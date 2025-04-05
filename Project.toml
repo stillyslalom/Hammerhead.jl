@@ -1,0 +1,13 @@
+name = "Hammerhead"
+uuid = "5ded7e7b-b945-48ee-9a66-c5dce433a0a7"
+authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.6.7"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
