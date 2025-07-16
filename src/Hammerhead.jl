@@ -4,7 +4,7 @@ using FFTW
 using LinearAlgebra: mul!, ldiv!, inv
 using ImageFiltering
 
-export CrossCorrelator, correlate
+export CrossCorrelator, correlate, subpixel_gauss3
 
 # Define a Correlator type to encapsulate correlation methods and options
 abstract type Correlator end
