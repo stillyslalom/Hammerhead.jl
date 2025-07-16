@@ -15,7 +15,7 @@
 - ✅ **Q&A Session** - Comprehensive requirements gathering completed
 
 ### Key Decisions Made
-- **Data Structure**: PIVResult with StructArray{PIVWindow} + metadata/auxiliary dicts
+- **Data Structure**: PIVResult with StructArray{PIVVector} + metadata/auxiliary dicts
 - **Processing**: Multi-stage with iterative deformation and outlier detection
 - **Windowing**: Support for rectangular, Blackman, Hanning, Hamming functions
 - **Interpolation**: Linear barycentric for outlier replacement, configurable methods
@@ -26,10 +26,10 @@
 
 ### Immediate Tasks (Phase 1: Foundation - Week 1)
 
-**Start Here**: Task 1.1 - PIVWindow Structure
+**Start Here**: Task 1.1 - PIVVector Structure
 ```julia
 # Define in src/Hammerhead.jl
-struct PIVWindow
+struct PIVVector
     x::Float64          # Grid x-coordinate
     y::Float64          # Grid y-coordinate  
     u::Float64          # Displacement in x-direction
@@ -51,7 +51,7 @@ ImageIO = "82e4d734-157c-48bb-816b-45c225c6df19"
 **Next**: Task 1.2 - PIVResult with getproperty forwarding
 ```julia
 struct PIVResult
-    vectors::StructArray{PIVWindow}
+    vectors::StructArray{PIVVector}
     metadata::Dict{String, Any}
     auxiliary::Dict{String, Any}
 end
@@ -78,7 +78,7 @@ PIVStages(n_stages::Int, final_size::Int, overlap::Float64) = # Implementation n
 
 ### Success Criteria for Next Session
 - [ ] All Phase 1 tasks completed and tested
-- [ ] PIVWindow struct functional with tests
+- [ ] PIVVector struct functional with tests
 - [ ] PIVResult with working property forwarding
 - [ ] PIVStage configuration with helper constructors
 - [ ] Dependencies added and importing correctly
@@ -154,7 +154,7 @@ cd("/home/alex/.julia/dev/Hammerhead")
 # Open requirements.md and task_plan.md
 
 # Start implementation
-# Begin with Task 1.1 - PIVWindow struct in src/Hammerhead.jl
+# Begin with Task 1.1 - PIVVector struct in src/Hammerhead.jl
 ```
 
 ## Ready State Verification

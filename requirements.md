@@ -7,7 +7,7 @@ This document specifies the requirements for the core PIV engine `run_piv` funct
 
 ### 1. Data Structures
 
-#### 1.1 PIVWindow
+#### 1.1 PIVVector
 - **Purpose**: Individual vector data point containing position, displacement, and quality metrics
 - **Fields**:
   - `x::Float64` - Grid x-coordinate
@@ -21,7 +21,7 @@ This document specifies the requirements for the core PIV engine `run_piv` funct
 #### 1.2 PIVResult
 - **Purpose**: Container for complete PIV analysis results
 - **Structure**:
-  - `vectors::StructArray{PIVWindow}` - Vector field data
+  - `vectors::StructArray{PIVVector}` - Vector field data
   - `metadata::Dict{String, Any}` - Processing parameters and run information
   - `auxiliary::Dict{String, Any}` - Additional data (correlation planes, secondary peaks, etc.)
 - **Property Forwarding**: `pivdata.x` → `pivdata.vectors.x` via `getproperty`

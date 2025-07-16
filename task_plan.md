@@ -5,19 +5,19 @@ This document outlines the detailed implementation plan for the core PIV engine 
 
 ## Phase 1: Foundation Data Structures (Week 1)
 
-### Task 1.1: PIVWindow Structure
+### Task 1.1: PIVVector Structure
 **Priority**: Critical
 **Estimated Time**: 2 hours
 **Dependencies**: None
 
 **Implementation Steps**:
-1. Define PIVWindow struct with required fields
+1. Define PIVVector struct with required fields
 2. Implement constructors and basic validation
 3. Add docstring with field descriptions
 4. Create unit tests for struct creation and field access
 
 **Acceptance Criteria**:
-- PIVWindow struct properly defined with all required fields
+- PIVVector struct properly defined with all required fields
 - Type-stable constructors
 - Comprehensive documentation
 - Unit tests passing
@@ -25,7 +25,7 @@ This document outlines the detailed implementation plan for the core PIV engine 
 ### Task 1.2: PIVResult Container
 **Priority**: Critical  
 **Estimated Time**: 4 hours
-**Dependencies**: PIVWindow (1.1)
+**Dependencies**: PIVVector (1.1)
 
 **Implementation Steps**:
 1. Define PIVResult struct with StructArray, metadata, and auxiliary fields
