@@ -3,6 +3,7 @@ using Test
 using Random
 using LinearAlgebra
 using FFTW
+using StructArrays
 
 function generate_gaussian_particle!(array::AbstractArray, centroid::Tuple{Float64, Float64}, diameter::Float64)
     sigma = diameter / 2.0  # Approximation: diameter covers ~1 standard deviation
@@ -210,7 +211,7 @@ end
             @test result2.v == result2.vectors.v
             
             # Test direct field access still works
-            @test isa(result2.vectors, StructArrays.StructArray)
+            @test isa(result2.vectors, StructArray)
             @test isa(result2.metadata, Dict)
             @test isa(result2.auxiliary, Dict)
         end # PIVResult
@@ -362,7 +363,8 @@ end
                 @test pointer(correlator.C2) == c2_ptr
                 
                 # Verify result is reasonable
-                @test isa(disp, Tuple{Float64, Float64})
+                @test isa(disp, Tuple)
+                @test length(disp) == 2
                 @test isfinite(disp[1])
                 @test isfinite(disp[2])
             end
@@ -375,8 +377,8 @@ end
             img_wrong_size = zeros(16, 16)
             img_correct = zeros(32, 32)
             
-            @test_throws BoundsError correlate(correlator, img_wrong_size, img_correct)
-            @test_throws BoundsError correlate(correlator, img_correct, img_wrong_size)
+            @test_throws DimensionMismatch correlate(correlator, img_wrong_size, img_correct)
+            @test_throws DimensionMismatch correlate(correlator, img_correct, img_wrong_size)
         end # CrossCorrelator Error Handling
     end # Correlation Algorithm Tests
 

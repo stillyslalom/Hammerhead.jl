@@ -8,7 +8,7 @@ using Interpolations
 using ImageIO
 
 # Data structures
-export PIVVector, PIVResult, PIVStage
+export PIVVector, PIVResult, PIVStage, PIVStages
 
 # Core functionality  
 export run_piv, CrossCorrelator, correlate
