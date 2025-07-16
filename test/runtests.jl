@@ -156,56 +156,167 @@ end
             @test refined_noisy[2] ≈ 8.0 atol=0.5
         end
     end
-end
 
-@testset "Integration Tests" begin
-    @testset "CrossCorrelator with Gaussian Particle" begin
-    # Define test image size
-    image_size = (64, 64)
-    centroid1 = image_size ./ 2
-    displacement = (2.2, 1.3)
-    diameter = 2.6
+    @testset "Data Structure Tests" begin
+        @testset "PIVVector" begin
+            # Test basic constructor
+            pv1 = PIVVector(1.0, 2.0, 0.5, 0.3)
+            @test pv1.x == 1.0
+            @test pv1.y == 2.0
+            @test pv1.u == 0.5
+            @test pv1.v == 0.3
+            @test pv1.status == :good
+            @test isnan(pv1.peak_ratio)
+            @test isnan(pv1.correlation_moment)
+            
+            # Test constructor with status
+            pv2 = PIVVector(2.0, 3.0, 1.0, -0.5, :interpolated)
+            @test pv2.status == :interpolated
+            @test isnan(pv2.peak_ratio)
+            @test isnan(pv2.correlation_moment)
+            
+            # Test full constructor
+            pv3 = PIVVector(1.0, 2.0, 0.5, 0.3, :good, 2.5, 0.8)
+            @test pv3.peak_ratio == 2.5
+            @test pv3.correlation_moment == 0.8
+            
+            # Test type conversion
+            pv4 = PIVVector(1, 2, 0.5, 0.3)  # Int inputs
+            @test isa(pv4.x, Float64)
+            @test isa(pv4.y, Float64)
+        end
+        
+        @testset "PIVResult" begin
+            # Test grid size constructor
+            result1 = PIVResult((3, 4))
+            @test size(result1.vectors) == (3, 4)
+            @test length(result1.metadata) == 0
+            @test length(result1.auxiliary) == 0
+            
+            # Test vector array constructor
+            pv_array = [PIVVector(i, j, 0.0, 0.0) for i in 1:2, j in 1:3]
+            result2 = PIVResult(pv_array)
+            @test size(result2.vectors) == (2, 3)
+            
+            # Test property forwarding
+            # Fill vectors with test data
+            for (idx, pv) in enumerate(pv_array)
+                result2.vectors[idx] = PIVVector(pv.x, pv.y, idx*0.1, idx*0.2)
+            end
+            
+            # Test that property forwarding works
+            @test result2.x == result2.vectors.x
+            @test result2.u == result2.vectors.u
+            @test result2.v == result2.vectors.v
+            
+            # Test direct field access still works
+            @test isa(result2.vectors, StructArrays.StructArray)
+            @test isa(result2.metadata, Dict)
+            @test isa(result2.auxiliary, Dict)
+        end
+        
+        @testset "PIVStage" begin
+            # Test basic constructor with defaults
+            stage1 = PIVStage((64, 64))
+            @test stage1.window_size == (64, 64)
+            @test stage1.overlap == (0.5, 0.5)
+            @test stage1.padding == 0
+            @test stage1.deformation_iterations == 3
+            @test isa(stage1.window_function, Hammerhead._Rectangular)
+            @test isa(stage1.interpolation_method, Hammerhead._Bilinear)
+            
+            # Test constructor with custom parameters
+            stage2 = PIVStage((32, 48), overlap=(0.25, 0.75), padding=5, 
+                             deformation_iterations=5, window_function=:hanning,
+                             interpolation_method=:bicubic)
+            @test stage2.window_size == (32, 48)
+            @test stage2.overlap == (0.25, 0.75)
+            @test stage2.padding == 5
+            @test stage2.deformation_iterations == 5
+            @test isa(stage2.window_function, Hammerhead._Hanning)
+            @test isa(stage2.interpolation_method, Hammerhead._Bicubic)
+            
+            # Test square window helper constructor
+            stage3 = PIVStage(128, overlap=(0.6, 0.6))
+            @test stage3.window_size == (128, 128)
+            @test stage3.overlap == (0.6, 0.6)
+            
+            # Test input validation
+            @test_throws ArgumentError PIVStage((0, 64))  # Invalid window size
+            @test_throws ArgumentError PIVStage((64, 64), overlap=(1.0, 0.5))  # Invalid overlap
+            @test_throws ArgumentError PIVStage((64, 64), overlap=(-0.1, 0.5))  # Invalid overlap
+            
+            # Test unknown symbols
+            @test_throws ArgumentError PIVStage((64, 64), window_function=:unknown)
+            @test_throws ArgumentError PIVStage((64, 64), interpolation_method=:unknown)
+        end
+        
+        @testset "PIVStages Helper" begin
+            # Test multi-stage generation
+            stages = PIVStages(3, 32, 0.5)
+            @test length(stages) == 3
+            @test all(s -> s.overlap == (0.5, 0.5), stages)
+            
+            # Test size progression (should be geometric)
+            sizes = [stage.window_size[1] for stage in stages]
+            @test sizes[end] == 32  # Final size should match input
+            @test all(sizes .>= 32)  # All sizes should be >= final size
+            @test issorted(sizes, rev=true)  # Should be decreasing
+            
+            # Test input validation
+            @test_throws ArgumentError PIVStages(0, 32)  # Invalid number of stages
+        end
+    end
 
-    # Create test images with a Gaussian particle
-    img1 = zeros(Float64, image_size)
-    img2 = zeros(Float64, image_size)
-
-    # Add a Gaussian particle in the center of img1
-    generate_gaussian_particle!(img1, centroid1, diameter)
-
-    # Shift the particle to create img2
-    generate_gaussian_particle!(img2, centroid1 .+ displacement, diameter)
-
-    # Initialize CrossCorrelator
-    correlator = CrossCorrelator(image_size)
-    
-    # Perform correlation
-    displacement = correlate(correlator, img1, img2)
-    @test all(displacement .≈ (2.2, 1.3))
-end
-
-# Additional comprehensive tests for existing functionality
-@testset "Correlation Algorithm Tests" begin
-    @testset "CrossCorrelator with Various Displacements" begin
+    @testset "Integration Tests" begin
+        @testset "CrossCorrelator with Gaussian Particle" begin
+        # Define test image size
         image_size = (64, 64)
-        centroid = (32.0, 32.0)
-        diameter = 3.0
+        centroid1 = image_size ./ 2
+        displacement = (2.2, 1.3)
+        diameter = 2.6
+
+        # Create test images with a Gaussian particle
+        img1 = zeros(Float64, image_size)
+        img2 = zeros(Float64, image_size)
+
+        # Add a Gaussian particle in the center of img1
+        generate_gaussian_particle!(img1, centroid1, diameter)
+
+        # Shift the particle to create img2
+        generate_gaussian_particle!(img2, centroid1 .+ displacement, diameter)
+
+        # Initialize CrossCorrelator
         correlator = CrossCorrelator(image_size)
         
-        # Test multiple displacement values
-        test_displacements = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (-1.5, 2.3), (3.7, -2.1)]
-        
-        for true_disp in test_displacements
-            img1 = zeros(Float64, image_size)
-            img2 = zeros(Float64, image_size)
+        # Perform correlation
+        displacement = correlate(correlator, img1, img2)
+        @test all(displacement .≈ (2.2, 1.3))
+        end
+    end
+
+    # Additional comprehensive tests for existing functionality
+    @testset "Correlation Algorithm Tests" begin
+        @testset "CrossCorrelator with Various Displacements" begin
+            image_size = (64, 64)
+            centroid = (32.0, 32.0)
+            diameter = 3.0
+            correlator = CrossCorrelator(image_size)
             
-            generate_gaussian_particle!(img1, centroid, diameter)
-            generate_gaussian_particle!(img2, centroid .+ true_disp, diameter)
+            # Test multiple displacement values
+            test_displacements = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (-1.5, 2.3), (3.7, -2.1)]
             
-            measured_disp = correlate(correlator, img1, img2)
-            
-            @test measured_disp[1] ≈ true_disp[1] atol=0.15
-            @test measured_disp[2] ≈ true_disp[2] atol=0.15
+            for true_disp in test_displacements
+                img1 = zeros(Float64, image_size)
+                img2 = zeros(Float64, image_size)
+                
+                generate_gaussian_particle!(img1, centroid, diameter)
+                generate_gaussian_particle!(img2, centroid .+ true_disp, diameter)
+                
+                measured_disp = correlate(correlator, img1, img2)
+                
+                @test measured_disp[1] ≈ true_disp[1] atol=0.15
+                @test measured_disp[2] ≈ true_disp[2] atol=0.15
         end
     end
     
@@ -267,9 +378,8 @@ end
         @test_throws BoundsError correlate(correlator, img_wrong_size, img_correct)
         @test_throws BoundsError correlate(correlator, img_correct, img_wrong_size)
     end
-end
 
-@testset "Performance Tests" begin
+    @testset "Performance Tests" begin
     @testset "CrossCorrelator Performance" begin
         # Test performance with larger images
         image_size = (128, 128)  # Reasonable size for CI
@@ -296,5 +406,6 @@ end
         allocs = @allocated correlate(correlator, img1, img2)
         # Should have minimal allocations after compilation
         @test allocs < 5000  # bytes - allow some headroom for different Julia versions
+    end
     end
 end
