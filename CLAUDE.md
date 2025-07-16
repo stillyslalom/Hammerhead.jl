@@ -6,20 +6,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hammerhead.jl is a Julia package for Particle Image Velocimetry (PIV) analysis, designed to provide modern, high-performance capabilities on par with the Prana library. The project targets shock tube experiments with turbulent mixing regions involving subsonic post-shock flow with significant shear and compressibility effects.
 
-## Architecture
+## Development Philosophy and Key Design Decisions
 
-The codebase is currently in early development with a minimal structure:
+### 1. No Placeholders or Stubs
+**Critical Rule**: Never add placeholder functions or stub implementations. Only implement functionality that actually works and can be tested. If a feature isn't ready to be built, don't add empty functions for it.
 
-- **Main Module** (`src/Hammerhead.jl`): Contains the core CrossCorrelator implementation and basic correlation functions
-- **Reference Implementation** (`src/prana.jl`): Reference code from the Prana library
-- **Tests** (`test/runtests.jl`): Basic test setup with Gaussian particle correlation tests
-- **Documentation** (`docs/`): Documenter.jl setup for future documentation
+**Example**: Don't create empty `apply_windowing_function()` - instead, implement the actual windowing when ready.
 
-### Key Components
+### 2. Symbol-to-Type Mapping for Clean APIs
+Use symbols in public APIs but convert to concrete types internally for type-stable dispatch and to avoid namespace collisions.
 
-- **CrossCorrelator**: FFT-based cross-correlation with pre-computed FFTW plans for performance
-- **correlate**: Main correlation function that performs FFT-based cross-correlation with subpixel refinement
-- **subpixel_gauss3**: 3-point Gaussian subpixel refinement algorithm
+**Pattern**:
+```julia
+# Internal types (not exported)
+abstract type WindowFunction end
+struct _Rectangular <: WindowFunction end
+struct _Hanning <: WindowFunction end
+
+# Symbol mapping function
+function window_function_type(s::Symbol)
+    s == :rectangular && return _Rectangular()
+    s == :hanning && return _Hanning()
+    throw(ArgumentError("Unknown window function: $s"))
+end
+
+# Constructor uses symbols, stores types
+PIVStage((64,64), window_function=:hanning)  # User-friendly
+```
+
+**Rationale**: Avoids conflicts with packages like DSP.jl that export `Hanning`, while providing clean user interface.
+
+### 3. Property Forwarding for Ergonomic APIs
+Implement `Base.getproperty` to provide direct access to nested data structures.
+
+**Pattern**:
+```julia
+# Instead of result.vectors.x, allow result.x
+function Base.getproperty(r::PIVResult, s::Symbol)
+    if s in (:vectors, :metadata, :auxiliary)
+        return getfield(r, s)
+    else
+        return getproperty(getfield(r, :vectors), s)
+    end
+end
+```
+
+### 4. Use Proper Dependency Management
+Always use `Pkg.add` instead of manual Project.toml editing to ensure correctness and proper version resolution.
+
+**Command**: `julia --project=. -e "using Pkg; Pkg.add([\"StructArrays\", \"Interpolations\"])"`
+
+### 5. Comprehensive Testing Strategy
+Test functionality that exists thoroughly, but don't test placeholders.
+
+**Approach**:
+- Use realistic test data (`generate_gaussian_particle!`) instead of artificial patterns
+- Test all constructors and edge cases
+- Test property forwarding and API ergonomics
+- Test error conditions and validation
+
+### 6. Organized Exports by Functionality
+Group exports by functionality rather than alphabetically:
+
+```julia
+# Data structures
+export PIVVector, PIVResult, PIVStage
+
+# Core functionality  
+export run_piv, CrossCorrelator, correlate
+
+# Utilities
+export subpixel_gauss3
+```
+
+### 7. Type Stability and Performance
+- Use parametric types where beneficial (`PIVStage{W<:WindowFunction, I<:InterpolationMethod}`)
+- Pre-allocate arrays for performance-critical operations
+- Use `Vector{<:PIVStage}` to handle parametric type collections
 
 ## Common Development Tasks
 
@@ -28,71 +91,75 @@ The codebase is currently in early development with a minimal structure:
 julia --project=. -e "using Pkg; Pkg.test()"
 ```
 
-### Building Documentation
+### Adding Dependencies
 ```bash
-julia --project=docs docs/make.jl
+julia --project=. -e "using Pkg; Pkg.add([\"PackageName\"])"
 ```
 
-### Basic Usage
-```julia
-using Hammerhead
-
-# Create a correlator for images of size (64, 64)
-correlator = CrossCorrelator((64, 64))
-
-# Correlate two image patches
-displacement = correlate(correlator, img1, img2)
+### Testing Individual Components
+```bash
+julia --project=. -e "using Hammerhead; # test specific functionality"
 ```
 
-## Performance Considerations
+## Architecture Notes
 
-- **Target Performance**: Process 29 megapixel image pair in <30 seconds (FFT correlation) or <10 minutes (phase correlation)
-- **Memory Management**: CrossCorrelator pre-allocates FFT arrays for reuse across multiple correlations
-- **Future GPU Support**: Planned CUDA.jl integration for phase correlation and interpolation
+### Current Status (Phase 1 Complete)
+- **PIVVector**: Individual vector data with position, displacement, quality metrics
+- **PIVResult**: StructArray container with property forwarding 
+- **PIVStage**: Type-safe configuration with symbol-to-type mapping
+- **run_piv**: Single and multi-stage PIV analysis
+- **generate_interrogation_grid**: Grid generation with overlap handling
 
-## Data Formats
+### Implementation Guidelines
 
-- **Input**: High-resolution experimental images (~29 megapixels)
-- **Output**: Currently returns displacement tuples, HDF5 support planned
-- **Typical Dataset**: 200-500 image pairs per experiment
+**When implementing new features**:
+1. Check existing patterns in the codebase first
+2. Follow the symbol-to-type mapping pattern for user APIs
+3. Implement complete, testable functionality - no stubs
+4. Add comprehensive tests alongside implementation
+5. Use realistic test data (Gaussian particles, not synthetic matrices)
+6. Handle edge cases and errors gracefully
 
-## Key Algorithms
+**When encountering namespace conflicts**:
+- Use internal types with underscores (`_Rectangular`)
+- Provide symbol-based constructors for users
+- Keep internal types private (don't export)
 
-### Current Implementation
-- **Cross-correlation**: FFT-based approach with FFTW plans for optimal performance
-- **Subpixel refinement**: 3-point Gaussian fit (gauss3) for 1/4 pixel accuracy
+**When adding tests**:
+- Test actual functionality, not placeholders
+- Use `generate_gaussian_particle!` for realistic test scenarios
+- Test all constructors and validation logic
+- Verify property forwarding works correctly
 
-### Planned Features
-- **Phase correlation**: Normalized cross-power spectrum for robust matching
-- **Deformable correlation**: Iterative refinement using affine transforms
-- **Quality metrics**: Peak ratio and correlation moment assessment
-- **Outlier detection**: Universal Outlier Detection (UOD) implementation
+## Performance Targets
+
+- Process 29 megapixel image pair in <30 seconds (single-stage)
+- Memory efficient with large datasets (200-500 pairs)
+- Type-stable implementations throughout
 
 ## Dependencies
 
-Core dependencies from Project.toml:
+Core dependencies (managed via Pkg.add):
 - **FFTW**: Fast Fourier Transform library for correlation
-- **ImageFiltering**: Image processing utilities
+- **ImageFiltering**: Image processing utilities  
 - **LinearAlgebra**: Matrix operations (mul!, ldiv!, inv)
-- **Statistics**: Statistical functions (in compatibility bounds)
-
-## Development Notes
-
-- The project is in early stages with placeholder functions for preprocessing and postprocessing
-- Phase correlation is currently a placeholder and needs implementation
-- Future development will focus on modular architecture with separate preprocessing, postprocessing, and visualization modules
-- GPU acceleration with CUDA.jl is planned for performance-critical operations
+- **StructArrays**: Efficient storage for vector fields
+- **Interpolations**: Grid interpolation and resampling
+- **ImageIO**: Flexible image loading
 
 ## Testing Strategy
 
-Current test includes synthetic Gaussian particle correlation validation. Future tests should include:
-- Unit tests for correlation algorithms
-- Integration tests with real experimental data
-- Performance benchmarks for large image processing
+- **Unit tests**: Each data structure and function
+- **Integration tests**: Complete PIV workflows with synthetic data
+- **Realistic data**: Gaussian particles with known displacements
+- **Edge cases**: Boundary conditions, error scenarios
+- **Performance**: Memory allocation and timing benchmarks
 
-## Documentation
+## Key Lessons from Development
 
-The project uses Documenter.jl for documentation generation. Key areas needing documentation:
-- API reference for all exported functions
-- Usage examples for common PIV workflows
-- Parameter selection guidance for experimental setups
+1. **Start with data structures**: Get the foundation right before building algorithms
+2. **User experience matters**: Property forwarding and symbol APIs improve usability
+3. **Type safety enables performance**: Use Julia's type system for dispatch and optimization
+4. **Test with realistic data**: Gaussian particles reveal issues that synthetic data doesn't
+5. **Avoid premature optimization**: Build working functionality first, optimize later
+6. **Namespace management**: Internal types prevent conflicts with ecosystem packages
