@@ -200,10 +200,71 @@ end
 # Helper constructor for square windows
 PIVStage(window_size::Int; kwargs...) = PIVStage((window_size, window_size); kwargs...)
 
-# Helper function to create multi-stage progression
-function PIVStages(n_stages::Int, final_size::Int, overlap::Float64 = 0.5)
+"""
+    PIVStages(n_stages::Int, final_size::Int; kwargs...) -> Vector{PIVStage}
+
+Create a vector of PIVStage configurations for multi-stage PIV analysis with geometric window size progression.
+
+# Arguments
+- `n_stages::Int` - Number of processing stages
+- `final_size::Int` - Final window size (smallest stage)
+
+# Keyword Arguments
+All PIVStage parameters are supported with either scalar or vector values:
+- `overlap=0.5` - Overlap ratio(s). Can be scalar, tuple, or vector of scalars/tuples
+- `padding=0` - Padding pixel(s). Can be scalar or vector
+- `deformation_iterations=3` - Deformation iteration(s). Can be scalar or vector  
+- `window_function=:rectangular` - Window function(s). Can be scalar symbol or vector of symbols
+- `interpolation_method=:bilinear` - Interpolation method(s). Can be scalar symbol or vector of symbols
+
+# Parameter Handling
+- **Scalar values**: Applied to all stages
+- **Vector values**: Must have length 1 (applied to all) or length `n_stages` (one per stage)
+- **Overlap**: Scalar values create symmetric overlap `(val, val)`, tuples are used directly
+
+# Window Size Progression
+Stages use geometric progression: `final_size * 2^(n_stages - i)` for stage `i`, 
+with minimum size constrained to `final_size`.
+
+# Examples
+```julia
+# Basic usage with scalar parameters
+stages = PIVStages(3, 32, overlap=0.5, window_function=:hanning)
+
+# Mixed scalar and vector parameters  
+stages = PIVStages(3, 32, overlap=[0.75, 0.5, 0.25], padding=5)
+
+# Different window functions per stage
+stages = PIVStages(2, 32, window_function=[:rectangular, :hanning])
+
+# Asymmetric overlap
+stages = PIVStages(2, 32, overlap=(0.6, 0.4))
+```
+"""
+function PIVStages(n_stages::Int, final_size::Int; 
+                   overlap=0.5, 
+                   padding=0,
+                   deformation_iterations=3,
+                   window_function=:rectangular,
+                   interpolation_method=:bilinear)
+    
     if n_stages <= 0
         throw(ArgumentError("Number of stages must be positive"))
+    end
+    
+    # Helper function to get value for stage i (1-indexed)
+    function get_stage_value(param, i::Int)
+        if isa(param, AbstractVector)
+            if length(param) == 1
+                return param[1]  # Single value for all stages
+            elseif length(param) == n_stages
+                return param[i]  # One value per stage
+            else
+                throw(ArgumentError("Parameter vector length ($(length(param))) must be 1 or equal to n_stages ($n_stages)"))
+            end
+        else
+            return param  # Scalar value for all stages
+        end
     end
     
     stages = PIVStage[]
@@ -216,7 +277,26 @@ function PIVStages(n_stages::Int, final_size::Int, overlap::Float64 = 0.5)
         # Ensure minimum window size
         current_size = max(current_size, final_size)
         
-        stage = PIVStage(current_size, overlap=(overlap, overlap))
+        # Get stage-specific parameters
+        stage_overlap = get_stage_value(overlap, i)
+        stage_padding = get_stage_value(padding, i)
+        stage_deformation_iterations = get_stage_value(deformation_iterations, i)
+        stage_window_function = get_stage_value(window_function, i)
+        stage_interpolation_method = get_stage_value(interpolation_method, i)
+        
+        # Convert scalar overlap to tuple if needed
+        if isa(stage_overlap, Real)
+            stage_overlap_tuple = (Float64(stage_overlap), Float64(stage_overlap))
+        else
+            stage_overlap_tuple = stage_overlap
+        end
+        
+        stage = PIVStage(current_size, 
+                        overlap=stage_overlap_tuple,
+                        padding=Int(stage_padding),
+                        deformation_iterations=Int(stage_deformation_iterations),
+                        window_function=stage_window_function,
+                        interpolation_method=stage_interpolation_method)
         push!(stages, stage)
     end
     

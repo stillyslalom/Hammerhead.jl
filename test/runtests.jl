@@ -253,8 +253,8 @@ end
         end # PIVStage
         
         @testset "PIVStages Helper" begin
-            # Test multi-stage generation
-            stages = PIVStages(3, 32, 0.5)
+            # Test basic multi-stage generation with old signature
+            stages = PIVStages(3, 32, overlap=0.5)
             @test length(stages) == 3
             @test all(s -> s.overlap == (0.5, 0.5), stages)
             
@@ -264,8 +264,39 @@ end
             @test all(sizes .>= 32)  # All sizes should be >= final size
             @test issorted(sizes, rev=true)  # Should be decreasing
             
+            # Test scalar parameters applied to all stages
+            stages2 = PIVStages(2, 32, overlap=0.25, padding=5, 
+                               window_function=:hanning, interpolation_method=:bicubic)
+            @test all(s -> s.overlap == (0.25, 0.25), stages2)
+            @test all(s -> s.padding == 5, stages2)
+            @test all(s -> isa(s.window_function, Hammerhead._Hanning), stages2)
+            @test all(s -> isa(s.interpolation_method, Hammerhead._Bicubic), stages2)
+            
+            # Test vector parameters (one per stage)
+            stages3 = PIVStages(3, 16, overlap=[0.75, 0.5, 0.25], 
+                               deformation_iterations=[1, 3, 5])
+            @test stages3[1].overlap == (0.75, 0.75)
+            @test stages3[2].overlap == (0.5, 0.5)
+            @test stages3[3].overlap == (0.25, 0.25)
+            @test stages3[1].deformation_iterations == 1
+            @test stages3[2].deformation_iterations == 3
+            @test stages3[3].deformation_iterations == 5
+            
+            # Test mixed scalar/vector parameters
+            stages4 = PIVStages(2, 32, overlap=0.5, 
+                               window_function=[:rectangular, :hanning])
+            @test isa(stages4[1].window_function, Hammerhead._Rectangular)
+            @test isa(stages4[2].window_function, Hammerhead._Hanning)
+            @test all(s -> s.overlap == (0.5, 0.5), stages4)
+            
+            # Test tuple overlap
+            stages5 = PIVStages(2, 32, overlap=(0.6, 0.4))
+            @test all(s -> s.overlap == (0.6, 0.4), stages5)
+            
             # Test input validation
             @test_throws ArgumentError PIVStages(0, 32)  # Invalid number of stages
+            @test_throws ArgumentError PIVStages(3, 32, overlap=[0.5, 0.25])  # Wrong vector length
+            @test_throws ArgumentError PIVStages(2, 32, padding=[1, 2, 3])  # Wrong vector length
         end # PIVStages Helper
     end # Data Structure Tests
 
