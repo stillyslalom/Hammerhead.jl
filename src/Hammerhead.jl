@@ -6,12 +6,13 @@ using ImageFiltering
 using StructArrays
 using Interpolations
 using ImageIO
+using DSP
 
 # Data structures
 export PIVVector, PIVResult, PIVStage, PIVStages
 
 # Core functionality  
-export run_piv, CrossCorrelator, correlate!, analyze_correlation_plane
+export run_piv, run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_plane
 
 # Utilities
 export subpixel_gauss3
@@ -104,11 +105,19 @@ function PIVResult(piv_vectors::AbstractArray{PIVVector})
 end
 
 # Window function types for type-stable dispatch (internal)
+# Use DSP.jl implementations for mathematically correct and well-tested functions
 abstract type WindowFunction end
-struct _Rectangular <: WindowFunction end
-struct _Blackman <: WindowFunction end
-struct _Hanning <: WindowFunction end
-struct _Hamming <: WindowFunction end
+
+# Simple window functions (no parameters)
+struct SimpleWindow{F} <: WindowFunction
+    func::F
+end
+
+# Parametric window functions (with parameters)
+struct ParametricWindow{F,P} <: WindowFunction
+    func::F
+    params::P
+end
 
 # Interpolation method types for type-stable dispatch (internal)
 abstract type InterpolationMethod end
@@ -120,17 +129,78 @@ struct _Lanczos <: InterpolationMethod end
 
 # Symbol to type mapping for window functions
 function window_function_type(s::Symbol)
-    if s == :rectangular
-        return _Rectangular()
-    elseif s == :blackman
-        return _Blackman()
-    elseif s == :hanning
-        return _Hanning()
-    elseif s == :hamming
-        return _Hamming()
+    # Map symbols to DSP.jl functions for simple windows
+    simple_windows = Dict(
+        :rectangular => DSP.rect,
+        :rect => DSP.rect,
+        :hanning => DSP.hanning,
+        :hamming => DSP.hamming, 
+        :blackman => DSP.blackman,
+        :bartlett => DSP.bartlett,
+        :cosine => DSP.cosine,
+        :lanczos => DSP.lanczos,
+        :triang => DSP.triang
+    )
+    
+    if haskey(simple_windows, s)
+        return SimpleWindow(simple_windows[s])
     else
-        throw(ArgumentError("Unknown window function: $s. Supported: :rectangular, :blackman, :hanning, :hamming"))
+        throw(ArgumentError("Unknown window function: $s. Supported: $(keys(simple_windows))"))
     end
+end
+
+# Tuple mapping for parametric window functions
+function window_function_type(spec::Tuple{Symbol, Vararg{Real}})
+    window_type, params... = spec
+    
+    # Map symbols to DSP.jl parametric functions
+    parametric_windows = Dict(
+        :kaiser => DSP.kaiser,
+        :tukey => DSP.tukey,
+        :gaussian => DSP.gaussian
+    )
+    
+    if haskey(parametric_windows, window_type)
+        return ParametricWindow(parametric_windows[window_type], params)
+    else
+        throw(ArgumentError("Unknown parametric window function: $window_type. Supported: $(keys(parametric_windows))"))
+    end
+end
+
+"""
+    apply_window_function(subimage, window_function) -> windowed_subimage
+
+Apply windowing function to subimage to reduce spectral leakage in correlation analysis.
+Uses DSP.jl implementations for mathematically correct and well-tested window functions.
+"""
+function apply_window_function(subimg::AbstractArray{T,2}, window_function::WindowFunction) where T
+    rows, cols = size(subimg)
+    
+    # Generate separable window using DSP.jl
+    window_1d_row = generate_window_1d(window_function, rows)
+    window_1d_col = generate_window_1d(window_function, cols)
+    
+    # Apply separable 2D windowing
+    windowed = similar(subimg)
+    for i in 1:rows, j in 1:cols
+        windowed[i, j] = subimg[i, j] * window_1d_row[i] * window_1d_col[j]
+    end
+    
+    return windowed
+end
+
+"""
+    generate_window_1d(window_function, length) -> window_vector
+
+Generate 1D window function using DSP.jl implementations for accuracy and performance.
+Supports both simple and parametric window functions.
+"""
+function generate_window_1d(w::SimpleWindow, n::Int)
+    return w.func(n)
+end
+
+function generate_window_1d(w::ParametricWindow, n::Int)
+    return w.func(n, w.params...)
 end
 
 # Symbol to type mapping for interpolation methods
@@ -172,12 +242,12 @@ struct PIVStage{W<:WindowFunction, I<:InterpolationMethod}
     interpolation_method::I
 end
 
-# Constructor with defaults using symbols
+# Constructor with defaults using symbols or tuples for parametric windows
 function PIVStage(window_size::Tuple{Int, Int}; 
                  overlap::Tuple{Float64, Float64} = (0.5, 0.5),
                  padding::Int = 0,
                  deformation_iterations::Int = 3,
-                 window_function::Symbol = :rectangular,
+                 window_function::Union{Symbol, Tuple{Symbol, Vararg{Real}}} = :rectangular,
                  interpolation_method::Symbol = :bilinear)
     
     # Validate overlap ratios
@@ -214,7 +284,7 @@ All PIVStage parameters are supported with either scalar or vector values:
 - `overlap=0.5` - Overlap ratio(s). Can be scalar, tuple, or vector of scalars/tuples
 - `padding=0` - Padding pixel(s). Can be scalar or vector
 - `deformation_iterations=3` - Deformation iteration(s). Can be scalar or vector  
-- `window_function=:rectangular` - Window function(s). Can be scalar symbol or vector of symbols
+- `window_function=:rectangular` - Window function(s). Can be symbol, tuple (symbol, params...), or vector thereof
 - `interpolation_method=:bilinear` - Interpolation method(s). Can be scalar symbol or vector of symbols
 
 # Parameter Handling
@@ -236,6 +306,9 @@ stages = PIVStages(3, 32, overlap=[0.75, 0.5, 0.25], padding=5)
 
 # Different window functions per stage
 stages = PIVStages(2, 32, window_function=[:rectangular, :hanning])
+
+# Parametric window functions
+stages = PIVStages(3, 32, window_function=[(:kaiser, 5.0), :hanning, (:tukey, 0.3)])
 
 # Asymmetric overlap
 stages = PIVStages(2, 32, overlap=(0.6, 0.4))
@@ -600,6 +673,98 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2},
 end
 
 """
+    pad_to_size(subimg, target_size) -> padded_array
+
+Pad a subimage to match target window size using symmetric padding.
+Uses the 'symmetric' boundary condition which reflects values across the boundary.
+"""
+function pad_to_size(subimg::AbstractArray{T,2}, target_size::Tuple{Int,Int}) where T
+    current_size = size(subimg)
+    
+    # If already correct size, return as-is
+    if current_size == target_size
+        return subimg
+    end
+    
+    # Calculate padding needed
+    pad_h = target_size[1] - current_size[1]
+    pad_w = target_size[2] - current_size[2]
+    
+    # Ensure we're only padding (not cropping)
+    if pad_h < 0 || pad_w < 0
+        throw(ArgumentError("Cannot pad to smaller size: $current_size -> $target_size"))
+    end
+    
+    # Calculate padding on each side (distribute evenly, with extra on bottom/right if odd)
+    pad_top = pad_h ÷ 2
+    pad_bottom = pad_h - pad_top
+    pad_left = pad_w ÷ 2
+    pad_right = pad_w - pad_left
+    
+    # Create padded array using symmetric boundary condition
+    # This reflects values across the boundary, avoiding discontinuities
+    padded = zeros(T, target_size)
+    
+    # Copy original data to center
+    padded[pad_top+1:pad_top+current_size[1], pad_left+1:pad_left+current_size[2]] = subimg
+    
+    # Fill padding regions using symmetric reflection
+    fill_symmetric_padding!(padded, subimg, pad_top, pad_left, current_size)
+    
+    return padded
+end
+
+"""
+    fill_symmetric_padding!(padded, original, pad_top, pad_left, original_size)
+
+Fill padding regions using symmetric reflection to avoid discontinuities.
+"""
+function fill_symmetric_padding!(padded::AbstractArray{T,2}, original::AbstractArray{T,2}, 
+                                 pad_top::Int, pad_left::Int, original_size::Tuple{Int,Int}) where T
+    orig_h, orig_w = original_size
+    
+    # Copy original to center region
+    center_h_range = (pad_top+1):(pad_top+orig_h)
+    center_w_range = (pad_left+1):(pad_left+orig_w)
+    
+    # Top padding (reflect vertically)
+    if pad_top > 0
+        for i in 1:pad_top
+            src_row = min(orig_h, pad_top - i + 1)  # Reflect from first row
+            padded[i, center_w_range] = original[src_row, :]
+        end
+    end
+    
+    # Bottom padding (reflect vertically)
+    bottom_start = pad_top + orig_h + 1
+    if bottom_start <= size(padded, 1)
+        for i in bottom_start:size(padded, 1)
+            offset = i - bottom_start
+            src_row = max(1, orig_h - offset)  # Reflect from last row
+            padded[i, center_w_range] = original[src_row, :]
+        end
+    end
+    
+    # Left padding (reflect horizontally, including top/bottom padding)
+    if pad_left > 0
+        for j in 1:pad_left
+            src_col = min(orig_w, pad_left - j + 1)  # Reflect from first column
+            padded[:, j] = padded[:, pad_left + src_col]
+        end
+    end
+    
+    # Right padding (reflect horizontally, including top/bottom padding) 
+    right_start = pad_left + orig_w + 1
+    if right_start <= size(padded, 2)
+        for j in right_start:size(padded, 2)
+            offset = j - right_start
+            src_col = max(1, pad_left + orig_w - offset)  # Reflect from last column
+            padded[:, j] = padded[:, src_col]
+        end
+    end
+end
+
+"""
     run_piv_stage(img1, img2, stage, correlator) -> PIVResult
 
 Perform PIV analysis for a single stage with given configuration.
@@ -643,20 +808,16 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
             
             # Pad if necessary to match correlator size
             if size(subimg1) != stage.window_size
-                # For now, skip windows that don't fit exactly
-                # TODO: Implement proper padding
-                push!(positions_x, window_x)
-                push!(positions_y, window_y) 
-                push!(displacements_u, NaN)
-                push!(displacements_v, NaN)
-                push!(status_flags, :bad)
-                push!(peak_ratios, NaN)
-                push!(correlation_moments, NaN)
-                continue
+                subimg1 = pad_to_size(subimg1, stage.window_size)
+                subimg2 = pad_to_size(subimg2, stage.window_size)
             end
             
+            # Apply windowing function to reduce spectral leakage
+            windowed_subimg1 = apply_window_function(subimg1, stage.window_function)
+            windowed_subimg2 = apply_window_function(subimg2, stage.window_function)
+            
             # Perform correlation to get correlation plane
-            correlation_plane = correlate!(correlator, subimg1, subimg2)
+            correlation_plane = correlate!(correlator, windowed_subimg1, windowed_subimg2)
             
             # Analyze correlation plane for displacement and quality metrics
             disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)

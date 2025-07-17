@@ -4,6 +4,7 @@ using Random
 using LinearAlgebra
 using FFTW
 using StructArrays
+using DSP
 
 function generate_gaussian_particle!(array::AbstractArray, centroid::Tuple{Float64, Float64}, diameter::Float64)
     sigma = diameter / 2.0  # Approximation: diameter covers ~1 standard deviation
@@ -223,7 +224,7 @@ end
             @test stage1.overlap == (0.5, 0.5)
             @test stage1.padding == 0
             @test stage1.deformation_iterations == 3
-            @test isa(stage1.window_function, Hammerhead._Rectangular)
+            @test isa(stage1.window_function, Hammerhead.SimpleWindow)
             @test isa(stage1.interpolation_method, Hammerhead._Bilinear)
             
             # Test constructor with custom parameters
@@ -234,7 +235,7 @@ end
             @test stage2.overlap == (0.25, 0.75)
             @test stage2.padding == 5
             @test stage2.deformation_iterations == 5
-            @test isa(stage2.window_function, Hammerhead._Hanning)
+            @test isa(stage2.window_function, Hammerhead.SimpleWindow)
             @test isa(stage2.interpolation_method, Hammerhead._Bicubic)
             
             # Test square window helper constructor
@@ -269,7 +270,7 @@ end
                                window_function=:hanning, interpolation_method=:bicubic)
             @test all(s -> s.overlap == (0.25, 0.25), stages2)
             @test all(s -> s.padding == 5, stages2)
-            @test all(s -> isa(s.window_function, Hammerhead._Hanning), stages2)
+            @test all(s -> isa(s.window_function, Hammerhead.SimpleWindow), stages2)
             @test all(s -> isa(s.interpolation_method, Hammerhead._Bicubic), stages2)
             
             # Test vector parameters (one per stage)
@@ -285,8 +286,8 @@ end
             # Test mixed scalar/vector parameters
             stages4 = PIVStages(2, 32, overlap=0.5, 
                                window_function=[:rectangular, :hanning])
-            @test isa(stages4[1].window_function, Hammerhead._Rectangular)
-            @test isa(stages4[2].window_function, Hammerhead._Hanning)
+            @test isa(stages4[1].window_function, Hammerhead.SimpleWindow)
+            @test isa(stages4[2].window_function, Hammerhead.SimpleWindow)
             @test all(s -> s.overlap == (0.5, 0.5), stages4)
             
             # Test tuple overlap - when tuple has 2 elements for 2 stages, each stage gets one value
@@ -484,4 +485,253 @@ end
             @test allocs < 5000  # bytes - back to original threshold since no copy
         end # CrossCorrelator Performance
     end # Performance Tests
+
+    @testset "Window Padding Tests" begin
+        @testset "pad_to_size Functionality" begin
+            # Test basic padding
+            small_img = [1.0 2.0; 3.0 4.0]  # 2x2
+            padded = Hammerhead.pad_to_size(small_img, (4, 4))
+            
+            @test size(padded) == (4, 4)
+            @test padded[2:3, 2:3] == small_img  # Original data in center
+            
+            # Test no padding needed
+            same_size = Hammerhead.pad_to_size(small_img, (2, 2))
+            @test same_size === small_img
+            
+            # Test symmetric reflection property
+            @test padded[1, 2] == padded[2, 2]  # Top reflection
+            @test padded[4, 2] == padded[3, 2]  # Bottom reflection  
+            @test padded[2, 1] == padded[2, 2]  # Left reflection
+            @test padded[2, 4] == padded[2, 3]  # Right reflection
+            
+            # Test error for invalid size
+            @test_throws ArgumentError Hammerhead.pad_to_size(small_img, (1, 1))
+        end # pad_to_size Functionality
+        
+        @testset "Boundary Window Processing" begin
+            # Create test images to force boundary conditions  
+            img_size = (64, 64)
+            img1 = rand(Float64, img_size...)
+            img2 = rand(Float64, img_size...)
+            
+            # Use large window size with high overlap to force boundary padding scenarios
+            stage = PIVStage((48, 48), overlap=(0.75, 0.75))  # Large windows, high overlap
+            
+            # This should process without error due to padding
+            result = run_piv_stage(img1, img2, stage, CrossCorrelator)
+            
+            @test isa(result, PIVResult)
+            @test length(result.vectors) > 0
+            # All vectors should be processed (no :bad status from padding issues)
+            @test all(v -> v.status != :bad, result.vectors)
+            
+            # Test boundary case with smaller image
+            small_img1 = rand(Float64, (32, 32)...)
+            small_img2 = rand(Float64, (32, 32)...)
+            stage_small = PIVStage((24, 24), overlap=(0.5, 0.5))
+            
+            result_small = run_piv_stage(small_img1, small_img2, stage_small, CrossCorrelator)
+            @test isa(result_small, PIVResult)
+            @test length(result_small.vectors) > 0
+        end # Boundary Window Processing
+    end # Window Padding Tests
+    
+    @testset "Windowing Functions Tests" begin
+        @testset "1D Window Generation (DSP.jl implementations)" begin
+            # Test rectangular window (should be all ones)
+            rect_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.rect), 5)
+            @test rect_window == ones(5)
+            @test length(rect_window) == 5
+            
+            # Test Hanning window properties
+            hann_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.hanning), 8)
+            @test length(hann_window) == 8
+            @test hann_window[1] ≈ 0.0 atol=1e-10  # Should start at 0
+            @test hann_window[end] ≈ 0.0 atol=1e-10  # Should end at 0
+            @test maximum(hann_window) ≈ 0.95 atol=0.05  # Peak value for 8-point Hanning
+            
+            # Test Hamming window properties
+            hamm_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.hamming), 8)
+            @test length(hamm_window) == 8
+            @test hamm_window[1] ≈ 0.08 atol=1e-2  # Hamming doesn't go to zero
+            @test hamm_window[end] ≈ 0.08 atol=1e-2
+            @test maximum(hamm_window) ≈ 0.98 atol=0.05  # Peak value for 8-point Hamming
+            
+            # Test Blackman window properties
+            blackman_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.blackman), 8)
+            @test length(blackman_window) == 8
+            @test blackman_window[1] ≈ 0.0 atol=1e-10  # Should start near 0
+            @test blackman_window[end] ≈ 0.0 atol=1e-10  # Should end near 0
+            @test maximum(blackman_window) ≈ 0.92 atol=0.05  # Peak value for 8-point Blackman
+            
+            # Test additional DSP.jl window functions
+            bartlett_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.bartlett), 8)
+            @test length(bartlett_window) == 8
+            @test bartlett_window[1] ≈ 0.0 atol=1e-10
+            @test bartlett_window[end] ≈ 0.0 atol=1e-10
+            
+            cosine_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.cosine), 8)
+            @test length(cosine_window) == 8
+            @test cosine_window[1] ≈ 0.0 atol=1e-10
+            
+            # Test parametric window functions
+            kaiser_window = Hammerhead.generate_window_1d(Hammerhead.ParametricWindow(DSP.kaiser, (5.0,)), 8)
+            @test length(kaiser_window) == 8
+            @test kaiser_window[1] < kaiser_window[4]  # Should be increasing toward center
+            
+            tukey_window = Hammerhead.generate_window_1d(Hammerhead.ParametricWindow(DSP.tukey, (0.5,)), 8)
+            @test length(tukey_window) == 8
+            @test maximum(tukey_window) ≈ 1.0 atol=1e-10
+            
+            # Test edge case: single element for simple windows
+            simple_windows = [
+                Hammerhead.SimpleWindow(DSP.rect),
+                Hammerhead.SimpleWindow(DSP.hanning),
+                Hammerhead.SimpleWindow(DSP.hamming),
+                Hammerhead.SimpleWindow(DSP.blackman)
+            ]
+            for window_type in simple_windows
+                single = Hammerhead.generate_window_1d(window_type, 1)
+                @test single == [1.0]
+            end
+        end # 1D Window Generation
+        
+        @testset "2D Window Application" begin
+            # Create test image
+            test_img = ones(Float64, 8, 8)
+            
+            # Test rectangular windowing (should not change the image)
+            windowed_rect = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.rect))
+            @test windowed_rect ≈ test_img
+            
+            # Test Hanning windowing
+            windowed_hann = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.hanning))
+            @test size(windowed_hann) == size(test_img)
+            @test windowed_hann[1, 1] ≈ 0.0 atol=1e-10  # Corners should be near zero
+            @test windowed_hann[end, end] ≈ 0.0 atol=1e-10
+            @test windowed_hann[4, 4] ≈ 0.903 atol=1e-2  # Center value for 8x8 Hanning
+            
+            # Test Hamming windowing
+            windowed_hamm = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.hamming))
+            @test size(windowed_hamm) == size(test_img)
+            # Hamming doesn't go to zero at edges
+            @test windowed_hamm[1, 1] > 0.0
+            @test windowed_hamm[end, end] > 0.0
+            @test windowed_hamm[4, 4] ≈ 0.91 atol=1e-2  # Center value for 8x8 Hamming
+            
+            # Test Blackman windowing
+            windowed_blackman = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.blackman))
+            @test size(windowed_blackman) == size(test_img)
+            @test windowed_blackman[1, 1] ≈ 0.0 atol=1e-10
+            @test windowed_blackman[end, end] ≈ 0.0 atol=1e-10
+            @test windowed_blackman[4, 4] ≈ 0.85 atol=1e-2  # Center value for 8x8 Blackman
+            
+            # Test energy conservation property (windowed energy should be less than original)
+            original_energy = sum(test_img.^2)
+            hann_energy = sum(windowed_hann.^2)
+            hamm_energy = sum(windowed_hamm.^2)
+            blackman_energy = sum(windowed_blackman.^2)
+            
+            @test hann_energy < original_energy
+            @test hamm_energy < original_energy
+            @test blackman_energy < original_energy
+        end # 2D Window Application
+        
+        @testset "Windowing Integration with PIV" begin
+            # Test that windowing integrates properly with PIV processing
+            image_size = (64, 64)
+            centroid = (32.0, 32.0)
+            diameter = 3.0
+            displacement = (2.0, 1.5)
+            
+            # Create test images with Gaussian particles
+            img1 = zeros(Float64, image_size)
+            img2 = zeros(Float64, image_size)
+            generate_gaussian_particle!(img1, centroid, diameter)
+            generate_gaussian_particle!(img2, centroid .+ displacement, diameter)
+            
+            # Test different windowing functions (simple)
+            for window_func in [:rectangular, :hanning, :hamming, :blackman, :bartlett, :cosine]
+                stage = PIVStage((32, 32), window_function=window_func)
+                result = run_piv_stage(img1, img2, stage, CrossCorrelator)
+                
+                @test isa(result, PIVResult)
+                @test length(result.vectors) > 0
+                
+                # All windows should detect displacement reasonably well
+                if length(result.vectors) > 0
+                    # Find vector closest to centroid (32, 32)
+                    best_vector = result.vectors[1]
+                    min_dist = Inf
+                    for v in result.vectors
+                        dist = sqrt((v.x - centroid[1])^2 + (v.y - centroid[2])^2)
+                        if dist < min_dist
+                            min_dist = dist
+                            best_vector = v
+                        end
+                    end
+                    
+                    if window_func == :rectangular
+                        @test best_vector.u ≈ displacement[1] atol=0.3
+                        @test best_vector.v ≈ displacement[2] atol=0.3
+                    else
+                        # Non-rectangular windows reduce energy, may affect precision
+                        @test isfinite(best_vector.u)
+                        @test isfinite(best_vector.v)
+                        @test abs(best_vector.u - displacement[1]) < 2.0
+                        @test abs(best_vector.v - displacement[2]) < 2.0
+                    end
+                    @test best_vector.status == :good
+                end
+            end
+            
+            # Test parametric window functions
+            parametric_windows = [(:kaiser, 5.0), (:tukey, 0.5), (:gaussian, 0.4)]
+            for window_func in parametric_windows
+                stage = PIVStage((32, 32), window_function=window_func)
+                result = run_piv_stage(img1, img2, stage, CrossCorrelator)
+                
+                @test isa(result, PIVResult)
+                @test length(result.vectors) > 0
+                
+                if length(result.vectors) > 0
+                    best_vector = result.vectors[1]
+                    min_dist = Inf
+                    for v in result.vectors
+                        dist = sqrt((v.x - centroid[1])^2 + (v.y - centroid[2])^2)
+                        if dist < min_dist
+                            min_dist = dist
+                            best_vector = v
+                        end
+                    end
+                    
+                    # Parametric windows should also detect displacement reasonably
+                    @test isfinite(best_vector.u)
+                    @test isfinite(best_vector.v)
+                    @test abs(best_vector.u - displacement[1]) < 2.0
+                    @test abs(best_vector.v - displacement[2]) < 2.0
+                    @test best_vector.status == :good
+                end
+            end
+        end # Windowing Integration with PIV
+        
+        @testset "PIVStages with Generalized Windowing" begin
+            # Test PIVStages with mixed window functions
+            stages_mixed = PIVStages(3, 32, window_function=[:rectangular, (:kaiser, 6.0), :hanning])
+            @test length(stages_mixed) == 3
+            @test isa(stages_mixed[1].window_function, Hammerhead.SimpleWindow)
+            @test isa(stages_mixed[2].window_function, Hammerhead.ParametricWindow)
+            @test isa(stages_mixed[3].window_function, Hammerhead.SimpleWindow)
+            
+            # Test all parametric windows
+            stages_param = PIVStages(2, 32, window_function=[(:tukey, 0.25), (:gaussian, 0.5)])
+            @test length(stages_param) == 2
+            @test all(s -> isa(s.window_function, Hammerhead.ParametricWindow), stages_param)
+            
+            # Test error handling for unknown window
+            @test_throws ArgumentError PIVStage((32, 32), window_function=:unknown_window)
+            @test_throws ArgumentError PIVStage((32, 32), window_function=(:unknown_param, 1.0))
+        end # PIVStages with Generalized Windowing
+    end # Windowing Functions Tests
 end # Hammerhead.jl

@@ -34,7 +34,7 @@ end
 PIVStage((64,64), window_function=:hanning)  # User-friendly
 ```
 
-**Rationale**: Avoids conflicts with packages like DSP.jl that export `Hanning`, while providing clean user interface.
+**Rationale**: Provides clean user interface while leveraging robust implementations from packages like DSP.jl internally.
 
 ### 3. Property Forwarding for Ergonomic APIs
 Implement `Base.getproperty` to provide direct access to nested data structures.
