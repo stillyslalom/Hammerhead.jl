@@ -107,8 +107,15 @@ julia --project=. -e "using Hammerhead; # test specific functionality"
 - **PIVVector**: Individual vector data with position, displacement, quality metrics
 - **PIVResult**: StructArray container with property forwarding 
 - **PIVStage**: Type-safe configuration with symbol-to-type mapping
+- **PIVStages**: Multi-stage helper with flexible parameter handling (scalars/vectors/tuples/matrices)
 - **run_piv**: Single and multi-stage PIV analysis
 - **generate_interrogation_grid**: Grid generation with overlap handling
+
+### Recent Enhancements
+- **Flexible parameter APIs**: PIVStages accepts scalars, vectors, tuples, matrices, ranges
+- **Robust dispatch**: Multiple dispatch for parameter handling instead of runtime checks
+- **Comprehensive edge case handling**: Proper conversion and validation for all input types
+- **Enhanced testing**: 165 tests covering all functionality and edge cases
 
 ### Implementation Guidelines
 
@@ -119,6 +126,9 @@ julia --project=. -e "using Hammerhead; # test specific functionality"
 4. Add comprehensive tests alongside implementation
 5. Use realistic test data (Gaussian particles, not synthetic matrices)
 6. Handle edge cases and errors gracefully
+7. Use multiple dispatch instead of runtime type checking (`isa()`)
+8. Design flexible APIs that accept multiple input formats (scalars, vectors, tuples, matrices)
+9. Fix any broken tests before adding new functionality
 
 **When encountering namespace conflicts**:
 - Use internal types with underscores (`_Rectangular`)
@@ -152,8 +162,11 @@ Core dependencies (managed via Pkg.add):
 - **Unit tests**: Each data structure and function
 - **Integration tests**: Complete PIV workflows with synthetic data
 - **Realistic data**: Gaussian particles with known displacements
-- **Edge cases**: Boundary conditions, error scenarios
+- **Edge cases**: Boundary conditions, error scenarios, alternative input formats
 - **Performance**: Memory allocation and timing benchmarks
+- **Test structure**: Use end-block comments for complex nested testsets
+- **Comprehensive coverage**: Test tuples, matrices, ranges, and error conditions
+- **Fix failures immediately**: Don't accumulate broken tests
 
 ## Key Lessons from Development
 
@@ -163,3 +176,13 @@ Core dependencies (managed via Pkg.add):
 4. **Test with realistic data**: Gaussian particles reveal issues that synthetic data doesn't
 5. **Avoid premature optimization**: Build working functionality first, optimize later
 6. **Namespace management**: Internal types prevent conflicts with ecosystem packages
+
+## Recent Development Insights
+
+7. **Fix broken tests immediately**: Don't accumulate technical debt - address failing tests before adding features
+8. **Use dispatch over runtime type checks**: Replace `isa()` checks with multiple dispatch for cleaner, more performant code
+9. **Handle edge cases comprehensively**: Users will pass tuples, matrices, ranges - design APIs to be flexible and convert appropriately
+10. **Test edge cases extensively**: Include tests for tuples, matrices, ranges, and error cases to ensure robust behavior
+11. **Document parameter flexibility**: When functions accept multiple input types, document all supported formats clearly
+12. **CI compatibility matters**: Keep Julia version support current (LTS minimum, not ancient versions like 1.6)
+13. **Test structure is critical**: Use end-block comments (`end # TestsetName`) to debug complex nested test structures
