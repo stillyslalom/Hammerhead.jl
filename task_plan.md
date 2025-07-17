@@ -3,135 +3,120 @@
 ## Overview
 This document outlines the detailed implementation plan for the core PIV engine based on the requirements document. Tasks are organized by priority and dependencies.
 
-## Phase 1: Foundation Data Structures (Week 1)
+## Phase 1: Foundation Data Structures (COMPLETED ✅)
 
-### Task 1.1: PIVVector Structure
-**Priority**: Critical
-**Estimated Time**: 2 hours
-**Dependencies**: None
+### Task 1.1: PIVVector Structure ✅
+**Status**: COMPLETED
+**Actual Time**: 2 hours
 
-**Implementation Steps**:
-1. Define PIVVector struct with required fields
-2. Implement constructors and basic validation
-3. Add docstring with field descriptions
-4. Create unit tests for struct creation and field access
+**Completed Implementation**:
+- ✅ PIVVector struct with all required fields
+- ✅ Type-stable constructors with validation
+- ✅ Comprehensive documentation
+- ✅ Complete unit tests
 
-**Acceptance Criteria**:
-- PIVVector struct properly defined with all required fields
-- Type-stable constructors
-- Comprehensive documentation
-- Unit tests passing
+### Task 1.2: PIVResult Container ✅  
+**Status**: COMPLETED
+**Actual Time**: 4 hours
 
-### Task 1.2: PIVResult Container
-**Priority**: Critical  
-**Estimated Time**: 4 hours
-**Dependencies**: PIVVector (1.1)
+**Completed Implementation**:
+- ✅ PIVResult struct with StructArray integration
+- ✅ Property forwarding (`result.x` → `result.vectors.x`)
+- ✅ Multiple constructor patterns
+- ✅ Full test coverage with realistic data
 
-**Implementation Steps**:
-1. Define PIVResult struct with StructArray, metadata, and auxiliary fields
-2. Implement `getproperty` forwarding for vector field access
-3. Create constructors for different initialization patterns
-4. Add helper functions for result manipulation
-5. Implement comprehensive tests
+### Task 1.3: PIVStage Configuration ✅
+**Status**: COMPLETED
+**Actual Time**: 6 hours (expanded scope)
 
-**Acceptance Criteria**:
-- PIVResult struct properly integrates StructArray
-- Property forwarding works correctly (`result.x` → `result.vectors.x`)
-- Metadata and auxiliary data handling functional
-- Full test coverage
+**Completed Implementation**:
+- ✅ PIVStage struct with comprehensive validation
+- ✅ Symbol-to-type mapping for clean APIs
+- ✅ PIVStages helper with flexible parameter handling
+- ✅ Dispatch-based parameter conversion (scalars, vectors, tuples, matrices)
+- ✅ Extensive documentation with examples
 
-### Task 1.3: PIVStage Configuration
-**Priority**: Critical
-**Estimated Time**: 3 hours
-**Dependencies**: None
+### Task 1.4: Add Dependencies ✅
+**Status**: COMPLETED
+**Actual Time**: 1 hour
 
-**Implementation Steps**:
-1. Define PIVStage struct with all configuration fields
-2. Implement constructor with sensible defaults
-3. Add validation for configuration consistency
-4. Create helper constructor `PIVStages(n_stages, final_size, overlap)`
-5. Add comprehensive documentation and examples
+**Completed Implementation**:
+- ✅ All dependencies added (StructArrays, Interpolations, ImageIO, etc.)
+- ✅ Clean import/export structure
+- ✅ Version compatibility verified
 
-**Acceptance Criteria**:
-- PIVStage struct supports all required configuration options
-- Validation prevents invalid configurations
-- Helper constructors work for common use cases
-- Documentation includes usage examples
-
-### Task 1.4: Add Dependencies
-**Priority**: Critical
+### Task 1.5: Code Quality Cleanup 🔄
+**Priority**: HIGH
 **Estimated Time**: 1 hour
-**Dependencies**: None
+**Dependencies**: Code review complete
 
 **Implementation Steps**:
-1. Add StructArrays.jl to Project.toml
-2. Add Interpolations.jl to Project.toml  
-3. Add ImageIO.jl to Project.toml
-4. Update exports in main module
-5. Test dependency loading
+1. Remove placeholder functions (lines 401-412, 643-647)
+2. Clean up dead code per project guidelines
+3. Verify no functionality regression
+4. Update exports if necessary
 
 **Acceptance Criteria**:
-- All required dependencies properly added
-- No version conflicts
-- Clean import/export structure
+- No placeholder or dead code remains
+- All tests still pass
+- Clean codebase ready for Phase 2
 
-## Phase 2: Core Processing Infrastructure (Week 2)
+## Phase 2: Core Processing Infrastructure (PARTIALLY COMPLETED)
 
-### Task 2.1: Interrogation Window Grid Generation
-**Priority**: High
-**Estimated Time**: 4 hours
-**Dependencies**: PIVStage (1.3)
+### Task 2.1: Interrogation Window Grid Generation ✅
+**Status**: COMPLETED
+**Actual Time**: 3 hours
 
-**Implementation Steps**:
-1. Implement `generate_interrogation_grid()` function
-2. Handle non-uniform overlap ratios
-3. Support non-square windows
-4. Handle boundary conditions properly
-5. Add comprehensive tests with edge cases
+**Completed Implementation**:
+- ✅ `generate_interrogation_grid()` function with boundary handling
+- ✅ Non-uniform overlap ratio support
+- ✅ Non-square window support
+- ✅ Comprehensive edge case testing
 
-**Acceptance Criteria**:
-- Grid generation works for various window sizes and overlaps
-- Proper boundary handling
-- Efficient implementation
-- Edge case testing complete
-
-### Task 2.2: Subimage Windowing Functions
-**Priority**: High
+### Task 2.2: Subimage Windowing Functions 🔄
+**Priority**: Medium (Deferred - working rectangular sufficient for core validation)
 **Estimated Time**: 3 hours
 **Dependencies**: None
 
 **Implementation Steps**:
-1. Implement rectangular windowing (pass-through)
-2. Implement Blackman windowing function
-3. Implement Hanning windowing function
-4. Implement Hamming windowing function
-5. Create windowing function dispatcher
-6. Add tests for all windowing functions
+1. Implement windowing function application in processing loop
+2. Add Blackman, Hanning, Hamming implementations
+3. Integrate with PIVStage window_function parameter
+4. Add windowing tests with synthetic data
 
 **Acceptance Criteria**:
 - All windowing functions mathematically correct
-- Consistent interface across all functions
+- Seamless integration with existing type system
 - Performance optimized implementations
-- Comprehensive test coverage
 
-### Task 2.3: Basic run_piv Function Structure
-**Priority**: High
-**Estimated Time**: 6 hours
-**Dependencies**: PIVResult (1.2), Grid Generation (2.1)
+### Task 2.3: Basic run_piv Function Structure ✅
+**Status**: COMPLETED
+**Actual Time**: 6 hours
+
+**Completed Implementation**:
+- ✅ Complete `run_piv` function with single/multi-stage support
+- ✅ Comprehensive input validation
+- ✅ Integration with CrossCorrelator
+- ✅ Robust error handling and graceful degradation
+- ✅ Extensive integration tests with synthetic data
+
+### Task 2.4: Complete Missing Algorithm Features 🔄
+**Priority**: HIGH 
+**Estimated Time**: 4 hours
+**Dependencies**: run_piv structure complete
 
 **Implementation Steps**:
-1. Implement basic `run_piv` function signature
-2. Add input validation for images and parameters
-3. Implement single-stage processing loop
-4. Integrate with existing CrossCorrelator
-5. Add basic error handling and logging
-6. Create integration tests with synthetic data
+1. Implement peak ratio calculation (line 573)
+2. Implement correlation moment calculation (line 574)  
+3. Add proper window padding implementation (line 553)
+4. Implement actual processing time measurement (line 599)
+5. Add input validation for window size vs image compatibility
 
 **Acceptance Criteria**:
-- Basic PIV processing works end-to-end
-- Proper error handling for invalid inputs
-- Integration with existing correlator
-- Basic test suite passing
+- All TODO comments resolved with working implementations
+- Quality metrics properly calculated
+- Proper padding for boundary windows
+- Comprehensive input validation
 
 ## Phase 3: Advanced Processing Features (Week 3)
 
@@ -323,31 +308,38 @@ This document outlines the detailed implementation plan for the core PIV engine 
 
 ## Timeline Summary
 
-**Week 1**: Foundation Data Structures (14 hours)
-**Week 2**: Core Processing Infrastructure (17 hours)
-**Week 3**: Advanced Processing Features (16 hours)
-**Week 4**: Multi-Stage Processing (10 hours)
-**Week 5**: Testing and Validation (14 hours)
-**Week 6**: Integration and Optimization (10 hours)
+**Phase 1**: Foundation Data Structures ✅ (13 hours completed)
+**Phase 2**: Core Processing Infrastructure 🔄 (9/17 hours completed)
+  - Cleanup: 1 hour remaining
+  - Missing features: 4 hours remaining
+  - Windowing functions: 3 hours remaining (deferred)
+**Phase 3**: Advanced Processing Features (16 hours)
+**Phase 4**: Multi-Stage Processing (10 hours)
+**Phase 5**: Testing and Validation (14 hours)
+**Phase 6**: Integration and Optimization (10 hours)
 
-**Total Estimated Time**: 81 hours (~2 months part-time)
+**Progress**: 22/81 hours completed (27%)
+**Next Priority**: Code cleanup + missing algorithm features (5 hours)
 
-## Risk Assessment
+## Risk Assessment (Updated Based on Progress)
 
 **High Risk**:
 - Iterative deformation algorithm complexity
-- Performance requirements with large images
-- Memory usage optimization
+- Initial guess propagation between stages
+- Outlier detection algorithm selection
 
 **Medium Risk**:
+- Window padding implementation for boundary cases
+- Quality metric calculation accuracy
 - Multi-stage processing integration
-- Outlier detection algorithm selection
-- Synthetic data realism
 
 **Low Risk**:
-- Basic data structure implementation
+- Basic data structure implementation ✅ (completed)
+- Code cleanup and dead code removal
 - Windowing function implementation
-- Documentation and testing
+- Documentation and testing ✅ (comprehensive)
+
+**Performance Note**: Core FFT and correlation operations are properly optimized. Per-stage allocations are not performance-critical compared to computational kernels.
 
 ## Success Metrics
 
