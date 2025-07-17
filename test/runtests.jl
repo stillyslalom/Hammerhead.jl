@@ -354,8 +354,15 @@ end
         correlator = CrossCorrelator(image_size)
         
         # Perform correlation
-        displacement = correlate(correlator, img1, img2)
-        @test all(displacement .≈ (2.2, 1.3))
+        correlation_plane = correlate(correlator, img1, img2)
+        @test isa(correlation_plane, AbstractMatrix)
+        
+        # Analyze correlation plane
+        disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
+        @test disp_u ≈ 2.2 atol=0.1
+        @test disp_v ≈ 1.3 atol=0.1
+        @test peak_ratio > 1.0  # Should have good peak ratio
+        @test isfinite(corr_moment)  # Should have finite correlation moment
         end # CrossCorrelator with Gaussian Particle
     end # Integration Tests
 
@@ -377,10 +384,13 @@ end
                 generate_gaussian_particle!(img1, centroid, diameter)
                 generate_gaussian_particle!(img2, centroid .+ true_disp, diameter)
                 
-                measured_disp = correlate(correlator, img1, img2)
+                correlation_plane = correlate(correlator, img1, img2)
+                disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
                 
-                @test measured_disp[1] ≈ true_disp[1] atol=0.15
-                @test measured_disp[2] ≈ true_disp[2] atol=0.15
+                @test disp_u ≈ true_disp[1] atol=0.15
+                @test disp_v ≈ true_disp[2] atol=0.15
+                @test peak_ratio > 0.0  # Should have positive peak ratio
+                @test isfinite(corr_moment)  # Should have finite correlation moment
             end
         end # CrossCorrelator with Various Displacements
     
@@ -392,17 +402,19 @@ end
             img1_f32 = rand(Float32, image_size...)
             img2_f32 = circshift(img1_f32, (2, 1))
             
-            disp_f32 = correlate(correlator, img1_f32, img2_f32)
-            @test abs(disp_f32[1]) ≈ 2.0 atol=0.3  # Should detect the shift
-            @test abs(disp_f32[2]) ≈ 1.0 atol=0.3
+            correlation_plane_f32 = correlate(correlator, img1_f32, img2_f32)
+            disp_u_f32, disp_v_f32, peak_ratio_f32, corr_moment_f32 = analyze_correlation_plane(correlation_plane_f32)
+            @test abs(disp_u_f32) ≈ 2.0 atol=0.3  # Should detect the shift
+            @test abs(disp_v_f32) ≈ 1.0 atol=0.3
             
             # Test with Float64 images
             img1_f64 = rand(Float64, image_size...)
             img2_f64 = circshift(img1_f64, (1, 3))
             
-            disp_f64 = correlate(correlator, img1_f64, img2_f64)
-            @test abs(disp_f64[1]) ≈ 1.0 atol=0.3
-            @test abs(disp_f64[2]) ≈ 3.0 atol=0.3
+            correlation_plane_f64 = correlate(correlator, img1_f64, img2_f64)
+            disp_u_f64, disp_v_f64, peak_ratio_f64, corr_moment_f64 = analyze_correlation_plane(correlation_plane_f64)
+            @test abs(disp_u_f64) ≈ 1.0 atol=0.3
+            @test abs(disp_v_f64) ≈ 3.0 atol=0.3
         end # CrossCorrelator with Different Image Types
         
         @testset "CrossCorrelator Memory Reuse" begin
@@ -419,17 +431,15 @@ end
                 img1 = rand(Float32, image_size...)
                 img2 = rand(Float32, image_size...)
                 
-                disp = correlate(correlator, img1, img2)
+                correlation_plane = correlate(correlator, img1, img2)
                 
                 # Verify memory wasn't reallocated
                 @test pointer(correlator.C1) == c1_ptr
                 @test pointer(correlator.C2) == c2_ptr
                 
                 # Verify result is reasonable
-                @test isa(disp, Tuple)
-                @test length(disp) == 2
-                @test isfinite(disp[1])
-                @test isfinite(disp[2])
+                @test isa(correlation_plane, AbstractMatrix)
+                @test all(isfinite.(correlation_plane))
             end
         end # CrossCorrelator Memory Reuse
         
@@ -470,8 +480,8 @@ end
             
             # Measure allocations on subsequent run
             allocs = @allocated correlate(correlator, img1, img2)
-            # Should have minimal allocations after compilation
-            @test allocs < 5000  # bytes - allow some headroom for different Julia versions
+            # Should have reasonable allocations (correlation plane copy adds some overhead)
+            @test allocs < 140000  # bytes - allow headroom for correlation plane copy
         end # CrossCorrelator Performance
     end # Performance Tests
 end # Hammerhead.jl

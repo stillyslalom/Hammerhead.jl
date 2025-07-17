@@ -11,7 +11,7 @@ using ImageIO
 export PIVVector, PIVResult, PIVStage, PIVStages
 
 # Core functionality  
-export run_piv, CrossCorrelator, correlate
+export run_piv, CrossCorrelator, correlate, analyze_correlation_plane
 
 # Utilities
 export subpixel_gauss3
@@ -363,6 +363,98 @@ Base.show(io::IO, c::CrossCorrelator) = print(io, "CrossCorrelator{$(eltype(c.C1
 
 CrossCorrelator(image_size::Tuple{Int, Int}) = CrossCorrelator{Float32}(image_size)
 
+"""
+    calculate_quality_metrics(correlation_plane, peak_location, peak_value) -> (peak_ratio, correlation_moment)
+
+Calculate quality metrics for PIV correlation analysis.
+
+# Arguments
+- `correlation_plane` - Complex correlation result matrix
+- `peak_location` - CartesianIndex of primary peak location
+- `peak_value` - Magnitude of primary peak
+
+# Returns
+- `peak_ratio::Float64` - Ratio of primary peak to secondary peak (higher is better)
+- `correlation_moment::Float64` - Normalized correlation moment (measure of peak sharpness)
+"""
+function calculate_quality_metrics(correlation_plane::AbstractMatrix, peak_location::CartesianIndex, peak_value::Real)
+    # Convert correlation plane to real magnitudes for analysis
+    corr_mag = abs.(correlation_plane)
+    
+    # Find secondary peak (exclude region around primary peak)
+    secondary_peak = find_secondary_peak(corr_mag, peak_location, peak_value)
+    
+    # Calculate peak ratio (primary/secondary)
+    peak_ratio = secondary_peak > 0 ? peak_value / secondary_peak : Inf
+    
+    # Calculate correlation moment (normalized second moment of peak)
+    correlation_moment = calculate_correlation_moment(corr_mag, peak_location)
+    
+    return Float64(peak_ratio), Float64(correlation_moment)
+end
+
+"""
+    find_secondary_peak(correlation_magnitudes, primary_location, primary_value) -> secondary_value
+
+Find the secondary peak in correlation plane, excluding region around primary peak.
+"""
+function find_secondary_peak(corr_mag::AbstractMatrix, primary_loc::CartesianIndex, primary_val::Real)
+    # Exclude circular region around primary peak (radius = 3 pixels)
+    exclusion_radius = 3
+    secondary_val = zero(eltype(corr_mag))
+    
+    for idx in CartesianIndices(corr_mag)
+        # Skip if within exclusion radius of primary peak
+        dx = idx.I[1] - primary_loc.I[1]
+        dy = idx.I[2] - primary_loc.I[2]
+        if sqrt(dx^2 + dy^2) <= exclusion_radius
+            continue
+        end
+        
+        val = corr_mag[idx]
+        if val > secondary_val
+            secondary_val = val
+        end
+    end
+    
+    return secondary_val
+end
+
+"""
+    calculate_correlation_moment(correlation_magnitudes, peak_location) -> moment
+
+Calculate normalized second moment of correlation peak as sharpness measure.
+"""
+function calculate_correlation_moment(corr_mag::AbstractMatrix, peak_loc::CartesianIndex)
+    # Calculate second moment in 5x5 region around peak
+    window_radius = 2
+    i_center, j_center = peak_loc.I[1], peak_loc.I[2]
+    rows, cols = size(corr_mag)
+    
+    # Bounds checking
+    i_start = max(1, i_center - window_radius)
+    i_end = min(rows, i_center + window_radius)
+    j_start = max(1, j_center - window_radius)
+    j_end = min(cols, j_center + window_radius)
+    
+    # Calculate weighted second moment
+    total_weight = 0.0
+    moment_sum = 0.0
+    
+    for i in i_start:i_end, j in j_start:j_end
+        weight = corr_mag[i, j]
+        dx = i - i_center
+        dy = j - j_center
+        distance_sq = dx^2 + dy^2
+        
+        total_weight += weight
+        moment_sum += weight * distance_sq
+    end
+    
+    # Normalized moment (lower values indicate sharper peaks)
+    return total_weight > 0 ? moment_sum / total_weight : NaN
+end
+
 function correlate(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray)
     c.C1 .= subimgA
     c.C2 .= subimgB
@@ -378,26 +470,39 @@ function correlate(c::CrossCorrelator, subimgA::AbstractArray, subimgB::Abstract
     ldiv!(c.C1, c.ip, c.C1)
     fftshift!(c.C2, c.C1)
 
+    # Return correlation plane for analysis at PIV stage level
+    return copy(c.C2)
+end
+
+"""
+    analyze_correlation_plane(correlation_plane) -> (displacement, peak_ratio, correlation_moment)
+
+Analyze correlation plane to extract displacement and quality metrics at PIV stage level.
+This allows the same analysis to be applied to results from different correlation algorithms.
+"""
+function analyze_correlation_plane(correlation_plane::AbstractMatrix)
     # Find the peak in the correlation result
     peakloc = CartesianIndex(0, 0)
-    maxval = zero(real(eltype(c.C2)))
-    for i in CartesianIndices(c.C2)
-        absval = abs(c.C2[i])
+    maxval = zero(real(eltype(correlation_plane)))
+    for i in CartesianIndices(correlation_plane)
+        absval = abs(correlation_plane[i])
         if absval > maxval
             maxval = absval
             peakloc = i
         end
     end
 
+    # Calculate quality metrics
+    peak_ratio, correlation_moment = calculate_quality_metrics(correlation_plane, peakloc, maxval)
+
     # Perform subpixel refinement and compute displacement relative to center
-    center = size(c.C2) .÷ 2 .+ 1
-    refined_peakloc = subpixel_gauss3(c.C2, peakloc.I)
+    center = size(correlation_plane) .÷ 2 .+ 1
+    refined_peakloc = subpixel_gauss3(correlation_plane, peakloc.I)
     disp = center .- refined_peakloc
 
-    # Return displacement as (x, y) = (row_offset, col_offset)
-    return (disp[1], disp[2])
+    # Return displacement and quality metrics
+    return (disp[1], disp[2], peak_ratio, correlation_moment)
 end
-
 
 function subpixel_gauss3(correlation_matrix::Matrix{T}, peak_coords::Tuple{Int, Int}) where T
     nrows, ncols = size(correlation_matrix)
@@ -458,7 +563,7 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2};
     stage = PIVStage(window_size, overlap=overlap)
     
     # Perform single-stage PIV analysis
-    return run_piv_single_stage(img1, img2, stage, correlator)
+    return run_piv_stage(img1, img2, stage, correlator)
 end
 
 # Multi-stage version
@@ -480,7 +585,7 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2},
     for (i, stage) in enumerate(stages)
         # For now, just perform independent analysis at each stage
         # TODO: Add initial guess propagation from previous stage
-        result = run_piv_single_stage(img1, img2, stage, correlator)
+        result = run_piv_stage(img1, img2, stage, correlator)
         
         # Add stage information to metadata
         result.metadata["stage"] = i
@@ -495,12 +600,13 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2},
 end
 
 """
-    run_piv_single_stage(img1, img2, stage, correlator) -> PIVResult
+    run_piv_stage(img1, img2, stage, correlator) -> PIVResult
 
-Perform single-stage PIV analysis with given configuration.
+Perform PIV analysis for a single stage with given configuration.
+Quality metrics and subpixel refinement are handled at this level for modularity.
 """
-function run_piv_single_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                              stage::PIVStage, correlator_type)
+function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
+                       stage::PIVStage, correlator_type)
     
     # Generate interrogation window grid
     grid_x, grid_y = generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
@@ -549,17 +655,20 @@ function run_piv_single_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray
                 continue
             end
             
-            # Perform correlation
-            displacement = correlate(correlator, subimg1, subimg2)
+            # Perform correlation to get correlation plane
+            correlation_plane = correlate(correlator, subimg1, subimg2)
+            
+            # Analyze correlation plane for displacement and quality metrics
+            disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
             
             # Store results
             push!(positions_x, window_x)
             push!(positions_y, window_y)
-            push!(displacements_u, displacement[1])
-            push!(displacements_v, displacement[2])
+            push!(displacements_u, disp_u)
+            push!(displacements_v, disp_v)
             push!(status_flags, :good)
-            push!(peak_ratios, NaN)  # TODO: Calculate actual peak ratio
-            push!(correlation_moments, NaN)  # TODO: Calculate actual correlation moment
+            push!(peak_ratios, peak_ratio)
+            push!(correlation_moments, corr_moment)
             
         catch e
             # Handle correlation failures gracefully
