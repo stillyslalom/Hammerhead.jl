@@ -115,8 +115,8 @@ end
             # Test that subpixel refinement finds the center
             peak_int = (11, 11)  # Integer peak location
             refined = subpixel_gauss3(corr, peak_int)
-            @test refined[1] ≈ center[1] atol=0.1
-            @test refined[2] ≈ center[2] atol=0.1
+            @test refined[1] ≈ center[1] atol=1e-10
+            @test refined[2] ≈ center[2] atol=1e-10
         end # subpixel_gauss3 Basic Functionality
         
         @testset "subpixel_gauss3 Edge Cases" begin
@@ -360,8 +360,8 @@ end
         
         # Analyze correlation plane
         disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
-        @test disp_u ≈ 2.2 atol=0.1
-        @test disp_v ≈ 1.3 atol=0.1
+        @test disp_u ≈ 2.2 atol=1e-5
+        @test disp_v ≈ 1.3 atol=1e-5
         @test peak_ratio > 1.0  # Should have good peak ratio
         @test isfinite(corr_moment)  # Should have finite correlation moment
         end # CrossCorrelator with Gaussian Particle
@@ -388,8 +388,8 @@ end
                 correlation_plane = correlate!(correlator, img1, img2)
                 disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
                 
-                @test disp_u ≈ true_disp[1] atol=0.15
-                @test disp_v ≈ true_disp[2] atol=0.15
+                @test disp_u ≈ true_disp[1] atol=2e-6
+                @test disp_v ≈ true_disp[2] atol=2e-6
                 @test peak_ratio > 0.0  # Should have positive peak ratio
                 @test isfinite(corr_moment)  # Should have finite correlation moment
             end
@@ -673,8 +673,8 @@ end
                     end
                     
                     if window_func == :rectangular
-                        @test best_vector.u ≈ displacement[1] atol=0.3
-                        @test best_vector.v ≈ displacement[2] atol=0.3
+                        @test best_vector.u ≈ displacement[1] atol=1e-10
+                        @test best_vector.v ≈ displacement[2] atol=1e-10
                     else
                         # Non-rectangular windows reduce energy, may affect precision
                         @test isfinite(best_vector.u)
