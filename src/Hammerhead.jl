@@ -398,18 +398,6 @@ function correlate(c::CrossCorrelator, subimgA::AbstractArray, subimgB::Abstract
     return (disp[1], disp[2])
 end
 
-# Placeholder for preprocessing functionality
-function preprocess_images(image_paths::Vector{String})
-    println("Preprocessing images...")
-    # Add image registration, distortion correction, etc.
-end
-
-# Core PIV correlation engine
-function phase_correlation(image1::AbstractArray, image2::AbstractArray)
-    println("Performing phase correlation...")
-    # Placeholder for phase correlation logic
-    # Compute FFT of both images, calculate cross-power spectrum, and find peak
-end
 
 function subpixel_gauss3(correlation_matrix::Matrix{T}, peak_coords::Tuple{Int, Int}) where T
     nrows, ncols = size(correlation_matrix)
@@ -640,10 +628,5 @@ function generate_interrogation_grid(image_size::Tuple{Int,Int}, window_size::Tu
     return grid_x, grid_y
 end
 
-# Placeholder for postprocessing functionality
-function postprocess_results(results)
-    println("Postprocessing results...")
-    # Add outlier detection, uncertainty quantification, etc.
-end
 
 end # module Hammerhead
