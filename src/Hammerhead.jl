@@ -252,18 +252,16 @@ function PIVStages(n_stages::Int, final_size::Int;
         throw(ArgumentError("Number of stages must be positive"))
     end
     
-    # Helper function to get value for stage i (1-indexed)
-    function get_stage_value(param, i::Int)
-        if isa(param, AbstractVector)
-            if length(param) == 1
-                return param[1]  # Single value for all stages
-            elseif length(param) == n_stages
-                return param[i]  # One value per stage
-            else
-                throw(ArgumentError("Parameter vector length ($(length(param))) must be 1 or equal to n_stages ($n_stages)"))
-            end
+    # Helper functions to get value for stage i (1-indexed) using dispatch
+    get_stage_value(param, i::Int, n_stages::Int) = param  # Scalar case
+    
+    function get_stage_value(param::AbstractVector, i::Int, n_stages::Int)
+        if length(param) == 1
+            return param[1]  # Single value for all stages
+        elseif length(param) == n_stages
+            return param[i]  # One value per stage
         else
-            return param  # Scalar value for all stages
+            throw(ArgumentError("Parameter vector length ($(length(param))) must be 1 or equal to n_stages ($n_stages)"))
         end
     end
     
@@ -278,11 +276,11 @@ function PIVStages(n_stages::Int, final_size::Int;
         current_size = max(current_size, final_size)
         
         # Get stage-specific parameters
-        stage_overlap = get_stage_value(overlap, i)
-        stage_padding = get_stage_value(padding, i)
-        stage_deformation_iterations = get_stage_value(deformation_iterations, i)
-        stage_window_function = get_stage_value(window_function, i)
-        stage_interpolation_method = get_stage_value(interpolation_method, i)
+        stage_overlap = get_stage_value(overlap, i, n_stages)
+        stage_padding = get_stage_value(padding, i, n_stages)
+        stage_deformation_iterations = get_stage_value(deformation_iterations, i, n_stages)
+        stage_window_function = get_stage_value(window_function, i, n_stages)
+        stage_interpolation_method = get_stage_value(interpolation_method, i, n_stages)
         
         # Convert scalar overlap to tuple if needed
         if isa(stage_overlap, Real)
