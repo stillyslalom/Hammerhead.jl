@@ -354,7 +354,7 @@ end
         correlator = CrossCorrelator(image_size)
         
         # Perform correlation
-        correlation_plane = correlate(correlator, img1, img2)
+        correlation_plane = correlate!(correlator, img1, img2)
         @test isa(correlation_plane, AbstractMatrix)
         
         # Analyze correlation plane
@@ -384,7 +384,7 @@ end
                 generate_gaussian_particle!(img1, centroid, diameter)
                 generate_gaussian_particle!(img2, centroid .+ true_disp, diameter)
                 
-                correlation_plane = correlate(correlator, img1, img2)
+                correlation_plane = correlate!(correlator, img1, img2)
                 disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
                 
                 @test disp_u ≈ true_disp[1] atol=0.15
@@ -402,7 +402,7 @@ end
             img1_f32 = rand(Float32, image_size...)
             img2_f32 = circshift(img1_f32, (2, 1))
             
-            correlation_plane_f32 = correlate(correlator, img1_f32, img2_f32)
+            correlation_plane_f32 = correlate!(correlator, img1_f32, img2_f32)
             disp_u_f32, disp_v_f32, peak_ratio_f32, corr_moment_f32 = analyze_correlation_plane(correlation_plane_f32)
             @test abs(disp_u_f32) ≈ 2.0 atol=0.3  # Should detect the shift
             @test abs(disp_v_f32) ≈ 1.0 atol=0.3
@@ -411,7 +411,7 @@ end
             img1_f64 = rand(Float64, image_size...)
             img2_f64 = circshift(img1_f64, (1, 3))
             
-            correlation_plane_f64 = correlate(correlator, img1_f64, img2_f64)
+            correlation_plane_f64 = correlate!(correlator, img1_f64, img2_f64)
             disp_u_f64, disp_v_f64, peak_ratio_f64, corr_moment_f64 = analyze_correlation_plane(correlation_plane_f64)
             @test abs(disp_u_f64) ≈ 1.0 atol=0.3
             @test abs(disp_v_f64) ≈ 3.0 atol=0.3
@@ -431,7 +431,7 @@ end
                 img1 = rand(Float32, image_size...)
                 img2 = rand(Float32, image_size...)
                 
-                correlation_plane = correlate(correlator, img1, img2)
+                correlation_plane = correlate!(correlator, img1, img2)
                 
                 # Verify memory wasn't reallocated
                 @test pointer(correlator.C1) == c1_ptr
@@ -450,8 +450,8 @@ end
             img_wrong_size = zeros(16, 16)
             img_correct = zeros(32, 32)
             
-            @test_throws DimensionMismatch correlate(correlator, img_wrong_size, img_correct)
-            @test_throws DimensionMismatch correlate(correlator, img_correct, img_wrong_size)
+            @test_throws DimensionMismatch correlate!(correlator, img_wrong_size, img_correct)
+            @test_throws DimensionMismatch correlate!(correlator, img_correct, img_wrong_size)
         end # CrossCorrelator Error Handling
     end # Correlation Algorithm Tests
 
@@ -467,7 +467,7 @@ end
             # Measure time for correlation
             elapsed = @elapsed begin
                 for i in 1:5
-                    correlate(correlator, img1, img2)
+                    correlate!(correlator, img1, img2)
                 end
             end
             
@@ -476,12 +476,12 @@ end
             
             # Test memory allocation efficiency
             # First run to compile
-            correlate(correlator, img1, img2)
+            correlate!(correlator, img1, img2)
             
             # Measure allocations on subsequent run
-            allocs = @allocated correlate(correlator, img1, img2)
-            # Should have reasonable allocations (correlation plane copy adds some overhead)
-            @test allocs < 140000  # bytes - allow headroom for correlation plane copy
+            allocs = @allocated correlate!(correlator, img1, img2)
+            # Should have minimal allocations (no copy, just returns view to correlation plane)
+            @test allocs < 5000  # bytes - back to original threshold since no copy
         end # CrossCorrelator Performance
     end # Performance Tests
 end # Hammerhead.jl

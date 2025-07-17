@@ -11,7 +11,7 @@ using ImageIO
 export PIVVector, PIVResult, PIVStage, PIVStages
 
 # Core functionality  
-export run_piv, CrossCorrelator, correlate, analyze_correlation_plane
+export run_piv, CrossCorrelator, correlate!, analyze_correlation_plane
 
 # Utilities
 export subpixel_gauss3
@@ -455,7 +455,7 @@ function calculate_correlation_moment(corr_mag::AbstractMatrix, peak_loc::Cartes
     return total_weight > 0 ? moment_sum / total_weight : NaN
 end
 
-function correlate(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray)
+function correlate!(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray)
     c.C1 .= subimgA
     c.C2 .= subimgB
     # Perform inplace FFT on both sub-images using pre-computed plan `fp`
@@ -470,8 +470,8 @@ function correlate(c::CrossCorrelator, subimgA::AbstractArray, subimgB::Abstract
     ldiv!(c.C1, c.ip, c.C1)
     fftshift!(c.C2, c.C1)
 
-    # Return correlation plane for analysis at PIV stage level
-    return copy(c.C2)
+    # Return view to correlation plane (c.C2) - no allocation!
+    return c.C2
 end
 
 """
@@ -656,7 +656,7 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
             end
             
             # Perform correlation to get correlation plane
-            correlation_plane = correlate(correlator, subimg1, subimg2)
+            correlation_plane = correlate!(correlator, subimg1, subimg2)
             
             # Analyze correlation plane for displacement and quality metrics
             disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
