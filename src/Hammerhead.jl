@@ -253,8 +253,11 @@ function PIVStages(n_stages::Int, final_size::Int;
     end
     
     # Helper functions to get value for stage i (1-indexed) using dispatch
-    get_stage_value(param, i::Int, n_stages::Int) = param  # Scalar case
     
+    # Handle scalar values (numbers, symbols, etc.)
+    get_stage_value(param::Union{Number, Symbol}, i::Int, n_stages::Int) = param
+    
+    # Handle vectors
     function get_stage_value(param::AbstractVector, i::Int, n_stages::Int)
         if length(param) == 1
             return param[1]  # Single value for all stages
@@ -262,6 +265,42 @@ function PIVStages(n_stages::Int, final_size::Int;
             return param[i]  # One value per stage
         else
             throw(ArgumentError("Parameter vector length ($(length(param))) must be 1 or equal to n_stages ($n_stages)"))
+        end
+    end
+    
+    # Handle tuples - convert to vector if appropriate size
+    function get_stage_value(param::Tuple, i::Int, n_stages::Int)
+        vec_param = collect(param)  # Convert tuple to vector
+        return get_stage_value(vec_param, i, n_stages)  # Delegate to vector method
+    end
+    
+    # Handle 1×n or n×1 matrices - convert to vector if appropriate
+    function get_stage_value(param::AbstractMatrix, i::Int, n_stages::Int)
+        if size(param, 1) == 1
+            # 1×n matrix - convert to vector
+            vec_param = vec(param)  # Flatten to vector
+            return get_stage_value(vec_param, i, n_stages)
+        elseif size(param, 2) == 1
+            # n×1 matrix - convert to vector  
+            vec_param = vec(param)  # Flatten to vector
+            return get_stage_value(vec_param, i, n_stages)
+        else
+            throw(ArgumentError("Matrix parameters must be 1×n or n×1, got $(size(param))"))
+        end
+    end
+    
+    # Handle other iterables - convert to vector if possible
+    function get_stage_value(param, i::Int, n_stages::Int)
+        if hasmethod(iterate, (typeof(param),)) && hasmethod(length, (typeof(param),))
+            # It's an iterable with known length - convert to vector
+            try
+                vec_param = collect(param)
+                return get_stage_value(vec_param, i, n_stages)
+            catch e
+                throw(ArgumentError("Cannot convert parameter of type $(typeof(param)) to vector: $e"))
+            end
+        else
+            throw(ArgumentError("Unsupported parameter type: $(typeof(param)). Use scalar values, vectors, tuples, or 1×n/n×1 matrices."))
         end
     end
     
@@ -285,6 +324,8 @@ function PIVStages(n_stages::Int, final_size::Int;
         # Convert scalar overlap to tuple if needed
         if isa(stage_overlap, Real)
             stage_overlap_tuple = (Float64(stage_overlap), Float64(stage_overlap))
+        elseif isa(stage_overlap, Tuple) && length(stage_overlap) == 2
+            stage_overlap_tuple = (Float64(stage_overlap[1]), Float64(stage_overlap[2]))
         else
             stage_overlap_tuple = stage_overlap
         end

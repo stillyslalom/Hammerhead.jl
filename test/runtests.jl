@@ -289,14 +289,46 @@ end
             @test isa(stages4[2].window_function, Hammerhead._Hanning)
             @test all(s -> s.overlap == (0.5, 0.5), stages4)
             
-            # Test tuple overlap
+            # Test tuple overlap - when tuple has 2 elements for 2 stages, each stage gets one value
             stages5 = PIVStages(2, 32, overlap=(0.6, 0.4))
-            @test all(s -> s.overlap == (0.6, 0.4), stages5)
+            @test stages5[1].overlap == (0.6, 0.6)  # First stage gets 0.6 as symmetric overlap
+            @test stages5[2].overlap == (0.4, 0.4)  # Second stage gets 0.4 as symmetric overlap
+            
+            # Test same asymmetric overlap for all stages - use vector with single tuple element
+            stages5b = PIVStages(2, 32, overlap=[(0.6, 0.4)])
+            @test all(s -> s.overlap == (0.6, 0.4), stages5b)
+            
+            # Test tuple parameters
+            stages6 = PIVStages(3, 32, overlap=(0.75, 0.5, 0.25), deformation_iterations=(1, 3, 5))
+            @test stages6[1].overlap == (0.75, 0.75)
+            @test stages6[2].overlap == (0.5, 0.5) 
+            @test stages6[3].overlap == (0.25, 0.25)
+            @test stages6[1].deformation_iterations == 1
+            @test stages6[2].deformation_iterations == 3
+            @test stages6[3].deformation_iterations == 5
+            
+            # Test 1×n matrix parameters
+            stages7 = PIVStages(2, 32, padding=[5 10])  # 1×2 matrix
+            @test stages7[1].padding == 5
+            @test stages7[2].padding == 10
+            
+            # Test n×1 matrix parameters  
+            stages8 = PIVStages(2, 32, deformation_iterations=[2; 4])  # 2×1 matrix
+            @test stages8[1].deformation_iterations == 2
+            @test stages8[2].deformation_iterations == 4
+            
+            # Test range parameters (iterable)
+            stages9 = PIVStages(3, 32, deformation_iterations=1:3)
+            @test stages9[1].deformation_iterations == 1
+            @test stages9[2].deformation_iterations == 2 
+            @test stages9[3].deformation_iterations == 3
             
             # Test input validation
             @test_throws ArgumentError PIVStages(0, 32)  # Invalid number of stages
             @test_throws ArgumentError PIVStages(3, 32, overlap=[0.5, 0.25])  # Wrong vector length
             @test_throws ArgumentError PIVStages(2, 32, padding=[1, 2, 3])  # Wrong vector length
+            @test_throws ArgumentError PIVStages(2, 32, padding=[1 2; 3 4])  # Invalid matrix size
+            @test_throws Union{ArgumentError, TypeError} PIVStages(2, 32, overlap=Dict(:a => 1))  # Unsupported type
         end # PIVStages Helper
     end # Data Structure Tests
 
