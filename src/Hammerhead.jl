@@ -1,13 +1,14 @@
 module Hammerhead
 
 using FFTW
-using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals, dot
+using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals, dot, I
 using ImageFiltering
 using StructArrays
 using Interpolations
 using ImageIO
 using DSP
 using TimerOutputs
+using Statistics: mean
 
 # Data structures
 export PIVVector, PIVResult, PIVStage, PIVStages
@@ -23,6 +24,9 @@ export validate_affine_transform, is_area_preserving
 
 # Interpolation
 export linear_barycentric_interpolation, interpolate_vectors
+
+# Iterative deformation
+export apply_image_deformation, compute_local_affine_transform, run_iterative_deformation, compute_convergence_metric, bilinear_interpolate
 
 # Utilities
 export subpixel_gauss3
@@ -1041,12 +1045,19 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
                                 status_flags[i], peak_ratios[i], correlation_moments[i]) 
                        for i in 1:n_windows]
         
-        # Create result with metadata
+        # Create initial result with metadata
         result = PIVResult(piv_vectors)
         result.metadata["image_size"] = size(img1)
         result.metadata["window_size"] = stage.window_size
         result.metadata["overlap"] = stage.overlap
         result.metadata["n_windows"] = n_windows
+        
+        # Apply iterative deformation if requested
+        if stage.deformation_iterations > 1
+            result = @timeit timer "Iterative Deformation" run_iterative_deformation(
+                img1, img2, stage, result, timer
+            )
+        end
         
         return result
     end  # @timeit timer "PIV Stage"
@@ -1539,6 +1550,401 @@ function is_area_preserving(matrix::AbstractMatrix, tolerance::Float64=0.1)
     # Check if determinant magnitude is close to 1 (area-preserving)
     # Use relative tolerance: |det - 1| / 1 < tolerance
     return abs(abs(det_val) - 1.0) <= tolerance
+end
+
+"""
+    run_iterative_deformation(img1, img2, stage, initial_result, timer)
+
+Perform iterative deformation refinement of PIV analysis.
+
+Uses initial displacement estimates to deform the second image iteratively,
+improving accuracy by reducing bias from large displacements.
+
+# Arguments
+- `img1::AbstractArray{<:Real,2}` - First image 
+- `img2::AbstractArray{<:Real,2}` - Second image
+- `stage::PIVStage` - Processing stage configuration
+- `initial_result::PIVResult` - Initial PIV analysis result
+- `timer::TimerOutput` - Performance timing object
+
+# Returns
+- `PIVResult` - Refined result after iterative deformation
+
+# Algorithm
+1. Start with initial displacement estimates
+2. For each iteration:
+   - Compute local affine transforms from displacement field
+   - Validate transforms for area preservation and stability
+   - Apply deformation to second image
+   - Re-run PIV analysis on deformed images
+   - Update displacement estimates
+   - Check for convergence
+3. Return final refined results with convergence metadata
+"""
+function run_iterative_deformation(img1::AbstractArray{<:Real,2}, 
+                                  img2::AbstractArray{<:Real,2},
+                                  stage::PIVStage,
+                                  initial_result::PIVResult,
+                                  timer::TimerOutput)
+    
+    current_result = initial_result
+    img2_deformed = copy(img2)
+    convergence_history = Float64[]
+    
+    # Store initial displacements for total displacement tracking
+    initial_u = copy(current_result.u)
+    initial_v = copy(current_result.v)
+    total_u = copy(initial_u)
+    total_v = copy(initial_v)
+    
+    @timeit timer "Deformation Iterations" for iteration in 2:stage.deformation_iterations
+        @timeit timer "Iteration $iteration" begin
+            
+            # Check for valid displacements
+            valid_mask = .!isnan.(current_result.u) .& .!isnan.(current_result.v) .& 
+                        (current_result.status .== :good)
+            
+            if sum(valid_mask) < 3
+                @warn "Insufficient valid vectors for iteration $iteration, stopping deformation"
+                break
+            end
+            
+            # Apply deformation to second image
+            img2_deformed = @timeit timer "Image Deformation" apply_image_deformation(
+                img2_deformed, current_result, stage.window_size
+            )
+            
+            # Re-run PIV analysis on deformed images
+            # Create a temporary stage with single iteration to avoid infinite recursion
+            temp_stage = PIVStage(
+                stage.window_size, stage.overlap, stage.padding,
+                1,  # Single iteration
+                stage.window_function, stage.interpolation_method
+            )
+            
+            new_result = @timeit timer "PIV Reanalysis" run_piv_stage(
+                img1, img2_deformed, temp_stage, CrossCorrelator, timer
+            )
+            
+            # Compute convergence metric
+            convergence = @timeit timer "Convergence Check" compute_convergence_metric(
+                current_result, new_result
+            )
+            push!(convergence_history, convergence)
+            
+            # Update total displacements
+            @timeit timer "Displacement Update" begin
+                for i in eachindex(total_u)
+                    if !isnan(new_result.u[i]) && !isnan(new_result.v[i])
+                        total_u[i] += new_result.u[i]
+                        total_v[i] += new_result.v[i]
+                    end
+                end
+                
+                # Update current result with total displacements
+                updated_vectors = similar(current_result.vectors)
+                for i in eachindex(updated_vectors)
+                    updated_vectors[i] = PIVVector(
+                        current_result.x[i], current_result.y[i],
+                        total_u[i], total_v[i],
+                        new_result.status[i], new_result.peak_ratio[i], new_result.correlation_moment[i]
+                    )
+                end
+                current_result = PIVResult(updated_vectors, copy(current_result.metadata), copy(current_result.auxiliary))
+            end
+            
+            # Check convergence criteria
+            if convergence < 0.1  # Convergence threshold in pixels
+                @timeit timer "Early Convergence" begin
+                    current_result.metadata["converged_at_iteration"] = iteration
+                    current_result.metadata["convergence_reason"] = "displacement_threshold"
+                    break
+                end
+            end
+        end
+    end
+    
+    # Add deformation metadata
+    current_result.metadata["deformation_iterations_completed"] = min(stage.deformation_iterations, length(convergence_history) + 1)
+    current_result.metadata["convergence_history"] = convergence_history
+    current_result.metadata["final_convergence"] = isempty(convergence_history) ? NaN : last(convergence_history)
+    
+    return current_result
+end
+
+"""
+    apply_image_deformation(img, displacement_field, window_size) -> deformed_image
+
+Apply smooth deformation to an image based on a PIV displacement field.
+
+Uses local affine transforms computed from displacement field to deform the image.
+Each pixel's new location is computed by interpolating local transform parameters.
+
+# Arguments
+- `img::AbstractArray{<:Real,2}` - Input image to deform
+- `displacement_field::PIVResult` - PIV result containing displacement vectors  
+- `window_size::Tuple{Int,Int}` - Window size for local transform computation
+
+# Returns
+- `AbstractArray{<:Real,2}` - Deformed image with same size as input
+"""
+function apply_image_deformation(img::AbstractArray{<:Real,2}, 
+                                displacement_field::PIVResult,
+                                window_size::Tuple{Int,Int})
+    
+    deformed_img = zeros(eltype(img), size(img))
+    
+    # Filter valid displacement vectors
+    valid_mask = .!isnan.(displacement_field.u) .& .!isnan.(displacement_field.v) .& 
+                (displacement_field.status .== :good)
+    
+    if sum(valid_mask) < 3
+        @warn "Insufficient valid displacement vectors for deformation, returning original image"
+        return copy(img)
+    end
+    
+    # Extract valid vectors
+    valid_x = displacement_field.x[valid_mask]
+    valid_y = displacement_field.y[valid_mask] 
+    valid_u = displacement_field.u[valid_mask]
+    valid_v = displacement_field.v[valid_mask]
+    
+    # For each pixel in the output image, find its source location
+    for j in 1:size(img, 2), i in 1:size(img, 1)
+        # Current pixel position
+        px, py = Float64(i), Float64(j)
+        
+        # Compute local affine transform at this location
+        transform = compute_local_affine_transform(
+            px, py, valid_x, valid_y, valid_u, valid_v, window_size
+        )
+        
+        if transform !== nothing && validate_affine_transform(transform)
+            # Apply inverse transform to find source pixel
+            # transform maps from original to deformed, so we need inverse
+            try
+                inv_transform = inv(transform)
+                source_pos = inv_transform * [px; py; 1.0]
+                source_x, source_y = source_pos[1], source_pos[2]
+                
+                # Bilinear interpolation from source image
+                if 1 <= source_x <= size(img, 1) && 1 <= source_y <= size(img, 2)
+                    deformed_img[i, j] = bilinear_interpolate(img, source_x, source_y)
+                end
+            catch
+                # If transform inversion fails, use nearest neighbor
+                nearest_idx = argmin((valid_x .- px).^2 + (valid_y .- py).^2)
+                source_x = px - valid_u[nearest_idx]
+                source_y = py - valid_v[nearest_idx]
+                
+                if 1 <= source_x <= size(img, 1) && 1 <= source_y <= size(img, 2)
+                    deformed_img[i, j] = bilinear_interpolate(img, source_x, source_y)
+                end
+            end
+        else
+            # If no valid transform, use nearest neighbor displacement
+            if !isempty(valid_x)
+                distances = (valid_x .- px).^2 + (valid_y .- py).^2
+                nearest_idx = argmin(distances)
+                source_x = px - valid_u[nearest_idx]
+                source_y = py - valid_v[nearest_idx]
+                
+                if 1 <= source_x <= size(img, 1) && 1 <= source_y <= size(img, 2)
+                    deformed_img[i, j] = bilinear_interpolate(img, source_x, source_y)
+                end
+            end
+        end
+    end
+    
+    return deformed_img
+end
+
+"""
+    compute_local_affine_transform(px, py, x_coords, y_coords, u_disps, v_disps, window_size)
+
+Compute local affine transformation matrix at a specific point using nearby displacement vectors.
+
+Fits a 2D affine transform (6 parameters) to displacement data within a local window.
+The transform maps from original coordinates to deformed coordinates.
+
+# Arguments
+- `px, py::Float64` - Point where transform is computed
+- `x_coords, y_coords::AbstractVector` - Coordinates of displacement vectors
+- `u_disps, v_disps::AbstractVector` - Displacement components
+- `window_size::Tuple{Int,Int}` - Size of local window for fitting
+
+# Returns
+- `Matrix{Float64}` - 3×3 homogeneous transformation matrix, or `nothing` if insufficient data
+
+# Transform Format
+```
+[a11 a12 tx]   [x]   [x + u]
+[a21 a22 ty] * [y] = [y + v]  
+[0   0   1 ]   [1]   [1    ]
+```
+"""
+function compute_local_affine_transform(px::Float64, py::Float64,
+                                      x_coords::AbstractVector, y_coords::AbstractVector,
+                                      u_disps::AbstractVector, v_disps::AbstractVector,
+                                      window_size::Tuple{Int,Int})
+    
+    # Define search radius based on window size
+    search_radius = max(window_size[1], window_size[2]) * 1.5
+    
+    # Find vectors within search radius
+    distances = sqrt.((x_coords .- px).^2 + (y_coords .- py).^2)
+    local_mask = distances .<= search_radius
+    
+    if sum(local_mask) < 6  # Need at least 6 points for 6-parameter affine transform
+        return nothing
+    end
+    
+    # Extract local data
+    local_x = x_coords[local_mask]
+    local_y = y_coords[local_mask]
+    local_u = u_disps[local_mask]
+    local_v = v_disps[local_mask]
+    n_points = length(local_x)
+    
+    # Weight points by inverse distance (with small regularization)
+    weights = 1.0 ./ (distances[local_mask] .+ 1.0)
+    
+    # Set up weighted least squares system for affine transform
+    # For each point: [x_new, y_new] = [a11 a12 tx; a21 a22 ty] * [x_old; y_old; 1]
+    # This gives us: x_old + u = a11*x_old + a12*y_old + tx
+    #               y_old + v = a21*x_old + a22*y_old + ty
+    
+    # Build design matrix A and target vector b
+    A = zeros(2*n_points, 6)
+    b = zeros(2*n_points)
+    W = zeros(2*n_points, 2*n_points)  # Weight matrix
+    
+    for i in 1:n_points
+        # Equation for u displacement: u = (a11-1)*x + a12*y + tx
+        row_u = 2*(i-1) + 1
+        A[row_u, 1] = local_x[i]    # a11 coefficient  
+        A[row_u, 2] = local_y[i]    # a12 coefficient
+        A[row_u, 3] = 1.0           # tx coefficient
+        b[row_u] = local_u[i] + local_x[i]  # target: x + u
+        W[row_u, row_u] = weights[i]
+        
+        # Equation for v displacement: v = a21*x + (a22-1)*y + ty  
+        row_v = 2*i
+        A[row_v, 4] = local_x[i]    # a21 coefficient
+        A[row_v, 5] = local_y[i]    # a22 coefficient  
+        A[row_v, 6] = 1.0           # ty coefficient
+        b[row_v] = local_v[i] + local_y[i]  # target: y + v
+        W[row_v, row_v] = weights[i]
+    end
+    
+    # Solve weighted least squares: (A'*W*A)*params = A'*W*b
+    try
+        AWA = A' * W * A
+        AWb = A' * W * b
+        
+        # Add small regularization for numerical stability
+        λ = 1e-6
+        AWA += λ * I
+        
+        params = AWA \ AWb
+        
+        # Construct 3x3 homogeneous transformation matrix
+        transform = [
+            params[1] params[2] params[3];
+            params[4] params[5] params[6];
+            0.0       0.0       1.0
+        ]
+        
+        return transform
+        
+    catch e
+        # Return identity transform if solve fails
+        @warn "Local affine transform computation failed at ($px, $py): $e"
+        return nothing
+    end
+end
+
+"""
+    bilinear_interpolate(img, x, y) -> pixel_value
+
+Bilinear interpolation of image intensity at non-integer coordinates.
+
+# Arguments  
+- `img::AbstractArray{<:Real,2}` - Input image
+- `x, y::Float64` - Coordinates to interpolate (1-indexed)
+
+# Returns
+- `Real` - Interpolated pixel value
+"""
+function bilinear_interpolate(img::AbstractArray{<:Real,2}, x::Float64, y::Float64)
+    # Get integer parts and fractional parts
+    x_floor = floor(Int, x)
+    y_floor = floor(Int, y)
+    x_frac = x - x_floor
+    y_frac = y - y_floor
+    
+    # Handle boundary conditions more carefully
+    if x_floor < 1
+        x_floor, x_frac = 1, 0.0
+    elseif x_floor >= size(img, 1)
+        x_floor, x_frac = size(img, 1), 0.0
+    end
+    
+    if y_floor < 1
+        y_floor, y_frac = 1, 0.0
+    elseif y_floor >= size(img, 2)
+        y_floor, y_frac = size(img, 2), 0.0
+    end
+    
+    x_ceil = min(x_floor + 1, size(img, 1))
+    y_ceil = min(y_floor + 1, size(img, 2))
+    
+    # Get four corner values
+    val_00 = img[x_floor, y_floor]
+    val_10 = img[x_ceil, y_floor] 
+    val_01 = img[x_floor, y_ceil]
+    val_11 = img[x_ceil, y_ceil]
+    
+    # Bilinear interpolation
+    val_0 = val_00 * (1 - x_frac) + val_10 * x_frac
+    val_1 = val_01 * (1 - x_frac) + val_11 * x_frac
+    
+    return val_0 * (1 - y_frac) + val_1 * y_frac
+end
+
+"""
+    compute_convergence_metric(result1, result2) -> convergence_value
+
+Compute convergence metric between two PIV results.
+
+# Arguments
+- `result1, result2::PIVResult` - PIV results to compare
+
+# Returns  
+- `Float64` - RMS displacement difference in pixels
+"""
+function compute_convergence_metric(result1::PIVResult, result2::PIVResult)
+    # Check that results have same number of vectors
+    if length(result1.vectors) != length(result2.vectors)
+        throw(ArgumentError("PIV results must have same number of vectors for convergence comparison"))
+    end
+    
+    # Find vectors that are valid in both results
+    valid_mask = .!isnan.(result1.u) .& .!isnan.(result1.v) .& 
+                .!isnan.(result2.u) .& .!isnan.(result2.v) .&
+                (result1.status .== :good) .& (result2.status .== :good)
+    
+    if sum(valid_mask) == 0
+        return Inf  # No valid comparison possible
+    end
+    
+    # Compute RMS difference in displacement
+    du = result2.u[valid_mask] - result1.u[valid_mask]
+    dv = result2.v[valid_mask] - result1.v[valid_mask]
+    
+    rms_diff = sqrt(mean(du.^2 + dv.^2))
+    
+    return rms_diff
 end
 
 

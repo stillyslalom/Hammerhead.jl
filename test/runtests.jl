@@ -5,6 +5,8 @@ using LinearAlgebra
 using FFTW
 using StructArrays
 using DSP
+using Statistics: mean
+using TimerOutputs
 
 function generate_gaussian_particle!(array::AbstractArray, centroid::Tuple{Float64, Float64}, diameter::Float64)
     sigma = diameter / 2.0  # Approximation: diameter covers ~1 standard deviation
@@ -1167,4 +1169,220 @@ end
             @test interp_result.metadata["interpolated_count"] >= 0
         end
     end # Vector Interpolation
+    
+    @testset "Iterative Deformation" begin
+        @testset "Bilinear Interpolation" begin
+            # Test bilinear interpolation function
+            img = [1.0 2.0; 3.0 4.0]
+            
+            # Test exact pixel locations
+            @test Hammerhead.bilinear_interpolate(img, 1.0, 1.0) ≈ 1.0
+            @test Hammerhead.bilinear_interpolate(img, 2.0, 1.0) ≈ 3.0
+            @test Hammerhead.bilinear_interpolate(img, 1.0, 2.0) ≈ 2.0
+            @test Hammerhead.bilinear_interpolate(img, 2.0, 2.0) ≈ 4.0
+            
+            # Test interpolation between pixels
+            @test Hammerhead.bilinear_interpolate(img, 1.5, 1.0) ≈ 2.0  # (1+3)/2
+            @test Hammerhead.bilinear_interpolate(img, 1.0, 1.5) ≈ 1.5  # (1+2)/2
+            @test Hammerhead.bilinear_interpolate(img, 1.5, 1.5) ≈ 2.5  # Center point
+            
+            # Test boundary conditions
+            @test Hammerhead.bilinear_interpolate(img, 0.5, 1.0) ≈ 1.0  # Clamped
+            @test Hammerhead.bilinear_interpolate(img, 2.5, 1.0) ≈ 3.0  # Clamped
+        end
+        
+        @testset "Convergence Metric" begin
+            # Create two PIV results with known differences
+            positions_x = [1.0, 2.0, 3.0]
+            positions_y = [1.0, 1.0, 1.0]
+            
+            # First result
+            result1_vectors = [
+                PIVVector(1.0, 1.0, 1.0, 0.5, :good, 2.0, 0.8),
+                PIVVector(2.0, 1.0, 2.0, 1.0, :good, 2.0, 0.8),
+                PIVVector(3.0, 1.0, 3.0, 1.5, :good, 2.0, 0.8)
+            ]
+            result1 = PIVResult(result1_vectors)
+            
+            # Second result with known displacement differences
+            result2_vectors = [
+                PIVVector(1.0, 1.0, 1.3, 0.8, :good, 2.0, 0.8),  # diff: (0.3, 0.3)
+                PIVVector(2.0, 1.0, 2.4, 1.4, :good, 2.0, 0.8),  # diff: (0.4, 0.4)
+                PIVVector(3.0, 1.0, 3.0, 1.5, :good, 2.0, 0.8)   # diff: (0.0, 0.0)
+            ]
+            result2 = PIVResult(result2_vectors)
+            
+            convergence = compute_convergence_metric(result1, result2)
+            
+            # Expected RMS: sqrt(mean([0.3^2+0.3^2, 0.4^2+0.4^2, 0.0^2+0.0^2]))
+            # = sqrt(mean([0.18, 0.32, 0.0])) = sqrt(0.5/3) ≈ 0.408
+            expected_rms = sqrt((0.3^2 + 0.3^2 + 0.4^2 + 0.4^2 + 0.0^2 + 0.0^2) / 3)
+            @test convergence ≈ expected_rms atol=1e-10
+            
+            # Test with no valid vectors (same length as result1)
+            result_bad_vectors = [
+                PIVVector(1.0, 1.0, NaN, NaN, :bad, NaN, NaN),
+                PIVVector(2.0, 1.0, NaN, NaN, :bad, NaN, NaN),
+                PIVVector(3.0, 1.0, NaN, NaN, :bad, NaN, NaN)
+            ]
+            result_bad = PIVResult(result_bad_vectors)
+            
+            convergence_bad = compute_convergence_metric(result1, result_bad)
+            @test convergence_bad == Inf
+        end
+        
+        @testset "Local Affine Transform" begin
+            # Test with simple uniform translation
+            x_coords = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+            y_coords = [1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+            u_disps = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # Uniform translation
+            v_disps = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]  # Uniform translation
+            
+            transform = compute_local_affine_transform(
+                3.0, 1.5, x_coords, y_coords, u_disps, v_disps, (32, 32)
+            )
+            
+            @test transform !== nothing
+            
+            # For uniform translation, transform should be approximately:
+            # [1 0 tx; 0 1 ty; 0 0 1] where tx ≈ u+x, ty ≈ v+y
+            @test transform[1, 1] ≈ 1.0 atol=0.1  # a11 ≈ 1
+            @test transform[2, 2] ≈ 1.0 atol=0.1  # a22 ≈ 1
+            @test abs(transform[1, 2]) < 0.1       # a12 ≈ 0
+            @test abs(transform[2, 1]) < 0.1       # a21 ≈ 0
+            @test transform[3, 3] ≈ 1.0            # Bottom right should be 1
+            @test transform[3, 1] ≈ 0.0            # Bottom row should be [0, 0, 1]
+            @test transform[3, 2] ≈ 0.0
+            
+            # Test with insufficient points
+            transform_insufficient = compute_local_affine_transform(
+                3.0, 1.5, [1.0, 2.0], [1.0, 1.0], [1.0, 1.0], [0.5, 0.5], (32, 32)
+            )
+            @test transform_insufficient === nothing
+        end
+        
+        @testset "Image Deformation" begin
+            # Create a simple test image
+            img = zeros(10, 10)
+            img[3:7, 3:7] .= 1.0  # Square pattern in center
+            
+            # Create displacement field for rightward translation
+            piv_vectors = [
+                PIVVector(3.0, 3.0, 2.0, 0.0, :good, 2.0, 0.8),
+                PIVVector(7.0, 3.0, 2.0, 0.0, :good, 2.0, 0.8),
+                PIVVector(3.0, 7.0, 2.0, 0.0, :good, 2.0, 0.8),
+                PIVVector(7.0, 7.0, 2.0, 0.0, :good, 2.0, 0.8)
+            ]
+            displacement_field = PIVResult(piv_vectors)
+            
+            deformed_img = apply_image_deformation(img, displacement_field, (32, 32))
+            
+            @test size(deformed_img) == size(img)
+            @test all(isfinite.(deformed_img))
+            
+            # The deformed image should have non-zero values shifted from the original pattern
+            # Due to the rightward displacement, some pattern should appear
+            @test sum(deformed_img) > 0
+            
+            # Test with insufficient vectors
+            bad_vectors = [PIVVector(5.0, 5.0, NaN, NaN, :bad, NaN, NaN)]
+            bad_field = PIVResult(bad_vectors)
+            
+            # Should return copy of original with warning
+            deformed_bad = @test_logs (:warn, r"Insufficient valid displacement vectors") apply_image_deformation(img, bad_field, (32, 32))
+            @test deformed_bad ≈ img
+        end
+        
+        @testset "Iterative Deformation Integration" begin
+            # Create synthetic images with known displacement
+            img1 = zeros(Float64, 64, 64)
+            # Add some features
+            for i in 10:15, j in 10:15
+                img1[i, j] = 1.0
+            end
+            for i in 30:35, j in 30:35
+                img1[i, j] = 0.8
+            end
+            
+            # Create second image with translation
+            img2 = zeros(Float64, 64, 64)
+            for i in 12:17, j in 12:17  # Shifted by (2, 2)
+                img2[i, j] = 1.0
+            end
+            for i in 32:37, j in 32:37  # Shifted by (2, 2)
+                img2[i, j] = 0.8
+            end
+            
+            # Create PIV stage with multiple deformation iterations
+            stage = PIVStage(
+                (16, 16);   # window_size
+                overlap=(0.5, 0.5),
+                padding=0,
+                deformation_iterations=3,
+                window_function=:rectangular,
+                interpolation_method=:bilinear
+            )
+            
+            # Run PIV with iterative deformation
+            timer = TimerOutput()
+            result = run_piv_stage(img1, img2, stage, CrossCorrelator, timer)
+            
+            # Check that deformation metadata was added
+            @test haskey(result.metadata, "deformation_iterations_completed")
+            @test haskey(result.metadata, "convergence_history")
+            @test haskey(result.metadata, "final_convergence")
+            
+            @test result.metadata["deformation_iterations_completed"] <= 3
+            @test result.metadata["deformation_iterations_completed"] >= 1
+            
+            # Check that we got reasonable displacements (should be close to (2, 2))
+            valid_mask = .!isnan.(result.u) .& .!isnan.(result.v) .& (result.status .== :good)
+            if sum(valid_mask) > 0
+                mean_u = mean(result.u[valid_mask])
+                mean_v = mean(result.v[valid_mask])
+                
+                # Check that we detected reasonable displacements
+                # PIV algorithms on synthetic data may not be perfectly accurate
+                # Just verify it's within the realm of possibility
+                @test abs(mean_u) > 0.5  # Should detect significant displacement
+                @test abs(mean_v) > 0.5  # Should detect significant displacement
+                @test abs(mean_u) < 15.0  # Should not be wildly incorrect
+                @test abs(mean_v) < 15.0  # Should not be wildly incorrect
+            end
+            
+            # Test single iteration (no deformation)
+            stage_single = PIVStage(
+                (16, 16);
+                overlap=(0.5, 0.5),
+                padding=0,
+                deformation_iterations=1,
+                window_function=:rectangular,
+                interpolation_method=:bilinear
+            )
+            
+            result_single = run_piv_stage(img1, img2, stage_single, CrossCorrelator, timer)
+            
+            # Should not have deformation metadata for single iteration
+            @test !haskey(result_single.metadata, "convergence_history")
+        end
+        
+        @testset "Deformation Error Handling" begin
+            # Test with empty displacement field
+            empty_vectors = PIVVector[]
+            empty_result = PIVResult(empty_vectors)
+            
+            img = rand(32, 32)
+            deformed = @test_logs (:warn, r"Insufficient valid displacement vectors") apply_image_deformation(img, empty_result, (16, 16))
+            @test deformed ≈ img
+            
+            # Test local transform with no nearby points
+            transform = compute_local_affine_transform(
+                50.0, 50.0,  # Query point far from data
+                [1.0, 2.0], [1.0, 2.0],  # Only 2 points, far away
+                [0.1, 0.1], [0.1, 0.1],
+                (8, 8)  # Small window
+            )
+            @test transform === nothing
+        end
+    end # Iterative Deformation
 end # Hammerhead.jl
