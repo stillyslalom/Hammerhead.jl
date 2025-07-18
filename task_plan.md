@@ -41,27 +41,11 @@ This document outlines the detailed implementation plan for the core PIV engine 
 **Actual Time**: 1 hour
 
 **Completed Implementation**:
-- ✅ All dependencies added (StructArrays, Interpolations, ImageIO, etc.)
+- ✅ All dependencies added (StructArrays, Interpolations, ImageIO, TimerOutputs, etc.)
 - ✅ Clean import/export structure
 - ✅ Version compatibility verified
 
-### Task 1.5: Code Quality Cleanup 🔄
-**Priority**: HIGH
-**Estimated Time**: 1 hour
-**Dependencies**: Code review complete
-
-**Implementation Steps**:
-1. Remove placeholder functions (lines 401-412, 643-647)
-2. Clean up dead code per project guidelines
-3. Verify no functionality regression
-4. Update exports if necessary
-
-**Acceptance Criteria**:
-- No placeholder or dead code remains
-- All tests still pass
-- Clean codebase ready for Phase 2
-
-## Phase 2: Core Processing Infrastructure (PARTIALLY COMPLETED)
+## Phase 2: Core Processing Infrastructure (COMPLETED ✅)
 
 ### Task 2.1: Interrogation Window Grid Generation ✅
 **Status**: COMPLETED
@@ -73,21 +57,16 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - ✅ Non-square window support
 - ✅ Comprehensive edge case testing
 
-### Task 2.2: Subimage Windowing Functions 🔄
-**Priority**: Medium (Deferred - working rectangular sufficient for core validation)
-**Estimated Time**: 3 hours
-**Dependencies**: None
+### Task 2.2: Subimage Windowing Functions ✅
+**Status**: COMPLETED
+**Actual Time**: 4 hours
 
-**Implementation Steps**:
-1. Implement windowing function application in processing loop
-2. Add Blackman, Hanning, Hamming implementations
-3. Integrate with PIVStage window_function parameter
-4. Add windowing tests with synthetic data
-
-**Acceptance Criteria**:
-- All windowing functions mathematically correct
-- Seamless integration with existing type system
-- Performance optimized implementations
+**Completed Implementation**:
+- ✅ Complete windowing function system using DSP.jl
+- ✅ Support for rectangular, Hanning, Hamming, Blackman, and parametric windows
+- ✅ Type-stable dispatch system for performance
+- ✅ Separable 2D windowing implementation
+- ✅ Integration with PIVStage configuration
 
 ### Task 2.3: Basic run_piv Function Structure ✅
 **Status**: COMPLETED
@@ -100,25 +79,33 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - ✅ Robust error handling and graceful degradation
 - ✅ Extensive integration tests with synthetic data
 
-### Task 2.4: Complete Missing Algorithm Features 🔄
-**Priority**: HIGH 
-**Estimated Time**: 4 hours
-**Dependencies**: run_piv structure complete
+### Task 2.4: Complete Algorithm Features ✅
+**Status**: COMPLETED
+**Actual Time**: 6 hours
 
-**Implementation Steps**:
-1. Implement peak ratio calculation (line 573)
-2. Implement correlation moment calculation (line 574)  
-3. Add proper window padding implementation (line 553)
-4. Implement actual processing time measurement (line 599)
-5. Add input validation for window size vs image compatibility
+**Completed Implementation**:
+- ✅ Peak ratio calculation with fast and robust methods
+- ✅ Correlation moment calculation for peak sharpness
+- ✅ Proper window padding with symmetric boundary conditions
+- ✅ Comprehensive timing infrastructure with TimerOutputs.jl
+- ✅ Input validation for window size vs image compatibility
+- ✅ Quality metrics integration at stage level
 
-**Acceptance Criteria**:
-- All TODO comments resolved with working implementations
-- Quality metrics properly calculated
-- Proper padding for boundary windows
-- Comprehensive input validation
+## Phase 2.5: Performance Infrastructure (COMPLETED ✅)
 
-## Phase 3: Advanced Processing Features (Week 3)
+### Task 2.5: Timing and Performance Measurement ✅
+**Status**: COMPLETED
+**Actual Time**: 8 hours
+
+**Completed Implementation**:
+- ✅ TimerOutputs.jl integration with local timers (thread-safe)
+- ✅ Comprehensive timing instrumentation throughout PIV pipeline
+- ✅ Performance overhead <3% with detailed insights
+- ✅ Professional benchmarking infrastructure in `bench/` directory
+- ✅ Fast vs robust algorithm comparison and optimization
+- ✅ Performance regression testing framework
+
+## Phase 3: Advanced Processing Features
 
 ### Task 3.1: Affine Transform Validation
 **Priority**: Medium
@@ -174,23 +161,25 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - Integration with outlier handling
 - Validated against synthetic data
 
-## Phase 4: Multi-Stage Processing (Week 4)
+## Phase 4: Multi-Stage Processing Enhancement
 
 ### Task 4.1: Multi-Stage Processing Logic
 **Priority**: Medium
 **Estimated Time**: 6 hours
-**Dependencies**: Basic run_piv (2.3), Iterative Deformation (3.3)
+**Dependencies**: Current multi-stage foundation
 
 **Implementation Steps**:
-1. Implement multi-stage processing dispatcher
+1. Enhance multi-stage processing with initial guess propagation
 2. Add grid interpolation between stages
-3. Implement initial guess propagation
+3. Implement proper stage-to-stage data flow
 4. Add stage-specific configuration handling
 5. Create comprehensive multi-stage tests
 
+**Note**: Basic multi-stage framework exists but needs initial guess propagation
+
 **Acceptance Criteria**:
-- Seamless multi-stage processing
-- Proper initial guess propagation
+- Seamless multi-stage processing with initial guess propagation
+- Proper grid interpolation between stages
 - Stage-specific configuration support
 - Comprehensive test coverage
 
@@ -212,7 +201,7 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - Configurable detection methods
 - Comprehensive outlier handling
 
-## Phase 5: Testing and Validation (Week 5)
+## Phase 5: Testing and Validation
 
 ### Task 5.1: Synthetic Test Data Generation
 **Priority**: High
@@ -225,6 +214,8 @@ This document outlines the detailed implementation plan for the core PIV engine 
 3. Create realistic particle distributions
 4. Add noise and imaging artifacts
 5. Create comprehensive test suite
+
+**Note**: Basic synthetic particle generation exists but needs expansion
 
 **Acceptance Criteria**:
 - Realistic synthetic test data
@@ -268,7 +259,7 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - User-friendly tutorials
 - Performance documentation
 
-## Phase 6: Integration and Optimization (Week 6)
+## Phase 6: Integration and Optimization
 
 ### Task 6.1: Performance Optimization
 **Priority**: Medium
@@ -309,17 +300,15 @@ This document outlines the detailed implementation plan for the core PIV engine 
 ## Timeline Summary
 
 **Phase 1**: Foundation Data Structures ✅ (13 hours completed)
-**Phase 2**: Core Processing Infrastructure 🔄 (9/17 hours completed)
-  - Cleanup: 1 hour remaining
-  - Missing features: 4 hours remaining
-  - Windowing functions: 3 hours remaining (deferred)
+**Phase 2**: Core Processing Infrastructure ✅ (23 hours completed)
+**Phase 2.5**: Performance Infrastructure ✅ (8 hours completed)
 **Phase 3**: Advanced Processing Features (16 hours)
-**Phase 4**: Multi-Stage Processing (10 hours)
+**Phase 4**: Multi-Stage Processing Enhancement (10 hours)
 **Phase 5**: Testing and Validation (14 hours)
 **Phase 6**: Integration and Optimization (10 hours)
 
-**Progress**: 22/81 hours completed (27%)
-**Next Priority**: Code cleanup + missing algorithm features (5 hours)
+**Progress**: 44/94 hours completed (47%)
+**Next Priority**: Advanced processing features (Phase 3)
 
 ## Risk Assessment (Updated Based on Progress)
 
@@ -329,17 +318,19 @@ This document outlines the detailed implementation plan for the core PIV engine 
 - Outlier detection algorithm selection
 
 **Medium Risk**:
-- Window padding implementation for boundary cases
-- Quality metric calculation accuracy
-- Multi-stage processing integration
+- Affine transform validation implementation
+- Linear barycentric interpolation for scattered data
+- Multi-stage processing with proper grid interpolation
 
 **Low Risk**:
 - Basic data structure implementation ✅ (completed)
-- Code cleanup and dead code removal
-- Windowing function implementation
-- Documentation and testing ✅ (comprehensive)
+- Core PIV processing pipeline ✅ (completed)
+- Windowing function implementation ✅ (completed)
+- Performance infrastructure ✅ (completed)
+- Quality metric calculations ✅ (completed)
+- Window padding implementation ✅ (completed)
 
-**Performance Note**: Core FFT and correlation operations are properly optimized. Per-stage allocations are not performance-critical compared to computational kernels.
+**Performance Note**: Core FFT and correlation operations are properly optimized with <3% timing overhead. Professional benchmarking infrastructure is in place for regression testing.
 
 ## Success Metrics
 

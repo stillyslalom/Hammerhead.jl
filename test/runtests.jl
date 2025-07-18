@@ -820,4 +820,123 @@ end
             @test_throws ArgumentError PIVStage((32, 32), window_function=(:unknown_param, 1.0))
         end # PIVStages with Generalized Windowing
     end # Windowing Functions Tests
+    
+    @testset "Affine Transform Validation" begin
+        @testset "Area Preservation Checks" begin
+            # Test identity matrix (perfect area preservation)
+            identity_2x2 = [1.0 0.0; 0.0 1.0]
+            @test is_area_preserving(identity_2x2)
+            @test is_area_preserving(identity_2x2, 0.01)  # Strict tolerance
+            
+            # Test rotation matrix (area preserving)
+            θ = π/6  # 30 degrees
+            rotation = [cos(θ) -sin(θ); sin(θ) cos(θ)]
+            @test is_area_preserving(rotation)
+            @test abs(det(rotation) - 1.0) < 1e-10  # Should be exactly 1
+            
+            # Test small shear (area preserving)
+            shear = [1.0 0.1; 0.0 1.0]
+            @test is_area_preserving(shear)
+            @test abs(det(shear) - 1.0) < 1e-10
+            
+            # Test uniform scaling (not area preserving if scale ≠ 1)
+            scale_up = [1.2 0.0; 0.0 1.2]  # det = 1.44
+            @test !is_area_preserving(scale_up, 0.1)  # Outside 10% tolerance
+            
+            scale_small = [1.05 0.0; 0.0 0.95]  # det ≈ 1.0 (0.9975)
+            @test is_area_preserving(scale_small, 0.1)  # Within 10% tolerance
+            
+            # Test non-uniform scaling
+            stretch = [2.0 0.0; 0.0 0.5]  # det = 1.0 (area preserving but distorting)
+            @test is_area_preserving(stretch)
+            
+            # Test degenerate matrix
+            singular = [1.0 0.0; 1.0 0.0]  # det = 0
+            @test !is_area_preserving(singular)
+            
+            # Test error handling
+            @test_throws ArgumentError is_area_preserving([1.0 0.0])  # Wrong size
+            @test_throws ArgumentError is_area_preserving([1.0 0.0; 0.0 1.0; 0.0 0.0])  # Wrong size
+        end # Area Preservation Checks
+        
+        @testset "Full Transform Validation" begin
+            # Test valid transforms
+            identity_2x2 = [1.0 0.0; 0.0 1.0]
+            @test validate_affine_transform(identity_2x2)
+            
+            # Test 3x3 affine matrix (should extract 2x2 part)
+            affine_3x3 = [1.0 0.0 5.0; 0.0 1.0 3.0; 0.0 0.0 1.0]
+            @test validate_affine_transform(affine_3x3)
+            
+            # Test small deformation (valid)
+            small_deform = [1.02 0.01; -0.01 0.98]
+            @test validate_affine_transform(small_deform)
+            
+            # Test rotation (valid)
+            θ = π/12  # 15 degrees
+            rotation = [cos(θ) -sin(θ); sin(θ) cos(θ)]
+            @test validate_affine_transform(rotation)
+            
+            # Test invalid transforms
+            
+            # Non-finite values
+            invalid_nan = [1.0 NaN; 0.0 1.0]
+            @test !validate_affine_transform(invalid_nan)
+            
+            invalid_inf = [Inf 0.0; 0.0 1.0]
+            @test !validate_affine_transform(invalid_inf)
+            
+            # Excessive scaling (violates eigenvalue constraints)
+            excessive_scale = [5.0 0.0; 0.0 0.2]  # 5x stretch, 0.2x compression
+            @test !validate_affine_transform(excessive_scale)
+            
+            # High condition number (near-singular) - this should fail due to poor conditioning
+            high_condition = [1.0 1.0; 0.0 1e-5]  # Very skewed matrix
+            @test !validate_affine_transform(high_condition)
+            
+            # Non area-preserving with strict tolerance
+            non_area_preserving = [1.5 0.0; 0.0 0.8]  # det = 1.2
+            @test !validate_affine_transform(non_area_preserving, tolerance=0.05)  # Strict tolerance
+            @test validate_affine_transform(non_area_preserving, tolerance=0.3)   # Loose tolerance
+            
+            # Test tolerance parameter
+            borderline_pass = [1.08 0.0; 0.0 0.93]  # det ≈ 1.004, within 1%
+            @test validate_affine_transform(borderline_pass, tolerance=0.1)   # Within 10%
+            @test validate_affine_transform(borderline_pass, tolerance=0.01)  # Within 1%
+            
+            # This matrix fails area preservation with strict tolerance
+            borderline_fail = [1.2 0.0; 0.0 0.83]  # det = 0.996, fails 1% area tolerance  
+            @test validate_affine_transform(borderline_fail, tolerance=0.1)   # Within 10%
+            @test !validate_affine_transform(borderline_fail, tolerance=0.003) # Outside 0.3%
+            
+            # Test wrong matrix size
+            @test_throws ArgumentError validate_affine_transform(reshape([1.0], 1, 1))
+            @test_throws ArgumentError validate_affine_transform([1.0 0.0 0.0; 0.0 1.0 0.0; 1.0 2.0 3.0; 4.0 5.0 6.0])
+        end # Full Transform Validation
+        
+        @testset "Edge Cases and Robustness" begin
+            # Test complex eigenvalues (should be rejected if not proper rotation)
+            # This matrix has complex eigenvalues but is not area-preserving: |det| = 2
+            complex_eigen = [0.0 -2.0; 1.0 0.0]  # Eigenvalues are ±i√2, |det| = 2
+            @test !validate_affine_transform(complex_eigen)
+            
+            # Test very small transforms (should be valid)
+            tiny_transform = [1.001 0.0001; -0.0001 0.999]
+            @test validate_affine_transform(tiny_transform)
+            
+            # Test boundary conditions for tolerance
+            exactly_tolerance = [1.1 0.0; 0.0 1.0/1.1]  # det = 1.0, but eigenvalues at tolerance boundary
+            @test validate_affine_transform(exactly_tolerance, tolerance=0.1)
+            
+            # Test mixed valid/invalid characteristics
+            # Good determinant, bad condition number - matrix that's nearly singular but has det ≈ 1
+            good_det_bad_cond = [1.0 1.0; 1e-6 1e-6]  # det ≈ 1e-6, not area-preserving
+            @test !validate_affine_transform(good_det_bad_cond)
+            
+            # Test matrix with reflection (negative determinant but magnitude = 1)
+            reflection = [-1.0 0.0; 0.0 1.0]  # det = -1
+            @test is_area_preserving(reflection)  # Area preserved
+            @test validate_affine_transform(reflection)  # Should be valid
+        end # Edge Cases and Robustness
+    end # Affine Transform Validation
 end # Hammerhead.jl

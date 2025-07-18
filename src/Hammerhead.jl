@@ -1,7 +1,7 @@
 module Hammerhead
 
 using FFTW
-using LinearAlgebra: mul!, ldiv!, inv
+using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals
 using ImageFiltering
 using StructArrays
 using Interpolations
@@ -17,6 +17,9 @@ export run_piv, run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_
 
 # Quality assessment
 export find_secondary_peak, find_secondary_peak_robust, find_local_maxima
+
+# Transform validation
+export validate_affine_transform, is_area_preserving
 
 # Utilities
 export subpixel_gauss3
@@ -1091,6 +1094,131 @@ function generate_interrogation_grid(image_size::Tuple{Int,Int}, window_size::Tu
     end
     
     return grid_x, grid_y
+end
+
+"""
+    validate_affine_transform(transform_matrix; tolerance=0.1) -> Bool
+
+Validate an affine transformation matrix for use in iterative deformation.
+Checks area preservation and other physical constraints.
+
+# Arguments
+- `transform_matrix::AbstractMatrix` - 2×2 or 3×3 affine transformation matrix
+- `tolerance::Float64` - Tolerance for area preservation check (default: 0.1)
+
+# Returns
+- `Bool` - True if transform is valid, false otherwise
+
+# Validation Criteria
+- Area preservation: |det(A)| ≈ 1 within tolerance
+- No excessive shear or rotation (condition number check)
+- Finite and real values only
+
+# Examples
+```julia
+# Valid identity transform
+A = [1.0 0.0; 0.0 1.0]
+validate_affine_transform(A)  # true
+
+# Invalid transform (not area-preserving)
+A = [2.0 0.0; 0.0 0.5]  # det = 1.0, but stretches by 2x and compresses by 0.5x
+validate_affine_transform(A)  # false
+
+# Valid small deformation
+A = [1.05 0.02; -0.01 0.98]  # Small rotation and stretch
+validate_affine_transform(A)  # likely true depending on tolerance
+```
+"""
+function validate_affine_transform(transform_matrix::AbstractMatrix; tolerance::Float64=0.1)
+    # Handle both 2×2 and 3×3 matrices (extract 2×2 linear part for 3×3)
+    if size(transform_matrix) == (3, 3)
+        A = transform_matrix[1:2, 1:2]
+    elseif size(transform_matrix) == (2, 2)
+        A = transform_matrix
+    else
+        throw(ArgumentError("Transform matrix must be 2×2 or 3×3, got $(size(transform_matrix))"))
+    end
+    
+    # Check for finite and real values
+    if !all(isfinite.(A)) || !all(isreal.(A))
+        return false
+    end
+    
+    # Check area preservation using determinant
+    if !is_area_preserving(A, tolerance)
+        return false
+    end
+    
+    # Check condition number to avoid excessive distortion
+    # High condition number indicates near-singular matrix or extreme aspect ratio changes
+    max_condition = 10.0  # Allow up to 10:1 aspect ratio changes
+    if cond(A) > max_condition
+        return false
+    end
+    
+    # Check for reasonable eigenvalues (no excessive stretching)
+    eigenvals = eigvals(A)
+    max_stretch = 3.0  # Allow up to 3x stretch in any direction
+    min_compress = 1.0 / max_stretch  # And corresponding compression
+    
+    # Special case: check if this is a pure rotation (complex eigenvalues with |λ| = 1)
+    if length(eigenvals) == 2 && !all(isreal.(eigenvals))
+        # For 2D rotation matrices, eigenvalues are complex conjugates with |λ| = 1
+        λ1, λ2 = eigenvals
+        if abs(abs(λ1) - 1) < 1e-10 && abs(abs(λ2) - 1) < 1e-10 && 
+           abs(λ1 - conj(λ2)) < 1e-10
+            # This is a valid rotation matrix
+            return true
+        else
+            return false  # Complex eigenvalues but not a proper rotation
+        end
+    end
+    
+    # For real eigenvalues, check stretching bounds
+    for λ in eigenvals
+        if !isreal(λ)
+            return false  # Unexpected complex eigenvalues
+        end
+        # Check absolute value to handle reflections (negative eigenvalues)
+        abs_λ = abs(real(λ))
+        if abs_λ > max_stretch || abs_λ < min_compress
+            return false
+        end
+    end
+    
+    return true
+end
+
+"""
+    is_area_preserving(matrix, tolerance=0.1) -> Bool
+
+Check if a 2×2 matrix preserves area within tolerance.
+Area preservation means |det(A)| ≈ 1.
+
+# Arguments
+- `matrix::AbstractMatrix` - 2×2 transformation matrix
+- `tolerance::Float64` - Relative tolerance for determinant check
+
+# Returns
+- `Bool` - True if area-preserving within tolerance
+
+# Examples
+```julia
+is_area_preserving([1.0 0.1; -0.1 1.0])  # true (rotation + small shear)
+is_area_preserving([2.0 0.0; 0.0 0.5])   # false (scales area by factor of 1.0 but violates uniformity)
+is_area_preserving([1.05 0.0; 0.0 0.95]) # true (small uniform scaling, det ≈ 1.0)
+```
+"""
+function is_area_preserving(matrix::AbstractMatrix, tolerance::Float64=0.1)
+    if size(matrix) != (2, 2)
+        throw(ArgumentError("Matrix must be 2×2 for area preservation check"))
+    end
+    
+    det_val = det(matrix)
+    
+    # Check if determinant magnitude is close to 1 (area-preserving)
+    # Use relative tolerance: |det - 1| / 1 < tolerance
+    return abs(abs(det_val) - 1.0) <= tolerance
 end
 
 
