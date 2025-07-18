@@ -186,3 +186,9 @@ Core dependencies (managed via Pkg.add):
 11. **Document parameter flexibility**: When functions accept multiple input types, document all supported formats clearly
 12. **CI compatibility matters**: Keep Julia version support current (LTS minimum, not ancient versions like 1.6)
 13. **Test structure is critical**: Use end-block comments (`end # TestsetName`) to debug complex nested test structures
+14. **Use @show for tolerance optimization**: Rather than iteratively guessing test tolerances, add temporary @show statements to measure actual accuracy and set appropriate tolerances based on real performance
+15. **Documentation should be general**: Avoid mentioning specific experimental details (image sizes, experimental setups) in public-facing documentation to keep it broadly applicable
+16. **Commit messages should be factual**: Avoid hyperbolic language about "improvements" when previous values weren't carefully set - just state what was done
+17. **Domain expertise matters for robustness**: Listen to domain experts about edge cases (e.g., closely spaced peaks in high shear flows) and implement robust alternatives alongside fast methods
+18. **Local maxima detection needs careful design**: Simple 3x3 neighborhood checking fails for broad peaks - need to merge adjacent maxima and sort by magnitude to find true peaks
+19. **Provide speed vs robustness options**: In performance-critical applications, offer both fast and robust methods rather than one-size-fits-all solutions
