@@ -14,6 +14,9 @@ export PIVVector, PIVResult, PIVStage, PIVStages
 # Core functionality  
 export run_piv, run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_plane
 
+# Quality assessment
+export find_secondary_peak, find_secondary_peak_robust, find_local_maxima
+
 # Utilities
 export subpixel_gauss3
 
@@ -437,7 +440,7 @@ Base.show(io::IO, c::CrossCorrelator) = print(io, "CrossCorrelator{$(eltype(c.C1
 CrossCorrelator(image_size::Tuple{Int, Int}) = CrossCorrelator{Float32}(image_size)
 
 """
-    calculate_quality_metrics(correlation_plane, peak_location, peak_value) -> (peak_ratio, correlation_moment)
+    calculate_quality_metrics(correlation_plane, peak_location, peak_value; robust=false) -> (peak_ratio, correlation_moment)
 
 Calculate quality metrics for PIV correlation analysis.
 
@@ -445,17 +448,22 @@ Calculate quality metrics for PIV correlation analysis.
 - `correlation_plane` - Complex correlation result matrix
 - `peak_location` - CartesianIndex of primary peak location
 - `peak_value` - Magnitude of primary peak
+- `robust=false` - Use robust local maxima method for secondary peak detection
 
 # Returns
 - `peak_ratio::Float64` - Ratio of primary peak to secondary peak (higher is better)
 - `correlation_moment::Float64` - Normalized correlation moment (measure of peak sharpness)
 """
-function calculate_quality_metrics(correlation_plane::AbstractMatrix, peak_location::CartesianIndex, peak_value::Real)
+function calculate_quality_metrics(correlation_plane::AbstractMatrix, peak_location::CartesianIndex, peak_value::Real; robust::Bool=false)
     # Convert correlation plane to real magnitudes for analysis
     corr_mag = abs.(correlation_plane)
     
-    # Find secondary peak (exclude region around primary peak)
-    secondary_peak = find_secondary_peak(corr_mag, peak_location, peak_value)
+    # Find secondary peak using chosen method
+    secondary_peak = if robust
+        find_secondary_peak_robust(corr_mag, peak_location, peak_value)
+    else
+        find_secondary_peak(corr_mag, peak_location, peak_value)
+    end
     
     # Calculate peak ratio (primary/secondary)
     peak_ratio = secondary_peak > 0 ? peak_value / secondary_peak : Inf
@@ -470,6 +478,7 @@ end
     find_secondary_peak(correlation_magnitudes, primary_location, primary_value) -> secondary_value
 
 Find the secondary peak in correlation plane, excluding region around primary peak.
+Uses exclusion radius approach for speed.
 """
 function find_secondary_peak(corr_mag::AbstractMatrix, primary_loc::CartesianIndex, primary_val::Real)
     # Exclude circular region around primary peak (radius = 3 pixels)
@@ -491,6 +500,103 @@ function find_secondary_peak(corr_mag::AbstractMatrix, primary_loc::CartesianInd
     end
     
     return secondary_val
+end
+
+"""
+    find_secondary_peak_robust(correlation_magnitudes, primary_location, primary_value) -> secondary_value
+
+Find the secondary peak using local maxima detection for robustness in high shear flows.
+More computationally expensive but handles closely spaced peaks better.
+"""
+function find_secondary_peak_robust(corr_mag::AbstractMatrix, primary_loc::CartesianIndex, primary_val::Real)
+    # Find all local maxima
+    local_maxima = find_local_maxima(corr_mag)
+    
+    # If no local maxima found, return zero
+    if isempty(local_maxima)
+        return zero(eltype(corr_mag))
+    end
+    
+    # Sort maxima by value in descending order
+    sort!(local_maxima, by=x -> corr_mag[x], rev=true)
+    
+    # Find the secondary peak (largest local maximum that's not the primary)
+    for loc in local_maxima
+        if loc != primary_loc
+            return corr_mag[loc]
+        end
+    end
+    
+    # If all local maxima are at primary location (shouldn't happen), return zero
+    return zero(eltype(corr_mag))
+end
+
+"""
+    find_local_maxima(correlation_magnitudes) -> Vector{CartesianIndex}
+
+Find all local maxima in correlation plane using robust peak detection.
+Identifies peaks by finding points that are local maxima in their immediate neighborhood,
+handling both sharp and broad peaks correctly.
+"""
+function find_local_maxima(corr_mag::AbstractMatrix)
+    rows, cols = size(corr_mag)
+    
+    # Find all potential maxima by checking if each point is greater than immediate neighbors
+    candidates = CartesianIndex[]
+    
+    # Check all interior points
+    for i in 2:(rows-1), j in 2:(cols-1)
+        center_val = corr_mag[i, j]
+        is_local_max = true
+        
+        # Check immediate neighbors (3x3 neighborhood)
+        for di in -1:1, dj in -1:1
+            if di == 0 && dj == 0
+                continue  # Skip center point
+            end
+            
+            if corr_mag[i + di, j + dj] > center_val
+                is_local_max = false
+                break
+            end
+        end
+        
+        if is_local_max && center_val > 0  # Only consider positive values
+            push!(candidates, CartesianIndex(i, j))
+        end
+    end
+    
+    # For broad peaks, we might have multiple adjacent points that are all "local maxima"
+    # Sort candidates by value and keep the significant ones
+    if isempty(candidates)
+        return candidates
+    end
+    
+    # Sort by correlation value (descending)
+    sort!(candidates, by=idx -> corr_mag[idx], rev=true)
+    
+    # Filter out candidates that are too close to higher-valued ones (merge broad peaks)
+    merged_maxima = CartesianIndex[]
+    min_separation = 2  # Minimum pixels between distinct peaks
+    
+    for candidate in candidates
+        is_distinct = true
+        
+        # Check if this candidate is too close to an already accepted maximum
+        for accepted in merged_maxima
+            distance = sqrt((candidate.I[1] - accepted.I[1])^2 + (candidate.I[2] - accepted.I[2])^2)
+            if distance < min_separation
+                is_distinct = false
+                break
+            end
+        end
+        
+        if is_distinct
+            push!(merged_maxima, candidate)
+        end
+    end
+    
+    return merged_maxima
 end
 
 """

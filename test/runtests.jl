@@ -159,6 +159,92 @@ end
         end # subpixel_gauss3 Numerical Stability
     end # Subpixel Refinement
 
+    @testset "Secondary Peak Detection" begin
+        @testset "Local Maxima Detection" begin
+            # Create a test correlation plane with multiple local maxima
+            corr_plane = zeros(Float64, 10, 10)
+            
+            # Add some peaks
+            corr_plane[3, 3] = 1.0    # Primary peak
+            corr_plane[3, 7] = 0.8    # Secondary peak
+            corr_plane[7, 3] = 0.6    # Tertiary peak
+            corr_plane[7, 7] = 0.4    # Quaternary peak
+            
+            # Test local maxima detection
+            maxima = Hammerhead.find_local_maxima(corr_plane)
+            @test length(maxima) == 4
+            @test CartesianIndex(3, 3) in maxima
+            @test CartesianIndex(3, 7) in maxima
+            @test CartesianIndex(7, 3) in maxima
+            @test CartesianIndex(7, 7) in maxima
+            
+            # Test with no peaks (all zeros)
+            zero_plane = zeros(Float64, 5, 5)
+            zero_maxima = Hammerhead.find_local_maxima(zero_plane)
+            @test isempty(zero_maxima)
+            
+            # Test with single peak in center
+            single_peak = zeros(Float64, 5, 5)
+            single_peak[3, 3] = 1.0
+            single_maxima = Hammerhead.find_local_maxima(single_peak)
+            @test length(single_maxima) == 1
+            @test single_maxima[1] == CartesianIndex(3, 3)
+        end # Local Maxima Detection
+        
+        @testset "Robust Secondary Peak Detection" begin
+            # Create correlation plane with closely spaced peaks
+            corr_plane = zeros(Float64, 12, 12)
+            primary_loc = CartesianIndex(6, 6)
+            corr_plane[6, 6] = 1.0    # Primary peak
+            corr_plane[6, 8] = 0.9    # Close secondary peak with gap (would be excluded by radius method)
+            corr_plane[2, 2] = 0.7    # Further secondary peak (outside exclusion radius)
+            
+            # Debug: Check distances to verify exclusion
+            distance_to_close = sqrt((6-6)^2 + (8-6)^2)  # Should be 2.0
+            distance_to_far = sqrt((2-6)^2 + (2-6)^2)    # Should be ~5.66
+            @test distance_to_close == 2.0  # Within exclusion radius of 3
+            @test distance_to_far > 3.0     # Outside exclusion radius of 3
+            
+            # Test exclusion radius method (should miss the close peak)
+            secondary_radius = Hammerhead.find_secondary_peak(corr_plane, primary_loc, 1.0)
+            @test secondary_radius ≈ 0.7  # Should find the distant peak
+            
+            # Test robust method (should find the close peak)
+            secondary_robust = Hammerhead.find_secondary_peak_robust(corr_plane, primary_loc, 1.0)
+            @test secondary_robust ≈ 0.9  # Should find the closest and strongest secondary peak
+            
+            # Test with no secondary peaks
+            single_peak = zeros(Float64, 10, 10)
+            single_peak[5, 5] = 1.0
+            secondary_none = Hammerhead.find_secondary_peak_robust(single_peak, CartesianIndex(5, 5), 1.0)
+            @test secondary_none == 0.0
+        end # Robust Secondary Peak Detection
+        
+        @testset "Quality Metrics with Robust Option" begin
+            # Create correlation plane
+            corr_plane = zeros(ComplexF64, 12, 12)
+            corr_plane[6, 6] = 1.0 + 0.0im    # Primary peak
+            corr_plane[6, 8] = 0.8 + 0.0im    # Close secondary peak with gap
+            corr_plane[2, 2] = 0.6 + 0.0im    # Distant peak (outside exclusion radius)
+            
+            primary_loc = CartesianIndex(6, 6)
+            primary_val = 1.0
+            
+            # Test standard method
+            peak_ratio_std, corr_moment_std = Hammerhead.calculate_quality_metrics(corr_plane, primary_loc, primary_val, robust=false)
+            @test peak_ratio_std ≈ 1.0 / 0.6  # Should find distant peak
+            @test isfinite(corr_moment_std)
+            
+            # Test robust method
+            peak_ratio_robust, corr_moment_robust = Hammerhead.calculate_quality_metrics(corr_plane, primary_loc, primary_val, robust=true)
+            @test peak_ratio_robust ≈ 1.0 / 0.8  # Should find close peak
+            @test isfinite(corr_moment_robust)
+            
+            # Correlation moment should be the same for both methods
+            @test corr_moment_std ≈ corr_moment_robust
+        end # Quality Metrics with Robust Option
+    end # Secondary Peak Detection
+
     @testset "Data Structure Tests" begin
         @testset "PIVVector" begin
             # Test basic constructor
