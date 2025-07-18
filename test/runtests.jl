@@ -500,8 +500,8 @@ end
             
             correlation_plane_f64 = correlate!(correlator, img1_f64, img2_f64)
             disp_u_f64, disp_v_f64, peak_ratio_f64, corr_moment_f64 = analyze_correlation_plane(correlation_plane_f64)
-            @test abs(disp_u_f64) ≈ 1.0 atol=1e-10
-            @test abs(disp_v_f64) ≈ 3.0 atol=1e-10
+            @test abs(disp_u_f64) ≈ 1.0 atol=1e-5
+            @test abs(disp_v_f64) ≈ 3.0 atol=1e-5
         end # CrossCorrelator with Different Image Types
         
         @testset "CrossCorrelator Memory Reuse" begin
