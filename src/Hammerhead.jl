@@ -1,7 +1,7 @@
 module Hammerhead
 
 using FFTW
-using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals
+using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals, dot
 using ImageFiltering
 using StructArrays
 using Interpolations
@@ -20,6 +20,9 @@ export find_secondary_peak, find_secondary_peak_robust, find_local_maxima
 
 # Transform validation
 export validate_affine_transform, is_area_preserving
+
+# Interpolation
+export linear_barycentric_interpolation, interpolate_vectors
 
 # Utilities
 export subpixel_gauss3
@@ -1187,6 +1190,323 @@ function validate_affine_transform(transform_matrix::AbstractMatrix; tolerance::
     end
     
     return true
+end
+
+"""
+    linear_barycentric_interpolation(points, values, query_points; fallback_method=:nearest)
+
+Perform linear barycentric interpolation for scattered 2D data.
+
+For each query point, finds the triangle containing it and computes the interpolated value
+using barycentric coordinates. If a point is outside the convex hull, uses fallback method.
+
+# Arguments
+- `points::AbstractMatrix`: Nx2 matrix of point coordinates [x y]
+- `values::AbstractVector`: N-element vector of values at each point
+- `query_points::AbstractMatrix`: Mx2 matrix of query point coordinates
+- `fallback_method::Symbol`: Method for points outside convex hull (`:nearest`, `:zero`, `:nan`)
+
+# Returns
+- `Vector`: Interpolated values at query points
+"""
+function linear_barycentric_interpolation(points::AbstractMatrix, values::AbstractVector, 
+                                         query_points::AbstractMatrix; 
+                                         fallback_method::Symbol=:nearest)
+    if size(points, 2) != 2
+        throw(ArgumentError("Points must be Nx2 matrix, got $(size(points))"))
+    end
+    if size(query_points, 2) != 2
+        throw(ArgumentError("Query points must be Mx2 matrix, got $(size(query_points))"))
+    end
+    if size(points, 1) != length(values)
+        throw(ArgumentError("Number of points ($(size(points, 1))) must match number of values ($(length(values)))"))
+    end
+    if !(fallback_method in (:nearest, :zero, :nan))
+        throw(ArgumentError("Fallback method must be :nearest, :zero, or :nan, got $fallback_method"))
+    end
+    
+    n_query = size(query_points, 1)
+    n_points = size(points, 1)
+    result = Vector{Float64}(undef, n_query)
+    
+    # Handle edge cases
+    if n_points == 0
+        fill!(result, fallback_method == :zero ? 0.0 : NaN)
+        return result
+    elseif n_points == 1
+        # Single point - use its value for all queries
+        fill!(result, values[1])
+        return result
+    elseif n_points == 2
+        # Two points - linear interpolation along line
+        return linear_interpolation_2points(points, values, query_points, fallback_method)
+    end
+    
+    # For 3+ points, use triangulation-based barycentric interpolation
+    # Simple approach: for each query point, find best triangle and interpolate
+    for i in 1:n_query
+        query_x, query_y = query_points[i, 1], query_points[i, 2]
+        
+        # Find the best triangle containing this point
+        best_triangle, best_coords = find_containing_triangle(points, query_x, query_y)
+        
+        if best_triangle !== nothing
+            # Interpolate using barycentric coordinates
+            idx1, idx2, idx3 = best_triangle
+            λ1, λ2, λ3 = best_coords
+            result[i] = λ1 * values[idx1] + λ2 * values[idx2] + λ3 * values[idx3]
+        else
+            # Point outside convex hull - use fallback
+            if fallback_method == :nearest
+                # Find nearest point
+                min_dist = Inf
+                nearest_idx = 1
+                for j in 1:n_points
+                    dist = (points[j, 1] - query_x)^2 + (points[j, 2] - query_y)^2
+                    if dist < min_dist
+                        min_dist = dist
+                        nearest_idx = j
+                    end
+                end
+                result[i] = values[nearest_idx]
+            elseif fallback_method == :zero
+                result[i] = 0.0
+            else  # :nan
+                result[i] = NaN
+            end
+        end
+    end
+    
+    return result
+end
+
+"""
+    linear_interpolation_2points(points, values, query_points, fallback_method)
+
+Linear interpolation between two points.
+"""
+function linear_interpolation_2points(points::AbstractMatrix, values::AbstractVector,
+                                     query_points::AbstractMatrix, fallback_method::Symbol)
+    n_query = size(query_points, 1)
+    result = Vector{Float64}(undef, n_query)
+    
+    # Two points define a line
+    p1, p2 = points[1, :], points[2, :]
+    v1, v2 = values[1], values[2]
+    
+    # Line direction
+    line_dir = p2 - p1
+    line_length_sq = sum(line_dir.^2)
+    
+    for i in 1:n_query
+        query = query_points[i, :]
+        
+        # Project query point onto line
+        to_query = query - p1
+        t = dot(to_query, line_dir) / line_length_sq
+        
+        if 0 <= t <= 1
+            # Point projects onto line segment
+            result[i] = (1 - t) * v1 + t * v2
+        else
+            # Outside line segment - use fallback
+            if fallback_method == :nearest
+                # Choose nearest endpoint
+                dist1 = sum((query - p1).^2)
+                dist2 = sum((query - p2).^2)
+                result[i] = dist1 <= dist2 ? v1 : v2
+            elseif fallback_method == :zero
+                result[i] = 0.0
+            else  # :nan
+                result[i] = NaN
+            end
+        end
+    end
+    
+    return result
+end
+
+"""
+    find_containing_triangle(points, query_x, query_y)
+
+Find triangle containing the query point and return barycentric coordinates.
+
+Returns (triangle_indices, barycentric_coords) or (nothing, nothing) if outside convex hull.
+"""
+function find_containing_triangle(points::AbstractMatrix, query_x::Real, query_y::Real)
+    n_points = size(points, 1)
+    
+    # Try all possible triangles
+    for i in 1:n_points-2
+        for j in i+1:n_points-1
+            for k in j+1:n_points
+                # Get triangle vertices
+                p1 = points[i, :]
+                p2 = points[j, :]
+                p3 = points[k, :]
+                
+                # Compute barycentric coordinates
+                coords = barycentric_coordinates(p1, p2, p3, [query_x, query_y])
+                
+                # Check if point is inside triangle (all coordinates >= 0)
+                if all(coords .>= -1e-10)  # Small tolerance for numerical errors
+                    return (i, j, k), coords
+                end
+            end
+        end
+    end
+    
+    return nothing, nothing
+end
+
+"""
+    barycentric_coordinates(p1, p2, p3, query)
+
+Compute barycentric coordinates of query point with respect to triangle p1-p2-p3.
+
+Returns (λ1, λ2, λ3) such that query = λ1*p1 + λ2*p2 + λ3*p3 and λ1 + λ2 + λ3 = 1.
+"""
+function barycentric_coordinates(p1::AbstractVector, p2::AbstractVector, 
+                               p3::AbstractVector, query::AbstractVector)
+    # Using the standard formula for barycentric coordinates
+    x1, y1 = p1[1], p1[2]
+    x2, y2 = p2[1], p2[2]
+    x3, y3 = p3[1], p3[2]
+    x, y = query[1], query[2]
+    
+    # Area of the full triangle (twice the actual area)
+    denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    
+    # Handle degenerate triangles
+    if abs(denom) < 1e-12
+        return [NaN, NaN, NaN]
+    end
+    
+    # Barycentric coordinates
+    λ1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / denom
+    λ2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / denom
+    λ3 = 1.0 - λ1 - λ2
+    
+    return [λ1, λ2, λ3]
+end
+
+"""
+    interpolate_vectors(result::PIVResult; method=:linear_barycentric, 
+                       target_status=:interpolated, source_status=:good)
+
+Interpolate vectors in PIV result to replace missing or bad vectors.
+
+# Arguments
+- `result::PIVResult`: PIV result to interpolate
+- `method::Symbol`: Interpolation method (`:linear_barycentric`, `:nearest`)
+- `target_status::Symbol`: Status to assign to interpolated vectors
+- `source_status::Symbol`: Only use vectors with this status for interpolation
+
+# Returns
+- Modified PIVResult with interpolated vectors
+"""
+function interpolate_vectors(result::PIVResult; 
+                           method::Symbol=:linear_barycentric,
+                           target_status::Symbol=:interpolated,
+                           source_status::Symbol=:good)
+    if !(method in (:linear_barycentric, :nearest))
+        throw(ArgumentError("Method must be :linear_barycentric or :nearest, got $method"))
+    end
+    
+    # Find good vectors to use for interpolation
+    good_mask = result.status .== source_status
+    n_good = sum(good_mask)
+    
+    if n_good == 0
+        @warn "No vectors with status $source_status found for interpolation"
+        return result
+    end
+    
+    # Extract coordinates and values of good vectors
+    good_x = result.x[good_mask]
+    good_y = result.y[good_mask]
+    good_u = result.u[good_mask]
+    good_v = result.v[good_mask]
+    
+    # Find vectors that need interpolation (not good and not NaN coordinates)
+    bad_mask = (result.status .!= source_status) .& 
+               .!isnan.(result.x) .& .!isnan.(result.y)
+    
+    if sum(bad_mask) == 0
+        return result  # Nothing to interpolate
+    end
+    
+    # Query points (bad vectors)
+    query_x = result.x[bad_mask]
+    query_y = result.y[bad_mask]
+    
+    # Prepare data for interpolation
+    points = hcat(collect(good_x), collect(good_y))
+    query_points = hcat(collect(query_x), collect(query_y))
+    
+    # Interpolate u and v components
+    if method == :linear_barycentric
+        interp_u = linear_barycentric_interpolation(points, collect(good_u), query_points)
+        interp_v = linear_barycentric_interpolation(points, collect(good_v), query_points)
+    else  # :nearest
+        interp_u = nearest_neighbor_interpolation(points, collect(good_u), query_points)
+        interp_v = nearest_neighbor_interpolation(points, collect(good_v), query_points)
+    end
+    
+    # Create new vectors with interpolated values
+    new_vectors = copy(result.vectors)
+    bad_indices = findall(bad_mask)
+    
+    for (i, idx) in enumerate(bad_indices)
+        if !isnan(interp_u[i]) && !isnan(interp_v[i])
+            new_vectors[idx] = PIVVector(
+                result.x[idx], result.y[idx],
+                interp_u[i], interp_v[i],
+                target_status, NaN, NaN
+            )
+        end
+    end
+    
+    # Create new result
+    new_result = PIVResult(new_vectors, 
+                          copy(result.metadata), 
+                          copy(result.auxiliary))
+    new_result.metadata["interpolation_method"] = string(method)
+    new_result.metadata["interpolated_count"] = sum(.!isnan.(interp_u))
+    
+    return new_result
+end
+
+"""
+    nearest_neighbor_interpolation(points, values, query_points)
+
+Simple nearest neighbor interpolation.
+"""
+function nearest_neighbor_interpolation(points::AbstractMatrix, values::AbstractVector,
+                                      query_points::AbstractMatrix)
+    n_query = size(query_points, 1)
+    n_points = size(points, 1)
+    result = Vector{Float64}(undef, n_query)
+    
+    for i in 1:n_query
+        query_x, query_y = query_points[i, 1], query_points[i, 2]
+        
+        # Find nearest point
+        min_dist = Inf
+        nearest_val = NaN
+        
+        for j in 1:n_points
+            dist = (points[j, 1] - query_x)^2 + (points[j, 2] - query_y)^2
+            if dist < min_dist
+                min_dist = dist
+                nearest_val = values[j]
+            end
+        end
+        
+        result[i] = nearest_val
+    end
+    
+    return result
 end
 
 """

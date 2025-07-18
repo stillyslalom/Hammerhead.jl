@@ -54,6 +54,7 @@ julia --project=. bench/run_benchmarks.jl  # Comprehensive benchmarks
 - **run_piv**: Single/multi-stage analysis with automatic timing
 - **Timing infrastructure**: TimerOutputs.jl integration for performance monitoring
 - **Benchmark suite**: Professional regression testing in `bench/`
+- **Transform validation**: Comprehensive affine transform validation for iterative deformation
 
 ## Critical Guidelines
 
@@ -82,6 +83,8 @@ julia --project=. bench/run_benchmarks.jl  # Comprehensive benchmarks
 - **Edge cases matter**: Users pass unexpected input types - handle gracefully
 - **Domain expertise critical**: Listen to experts about algorithm robustness needs
 - **Professional tooling pays off**: Comprehensive benchmarking prevents regressions
+- **Complex eigenvalues need special handling**: 2D rotations have complex eigenvalues with |λ| = 1
+- **Validation is multifaceted**: Area preservation + condition number + eigenvalue bounds all matter
 
 ## Dependencies
 

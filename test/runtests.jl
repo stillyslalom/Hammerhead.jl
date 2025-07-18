@@ -939,4 +939,232 @@ end
             @test validate_affine_transform(reflection)  # Should be valid
         end # Edge Cases and Robustness
     end # Affine Transform Validation
+    
+    @testset "Linear Barycentric Interpolation" begin
+        @testset "Basic Interpolation" begin
+            # Test with simple triangle
+            points = [0.0 0.0; 1.0 0.0; 0.0 1.0]  # Right triangle
+            values = [1.0, 2.0, 3.0]
+            
+            # Test center point of triangle
+            query_points = [1/3 1/3]  # Center of triangle
+            result = linear_barycentric_interpolation(points, values, query_points)
+            expected = (1.0 + 2.0 + 3.0) / 3  # Average of vertices
+            @test result[1] ≈ expected atol=1e-10
+            
+            # Test vertex points (should return exact values)
+            for i in 1:3
+                query = reshape(points[i, :], 1, 2)
+                result = linear_barycentric_interpolation(points, values, query)
+                @test result[1] ≈ values[i] atol=1e-10
+            end
+            
+            # Test edge midpoints
+            edge_mid = [0.5 0.0]  # Midpoint of edge 1-2
+            result = linear_barycentric_interpolation(points, values, edge_mid)
+            @test result[1] ≈ (values[1] + values[2]) / 2 atol=1e-10
+        end
+        
+        @testset "Two Point Interpolation" begin
+            # Test linear interpolation between two points
+            points = [0.0 0.0; 2.0 0.0]  # Two points on x-axis
+            values = [10.0, 30.0]
+            
+            # Test midpoint
+            query_points = [1.0 0.0]
+            result = linear_barycentric_interpolation(points, values, query_points)
+            @test result[1] ≈ 20.0 atol=1e-10
+            
+            # Test point on line but outside segment
+            query_outside = [3.0 0.0]  # Beyond second point
+            result = linear_barycentric_interpolation(points, values, query_outside, fallback_method=:nearest)
+            @test result[1] ≈ 30.0 atol=1e-10  # Should use nearest (second point)
+            
+            # Test point off the line - should project to line and interpolate
+            query_off_line = [1.0 1.0]
+            result = linear_barycentric_interpolation(points, values, query_off_line, fallback_method=:nearest)
+            @test result[1] ≈ 20.0 atol=1e-10  # Projects to midpoint of line
+        end
+        
+        @testset "Single Point Case" begin
+            # Test with single point
+            points = reshape([1.0, 2.0], 1, 2)
+            values = [42.0]
+            query_points = [0.0 0.0; 5.0 5.0; 1.0 2.0]
+            
+            result = linear_barycentric_interpolation(points, values, query_points)
+            @test all(result .≈ 42.0)
+        end
+        
+        @testset "Fallback Methods" begin
+            # Test fallback methods for points outside convex hull
+            points = [0.0 0.0; 1.0 0.0; 0.5 1.0]  # Triangle
+            values = [1.0, 2.0, 3.0]
+            query_outside = [2.0 2.0]  # Clearly outside triangle
+            
+            # Test :nearest fallback
+            result_nearest = linear_barycentric_interpolation(points, values, query_outside, fallback_method=:nearest)
+            @test result_nearest[1] ∈ values  # Should be one of the vertex values
+            
+            # Test :zero fallback
+            result_zero = linear_barycentric_interpolation(points, values, query_outside, fallback_method=:zero)
+            @test result_zero[1] ≈ 0.0
+            
+            # Test :nan fallback
+            result_nan = linear_barycentric_interpolation(points, values, query_outside, fallback_method=:nan)
+            @test isnan(result_nan[1])
+        end
+        
+        @testset "Edge Cases and Error Handling" begin
+            # Test empty points
+            empty_points = zeros(0, 2)
+            empty_values = Float64[]
+            query = [1.0 1.0]
+            result = linear_barycentric_interpolation(empty_points, empty_values, query)
+            @test isnan(result[1])
+            
+            # Test dimension mismatches
+            points_3d = [1.0 2.0 3.0; 4.0 5.0 6.0]  # 3D points
+            values = [1.0, 2.0]
+            query = [1.0 1.0]
+            @test_throws ArgumentError linear_barycentric_interpolation(points_3d, values, query)
+            
+            # Test value count mismatch
+            points = [0.0 0.0; 1.0 1.0]
+            wrong_values = [1.0]  # Wrong number of values
+            @test_throws ArgumentError linear_barycentric_interpolation(points, wrong_values, query)
+            
+            # Test invalid fallback method
+            points = [0.0 0.0; 1.0 1.0]
+            values = [1.0, 2.0]
+            @test_throws ArgumentError linear_barycentric_interpolation(points, values, query, fallback_method=:invalid)
+        end
+        
+        @testset "Multiple Query Points" begin
+            # Test with multiple query points efficiently
+            points = [0.0 0.0; 1.0 0.0; 0.0 1.0; 1.0 1.0]  # Square
+            values = [1.0, 2.0, 3.0, 4.0]
+            
+            # Multiple query points
+            query_points = [0.5 0.5; 0.0 0.0; 1.0 1.0; 0.25 0.25]
+            result = linear_barycentric_interpolation(points, values, query_points)
+            
+            @test length(result) == 4
+            @test all(isfinite.(result))
+            @test result[2] ≈ 1.0 atol=1e-10  # Query at first vertex
+            @test result[3] ≈ 4.0 atol=1e-10  # Query at fourth vertex
+        end
+    end # Linear Barycentric Interpolation
+    
+    @testset "Vector Interpolation" begin
+        @testset "Basic Vector Interpolation" begin
+            # Create test PIV result with some bad vectors
+            positions_x = [1.0, 2.0, 3.0, 1.0, 2.0, 3.0]
+            positions_y = [1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+            displacements_u = [1.0, 2.0, 3.0, 1.0, NaN, 3.0]  # One NaN displacement
+            displacements_v = [0.5, 1.0, 1.5, 0.5, NaN, 1.5]  # One NaN displacement
+            status_flags = [:good, :good, :good, :good, :bad, :good]
+            
+            piv_vectors = [PIVVector(positions_x[i], positions_y[i], displacements_u[i], displacements_v[i],
+                                   status_flags[i], 1.0, 0.5) for i in 1:6]
+            
+            result = PIVResult(piv_vectors)
+            
+            # Interpolate the bad vector
+            interp_result = interpolate_vectors(result, method=:linear_barycentric)
+            
+            # Check that bad vector was interpolated
+            @test interp_result.status[5] == :interpolated
+            @test !isnan(interp_result.u[5])
+            @test !isnan(interp_result.v[5])
+            
+            # Check that good vectors remain unchanged
+            good_indices = [1, 2, 3, 4, 6]
+            for i in good_indices
+                @test interp_result.u[i] ≈ result.u[i] atol=1e-10
+                @test interp_result.v[i] ≈ result.v[i] atol=1e-10
+                @test interp_result.status[i] == result.status[i]
+            end
+        end
+        
+        @testset "Nearest Neighbor Interpolation" begin
+            # Create simple test case
+            piv_vectors = [
+                PIVVector(0.0, 0.0, 1.0, 0.0, :good, 1.0, 0.5),
+                PIVVector(2.0, 0.0, 3.0, 0.0, :good, 1.0, 0.5),
+                PIVVector(1.0, 1.0, NaN, NaN, :bad, NaN, NaN)
+            ]
+            
+            result = PIVResult(piv_vectors)
+            interp_result = interpolate_vectors(result, method=:nearest)
+            
+            # Bad vector should be interpolated with nearest neighbor
+            @test interp_result.status[3] == :interpolated
+            @test !isnan(interp_result.u[3])
+            @test !isnan(interp_result.v[3])
+            
+            # Should be closer to one of the neighboring values
+            @test interp_result.u[3] ∈ [1.0, 3.0]
+            @test interp_result.v[3] ≈ 0.0 atol=1e-10
+        end
+        
+        @testset "No Good Vectors Case" begin
+            # Test case where no good vectors exist
+            piv_vectors = [
+                PIVVector(1.0, 1.0, NaN, NaN, :bad, NaN, NaN),
+                PIVVector(2.0, 2.0, NaN, NaN, :bad, NaN, NaN)
+            ]
+            
+            result = PIVResult(piv_vectors)
+            
+            # Should warn and return unchanged result
+            interp_result = @test_logs (:warn, r"No vectors with status good found") interpolate_vectors(result)
+            
+            @test interp_result.status[1] == :bad
+            @test interp_result.status[2] == :bad
+            @test isnan(interp_result.u[1])
+            @test isnan(interp_result.u[2])
+        end
+        
+        @testset "Custom Status Handling" begin
+            # Test with custom source and target status
+            piv_vectors = [
+                PIVVector(0.0, 0.0, 1.0, 0.0, :secondary, 1.0, 0.5),
+                PIVVector(2.0, 0.0, 3.0, 0.0, :secondary, 1.0, 0.5),
+                PIVVector(1.0, 1.0, NaN, NaN, :bad, NaN, NaN)
+            ]
+            
+            result = PIVResult(piv_vectors)
+            
+            # Interpolate using secondary vectors as source
+            interp_result = interpolate_vectors(result, 
+                                              source_status=:secondary,
+                                              target_status=:repaired)
+            
+            @test interp_result.status[3] == :repaired
+            @test !isnan(interp_result.u[3])
+            @test !isnan(interp_result.v[3])
+        end
+        
+        @testset "Metadata Preservation" begin
+            # Test that metadata is preserved and updated
+            piv_vectors = [
+                PIVVector(0.0, 0.0, 1.0, 0.0, :good, 1.0, 0.5),
+                PIVVector(1.0, 1.0, NaN, NaN, :bad, NaN, NaN)
+            ]
+            
+            result = PIVResult(piv_vectors)
+            result.metadata["test_key"] = "test_value"
+            
+            interp_result = interpolate_vectors(result)
+            
+            # Original metadata should be preserved
+            @test interp_result.metadata["test_key"] == "test_value"
+            
+            # New metadata should be added
+            @test haskey(interp_result.metadata, "interpolation_method")
+            @test haskey(interp_result.metadata, "interpolated_count")
+            @test interp_result.metadata["interpolated_count"] >= 0
+        end
+    end # Vector Interpolation
 end # Hammerhead.jl
