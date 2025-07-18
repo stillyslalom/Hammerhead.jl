@@ -192,3 +192,8 @@ Core dependencies (managed via Pkg.add):
 17. **Domain expertise matters for robustness**: Listen to domain experts about edge cases (e.g., closely spaced peaks in high shear flows) and implement robust alternatives alongside fast methods
 18. **Local maxima detection needs careful design**: Simple 3x3 neighborhood checking fails for broad peaks - need to merge adjacent maxima and sort by magnitude to find true peaks
 19. **Provide speed vs robustness options**: In performance-critical applications, offer both fast and robust methods rather than one-size-fits-all solutions
+20. **Global state is problematic for concurrency**: Avoid global timers/state that cause issues in multiprocessing environments - use local state passed through function calls instead
+21. **Performance assumptions need validation**: Methods labeled "fast" should actually be benchmarked - we discovered our "fast" peak detection was slower than the "robust" method due to expensive sqrt operations
+22. **Comprehensive timing infrastructure pays dividends**: TimerOutputs.jl with hierarchical instrumentation provides invaluable performance insights with minimal overhead (<3%)
+23. **Professional benchmarking infrastructure enables regression testing**: A dedicated bench/ directory with organized benchmarks helps maintain performance standards over time
+24. **Path concatenation should use joinpath()**: Use Julia's builtin joinpath() function instead of string concatenation for cross-platform compatibility
