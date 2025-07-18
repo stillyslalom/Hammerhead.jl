@@ -67,6 +67,31 @@ stage3 = PIVStage((32, 32), overlap=(0.25, 0.25), window_function=(:kaiser, 5.0)
 results = run_piv(img1, img2, [stage1, stage2, stage3])
 ```
 
+### Performance Timing
+
+Hammerhead.jl automatically instruments all PIV operations with detailed timing data:
+
+```julia
+# Run PIV analysis (timing is automatic)
+result = run_piv(img1, img2, window_size=(64, 64))
+
+# Access timing information
+using TimerOutputs  # Need to import for print_timer
+timer = get_timer(result)
+print_timer(timer)  # Prints detailed timing breakdown
+
+# For multi-stage analysis, timing is in the first result
+results = run_piv(img1, img2, stages)
+timer = get_timer(results[1])
+```
+
+Timing data includes hierarchical breakdown of:
+- FFT operations (forward, inverse, setup)
+- Cross-correlation computation  
+- Peak analysis and subpixel refinement
+- Window processing and padding
+- Grid generation and result assembly
+
 ## Core Data Structures
 
 ### PIVVector

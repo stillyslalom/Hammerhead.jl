@@ -7,6 +7,7 @@ using StructArrays
 using Interpolations
 using ImageIO
 using DSP
+using TimerOutputs
 
 # Data structures
 export PIVVector, PIVResult, PIVStage, PIVStages
@@ -19,6 +20,9 @@ export find_secondary_peak, find_secondary_peak_robust, find_local_maxima
 
 # Utilities
 export subpixel_gauss3
+
+# Timing
+export get_timer
 
 # Define a Correlator type to encapsulate correlation methods and options
 abstract type Correlator end
@@ -105,6 +109,17 @@ function PIVResult(piv_vectors::AbstractArray{PIVVector})
     metadata = Dict{String, Any}()
     auxiliary = Dict{String, Any}()
     PIVResult(vectors, metadata, auxiliary)
+end
+
+"""
+    get_timer(result::PIVResult) -> TimerOutput
+
+Get the timer data from a PIV result for analysis or integration with other timing systems.
+Returns a new TimerOutput if no timing data is available.
+"""
+function get_timer(result::PIVResult)
+    timer_data = get(result.metadata, "timer", nothing)
+    return timer_data !== nothing ? timer_data : TimerOutput()
 end
 
 # Window function types for type-stable dispatch (internal)
@@ -478,22 +493,48 @@ end
     find_secondary_peak(correlation_magnitudes, primary_location, primary_value) -> secondary_value
 
 Find the secondary peak in correlation plane, excluding region around primary peak.
-Uses exclusion radius approach for speed.
+Uses super-fast approach: find global maximum, then exclude if it's near primary.
 """
 function find_secondary_peak(corr_mag::AbstractMatrix, primary_loc::CartesianIndex, primary_val::Real)
-    # Exclude circular region around primary peak (radius = 3 pixels)
-    exclusion_radius = 3
-    secondary_val = zero(eltype(corr_mag))
+    # Strategy: Find global max first, check if it's far enough from primary
+    # This is O(n) instead of O(n) with exclusion checks
     
-    for idx in CartesianIndices(corr_mag)
-        # Skip if within exclusion radius of primary peak
-        dx = idx.I[1] - primary_loc.I[1]
-        dy = idx.I[2] - primary_loc.I[2]
-        if sqrt(dx^2 + dy^2) <= exclusion_radius
+    exclusion_radius = 3
+    rows, cols = size(corr_mag)
+    pi, pj = primary_loc.I
+    
+    # Find global maximum and its location
+    max_val = zero(eltype(corr_mag))
+    max_loc = CartesianIndex(1, 1)
+    
+    for i in 1:rows, j in 1:cols
+        val = corr_mag[i, j]
+        if val > max_val
+            max_val = val
+            max_loc = CartesianIndex(i, j)
+        end
+    end
+    
+    # Check if global max is far enough from primary
+    mi, mj = max_loc.I
+    if abs(mi - pi) > exclusion_radius || abs(mj - pj) > exclusion_radius
+        return max_val
+    end
+    
+    # If global max is too close to primary, find next best outside exclusion zone
+    secondary_val = zero(eltype(corr_mag))
+    min_i = max(1, pi - exclusion_radius)
+    max_i = min(rows, pi + exclusion_radius) 
+    min_j = max(1, pj - exclusion_radius)
+    max_j = min(cols, pj + exclusion_radius)
+    
+    for i in 1:rows, j in 1:cols
+        # Skip exclusion rectangle
+        if min_i <= i <= max_i && min_j <= j <= max_j
             continue
         end
         
-        val = corr_mag[idx]
+        val = corr_mag[i, j]
         if val > secondary_val
             secondary_val = val
         end
@@ -634,20 +675,37 @@ function calculate_correlation_moment(corr_mag::AbstractMatrix, peak_loc::Cartes
     return total_weight > 0 ? moment_sum / total_weight : NaN
 end
 
+# Backward compatibility method for correlate! without timer
 function correlate!(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray)
-    c.C1 .= subimgA
-    c.C2 .= subimgB
-    # Perform inplace FFT on both sub-images using pre-computed plan `fp`
-    mul!(c.C1, c.fp, c.C1)
-    mul!(c.C2, c.fp, c.C2)
+    # Create a temporary timer for non-timed calls
+    temp_timer = TimerOutput()
+    return correlate!(c, subimgA, subimgB, temp_timer)
+end
 
-    # Compute the cross-correlation matrix (conj(FFT(A)) * FFT(B))
-    for i in eachindex(c.C1)
-        c.C1[i] = conj(c.C1[i]) * c.C2[i]
+function correlate!(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray, timer::TimerOutput)
+    @timeit timer "FFT Setup" begin
+        c.C1 .= subimgA
+        c.C2 .= subimgB
     end
-    # Inverse FFT and shift zero-lag to center
-    ldiv!(c.C1, c.ip, c.C1)
-    fftshift!(c.C2, c.C1)
+    
+    @timeit timer "Forward FFT" begin
+        # Perform inplace FFT on both sub-images using pre-computed plan `fp`
+        mul!(c.C1, c.fp, c.C1)
+        mul!(c.C2, c.fp, c.C2)
+    end
+
+    @timeit timer "Cross-correlation" begin
+        # Compute the cross-correlation matrix (conj(FFT(A)) * FFT(B))
+        for i in eachindex(c.C1)
+            c.C1[i] = conj(c.C1[i]) * c.C2[i]
+        end
+    end
+    
+    @timeit timer "Inverse FFT" begin
+        # Inverse FFT and shift zero-lag to center
+        ldiv!(c.C1, c.ip, c.C1)
+        fftshift!(c.C2, c.C1)
+    end
 
     # Return view to correlation plane (c.C2) - no allocation!
     return c.C2
@@ -733,49 +791,71 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2};
                  correlator=CrossCorrelator, window_size::Tuple{Int,Int}=(64,64),
                  overlap::Tuple{Float64,Float64}=(0.5,0.5), kwargs...)
     
-    # Input validation
-    if size(img1) != size(img2)
-        throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
+    # Create local timer for this PIV run
+    timer = TimerOutput()
+    
+    @timeit timer "Single-Stage PIV" begin
+        # Input validation
+        if size(img1) != size(img2)
+            throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
+        end
+        
+        # Create default single-stage configuration
+        stage = PIVStage(window_size, overlap=overlap)
+        
+        # Perform single-stage PIV analysis
+        result = run_piv_stage(img1, img2, stage, correlator, timer)
+        
+        # Store timer in result metadata
+        result.metadata["timer"] = timer
+        
+        return result
     end
-    
-    # Create default single-stage configuration
-    stage = PIVStage(window_size, overlap=overlap)
-    
-    # Perform single-stage PIV analysis
-    return run_piv_stage(img1, img2, stage, correlator)
 end
 
 # Multi-stage version
 function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
                  stages::Vector{<:PIVStage}; correlator=CrossCorrelator, kwargs...)
     
-    # Input validation
-    if size(img1) != size(img2)
-        throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
-    end
+    # Create local timer for this PIV run
+    timer = TimerOutput()
     
-    if isempty(stages)
-        throw(ArgumentError("At least one PIV stage must be provided"))
-    end
-    
-    # Perform multi-stage PIV analysis
-    results = PIVResult[]
-    
-    for (i, stage) in enumerate(stages)
-        # For now, just perform independent analysis at each stage
-        # TODO: Add initial guess propagation from previous stage
-        result = run_piv_stage(img1, img2, stage, correlator)
+    @timeit timer "Multi-Stage PIV" begin
+        # Input validation
+        if size(img1) != size(img2)
+            throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
+        end
         
-        # Add stage information to metadata
-        result.metadata["stage"] = i
-        result.metadata["total_stages"] = length(stages)
-        result.metadata["window_size"] = stage.window_size
-        result.metadata["overlap"] = stage.overlap
+        if isempty(stages)
+            throw(ArgumentError("At least one PIV stage must be provided"))
+        end
         
-        push!(results, result)
+        # Perform multi-stage PIV analysis
+        results = PIVResult[]
+        
+        for (i, stage) in enumerate(stages)
+            @timeit timer "Stage $i" begin
+                # For now, just perform independent analysis at each stage
+                # TODO: Add initial guess propagation from previous stage
+                result = run_piv_stage(img1, img2, stage, correlator, timer)
+                
+                # Add stage information to metadata
+                result.metadata["stage"] = i
+                result.metadata["total_stages"] = length(stages)
+                result.metadata["window_size"] = stage.window_size
+                result.metadata["overlap"] = stage.overlap
+                
+                push!(results, result)
+            end
+        end
+        
+        # Store timer in the first result's metadata for overall timing
+        if !isempty(results)
+            results[1].metadata["timer"] = timer
+        end
+        
+        return results
     end
-    
-    return results
 end
 
 """
@@ -877,26 +957,27 @@ Perform PIV analysis for a single stage with given configuration.
 Quality metrics and subpixel refinement are handled at this level for modularity.
 """
 function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                       stage::PIVStage, correlator_type)
+                       stage::PIVStage, correlator_type, timer::TimerOutput)
     
-    # Generate interrogation window grid
-    grid_x, grid_y = generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
-    n_windows = length(grid_x)
+    @timeit timer "PIV Stage" begin
+        # Generate interrogation window grid
+        grid_x, grid_y = @timeit timer "Grid Generation" generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
+        n_windows = length(grid_x)
+        
+        # Initialize correlator
+        correlator = @timeit timer "Correlator Setup" correlator_type(stage.window_size)
     
-    # Initialize correlator
-    correlator = correlator_type(stage.window_size)
-    
-    # Initialize result arrays
-    positions_x = Float64[]
-    positions_y = Float64[]
-    displacements_u = Float64[]
-    displacements_v = Float64[]
-    status_flags = Symbol[]
-    peak_ratios = Float64[]
-    correlation_moments = Float64[]
-    
-    # Process each interrogation window
-    for i in 1:n_windows
+        # Initialize result arrays
+        positions_x = Float64[]
+        positions_y = Float64[]
+        displacements_u = Float64[]
+        displacements_v = Float64[]
+        status_flags = Symbol[]
+        peak_ratios = Float64[]
+        correlation_moments = Float64[]
+        
+        # Process each interrogation window
+        @timeit timer "Window Processing" for i in 1:n_windows
         # Extract window position
         window_x = grid_x[i]
         window_y = grid_y[i]
@@ -919,14 +1000,14 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
             end
             
             # Apply windowing function to reduce spectral leakage
-            windowed_subimg1 = apply_window_function(subimg1, stage.window_function)
-            windowed_subimg2 = apply_window_function(subimg2, stage.window_function)
+            windowed_subimg1 = @timeit timer "Windowing" apply_window_function(subimg1, stage.window_function)
+            windowed_subimg2 = @timeit timer "Windowing" apply_window_function(subimg2, stage.window_function)
             
             # Perform correlation to get correlation plane
-            correlation_plane = correlate!(correlator, windowed_subimg1, windowed_subimg2)
+            correlation_plane = @timeit timer "Correlation" correlate!(correlator, windowed_subimg1, windowed_subimg2, timer)
             
             # Analyze correlation plane for displacement and quality metrics
-            disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
+            disp_u, disp_v, peak_ratio, corr_moment = @timeit timer "Peak Analysis" analyze_correlation_plane(correlation_plane)
             
             # Store results
             push!(positions_x, window_x)
@@ -947,22 +1028,30 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
             push!(peak_ratios, NaN)
             push!(correlation_moments, NaN)
         end
-    end
-    
-    # Create PIVVector array
-    piv_vectors = [PIVVector(positions_x[i], positions_y[i], displacements_u[i], displacements_v[i],
-                            status_flags[i], peak_ratios[i], correlation_moments[i]) 
-                   for i in 1:n_windows]
-    
-    # Create result with metadata
-    result = PIVResult(piv_vectors)
-    result.metadata["image_size"] = size(img1)
-    result.metadata["window_size"] = stage.window_size
-    result.metadata["overlap"] = stage.overlap
-    result.metadata["n_windows"] = n_windows
-    result.metadata["processing_time"] = time()  # TODO: Measure actual processing time
-    
-    return result
+        end
+        
+        # Create PIVVector array
+        piv_vectors = @timeit timer "Result Assembly" [PIVVector(positions_x[i], positions_y[i], displacements_u[i], displacements_v[i],
+                                status_flags[i], peak_ratios[i], correlation_moments[i]) 
+                       for i in 1:n_windows]
+        
+        # Create result with metadata
+        result = PIVResult(piv_vectors)
+        result.metadata["image_size"] = size(img1)
+        result.metadata["window_size"] = stage.window_size
+        result.metadata["overlap"] = stage.overlap
+        result.metadata["n_windows"] = n_windows
+        
+        return result
+    end  # @timeit timer "PIV Stage"
+end
+
+# Backward compatibility method for run_piv_stage without timer
+function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
+                       stage::PIVStage, correlator_type)
+    # Create a temporary timer for non-timed calls
+    temp_timer = TimerOutput()
+    return run_piv_stage(img1, img2, stage, correlator_type, temp_timer)
 end
 
 """

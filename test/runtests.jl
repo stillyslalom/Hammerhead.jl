@@ -492,7 +492,7 @@ end
             correlation_plane_f32 = correlate!(correlator, img1_f32, img2_f32)
             disp_u_f32, disp_v_f32, peak_ratio_f32, corr_moment_f32 = analyze_correlation_plane(correlation_plane_f32)
             @test abs(disp_u_f32) ≈ 2.0 atol=1e-5  # Should detect the shift
-            @test abs(disp_v_f32) ≈ 1.0 atol=1e-10
+            @test abs(disp_v_f32) ≈ 1.0 atol=1e-5   # Float32 precision limit
             
             # Test with Float64 images
             img1_f64 = rand(Float64, image_size...)
