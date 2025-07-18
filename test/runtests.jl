@@ -154,8 +154,8 @@ end
             refined_noisy = subpixel_gauss3(corr_noisy, (8, 8))
             @test isfinite(refined_noisy[1])
             @test isfinite(refined_noisy[2])
-            @test refined_noisy[1] ≈ 8.0 atol=0.5  # Allow for noise effects
-            @test refined_noisy[2] ≈ 8.0 atol=0.5
+            @test refined_noisy[1] ≈ 8.0 atol=0.045  # Allow for noise effects
+            @test refined_noisy[2] ≈ 8.0 atol=0.045
         end # subpixel_gauss3 Numerical Stability
     end # Subpixel Refinement
 
@@ -405,8 +405,8 @@ end
             
             correlation_plane_f32 = correlate!(correlator, img1_f32, img2_f32)
             disp_u_f32, disp_v_f32, peak_ratio_f32, corr_moment_f32 = analyze_correlation_plane(correlation_plane_f32)
-            @test abs(disp_u_f32) ≈ 2.0 atol=0.3  # Should detect the shift
-            @test abs(disp_v_f32) ≈ 1.0 atol=0.3
+            @test abs(disp_u_f32) ≈ 2.0 atol=1e-5  # Should detect the shift
+            @test abs(disp_v_f32) ≈ 1.0 atol=1e-10
             
             # Test with Float64 images
             img1_f64 = rand(Float64, image_size...)
@@ -414,8 +414,8 @@ end
             
             correlation_plane_f64 = correlate!(correlator, img1_f64, img2_f64)
             disp_u_f64, disp_v_f64, peak_ratio_f64, corr_moment_f64 = analyze_correlation_plane(correlation_plane_f64)
-            @test abs(disp_u_f64) ≈ 1.0 atol=0.3
-            @test abs(disp_v_f64) ≈ 3.0 atol=0.3
+            @test abs(disp_u_f64) ≈ 1.0 atol=1e-10
+            @test abs(disp_v_f64) ≈ 3.0 atol=1e-10
         end # CrossCorrelator with Different Image Types
         
         @testset "CrossCorrelator Memory Reuse" begin
@@ -549,21 +549,21 @@ end
             @test length(hann_window) == 8
             @test hann_window[1] ≈ 0.0 atol=1e-10  # Should start at 0
             @test hann_window[end] ≈ 0.0 atol=1e-10  # Should end at 0
-            @test maximum(hann_window) ≈ 0.95 atol=0.05  # Peak value for 8-point Hanning
+            @test maximum(hann_window) ≈ 0.95 atol=0.001  # Peak value for 8-point Hanning
             
             # Test Hamming window properties
             hamm_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.hamming), 8)
             @test length(hamm_window) == 8
-            @test hamm_window[1] ≈ 0.08 atol=1e-2  # Hamming doesn't go to zero
-            @test hamm_window[end] ≈ 0.08 atol=1e-2
-            @test maximum(hamm_window) ≈ 0.98 atol=0.05  # Peak value for 8-point Hamming
+            @test hamm_window[1] ≈ 0.08 atol=1e-15  # Hamming doesn't go to zero
+            @test hamm_window[end] ≈ 0.08 atol=1e-15
+            @test maximum(hamm_window) ≈ 0.98 atol=0.03  # Peak value for 8-point Hamming
             
             # Test Blackman window properties
             blackman_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.blackman), 8)
             @test length(blackman_window) == 8
             @test blackman_window[1] ≈ 0.0 atol=1e-10  # Should start near 0
             @test blackman_window[end] ≈ 0.0 atol=1e-10  # Should end near 0
-            @test maximum(blackman_window) ≈ 0.92 atol=0.05  # Peak value for 8-point Blackman
+            @test maximum(blackman_window) ≈ 0.92 atol=0.001  # Peak value for 8-point Blackman
             
             # Test additional DSP.jl window functions
             bartlett_window = Hammerhead.generate_window_1d(Hammerhead.SimpleWindow(DSP.bartlett), 8)
@@ -610,7 +610,7 @@ end
             @test size(windowed_hann) == size(test_img)
             @test windowed_hann[1, 1] ≈ 0.0 atol=1e-10  # Corners should be near zero
             @test windowed_hann[end, end] ≈ 0.0 atol=1e-10
-            @test windowed_hann[4, 4] ≈ 0.903 atol=1e-2  # Center value for 8x8 Hanning
+            @test windowed_hann[4, 4] ≈ 0.903 atol=0.001  # Center value for 8x8 Hanning
             
             # Test Hamming windowing
             windowed_hamm = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.hamming))
@@ -618,14 +618,14 @@ end
             # Hamming doesn't go to zero at edges
             @test windowed_hamm[1, 1] > 0.0
             @test windowed_hamm[end, end] > 0.0
-            @test windowed_hamm[4, 4] ≈ 0.91 atol=1e-2  # Center value for 8x8 Hamming
+            @test windowed_hamm[4, 4] ≈ 0.91 atol=0.002  # Center value for 8x8 Hamming
             
             # Test Blackman windowing
             windowed_blackman = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.blackman))
             @test size(windowed_blackman) == size(test_img)
             @test windowed_blackman[1, 1] ≈ 0.0 atol=1e-10
             @test windowed_blackman[end, end] ≈ 0.0 atol=1e-10
-            @test windowed_blackman[4, 4] ≈ 0.85 atol=1e-2  # Center value for 8x8 Blackman
+            @test windowed_blackman[4, 4] ≈ 0.85 atol=0.004  # Center value for 8x8 Blackman
             
             # Test energy conservation property (windowed energy should be less than original)
             original_energy = sum(test_img.^2)
