@@ -7,6 +7,36 @@ using StructArrays
 using DSP
 using Distributions
 
+# Test utilities for deterministic reproducibility
+"""
+    @withseed seed expr
+
+Execute `expr` with the Random.GLOBAL_RNG temporarily seeded with `seed`.
+Restores the previous RNG state after execution, preventing global state leakage.
+
+# Example
+```julia
+@withseed 1234 begin
+    x = rand()  # Always gives same value
+    # ... test code ...
+end
+```
+"""
+macro withseed(seed, expr)
+    quote
+        local old_state = copy(Random.GLOBAL_RNG)
+        Random.seed!($(esc(seed)))
+        try
+            $(esc(expr))
+        finally
+            copy!(Random.GLOBAL_RNG, old_state)
+        end
+    end
+end
+
+# Check if performance tests should run (can be disabled in CI for speed)
+const RUN_PERFORMANCE_TESTS = get(ENV, "HAMMERHEAD_RUN_PERF_TESTS", "true") == "true"
+
 function generate_gaussian_particle!(array::AbstractArray, centroid::Tuple{Float64, Float64}, diameter::Float64)
     sigma = diameter / 2.0  # Approximation: diameter covers ~1 standard deviation
     for i in axes(array, 1), j in axes(array, 2)
@@ -197,8 +227,9 @@ end
 @testset "Hammerhead.jl" begin
     @testset "Synthetic Data Generation" begin
         @testset "Gaussian Particle Generation" begin
-            # Test basic functionality
-            img = zeros(64, 64)
+            @withseed 1001 begin
+                # Test basic functionality
+                img = zeros(64, 64)
             centroid = (32.0, 32.0)
             diameter = 4.0
             
@@ -226,6 +257,7 @@ end
             generate_gaussian_particle!(img4, (40.0, 40.0), 3.0)
             @test img4[20, 20] ≈ val1  # First particle unchanged
             @test img4[40, 40] > 0     # Second particle added
+            end # @withseed
         end # Gaussian Particle Generation
         
         @testset "Realistic Particle Field Generation" begin
@@ -1694,33 +1726,44 @@ end
     end # Correlation Algorithm Tests
 
     @testset "Performance Tests" begin
-        @testset "CrossCorrelator Performance" begin
-            # Test performance with larger images
-            image_size = (128, 128)  # Reasonable size for CI
-            correlator = CrossCorrelator(image_size)
-            
-            img1 = rand(Float32, image_size...)
-            img2 = rand(Float32, image_size...)
-            
-            # Measure time for correlation
-            elapsed = @elapsed begin
-                for i in 1:5
+        if RUN_PERFORMANCE_TESTS
+            @testset "CrossCorrelator Performance" begin
+                @withseed 4321 begin
+                    # Test performance with larger images
+                    image_size = (128, 128)  # Reasonable size for CI
+                    correlator = CrossCorrelator(image_size)
+                    
+                    img1 = rand(Float32, image_size...)
+                    img2 = rand(Float32, image_size...)
+                    
+                    # Warm-up runs to ensure compilation and caching
+                    for _ in 1:3
+                        correlate!(correlator, img1, img2)
+                    end
+                    
+                    # Measure time for correlation (after warm-up)
+                    elapsed = @elapsed begin
+                        for i in 1:5
+                            correlate!(correlator, img1, img2)
+                        end
+                    end
+                    
+                    # Test memory allocation efficiency
+                    # Additional warm-up for allocation measurement
                     correlate!(correlator, img1, img2)
+                    
+                    # Measure allocations on subsequent run
+                    allocs = @allocated correlate!(correlator, img1, img2)
+                    
+                    # Performance targets based on measured values:
+                    # Measured: elapsed ≈ 0.0008s for 5 runs, allocs ≈ 2048 bytes
+                    @test elapsed < 0.01   # 5 runs should complete in <10ms (10x safety margin)
+                    @test allocs < 5000    # Should have minimal allocations (<5KB)
                 end
-            end
-            
-            # Should be reasonably fast
-            @test elapsed < 2.0
-            
-            # Test memory allocation efficiency
-            # First run to compile
-            correlate!(correlator, img1, img2)
-            
-            # Measure allocations on subsequent run
-            allocs = @allocated correlate!(correlator, img1, img2)
-            # Should have minimal allocations (no copy, just returns view to correlation plane)
-            @test allocs < 5000  # bytes - back to original threshold since no copy
-        end # CrossCorrelator Performance
+            end # CrossCorrelator Performance
+        else
+            @test_skip "Performance tests disabled (set HAMMERHEAD_RUN_PERF_TESTS=true to enable)"
+        end
     end # Performance Tests
 
     @testset "Window Padding Tests" begin
