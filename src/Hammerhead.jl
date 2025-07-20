@@ -725,7 +725,8 @@ This allows the same analysis to be applied to results from different correlatio
 """
 function analyze_correlation_plane(correlation_plane::AbstractMatrix)
     # Find the peak in the correlation result
-    peakloc = CartesianIndex(0, 0)
+    center = size(correlation_plane) .÷ 2 .+ 1
+    peakloc = CartesianIndex(center...)  # Initialize to center instead of (0,0)
     maxval = zero(real(eltype(correlation_plane)))
     for i in CartesianIndices(correlation_plane)
         absval = abs(correlation_plane[i])
@@ -735,11 +736,17 @@ function analyze_correlation_plane(correlation_plane::AbstractMatrix)
         end
     end
 
+    # Handle degenerate case where maxval is still zero
+    if maxval == 0
+        # Return NaN displacement for all-zero correlation plane
+        nan_val = real(eltype(correlation_plane))(NaN)
+        return (nan_val, nan_val, nan_val, nan_val)
+    end
+
     # Calculate quality metrics
     peak_ratio, correlation_moment = calculate_quality_metrics(correlation_plane, peakloc, maxval)
 
     # Perform subpixel refinement and compute displacement relative to center
-    center = size(correlation_plane) .÷ 2 .+ 1
     refined_peakloc = subpixel_gauss3(correlation_plane, peakloc.I)
     disp = center .- refined_peakloc
 
