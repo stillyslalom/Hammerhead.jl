@@ -2439,6 +2439,34 @@ end
             end
         end
         
+        @testset "Gray{T} Image Type Support" begin
+            @withseed 2006 begin
+                using ImageCore  # Provides Gray{T} and fixed-point types
+                image_size = (32, 32)
+                
+                # Test various Gray{T} types common in scientific imaging
+                gray_types = [Gray{N0f8}, Gray{N4f12}, Gray{N0f16}]
+                type_names = ["N0f8 (8-bit)", "N4f12 (12-bit)", "N0f16 (16-bit)"]
+                
+                for (GrayType, type_name) in zip(gray_types, type_names)
+                    @testset "Gray{$type_name}" begin
+                        img1_gray = rand(GrayType, image_size...)
+                        img2_gray = rand(GrayType, image_size...)
+                        
+                        correlator = CrossCorrelator(image_size)
+                        corr = correlate!(correlator, img1_gray, img2_gray)
+                        
+                        @test eltype(corr) <: Complex
+                        @test size(corr) == image_size
+                        
+                        du, dv, pr, cm = analyze_correlation_plane(corr)
+                        @test isfinite(du) && isfinite(dv)
+                        @test isfinite(pr) && isfinite(cm)
+                    end
+                end
+            end
+        end
+        
         @testset "Border and Padding Validation" begin
             @withseed 2004 begin
                 # Test PIV processing with particles near image boundaries
