@@ -6,8 +6,10 @@ using ImageFiltering
 using StructArrays
 using Interpolations
 using ImageIO
+using ImageCore: Gray
 using DSP
 using TimerOutputs
+using GLMakie
 
 # Data structures
 export PIVVector, PIVResult, PIVStage, PIVStages
@@ -29,6 +31,9 @@ export subpixel_gauss3
 
 # Timing
 export get_timer
+
+# Visualization (optional, requires GLMakie)
+export plot_piv_results
 
 # Define a Correlator type to encapsulate correlation methods and options
 abstract type Correlator end
@@ -89,6 +94,12 @@ struct PIVResult
     vectors::StructArray{PIVVector}
     metadata::Dict{String, Any}
     auxiliary::Dict{String, Any}
+end
+
+function Base.show(io::IO, r::PIVResult)
+    frac_good = sum(r.vectors.status .== :good) / length(r.vectors)
+    print(io, "PIVResult with $(length(r.vectors)) vectors (",
+          "$(round(frac_good * 100, digits=1))% good)")
 end
 
 # Property forwarding: pivdata.x → pivdata.vectors.x
@@ -192,6 +203,20 @@ function window_function_type(spec::Tuple{Symbol, Vararg{Real}})
 end
 
 """
+    build_window(size, window_function) -> window
+
+Build a 2D window function for the given size using the specified window function type.
+"""
+function build_window(dims, window_function::WindowFunction)
+    rows, cols = dims
+    
+    # Generate separable window using DSP.jl
+    window_1d_row = generate_window_1d(window_function, rows)
+    window_1d_col = generate_window_1d(window_function, cols)
+    return [window_1d_row[i] * window_1d_col[j] for i in 1:rows, j in 1:cols]
+end
+
+"""
     apply_window_function(subimage, window_function) -> windowed_subimage
 
 Apply windowing function to subimage to reduce spectral leakage in correlation analysis.
@@ -211,6 +236,25 @@ function apply_window_function(subimg::AbstractArray{T,2}, window_function::Wind
     end
     
     return windowed
+end
+
+"""
+    apply_window!(subimage, window) -> windowed_subimage
+
+Apply windowing array to subimage to reduce spectral leakage in correlation analysis.
+"""
+function apply_window!(subimg::AbstractArray{T,2}, window::AbstractArray{T}) where T
+    rows, cols = size(subimg)
+    if size(window) != (rows, cols)
+        throw(ArgumentError("Window size $(size(window)) does not match subimage size $(rows), $(cols)"))
+    end
+    
+    # Element-wise multiplication
+    for i in 1:rows, j in 1:cols
+        subimg[i, j] *= window[i, j]
+    end
+    
+    return subimg
 end
 
 """
@@ -243,6 +287,12 @@ function interpolation_method_type(s::Symbol)
         throw(ArgumentError("Unknown interpolation method: $s. Supported: :nearest, :bilinear, :bicubic, :spline, :lanczos"))
     end
 end
+
+# struct PIVStageCache{T, C} where {C <: Correlator}
+#     window::AbstractArray{T,2}  # Window function applied to subimage
+#     correlator::C
+#     v::Vector{PIVVector}  # Vector field for this stage
+# end
 
 """
     PIVStage{W<:WindowFunction, I<:InterpolationMethod}
@@ -681,17 +731,11 @@ function calculate_correlation_moment(corr_mag::AbstractMatrix, peak_loc::Cartes
     return total_weight > 0 ? moment_sum / total_weight : NaN
 end
 
-# Backward compatibility method for correlate! without timer
-function correlate!(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray)
-    # Create a temporary timer for non-timed calls
-    temp_timer = TimerOutput()
-    return correlate!(c, subimgA, subimgB, temp_timer)
-end
-
-function correlate!(c::CrossCorrelator, subimgA::AbstractArray, subimgB::AbstractArray, timer::TimerOutput)
+function correlate!(c::CrossCorrelator{T}, subimgA::AbstractArray, subimgB::AbstractArray, 
+        timer = TimerOutput()) where {T}
     @timeit timer "FFT Setup" begin
-        c.C1 .= subimgA
-        c.C2 .= subimgB
+        c.C1 .= T.(subimgA)
+        c.C2 .= T.(subimgB)
     end
     
     @timeit timer "Forward FFT" begin
@@ -800,40 +844,37 @@ Perform PIV analysis on image pair with single-stage or multi-stage processing.
 - `PIVResult` for single-stage processing
 - `Vector{PIVResult}` for multi-stage processing
 """
-function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}; 
+function run_piv(img1::Matrix{T}, img2::Matrix{T}; 
                  correlator=CrossCorrelator, window_size::Tuple{Int,Int}=(64,64),
-                 overlap::Tuple{Float64,Float64}=(0.5,0.5), kwargs...)
+                 overlap::Tuple{Float64,Float64}=(0.5,0.5), kwargs...)  where {T <: Union{Real, Gray}}
     
-    # Create local timer for this PIV run
-    timer = TimerOutput()
-    
-    @timeit timer "Single-Stage PIV" begin
-        # Input validation
-        if size(img1) != size(img2)
-            throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
-        end
-        
-        # Create default single-stage configuration
-        stage = PIVStage(window_size, overlap=overlap)
-        
-        # Perform single-stage PIV analysis
-        result = run_piv_stage(img1, img2, stage, correlator, timer)
-        
-        # Store timer in result metadata
-        result.metadata["timer"] = timer
-        
-        return result
-    end
+    result = run_piv(img1, img2, [PIVStage(window_size, overlap=overlap, kwargs...)];
+             correlator=correlator)
+
+    return only(result)
 end
 
 # Multi-stage version
-function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                 stages::Vector{<:PIVStage}; correlator=CrossCorrelator, kwargs...)
+function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVStage};
+                 correlator=CrossCorrelator, kwargs...) where {T <: Union{Real, Gray}}
     
     # Create local timer for this PIV run
     timer = TimerOutput()
+
+    # Helper function to promote images to Float32 (default) or Float64 if image type is Gray{Float64} or similar
+    function promote_image_type(img::AbstractArray{T,2}) where T
+        if T <: Gray{Float64}
+            return Float64.(img)  # Promote to Float64
+        else
+            return Float32.(img)  # Default to Float32 for other types
+        end
+    end
+
+    # Promote images to Float32 or Float64 as needed
+    img1 = promote_image_type(img1_raw)
+    img2 = promote_image_type(img2_raw)
     
-    @timeit timer "Multi-Stage PIV" begin
+    @timeit timer "PIV processing" begin
         # Input validation
         if size(img1) != size(img2)
             throw(ArgumentError("Image sizes must match: $(size(img1)) vs $(size(img2))"))
@@ -850,7 +891,11 @@ function run_piv(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2},
             @timeit timer "Stage $i" begin
                 # For now, just perform independent analysis at each stage
                 # TODO: Add initial guess propagation from previous stage
-                result = run_piv_stage(img1, img2, stage, correlator, timer)
+
+                # Concretize correlator
+                correlator_C = correlator(stage.window_size)
+
+                result = run_piv_stage(img1, img2, stage, correlator_C, timer)
                 
                 # Add stage information to metadata
                 result.metadata["stage"] = i
@@ -970,16 +1015,13 @@ Perform PIV analysis for a single stage with given configuration.
 Quality metrics and subpixel refinement are handled at this level for modularity.
 """
 function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                       stage::PIVStage, correlator_type, timer::TimerOutput)
+                       stage::PIVStage, correlator::Correlator, timer = TimerOutput())
     
     @timeit timer "PIV Stage" begin
         # Generate interrogation window grid
         grid_x, grid_y = @timeit timer "Grid Generation" generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
         n_windows = length(grid_x)
-        
-        # Initialize correlator
-        correlator = @timeit timer "Correlator Setup" correlator_type(stage.window_size)
-    
+
         # Initialize result arrays
         positions_x = Float64[]
         positions_y = Float64[]
@@ -991,56 +1033,56 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
         
         # Process each interrogation window
         @timeit timer "Window Processing" for i in 1:n_windows
-        # Extract window position
-        window_x = grid_x[i]
-        window_y = grid_y[i]
-        
-        # Calculate window bounds with boundary checking
-        x_start = max(1, round(Int, window_x - stage.window_size[1]//2))
-        x_end = min(size(img1, 1), x_start + stage.window_size[1] - 1)
-        y_start = max(1, round(Int, window_y - stage.window_size[2]//2))
-        y_end = min(size(img1, 2), y_start + stage.window_size[2] - 1)
-        
-        # Extract subimages
-        try
-            subimg1 = img1[x_start:x_end, y_start:y_end]
-            subimg2 = img2[x_start:x_end, y_start:y_end]
+            # Extract window position
+            window_x = grid_x[i]
+            window_y = grid_y[i]
             
-            # Pad if necessary to match correlator size
-            if size(subimg1) != stage.window_size
-                subimg1 = pad_to_size(subimg1, stage.window_size)
-                subimg2 = pad_to_size(subimg2, stage.window_size)
+            # Calculate window bounds with boundary checking
+            x_start = max(1, round(Int, window_x - stage.window_size[1]//2))
+            x_end = min(size(img1, 1), x_start + stage.window_size[1] - 1)
+            y_start = max(1, round(Int, window_y - stage.window_size[2]//2))
+            y_end = min(size(img1, 2), y_start + stage.window_size[2] - 1)
+            
+            # Extract subimages
+            try
+                subimg1 = img1[x_start:x_end, y_start:y_end]
+                subimg2 = img2[x_start:x_end, y_start:y_end]
+                
+                # Pad if necessary to match correlator size
+                if size(subimg1) != stage.window_size
+                    subimg1 = pad_to_size(subimg1, stage.window_size)
+                    subimg2 = pad_to_size(subimg2, stage.window_size)
+                end
+                
+                # Apply windowing function to reduce spectral leakage
+                windowed_subimg1 = @timeit timer "Windowing" apply_window_function(subimg1, stage.window_function)
+                windowed_subimg2 = @timeit timer "Windowing" apply_window_function(subimg2, stage.window_function)
+                
+                # Perform correlation to get correlation plane
+                correlation_plane = @timeit timer "Correlation" correlate!(correlator, windowed_subimg1, windowed_subimg2, timer)
+                
+                # Analyze correlation plane for displacement and quality metrics
+                disp_u, disp_v, peak_ratio, corr_moment = @timeit timer "Peak Analysis" analyze_correlation_plane(correlation_plane)
+                
+                # Store results
+                push!(positions_x, window_x)
+                push!(positions_y, window_y)
+                push!(displacements_u, disp_u)
+                push!(displacements_v, disp_v)
+                push!(status_flags, :good)
+                push!(peak_ratios, peak_ratio)
+                push!(correlation_moments, corr_moment)
+                
+            catch e
+                # Handle correlation failures gracefully
+                push!(positions_x, window_x)
+                push!(positions_y, window_y)
+                push!(displacements_u, NaN)
+                push!(displacements_v, NaN)
+                push!(status_flags, :bad)
+                push!(peak_ratios, NaN)
+                push!(correlation_moments, NaN)
             end
-            
-            # Apply windowing function to reduce spectral leakage
-            windowed_subimg1 = @timeit timer "Windowing" apply_window_function(subimg1, stage.window_function)
-            windowed_subimg2 = @timeit timer "Windowing" apply_window_function(subimg2, stage.window_function)
-            
-            # Perform correlation to get correlation plane
-            correlation_plane = @timeit timer "Correlation" correlate!(correlator, windowed_subimg1, windowed_subimg2, timer)
-            
-            # Analyze correlation plane for displacement and quality metrics
-            disp_u, disp_v, peak_ratio, corr_moment = @timeit timer "Peak Analysis" analyze_correlation_plane(correlation_plane)
-            
-            # Store results
-            push!(positions_x, window_x)
-            push!(positions_y, window_y)
-            push!(displacements_u, disp_u)
-            push!(displacements_v, disp_v)
-            push!(status_flags, :good)
-            push!(peak_ratios, peak_ratio)
-            push!(correlation_moments, corr_moment)
-            
-        catch e
-            # Handle correlation failures gracefully
-            push!(positions_x, window_x)
-            push!(positions_y, window_y)
-            push!(displacements_u, NaN)
-            push!(displacements_v, NaN)
-            push!(status_flags, :bad)
-            push!(peak_ratios, NaN)
-            push!(correlation_moments, NaN)
-        end
         end
         
         # Create PIVVector array
@@ -1057,14 +1099,6 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
         
         return result
     end  # @timeit timer "PIV Stage"
-end
-
-# Backward compatibility method for run_piv_stage without timer
-function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                       stage::PIVStage, correlator_type)
-    # Create a temporary timer for non-timed calls
-    temp_timer = TimerOutput()
-    return run_piv_stage(img1, img2, stage, correlator_type, temp_timer)
 end
 
 """
@@ -1546,6 +1580,182 @@ function is_area_preserving(matrix::AbstractMatrix, tolerance::Float64=0.1)
     # Check if determinant magnitude is close to 1 (area-preserving)
     # Use relative tolerance: |det - 1| / 1 < tolerance
     return abs(abs(det_val) - 1.0) <= tolerance
+end
+
+"""
+    plot_piv_results(background_image, piv_result; kwargs...) -> Figure
+
+Create an interactive vector plot of PIV results overlaid on a background image.
+Vectors are colored by their status and scaled for visibility.
+
+# Arguments
+- `background_image::AbstractMatrix` - Background image to display
+- `piv_result::PIVResult` - PIV analysis results to visualize
+
+# Keyword Arguments
+- `scale::Float64 = 5.0` - Vector scaling factor for visibility
+- `arrow_size::Float64 = 0.02` - Width of vector arrowheads (relative to plot size)
+- `colormap_good = :viridis` - Colormap for good vectors (by magnitude)
+- `show_bad::Bool = true` - Whether to show bad/interpolated vectors
+- `title::String = "PIV Results"` - Plot title
+- `vector_width::Float64 = 2.0` - Line width for vectors
+
+# Vector Status Colors
+- `:good` - Colored by velocity magnitude using specified colormap
+- `:interpolated` - Orange
+- `:bad` - Red
+- `:secondary` - Yellow
+
+# Returns
+- `Figure` - GLMakie figure object that can be displayed or saved
+
+# Examples
+```julia
+# Basic usage
+fig = plot_piv_results(img1, result)
+display(fig)
+
+# Customized visualization
+fig = plot_piv_results(img1, result, 
+                      scale=10.0, 
+                      colormap_good=:plasma,
+                      title="PIV Analysis - Flow Field")
+```
+
+# Requirements
+Requires GLMakie.jl to be loaded: `using GLMakie`
+"""
+function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResult;
+                          scale::Float64 = 5.0,
+                          arrow_size::Float64 = 0.02,
+                          colormap_good = :viridis,
+                          show_bad::Bool = true,
+                          title::String = "PIV Results",
+                          vector_width::Float64 = 2.0)
+    
+    # Create figure
+    fig = Main.GLMakie.Figure(size = (800, 600))
+    ax = Main.GLMakie.Axis(fig[1, 1], 
+                          title = title,
+                          xlabel = "X (pixels)", 
+                          ylabel = "Y (pixels)",
+                          aspect = Main.GLMakie.DataAspect())
+    
+    # Display background image (flip Y axis to match image coordinates)
+    img_extent = (1, size(background_image, 2), 1, size(background_image, 1))
+    Main.GLMakie.image!(ax, background_image, colormap = :bone)
+    
+    # Separate vectors by status
+    good_mask = piv_result.status .== :good
+    interpolated_mask = piv_result.status .== :interpolated
+    bad_mask = piv_result.status .== :bad
+    secondary_mask = piv_result.status .== :secondary
+    
+    # Plot good vectors with magnitude-based coloring
+    if any(good_mask)
+        x_good = piv_result.x[good_mask]
+        y_good = piv_result.y[good_mask]
+        u_good = piv_result.u[good_mask] .* scale
+        v_good = piv_result.v[good_mask] .* scale
+        
+        # Calculate velocity magnitude for coloring
+        magnitude = sqrt.(u_good.^2 .+ v_good.^2)
+        
+        # Only plot if we have finite vectors
+        finite_mask = isfinite.(u_good) .& isfinite.(v_good)
+        if any(finite_mask)
+            Main.GLMakie.arrows!(ax, 
+                               x_good[finite_mask], y_good[finite_mask],
+                               u_good[finite_mask], v_good[finite_mask],
+                               color = magnitude[finite_mask],
+                               colormap = colormap_good,
+                               tipwidth = arrow_size,
+                               linewidth = vector_width,
+                               label = "Good")
+        end
+    end
+    
+    # Plot other status vectors if requested
+    if show_bad
+        # Interpolated vectors (orange)
+        if any(interpolated_mask)
+            x_interp = piv_result.x[interpolated_mask]
+            y_interp = piv_result.y[interpolated_mask]
+            u_interp = piv_result.u[interpolated_mask] .* scale
+            v_interp = piv_result.v[interpolated_mask] .* scale
+            
+            finite_mask = isfinite.(u_interp) .& isfinite.(v_interp)
+            if any(finite_mask)
+                Main.GLMakie.arrows!(ax,
+                                   x_interp[finite_mask], y_interp[finite_mask],
+                                   u_interp[finite_mask], v_interp[finite_mask],
+                                   color = :orange,
+                                   tipwidth = arrow_size,
+                                   linewidth = vector_width,
+                                   label = "Interpolated")
+            end
+        end
+        
+        # Bad vectors (red)
+        if any(bad_mask)
+            x_bad = piv_result.x[bad_mask]
+            y_bad = piv_result.y[bad_mask]
+            u_bad = piv_result.u[bad_mask] .* scale
+            v_bad = piv_result.v[bad_mask] .* scale
+            
+            finite_mask = isfinite.(u_bad) .& isfinite.(v_bad)
+            if any(finite_mask)
+                Main.GLMakie.arrows!(ax,
+                                   x_bad[finite_mask], y_bad[finite_mask],
+                                   u_bad[finite_mask], v_bad[finite_mask],
+                                   color = :red,
+                                   tipwidth = arrow_size,
+                                   linewidth = vector_width,
+                                   label = "Bad")
+            end
+        end
+        
+        # Secondary vectors (yellow)
+        if any(secondary_mask)
+            x_sec = piv_result.x[secondary_mask]
+            y_sec = piv_result.y[secondary_mask]
+            u_sec = piv_result.u[secondary_mask] .* scale
+            v_sec = piv_result.v[secondary_mask] .* scale
+            
+            finite_mask = isfinite.(u_sec) .& isfinite.(v_sec)
+            if any(finite_mask)
+                Main.GLMakie.arrows!(ax,
+                                   x_sec[finite_mask], y_sec[finite_mask],
+                                   u_sec[finite_mask], v_sec[finite_mask],
+                                   color = :yellow,
+                                   tipwidth = arrow_size,
+                                   linewidth = vector_width,
+                                   label = "Secondary")
+            end
+        end
+    end
+    
+    # Add colorbar for good vectors
+    if any(good_mask)
+        good_u = piv_result.u[good_mask] .* scale
+        good_v = piv_result.v[good_mask] .* scale
+        finite_mask = isfinite.(good_u) .& isfinite.(good_v)
+        
+        if any(finite_mask)
+            magnitude = sqrt.(good_u[finite_mask].^2 .+ good_v[finite_mask].^2)
+            if !isempty(magnitude) && any(isfinite.(magnitude))
+                Main.GLMakie.Colorbar(fig[1, 2], 
+                                    limits = (minimum(magnitude), maximum(magnitude)),
+                                    colormap = colormap_good,
+                                    label = "Velocity Magnitude (scaled)")
+            end
+        end
+    end
+    
+    # Flip Y axis to match image coordinates (Y increases downward)
+    Main.GLMakie.ylims!(ax, size(background_image, 1), 1)
+    
+    return fig
 end
 
 
