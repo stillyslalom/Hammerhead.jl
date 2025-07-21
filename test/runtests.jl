@@ -389,8 +389,7 @@ end
             
             # Run PIV analysis
             stage = PIVStage((32, 32), overlap=(0.5, 0.5))
-            c = CrossCorrelator((32, 32))
-            result_real = run_piv_stage(img1_real, img2_real, stage, c)
+            result_real = run_piv_stage(img1_real, img2_real, stage)
             
             # Find vectors with good status near center
             good_vectors = [v for v in result_real.vectors if v.status == :good]
@@ -440,11 +439,10 @@ end
             ]
             
             stage = PIVStage(window_size, overlap=(0.25, 0.25))  # Less overlap for more windows
-            c = CrossCorrelator(window_size)
 
             for (i, displacement) in enumerate(test_displacements)
                 displaced_img = apply_displacement_to_field(base_img, displacement)
-                result = run_piv_stage(base_img, displaced_img, stage, c)
+                result = run_piv_stage(base_img, displaced_img, stage)
                 
                 good_vectors = [v for v in result.vectors if v.status == :good]
                 
@@ -491,7 +489,7 @@ end
             # This should theoretically cause maximum ambiguity
             critical_displacement = (max_unambiguous, max_unambiguous)
             critical_img = apply_displacement_to_field(base_img, critical_displacement)
-            critical_result = run_piv_stage(base_img, critical_img, stage, c)
+            critical_result = run_piv_stage(base_img, critical_img, stage)
             
             @test critical_result isa PIVResult  # Should not crash
             critical_good = [v for v in critical_result.vectors if v.status == :good]
@@ -553,8 +551,7 @@ end
             
             # Test 1: Single-stage processing with large window
             large_stage = PIVStage((64, 64), overlap=(0.5, 0.5))
-            c = CrossCorrelator((64, 64))
-            result_single = run_piv_stage(img1, img2, large_stage, c)
+            result_single = run_piv_stage(img1, img2, large_stage)
             
             good_single = [v for v in result_single.vectors if v.status == :good]
             @test length(good_single) >= 3  # Should find some vectors
@@ -1801,9 +1798,8 @@ end
             
             # Use large window size with high overlap to force boundary padding scenarios
             stage = PIVStage((48, 48), overlap=(0.75, 0.75))  # Large windows, high overlap
-            c = CrossCorrelator((48, 48))  # Correlator for large window size
             # This should process without error due to padding
-            result = run_piv_stage(img1, img2, stage, c)
+            result = run_piv_stage(img1, img2, stage)
             
             @test isa(result, PIVResult)
             @test length(result.vectors) > 0
@@ -1814,9 +1810,8 @@ end
             small_img1 = rand(Float64, (32, 32)...)
             small_img2 = rand(Float64, (32, 32)...)
             stage_small = PIVStage((24, 24), overlap=(0.5, 0.5))
-            c = CrossCorrelator((24, 24))  # Smaller correlator for small window size
             
-            result_small = run_piv_stage(small_img1, small_img2, stage_small, c)
+            result_small = run_piv_stage(small_img1, small_img2, stage_small)
             @test isa(result_small, PIVResult)
             @test length(result_small.vectors) > 0
         end # Boundary Window Processing
@@ -1887,18 +1882,24 @@ end
             test_img = ones(Float64, 8, 8)
             
             # Test rectangular windowing (should not change the image)
-            windowed_rect = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.rect))
+            rect_window = Hammerhead.build_window((8, 8), Hammerhead.SimpleWindow(DSP.rect))
+            windowed_rect = copy(test_img)
+            Hammerhead.apply_window!(windowed_rect, rect_window)
             @test windowed_rect ≈ test_img
             
             # Test Hanning windowing
-            windowed_hann = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.hanning))
+            hann_window = Hammerhead.build_window((8, 8), Hammerhead.SimpleWindow(DSP.hanning))
+            windowed_hann = copy(test_img)
+            Hammerhead.apply_window!(windowed_hann, hann_window)
             @test size(windowed_hann) == size(test_img)
             @test windowed_hann[1, 1] ≈ 0.0 atol=1e-10  # Corners should be near zero
             @test windowed_hann[end, end] ≈ 0.0 atol=1e-10
             @test windowed_hann[4, 4] ≈ 0.903 atol=0.001  # Center value for 8x8 Hanning
             
             # Test Hamming windowing
-            windowed_hamm = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.hamming))
+            hamm_window = Hammerhead.build_window((8, 8), Hammerhead.SimpleWindow(DSP.hamming))
+            windowed_hamm = copy(test_img)
+            Hammerhead.apply_window!(windowed_hamm, hamm_window)
             @test size(windowed_hamm) == size(test_img)
             # Hamming doesn't go to zero at edges
             @test windowed_hamm[1, 1] > 0.0
@@ -1906,7 +1907,9 @@ end
             @test windowed_hamm[4, 4] ≈ 0.91 atol=0.002  # Center value for 8x8 Hamming
             
             # Test Blackman windowing
-            windowed_blackman = Hammerhead.apply_window_function(test_img, Hammerhead.SimpleWindow(DSP.blackman))
+            blackman_window = Hammerhead.build_window((8, 8), Hammerhead.SimpleWindow(DSP.blackman))
+            windowed_blackman = copy(test_img)
+            Hammerhead.apply_window!(windowed_blackman, blackman_window)
             @test size(windowed_blackman) == size(test_img)
             @test windowed_blackman[1, 1] ≈ 0.0 atol=1e-10
             @test windowed_blackman[end, end] ≈ 0.0 atol=1e-10
@@ -1939,8 +1942,7 @@ end
             # Test different windowing functions (simple)
             for window_func in [:rectangular, :hanning, :hamming, :blackman, :bartlett, :cosine]
                 stage = PIVStage((32, 32), window_function=window_func)
-                c = CrossCorrelator((32, 32))  # Correlator for 32x32 window
-                result = run_piv_stage(img1, img2, stage, c)
+                result = run_piv_stage(img1, img2, stage)
                 
                 @test isa(result, PIVResult)
                 @test length(result.vectors) > 0
@@ -1976,8 +1978,7 @@ end
             parametric_windows = [(:kaiser, 5.0), (:tukey, 0.5), (:gaussian, 0.4)]
             for window_func in parametric_windows
                 stage = PIVStage((32, 32), window_function=window_func)
-                c = CrossCorrelator((32, 32))  # Correlator for 32x32 window
-                result = run_piv_stage(img1, img2, stage, c)
+                result = run_piv_stage(img1, img2, stage)
                 
                 @test isa(result, PIVResult)
                 @test length(result.vectors) > 0

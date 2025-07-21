@@ -10,6 +10,7 @@ using ImageCore: Gray
 using DSP
 using TimerOutputs
 using GLMakie
+using ChunkSplitters
 
 # Data structures
 export PIVVector, PIVResult, PIVStage, PIVStages
@@ -99,7 +100,7 @@ end
 function Base.show(io::IO, r::PIVResult)
     frac_good = sum(r.vectors.status .== :good) / length(r.vectors)
     print(io, "PIVResult with $(length(r.vectors)) vectors (",
-          "$(round(frac_good * 100, digits=1))% good)")
+          "$(round(frac_good * 100, digits=1))% good)", r.metadata["timer"])
 end
 
 # Property forwarding: pivdata.x → pivdata.vectors.x
@@ -216,27 +217,6 @@ function build_window(dims, window_function::WindowFunction)
     return [window_1d_row[i] * window_1d_col[j] for i in 1:rows, j in 1:cols]
 end
 
-"""
-    apply_window_function(subimage, window_function) -> windowed_subimage
-
-Apply windowing function to subimage to reduce spectral leakage in correlation analysis.
-Uses DSP.jl implementations for mathematically correct and well-tested window functions.
-"""
-function apply_window_function(subimg::AbstractArray{T,2}, window_function::WindowFunction) where T
-    rows, cols = size(subimg)
-    
-    # Generate separable window using DSP.jl
-    window_1d_row = generate_window_1d(window_function, rows)
-    window_1d_col = generate_window_1d(window_function, cols)
-    
-    # Apply separable 2D windowing
-    windowed = similar(subimg)
-    for i in 1:rows, j in 1:cols
-        windowed[i, j] = subimg[i, j] * window_1d_row[i] * window_1d_col[j]
-    end
-    
-    return windowed
-end
 
 """
     apply_window!(subimage, window) -> windowed_subimage
@@ -256,6 +236,7 @@ function apply_window!(subimg::AbstractArray{T,2}, window::AbstractArray{T}) whe
     
     return subimg
 end
+
 
 """
     generate_window_1d(window_function, length) -> window_vector
@@ -288,11 +269,6 @@ function interpolation_method_type(s::Symbol)
     end
 end
 
-# struct PIVStageCache{T, C} where {C <: Correlator}
-#     window::AbstractArray{T,2}  # Window function applied to subimage
-#     correlator::C
-#     v::Vector{PIVVector}  # Vector field for this stage
-# end
 
 """
     PIVStage{W<:WindowFunction, I<:InterpolationMethod}
@@ -487,6 +463,70 @@ function PIVStages(n_stages::Int, final_size::Int;
     end
     
     return stages
+end
+
+"""
+    PIVStageCache{T, C}
+
+Per-thread computational cache for PIV stage processing. Contains pre-computed
+resources to avoid repeated allocations and enable thread-safe parallel processing.
+
+# Fields
+- `window::Matrix{T}` - Pre-computed window function matrix
+- `correlator::C` - Thread-local correlator with FFT plans
+- `vectors::Vector{PIVVector}` - Pre-allocated storage for results
+- `windowed_img1::Matrix{T}` - Pre-allocated buffer for windowed subimage 1
+- `windowed_img2::Matrix{T}` - Pre-allocated buffer for windowed subimage 2
+"""
+struct PIVStageCache{T, C <: Correlator}
+    window::Matrix{T}  # Pre-computed window function matrix
+    correlator::C      # Thread-local correlator
+    vectors::Vector{PIVVector}  # Pre-allocated result storage
+    windowed_img1::Matrix{T}   # Pre-allocated windowed image buffer 1
+    windowed_img2::Matrix{T}   # Pre-allocated windowed image buffer 2
+end
+
+"""
+    PIVStageCache(stage::PIVStage, ::Type{T}=Float32) -> PIVStageCache{T, CrossCorrelator{T}}
+
+Create a per-thread computational cache from a PIV stage configuration.
+Pre-computes the window function matrix and initializes thread-local correlator.
+"""
+function PIVStageCache(stage::PIVStage, ::Type{T}=Float32) where T
+    # Pre-compute window function matrix
+    window = Matrix{T}(build_window(stage.window_size, stage.window_function))
+    
+    # Create thread-local correlator
+    correlator = CrossCorrelator{T}(stage.window_size)
+    
+    # Initialize result storage (will be resized as needed)
+    vectors = PIVVector[]
+    
+    # Pre-allocate windowed image buffers
+    windowed_img1 = Matrix{T}(undef, stage.window_size...)
+    windowed_img2 = Matrix{T}(undef, stage.window_size...)
+    
+    return PIVStageCache{T, typeof(correlator)}(window, correlator, vectors, windowed_img1, windowed_img2)
+end
+
+"""
+    apply_cached_window!(cache, subimg1, subimg2) -> (windowed1, windowed2)
+
+Apply pre-computed window function to both subimages using pre-allocated buffers.
+Returns references to the cached windowed image buffers for efficient memory usage.
+"""
+function apply_cached_window!(cache::PIVStageCache{T}, 
+                              subimg1::AbstractArray{T,2}, 
+                              subimg2::AbstractArray{T,2}) where T
+    # Copy subimages to pre-allocated buffers
+    cache.windowed_img1 .= subimg1
+    cache.windowed_img2 .= subimg2
+    
+    # Apply window function in-place
+    apply_window!(cache.windowed_img1, cache.window)
+    apply_window!(cache.windowed_img2, cache.window)
+    
+    return cache.windowed_img1, cache.windowed_img2
 end
 
 struct CrossCorrelator{T, FP, IP} <: Correlator
@@ -836,7 +876,6 @@ Perform PIV analysis on image pair with single-stage or multi-stage processing.
 - `stages::Vector{PIVStage}` - Optional multi-stage configuration
 
 # Keyword Arguments  
-- `correlator` - Correlation method (default: CrossCorrelator)
 - `window_size::Tuple{Int,Int}` - Window size for single-stage (default: (64,64))
 - `overlap::Tuple{Float64,Float64}` - Overlap ratios (default: (0.5,0.5))
 
@@ -845,18 +884,17 @@ Perform PIV analysis on image pair with single-stage or multi-stage processing.
 - `Vector{PIVResult}` for multi-stage processing
 """
 function run_piv(img1::Matrix{T}, img2::Matrix{T}; 
-                 correlator=CrossCorrelator, window_size::Tuple{Int,Int}=(64,64),
+                 window_size::Tuple{Int,Int}=(64,64),
                  overlap::Tuple{Float64,Float64}=(0.5,0.5), kwargs...)  where {T <: Union{Real, Gray}}
     
-    result = run_piv(img1, img2, [PIVStage(window_size, overlap=overlap, kwargs...)];
-             correlator=correlator)
+    result = run_piv(img1, img2, [PIVStage(window_size, overlap=overlap, kwargs...)])
 
     return only(result)
 end
 
 # Multi-stage version
 function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVStage};
-                 correlator=CrossCorrelator, kwargs...) where {T <: Union{Real, Gray}}
+                 kwargs...) where {T <: Union{Real, Gray}}
     
     # Create local timer for this PIV run
     timer = TimerOutput()
@@ -892,10 +930,8 @@ function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVS
                 # For now, just perform independent analysis at each stage
                 # TODO: Add initial guess propagation from previous stage
 
-                # Concretize correlator
-                correlator_C = correlator(stage.window_size)
-
-                result = run_piv_stage(img1, img2, stage, correlator_C, timer)
+                # Use parallel implementation by default
+                result = run_piv_stage(img1, img2, stage, eltype(img1), timer)
                 
                 # Add stage information to metadata
                 result.metadata["stage"] = i
@@ -1008,97 +1044,106 @@ function fill_symmetric_padding!(padded::AbstractArray{T,2}, original::AbstractA
     end
 end
 
-"""
-    run_piv_stage(img1, img2, stage, correlator) -> PIVResult
 
-Perform PIV analysis for a single stage with given configuration.
-Quality metrics and subpixel refinement are handled at this level for modularity.
 """
-function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
-                       stage::PIVStage, correlator::Correlator, timer = TimerOutput())
-    
-    @timeit timer "PIV Stage" begin
-        # Generate interrogation window grid
-        grid_x, grid_y = @timeit timer "Grid Generation" generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
-        n_windows = length(grid_x)
+    process_chunk!(cache, chunk, grid_x, grid_y, img1, img2, stage, timer=nothing)
 
-        # Initialize result arrays
-        positions_x = Float64[]
-        positions_y = Float64[]
-        displacements_u = Float64[]
-        displacements_v = Float64[]
-        status_flags = Symbol[]
-        peak_ratios = Float64[]
-        correlation_moments = Float64[]
+Process a chunk of interrogation windows using the provided cache.
+Optionally uses timer for detailed performance tracking (thread 1 only).
+"""
+function process_chunk!(cache::PIVStageCache{T}, chunk, grid_x, grid_y, img1, img2, stage::PIVStage, timer=nothing) where T
+    for i in chunk
+        window_x = grid_x[i]
+        window_y = grid_y[i]
         
-        # Process each interrogation window
-        @timeit timer "Window Processing" for i in 1:n_windows
-            # Extract window position
-            window_x = grid_x[i]
-            window_y = grid_y[i]
-            
+        try
             # Calculate window bounds with boundary checking
             x_start = max(1, round(Int, window_x - stage.window_size[1]//2))
             x_end = min(size(img1, 1), x_start + stage.window_size[1] - 1)
             y_start = max(1, round(Int, window_y - stage.window_size[2]//2))
             y_end = min(size(img1, 2), y_start + stage.window_size[2] - 1)
             
-            # Extract subimages
-            try
-                subimg1 = img1[x_start:x_end, y_start:y_end]
-                subimg2 = img2[x_start:x_end, y_start:y_end]
-                
-                # Pad if necessary to match correlator size
-                if size(subimg1) != stage.window_size
-                    subimg1 = pad_to_size(subimg1, stage.window_size)
-                    subimg2 = pad_to_size(subimg2, stage.window_size)
-                end
-                
-                # Apply windowing function to reduce spectral leakage
-                windowed_subimg1 = @timeit timer "Windowing" apply_window_function(subimg1, stage.window_function)
-                windowed_subimg2 = @timeit timer "Windowing" apply_window_function(subimg2, stage.window_function)
-                
-                # Perform correlation to get correlation plane
-                correlation_plane = @timeit timer "Correlation" correlate!(correlator, windowed_subimg1, windowed_subimg2, timer)
-                
-                # Analyze correlation plane for displacement and quality metrics
-                disp_u, disp_v, peak_ratio, corr_moment = @timeit timer "Peak Analysis" analyze_correlation_plane(correlation_plane)
-                
-                # Store results
-                push!(positions_x, window_x)
-                push!(positions_y, window_y)
-                push!(displacements_u, disp_u)
-                push!(displacements_v, disp_v)
-                push!(status_flags, :good)
-                push!(peak_ratios, peak_ratio)
-                push!(correlation_moments, corr_moment)
-                
-            catch e
-                # Handle correlation failures gracefully
-                push!(positions_x, window_x)
-                push!(positions_y, window_y)
-                push!(displacements_u, NaN)
-                push!(displacements_v, NaN)
-                push!(status_flags, :bad)
-                push!(peak_ratios, NaN)
-                push!(correlation_moments, NaN)
+            # Extract and convert subimages
+            subimg1 = T.(img1[x_start:x_end, y_start:y_end])
+            subimg2 = T.(img2[x_start:x_end, y_start:y_end])
+            
+            # Pad if necessary to match window size
+            if size(subimg1) != stage.window_size
+                subimg1 = pad_to_size(subimg1, stage.window_size)
+                subimg2 = pad_to_size(subimg2, stage.window_size)
             end
+            
+            # Apply windowing using cached window function
+            windowed_subimg1, windowed_subimg2 = apply_cached_window!(cache, subimg1, subimg2)
+            
+            # Perform correlation using cached correlator (with or without timing)
+            correlation_plane = if timer !== nothing
+                correlate!(cache.correlator, windowed_subimg1, windowed_subimg2, timer)
+            else
+                correlate!(cache.correlator, windowed_subimg1, windowed_subimg2)
+            end
+            
+            # Analyze correlation plane for displacement and quality metrics
+            disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
+            
+            # Store result in cache
+            vector = PIVVector(window_x, window_y, disp_u, disp_v, :good, peak_ratio, corr_moment)
+            push!(cache.vectors, vector)
+            
+        catch e
+            # Handle correlation failures gracefully
+            vector = PIVVector(window_x, window_y, NaN, NaN, :bad, NaN, NaN)
+            push!(cache.vectors, vector)
         end
+    end
+end
+
+"""
+    run_piv_stage(img1, img2, stage, ::Type{T}=Float32) -> PIVResult
+
+Perform PIV analysis for a single stage with parallel processing using ChunkSplitters.jl.
+Pre-allocates per-thread caches and merges results efficiently.
+"""
+function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real,2}, 
+                                stage::PIVStage, ::Type{T}=Float32, timer = TimerOutput()) where T
+    
+    # Generate interrogation window grid
+    grid_x, grid_y = @timeit timer "Grid Generation" generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
+    n_windows = length(grid_x)
+    
+    # Pre-allocate per-thread caches
+    n_threads = Threads.nthreads()
+    caches = @timeit timer "Cache Allocation" [PIVStageCache(stage, T) for _ in 1:n_threads]
+    
+    # Process windows in parallel using ChunkSplitters
+    Threads.@threads for (thread_id, chunk) in collect(enumerate(chunks(1:n_windows; n=n_threads)))
+        cache = caches[thread_id]
         
-        # Create PIVVector array
-        piv_vectors = @timeit timer "Result Assembly" [PIVVector(positions_x[i], positions_y[i], displacements_u[i], displacements_v[i],
-                                status_flags[i], peak_ratios[i], correlation_moments[i]) 
-                       for i in 1:n_windows]
+        # Clear previous results and resize for this chunk
+        empty!(cache.vectors)
+        sizehint!(cache.vectors, length(chunk))
         
-        # Create result with metadata
-        result = PIVResult(piv_vectors)
-        result.metadata["image_size"] = size(img1)
-        result.metadata["window_size"] = stage.window_size
-        result.metadata["overlap"] = stage.overlap
-        result.metadata["n_windows"] = n_windows
-        
-        return result
-    end  # @timeit timer "PIV Stage"
+        # Only do detailed timing on thread 1 to keep output clean
+        if thread_id == 1
+            process_chunk!(cache, chunk, grid_x, grid_y, img1, img2, stage, timer)
+        else
+            # Other threads process without detailed timing
+            process_chunk!(cache, chunk, grid_x, grid_y, img1, img2, stage)
+        end
+    end
+    
+    # Merge results from all thread caches using reduce
+    all_vectors = reduce(vcat, [cache.vectors for cache in caches])
+    
+    # Create result with metadata
+    result = PIVResult(all_vectors)
+    result.metadata["image_size"] = size(img1)
+    result.metadata["window_size"] = stage.window_size
+    result.metadata["overlap"] = stage.overlap
+    result.metadata["n_windows"] = n_windows
+    result.metadata["n_threads"] = n_threads
+    
+    return result
 end
 
 """
