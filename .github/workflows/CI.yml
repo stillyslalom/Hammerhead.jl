@@ -41,41 +41,50 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         with:
           prefix: xvfb-run -s '-screen 0 1024x768x24'
-  docs:
+docs:
     name: Documentation
     runs-on: ubuntu-latest
-    permissions:
-      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
-      contents: write
-      statuses: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Install virtual framebuffer
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-      - uses: julia-actions/cache@v2
-      - name: Configure doc environment
-        shell: julia --project=docs --color=yes {0}
+      # --------------------------------------------------------
+      # 0. checkout + install everything you already had …
+      # --------------------------------------------------------
+
+      # 1. Install a virtual frame-buffer **and** some basic GL libs
+      - name: Install Xvfb & Mesa
         run: |
-          using Pkg
-          Pkg.develop(PackageSpec(path=pwd()))
-          Pkg.instantiate()
-        with:
-          prefix: xvfb-run -s '-screen 0 1024x768x24'
+          sudo apt-get update
+          sudo apt-get install -y \
+              xvfb mesa-utils libgl1 libglu1-mesa
+
+      # 2. Configure the docs environment **inside Xvfb**
+      - name: Configure doc environment
+        run: |
+          xvfb-run -s '-screen 0 1024x768x24' \
+            julia --project=docs --color=yes -e '
+              using Pkg;
+              Pkg.develop(PackageSpec(path=pwd()));
+              Pkg.instantiate();'
+
+      # 3. Build the package (still needs X)
       - uses: julia-actions/julia-buildpkg@v1
-      - name: Build and deploy docs
-        run: DISPLAY=:0 xvfb-run -s '-screen 0 1024x768x24' julia --color=yes --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); using Documenter; include("docs/make.jl")'
+        with:
+          prefix: xvfb-run
+
+      # 4. Build & deploy the docs — pass a **short** prefix
+      - uses: julia-actions/julia-docdeploy@v1
+        with:
+          prefix: xvfb-run          # no extra flags here!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-      # - name: Run doctests
-      #   shell: xvfb-run -s '-screen 0 1024x768x24' julia --project=docs --color=yes {0}
-      #   run: |
-      #     using Documenter: DocMeta, doctest
-      #     using Hammerhead
-      #     DocMeta.setdocmeta!(Hammerhead, :DocTestSetup, :(using Hammerhead); recursive=true)
-      #     doctest(Hammerhead)
-      #   with: 
-      #     prefix: xvfb-run -s '-screen 0 1024x768x24'
+
+      # 5. Doctests (again under Xvfb)
+      - name: Run doctests
+        run: |
+          xvfb-run -s '-screen 0 1024x768x24' \
+            julia --project=docs --color=yes -e '
+              using Documenter: DocMeta, doctest
+              using Hammerhead
+              DocMeta.setdocmeta!(Hammerhead, :DocTestSetup,
+                                  :(using Hammerhead); recursive=true)
+              doctest(Hammerhead)'
+
