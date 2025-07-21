@@ -12,12 +12,15 @@ Hammerhead.jl provides a complete PIV analysis pipeline for experimental fluid d
 
 ## Key Features
 
-- **High Performance**: Type-stable implementations with optimized FFT-based correlation
+- **High Performance**: Type-stable implementations with optimized FFT-based correlation and parallel processing
+- **Parallel Processing**: Thread-safe multi-core processing using ChunkSplitters.jl for optimal work distribution
+- **Memory Efficient**: Per-thread caches with pre-computed window functions and pre-allocated buffers
 - **Flexible Configuration**: Multi-stage processing with configurable window sizes, overlap ratios, and windowing functions
 - **Quality Assessment**: Built-in peak ratio and correlation moment metrics for vector validation
 - **Modern Architecture**: Clean APIs with property forwarding and symbol-based configuration
 - **Comprehensive Windowing**: Support for all DSP.jl windowing functions (Hanning, Hamming, Blackman, Kaiser, etc.)
 - **Robust Processing**: Boundary handling with symmetric padding and graceful error recovery
+- **Detailed Timing**: Comprehensive performance instrumentation with TimerOutputs.jl integration
 
 ## Quick Start
 
@@ -89,8 +92,9 @@ Timing data includes hierarchical breakdown of:
 - FFT operations (forward, inverse, setup)
 - Cross-correlation computation  
 - Peak analysis and subpixel refinement
-- Window processing and padding
-- Grid generation and result assembly
+- Parallel window processing with thread-level detail
+- Grid generation and cache allocation
+- Result assembly and merging
 
 ## Core Data Structures
 
@@ -129,9 +133,13 @@ Supported functions include: `:rectangular`, `:hanning`, `:hamming`, `:blackman`
 
 ## Performance
 
-- Optimized for large image processing with fast correlation algorithms
-- Memory efficient processing of extensive datasets 
-- Type-stable implementations throughout for optimal performance
+- **Parallel Processing**: Automatic multi-threaded execution using ChunkSplitters.jl for optimal CPU utilization
+- **Memory Efficiency**: Per-thread caches eliminate repeated allocations and window function computations
+- **Optimized Algorithms**: Fast FFT-based correlation with pre-allocated buffers and type-stable implementations
+- **Scalable Design**: Efficient processing of large datasets with minimal memory overhead
+- **Performance Monitoring**: Built-in timing instrumentation for performance analysis and optimization
+
+Hammerhead.jl delivers excellent performance with near-linear scaling across available CPU cores, making it suitable for both interactive analysis and high-throughput batch processing.
 
 ## Installation
 

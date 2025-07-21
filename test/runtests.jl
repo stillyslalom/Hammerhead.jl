@@ -7,6 +7,11 @@ using StructArrays
 using DSP
 using Distributions
 
+# Import internal functions for testing
+using Hammerhead: run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_plane,
+                  find_secondary_peak, find_secondary_peak_robust, find_local_maxima,
+                  is_area_preserving, subpixel_gauss3
+
 # Test utilities for deterministic reproducibility
 """
     @withseed seed expr

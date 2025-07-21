@@ -16,19 +16,13 @@ using ChunkSplitters
 export PIVVector, PIVResult, PIVStage, PIVStages
 
 # Core functionality  
-export run_piv, run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_plane
+export run_piv
 
-# Quality assessment
-export find_secondary_peak, find_secondary_peak_robust, find_local_maxima
-
-# Transform validation
-export validate_affine_transform, is_area_preserving
+# Transform validation (advanced workflows)
+export validate_affine_transform
 
 # Interpolation
 export linear_barycentric_interpolation, interpolate_vectors
-
-# Utilities
-export subpixel_gauss3
 
 # Timing
 export get_timer
@@ -515,12 +509,12 @@ end
 Apply pre-computed window function to both subimages using pre-allocated buffers.
 Returns references to the cached windowed image buffers for efficient memory usage.
 """
-function apply_cached_window!(cache::PIVStageCache{T}, 
-                              subimg1::AbstractArray{T,2}, 
-                              subimg2::AbstractArray{T,2}) where T
+function apply_cached_window!(cache::PIVStageCache{T1},
+                              subimg1::AbstractArray{T2}, 
+                              subimg2::AbstractArray{T2}) where {T1, T2}
     # Copy subimages to pre-allocated buffers
-    cache.windowed_img1 .= subimg1
-    cache.windowed_img2 .= subimg2
+    @. cache.windowed_img1 = T1(subimg1)
+    @. cache.windowed_img2 = T1(subimg2)
     
     # Apply window function in-place
     apply_window!(cache.windowed_img1, cache.window)
@@ -1064,8 +1058,8 @@ function process_chunk!(cache::PIVStageCache{T}, chunk, grid_x, grid_y, img1, im
             y_end = min(size(img1, 2), y_start + stage.window_size[2] - 1)
             
             # Extract and convert subimages
-            subimg1 = T.(img1[x_start:x_end, y_start:y_end])
-            subimg2 = T.(img2[x_start:x_end, y_start:y_end])
+            subimg1 = @view img1[x_start:x_end, y_start:y_end]
+            subimg2 = @view img2[x_start:x_end, y_start:y_end]
             
             # Pad if necessary to match window size
             if size(subimg1) != stage.window_size
