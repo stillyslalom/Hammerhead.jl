@@ -50,6 +50,8 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@v4
+      - name: Install virtual framebuffer
+        run: sudo apt-get update && sudo apt-get install -y xvfb
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
