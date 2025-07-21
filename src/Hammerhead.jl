@@ -9,7 +9,7 @@ using ImageIO
 using ImageCore: Gray
 using DSP
 using TimerOutputs
-using GLMakie
+using CairoMakie
 using ChunkSplitters
 
 # Data structures
@@ -27,7 +27,7 @@ export linear_barycentric_interpolation, interpolate_vectors
 # Timing
 export get_timer
 
-# Visualization (optional, requires GLMakie)
+# Visualization (optional, requires CairoMakie)
 export plot_piv_results
 
 # Define a Correlator type to encapsulate correlation methods and options
@@ -1646,7 +1646,7 @@ Vectors are colored by their status and scaled for visibility.
 - `:secondary` - Yellow
 
 # Returns
-- `Figure` - GLMakie figure object that can be displayed or saved
+- `Figure` - CairoMakie figure object that can be displayed or saved
 
 # Examples
 ```julia
@@ -1662,7 +1662,7 @@ fig = plot_piv_results(img1, result,
 ```
 
 # Requirements
-Requires GLMakie.jl to be loaded: `using GLMakie`
+Requires CairoMakie.jl to be loaded: `using CairoMakie`
 """
 function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResult;
                           scale::Float64 = 5.0,
@@ -1673,16 +1673,16 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
                           vector_width::Float64 = 2.0)
     
     # Create figure
-    fig = Main.GLMakie.Figure(size = (800, 600))
-    ax = Main.GLMakie.Axis(fig[1, 1], 
+    fig = Main.CairoMakie.Figure(size = (800, 600))
+    ax = Main.CairoMakie.Axis(fig[1, 1], 
                           title = title,
                           xlabel = "X (pixels)", 
                           ylabel = "Y (pixels)",
-                          aspect = Main.GLMakie.DataAspect())
+                          aspect = Main.CairoMakie.DataAspect())
     
     # Display background image (flip Y axis to match image coordinates)
     img_extent = (1, size(background_image, 2), 1, size(background_image, 1))
-    Main.GLMakie.image!(ax, background_image, colormap = :bone)
+    Main.CairoMakie.image!(ax, background_image, colormap = :bone)
     
     # Separate vectors by status
     good_mask = piv_result.status .== :good
@@ -1703,7 +1703,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
         # Only plot if we have finite vectors
         finite_mask = isfinite.(u_good) .& isfinite.(v_good)
         if any(finite_mask)
-            Main.GLMakie.arrows!(ax, 
+            Main.CairoMakie.arrows!(ax, 
                                x_good[finite_mask], y_good[finite_mask],
                                u_good[finite_mask], v_good[finite_mask],
                                color = magnitude[finite_mask],
@@ -1725,7 +1725,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
             
             finite_mask = isfinite.(u_interp) .& isfinite.(v_interp)
             if any(finite_mask)
-                Main.GLMakie.arrows!(ax,
+                Main.CairoMakie.arrows!(ax,
                                    x_interp[finite_mask], y_interp[finite_mask],
                                    u_interp[finite_mask], v_interp[finite_mask],
                                    color = :orange,
@@ -1744,7 +1744,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
             
             finite_mask = isfinite.(u_bad) .& isfinite.(v_bad)
             if any(finite_mask)
-                Main.GLMakie.arrows!(ax,
+                Main.CairoMakie.arrows!(ax,
                                    x_bad[finite_mask], y_bad[finite_mask],
                                    u_bad[finite_mask], v_bad[finite_mask],
                                    color = :red,
@@ -1763,7 +1763,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
             
             finite_mask = isfinite.(u_sec) .& isfinite.(v_sec)
             if any(finite_mask)
-                Main.GLMakie.arrows!(ax,
+                Main.CairoMakie.arrows!(ax,
                                    x_sec[finite_mask], y_sec[finite_mask],
                                    u_sec[finite_mask], v_sec[finite_mask],
                                    color = :yellow,
@@ -1783,7 +1783,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
         if any(finite_mask)
             magnitude = sqrt.(good_u[finite_mask].^2 .+ good_v[finite_mask].^2)
             if !isempty(magnitude) && any(isfinite.(magnitude))
-                Main.GLMakie.Colorbar(fig[1, 2], 
+                Main.CairoMakie.Colorbar(fig[1, 2], 
                                     limits = (minimum(magnitude), maximum(magnitude)),
                                     colormap = colormap_good,
                                     label = "Velocity Magnitude (scaled)")
@@ -1792,7 +1792,7 @@ function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResul
     end
     
     # Flip Y axis to match image coordinates (Y increases downward)
-    Main.GLMakie.ylims!(ax, size(background_image, 1), 1)
+    Main.CairoMakie.ylims!(ax, size(background_image, 1), 1)
     
     return fig
 end
