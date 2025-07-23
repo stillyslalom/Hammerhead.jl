@@ -8,11 +8,3 @@ Modules = [Hammerhead]
 Order = [:function, :type, :constant, :macro]
 Private = false
 ```
-
-## Internals
-
-```@autodocs
-Modules = [Hammerhead]
-Order = [:function, :type, :constant, :macro]
-Public = false
-```
