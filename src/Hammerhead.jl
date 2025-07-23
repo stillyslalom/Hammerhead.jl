@@ -18,15 +18,6 @@ export PIVVector, PIVResult, PIVStage, PIVStages
 # Core functionality  
 export run_piv
 
-# Transform validation (advanced workflows)
-export validate_affine_transform
-
-# Interpolation
-export linear_barycentric_interpolation, interpolate_vectors
-
-# Timing
-export get_timer
-
 # Visualization (optional, requires CairoMakie)
 export plot_piv
 

@@ -10,7 +10,8 @@ using Distributions
 # Import internal functions for testing
 using Hammerhead: run_piv_stage, CrossCorrelator, correlate!, analyze_correlation_plane,
                   find_secondary_peak, find_secondary_peak_robust, find_local_maxima,
-                  is_area_preserving, subpixel_gauss3
+                  is_area_preserving, subpixel_gauss3, validate_affine_transform, 
+                  linear_barycentric_interpolation, interpolate_vectors, get_timer
 
 # Test utilities for deterministic reproducibility
 """
