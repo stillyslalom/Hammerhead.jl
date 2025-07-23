@@ -13,6 +13,5 @@ Private = false
 
 ```@autodocs
 Modules = [Hammerhead]
-Order = [:function, :type, :constant, :macro]
 Private = true
 ```
