@@ -155,4 +155,6 @@ Pkg.add("Hammerhead")
 
 ```@autodocs
 Modules = [Hammerhead]
+Order = [:function, :type, :constant, :macro]
+Private = false
 ```

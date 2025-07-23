@@ -713,6 +713,7 @@ end
             end
         end
         
+        # TODO: this should handle the case of flat-topped *particle images*, not correlation planes.
         @testset "Flat-Top (Clipped) Peaks" begin
             # Test handling of saturated/clipped correlation peaks
             Random.seed!(7777)

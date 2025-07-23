@@ -224,7 +224,7 @@ function apply_window!(subimg::AbstractArray{T,2}, window::AbstractArray{T}) whe
     end
     
     # Element-wise multiplication
-    for i in 1:rows, j in 1:cols
+    @inbounds for i in 1:rows, j in 1:cols
         subimg[i, j] *= window[i, j]
     end
     
@@ -559,15 +559,16 @@ Calculate quality metrics for PIV correlation analysis.
 - `peak_ratio::Float64` - Ratio of primary peak to secondary peak (higher is better)
 - `correlation_moment::Float64` - Normalized correlation moment (measure of peak sharpness)
 """
-function calculate_quality_metrics(correlation_plane::AbstractMatrix, peak_location::CartesianIndex, peak_value::Real; robust::Bool=false)
+function calculate_quality_metrics(correlation_plane::AbstractMatrix{T}, peak_location::CartesianIndex, peak_value::Real; robust::Bool=false, work_buffer::AbstractMatrix{<:Real} = zeros(real(T), size(correlation_plane))) where {T}
     # Convert correlation plane to real magnitudes for analysis
-    corr_mag = abs.(correlation_plane)
+    work_buffer .= abs.(correlation_plane)
+    corr_mag = work_buffer
     
     # Find secondary peak using chosen method
     secondary_peak = if robust
-        find_secondary_peak_robust(corr_mag, peak_location, peak_value)
+        find_secondary_peak_robust(corr_mag, peak_location, peak_value)::real(T)
     else
-        find_secondary_peak(corr_mag, peak_location, peak_value)
+        find_secondary_peak(corr_mag, peak_location, peak_value)::real(T)
     end
     
     # Calculate peak ratio (primary/secondary)
@@ -801,7 +802,7 @@ end
 Analyze correlation plane to extract displacement and quality metrics at PIV stage level.
 This allows the same analysis to be applied to results from different correlation algorithms.
 """
-function analyze_correlation_plane(correlation_plane::AbstractMatrix)
+function analyze_correlation_plane(correlation_plane::AbstractMatrix, work_buffer::AbstractMatrix{<:Real} = zeros(real(eltype(correlation_plane)), size(correlation_plane)))
     # Find the peak in the correlation result
     center = size(correlation_plane) .÷ 2 .+ 1
     peakloc = CartesianIndex(center...)  # Initialize to center instead of (0,0)
@@ -822,7 +823,7 @@ function analyze_correlation_plane(correlation_plane::AbstractMatrix)
     end
 
     # Calculate quality metrics
-    peak_ratio, correlation_moment = calculate_quality_metrics(correlation_plane, peakloc, maxval)
+    peak_ratio, correlation_moment = calculate_quality_metrics(correlation_plane, peakloc, maxval, work_buffer=work_buffer)
 
     # Perform subpixel refinement and compute displacement relative to center
     refined_peakloc = subpixel_gauss3(correlation_plane, peakloc.I)
@@ -895,7 +896,7 @@ function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVS
 
     # Helper function to promote images to Float32 (default) or Float64 if image type is Gray{Float64} or similar
     function promote_image_type(img::AbstractArray{T,2}) where T
-        if T <: Gray{Float64}
+        if (T <: Gray{Float64}) || (T <: Float64)
             return Float64.(img)  # Promote to Float64
         else
             return Float32.(img)  # Default to Float32 for other types
@@ -903,8 +904,9 @@ function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVS
     end
 
     # Promote images to Float32 or Float64 as needed
-    img1 = promote_image_type(img1_raw)
-    img2 = promote_image_type(img2_raw)
+    
+    img1 = @timeit timer "Image type promotion" promote_image_type(img1_raw)
+    img2 = @timeit timer "Image type promotion" promote_image_type(img2_raw)
     
     @timeit timer "PIV processing" begin
         # Input validation
@@ -1068,17 +1070,26 @@ function process_chunk!(cache::PIVStageCache{T}, chunk, grid_x, grid_y, img1, im
             end
             
             # Apply windowing using cached window function
-            windowed_subimg1, windowed_subimg2 = apply_cached_window!(cache, subimg1, subimg2)
+            windowed_subimg1, windowed_subimg2 = if timer !== nothing
+                @timeit timer "Applying window" apply_cached_window!(cache, subimg1, subimg2)
+            else
+                apply_cached_window!(cache, subimg1, subimg2)
+            end
             
             # Perform correlation using cached correlator (with or without timing)
             correlation_plane = if timer !== nothing
-                correlate!(cache.correlator, windowed_subimg1, windowed_subimg2, timer)
+                @timeit timer "Correlating" correlate!(cache.correlator, windowed_subimg1, windowed_subimg2, timer)
             else
                 correlate!(cache.correlator, windowed_subimg1, windowed_subimg2)
             end
             
             # Analyze correlation plane for displacement and quality metrics
-            disp_u, disp_v, peak_ratio, corr_moment = analyze_correlation_plane(correlation_plane)
+            disp_u, disp_v, peak_ratio, corr_moment = if timer !== nothing
+                @timeit timer "Analyzing correlation plane" analyze_correlation_plane(correlation_plane, cache.windowed_img1)
+            else
+                analyze_correlation_plane(correlation_plane, cache.windowed_img1)
+            end
+
             
             # Store result in cache
             vector = PIVVector(window_x, window_y, disp_u, disp_v, :good, peak_ratio, corr_moment)
@@ -1102,12 +1113,12 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
                                 stage::PIVStage, ::Type{T}=Float32, timer = TimerOutput()) where T
     
     # Generate interrogation window grid
-    grid_x, grid_y = @timeit timer "Grid Generation" generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
+    grid_x, grid_y = generate_interrogation_grid(size(img1), stage.window_size, stage.overlap)
     n_windows = length(grid_x)
     
     # Pre-allocate per-thread caches
     n_threads = Threads.nthreads()
-    caches = @timeit timer "Cache Allocation" [PIVStageCache(stage, T) for _ in 1:n_threads]
+    caches = [PIVStageCache(stage, T) for _ in 1:n_threads]
     
     # Process windows in parallel using ChunkSplitters
     Threads.@threads for (thread_id, chunk) in collect(enumerate(chunks(1:n_windows; n=n_threads)))
