@@ -926,7 +926,6 @@ function run_piv(img1_raw::Matrix{T}, img2_raw::Matrix{T}, stages::Vector{<:PIVS
                 # For now, just perform independent analysis at each stage
                 # TODO: Add initial guess propagation from previous stage
 
-                # Use parallel implementation by default
                 result = run_piv_stage(img1, img2, stage, eltype(img1), timer)
                 
                 # Add stage information to metadata

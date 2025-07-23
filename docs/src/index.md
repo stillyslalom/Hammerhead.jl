@@ -8,7 +8,7 @@ A modern, high-performance Julia package for Particle Image Velocimetry (PIV) an
 
 ## Overview
 
-Hammerhead.jl provides a complete PIV analysis pipeline for experimental fluid dynamics applications. The package processes image pairs to extract velocity vector fields, supporting both simple single-stage analysis and sophisticated multi-stage processing for improved accuracy in challenging flow conditions.
+Hammerhead.jl provides a 2D PIV analysis pipeline for experimental fluid dynamics. The package processes image pairs to extract velocity vector fields, supporting both simple single-stage analysis and sophisticated multi-stage processing (in-progress) for improved accuracy in challenging flow conditions.
 
 ## Key Features
 
@@ -145,16 +145,5 @@ Hammerhead.jl delivers excellent performance with near-linear scaling across ava
 
 ```julia
 using Pkg
-Pkg.add("Hammerhead")
-```
-
-## API Reference
-
-```@index
-```
-
-```@autodocs
-Modules = [Hammerhead]
-Order = [:function, :type, :constant, :macro]
-Private = false
+Pkg.add("https://github.com/stillyslalom/Hammerhead.jl")
 ```
