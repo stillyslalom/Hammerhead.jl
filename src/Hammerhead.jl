@@ -28,7 +28,7 @@ export linear_barycentric_interpolation, interpolate_vectors
 export get_timer
 
 # Visualization (optional, requires CairoMakie)
-export plot_piv_results
+export plot_piv
 
 # Define a Correlator type to encapsulate correlation methods and options
 abstract type Correlator end
@@ -1633,7 +1633,7 @@ function is_area_preserving(matrix::AbstractMatrix, tolerance::Float64=0.1)
 end
 
 """
-    plot_piv_results(background_image, piv_result; kwargs...) -> Figure
+    plot_piv(background_image, piv_result; kwargs...) -> Figure
 
 Create an interactive vector plot of PIV results overlaid on a background image.
 Vectors are colored by their status and scaled for visibility.
@@ -1662,11 +1662,11 @@ Vectors are colored by their status and scaled for visibility.
 # Examples
 ```julia
 # Basic usage
-fig = plot_piv_results(img1, result)
+fig = plot_piv(img1, result)
 display(fig)
 
 # Customized visualization
-fig = plot_piv_results(img1, result, 
+fig = plot_piv(img1, result, 
                       scale=10.0, 
                       colormap_good=:plasma,
                       title="PIV Analysis - Flow Field")
@@ -1675,7 +1675,7 @@ fig = plot_piv_results(img1, result,
 # Requirements
 Requires CairoMakie.jl to be loaded: `using CairoMakie`
 """
-function plot_piv_results(background_image::AbstractMatrix, piv_result::PIVResult;
+function plot_piv(background_image::AbstractMatrix, piv_result::PIVResult;
                           scale::Float64 = 5.0,
                           arrow_size::Float64 = 0.02,
                           colormap_good = :viridis,
