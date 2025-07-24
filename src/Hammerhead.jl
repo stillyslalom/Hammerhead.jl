@@ -268,13 +268,14 @@ Configuration for individual processing stage in multi-stage PIV analysis.
 - `window_function::W` - Windowing function type
 - `interpolation_method::I` - Interpolation method type
 """
-struct PIVStage{W<:WindowFunction, I<:InterpolationMethod}
+struct PIVStage{W<:WindowFunction, I<:InterpolationMethod, V<:Tuple}
     window_size::Tuple{Int, Int}
     overlap::Tuple{Float64, Float64}
     padding::Int
     deformation_iterations::Int
     window_function::W
     interpolation_method::I
+    validation::V  # Validation pipeline as parameterized tuple type
 end
 
 # Constructor with defaults using symbols or tuples for parametric windows
@@ -283,7 +284,8 @@ function PIVStage(window_size::Tuple{Int, Int};
                  padding::Int = 0,
                  deformation_iterations::Int = 3,
                  window_function::Union{Symbol, Tuple{Symbol, Vararg{Real}}} = :rectangular,
-                 interpolation_method::Symbol = :bilinear)
+                 interpolation_method::Symbol = :bilinear,
+                 validation::Tuple = ())
     
     # Validate overlap ratios
     if any(x -> x < 0 || x >= 1, overlap)
@@ -299,7 +301,7 @@ function PIVStage(window_size::Tuple{Int, Int};
     wf = window_function_type(window_function)
     im = interpolation_method_type(interpolation_method)
     
-    PIVStage(window_size, overlap, padding, deformation_iterations, wf, im)
+    PIVStage(window_size, overlap, padding, deformation_iterations, wf, im, validation)
 end
 
 # Helper constructor for square windows
@@ -354,7 +356,8 @@ function PIVStages(n_stages::Int, final_size::Int;
                    padding=0,
                    deformation_iterations=3,
                    window_function=:rectangular,
-                   interpolation_method=:bilinear)
+                   interpolation_method=:bilinear,
+                   validation=())
     
     if n_stages <= 0
         throw(ArgumentError("Number of stages must be positive"))
@@ -376,10 +379,11 @@ function PIVStages(n_stages::Int, final_size::Int;
         end
     end
     
-    # Handle tuples - convert to vector if appropriate size
+    # Handle tuples - DO NOT convert to vector for validation pipelines  
     function get_stage_value(param::Tuple, i::Int, n_stages::Int)
-        vec_param = collect(param)  # Convert tuple to vector
-        return get_stage_value(vec_param, i, n_stages)  # Delegate to vector method
+        # For validation tuples, return as-is (they should be validation pipelines)
+        # This prevents ambiguity with multi-stage PIV vectors
+        return param
     end
     
     # Handle 1×n or n×1 matrices - convert to vector if appropriate
@@ -428,6 +432,7 @@ function PIVStages(n_stages::Int, final_size::Int;
         stage_deformation_iterations = get_stage_value(deformation_iterations, i, n_stages)
         stage_window_function = get_stage_value(window_function, i, n_stages)
         stage_interpolation_method = get_stage_value(interpolation_method, i, n_stages)
+        stage_validation = get_stage_value(validation, i, n_stages)
         
         # Convert scalar overlap to tuple if needed
         if isa(stage_overlap, Real)
@@ -443,7 +448,8 @@ function PIVStages(n_stages::Int, final_size::Int;
                         padding=Int(stage_padding),
                         deformation_iterations=Int(stage_deformation_iterations),
                         window_function=stage_window_function,
-                        interpolation_method=stage_interpolation_method)
+                        interpolation_method=stage_interpolation_method,
+                        validation=stage_validation)
         push!(stages, stage)
     end
     
@@ -569,6 +575,296 @@ function calculate_quality_metrics(correlation_plane::AbstractMatrix{T}, peak_lo
     correlation_moment = calculate_correlation_moment(corr_mag, peak_location)
     
     return Float64(peak_ratio), Float64(correlation_moment)
+end
+
+# ============================================================================
+# Vector Validation System
+# ============================================================================
+
+"""
+Abstract base type for PIV vector validation algorithms.
+
+Validators are applied sequentially to filter out unreliable displacement vectors.
+Two main categories exist:
+- `LocalValidator`: Tests individual vectors against thresholds (fast)
+- `NeighborhoodValidator`: Tests vectors against local neighborhood statistics (slower)
+"""
+abstract type PIVValidator end
+
+"""
+Validators that examine individual vector properties without considering neighbors.
+These can be efficiently batched together in a single loop.
+"""
+abstract type LocalValidator <: PIVValidator end
+
+"""
+Validators that examine vectors relative to their spatial neighbors.
+These require knowledge of surrounding valid vectors and are applied separately.
+"""
+abstract type NeighborhoodValidator <: PIVValidator end
+
+"""
+    PeakRatioValidator(threshold::Float64)
+
+Validates vectors based on correlation peak ratio (primary/secondary peak).
+Higher ratios indicate more reliable correlations.
+
+# Arguments
+- `threshold`: Minimum acceptable peak ratio (typically 1.1-1.5)
+
+# Example
+```julia
+validator = PeakRatioValidator(1.2)  # Require peak ratio ≥ 1.2
+```
+"""
+struct PeakRatioValidator <: LocalValidator
+    threshold::Float64
+end
+
+"""
+    CorrelationMomentValidator(threshold::Float64)
+
+Validates vectors based on correlation moment (peak sharpness).
+Higher moments indicate sharper, more reliable peaks.
+
+# Arguments  
+- `threshold`: Minimum acceptable correlation moment (typically 0.1-0.5)
+
+# Example
+```julia
+validator = CorrelationMomentValidator(0.2)  # Require moment ≥ 0.2
+```
+"""
+struct CorrelationMomentValidator <: LocalValidator
+    threshold::Float64
+end
+
+"""
+    VelocityMagnitudeValidator(min::Float64, max::Float64)
+
+Validates vectors based on displacement magnitude bounds.
+Filters out physically unrealistic displacements.
+
+# Arguments
+- `min`: Minimum acceptable displacement magnitude
+- `max`: Maximum acceptable displacement magnitude
+
+# Example
+```julia
+validator = VelocityMagnitudeValidator(0.1, 50.0)  # Magnitude between 0.1-50 pixels
+```
+"""
+struct VelocityMagnitudeValidator <: LocalValidator
+    min::Float64
+    max::Float64
+end
+
+"""
+    LocalMedianValidator(window_size::Int, threshold::Float64)
+
+Validates vectors against median of local neighborhood.
+Vectors deviating more than `threshold` standard deviations from
+local median are marked as outliers.
+
+# Arguments
+- `window_size`: Radius of neighborhood window (e.g., 3 = 7×7 window)
+- `threshold`: Deviation threshold in standard deviations (typically 2-3)
+
+# Example
+```julia
+validator = LocalMedianValidator(3, 2.0)  # 7×7 window, 2σ threshold
+```
+"""
+struct LocalMedianValidator <: NeighborhoodValidator
+    window_size::Int
+    threshold::Float64
+end
+
+"""
+    NormalizedResidualValidator(window_size::Int, threshold::Float64)
+
+Validates vectors using normalized residual against local interpolated field.
+More sophisticated than median test, accounts for local flow gradients.
+
+# Arguments
+- `window_size`: Radius of neighborhood for interpolation
+- `threshold`: Normalized residual threshold (typically 2-4)
+
+# Example
+```julia
+validator = NormalizedResidualValidator(5, 3.0)  # 11×11 window, 3σ threshold
+```
+"""
+struct NormalizedResidualValidator <: NeighborhoodValidator
+    window_size::Int
+    threshold::Float64
+end
+
+"""
+    parse_validator(spec) -> PIVValidator
+
+Convert user specification to validator object.
+Supports both object syntax and pair syntax.
+
+# Examples
+```julia
+# Object syntax
+parse_validator(PeakRatioValidator(1.2))
+
+# Pair syntax
+parse_validator(:peak_ratio => 1.2)
+parse_validator(:local_median => (window_size=3, threshold=2.0))
+```
+"""
+function parse_validator(validator::PIVValidator)
+    return validator  # Already a validator object
+end
+
+function parse_validator(spec::Pair{Symbol, <:Real})
+    symbol, threshold = spec
+    return if symbol == :peak_ratio
+        PeakRatioValidator(threshold)
+    elseif symbol == :correlation_moment
+        CorrelationMomentValidator(threshold)
+    else
+        error("Unknown validator: $symbol")
+    end
+end
+
+function parse_validator(spec::Pair{Symbol, <:NamedTuple})
+    symbol, config = spec
+    return if symbol == :local_median
+        LocalMedianValidator(config.window_size, config.threshold)
+    elseif symbol == :normalized_residual
+        NormalizedResidualValidator(config.window_size, config.threshold)
+    elseif symbol == :velocity_magnitude
+        VelocityMagnitudeValidator(config.min, config.max)
+    else
+        error("Unknown validator: $symbol")
+    end
+end
+
+"""
+    parse_validation_pipeline(pipeline::Tuple) -> Tuple of PIVValidators
+
+Convert validation pipeline tuple to validator objects.
+Uses tuple to distinguish from multi-stage PIV vector parameters.
+
+# Examples
+```julia
+# Object syntax
+pipeline = (PeakRatioValidator(1.2), LocalMedianValidator(3, 2.0))
+
+# Pair syntax  
+pipeline = (:peak_ratio => 1.2, :local_median => (window_size=3, threshold=2.0))
+```
+"""
+function parse_validation_pipeline(pipeline::Tuple)
+    return Tuple(parse_validator(spec) for spec in pipeline)
+end
+
+function parse_validation_pipeline(pipeline::Tuple{})
+    return ()  # Empty pipeline
+end
+
+"""
+    validate_vectors!(result::PIVResult, validation_pipeline::Tuple)
+
+Apply validation pipeline to PIV result, optimizing for performance.
+Local validators are batched together, neighborhood validators applied separately.
+"""
+function validate_vectors!(result::PIVResult, validation_pipeline::Tuple)
+    if isempty(validation_pipeline)
+        return  # No validation to perform
+    end
+    
+    validators = parse_validation_pipeline(validation_pipeline)
+    
+    # Separate local and neighborhood validators
+    local_validators = filter(v -> v isa LocalValidator, validators)
+    neighborhood_validators = filter(v -> v isa NeighborhoodValidator, validators)
+    
+    # Apply all local validators in single batched loop
+    if !isempty(local_validators)
+        apply_local_validators!(result.vectors, local_validators)
+    end
+    
+    # Apply neighborhood validators sequentially with masking
+    valid_mask = get_valid_mask(result.vectors)
+    for validator in neighborhood_validators
+        apply_neighborhood_validator!(result.vectors, validator, valid_mask)
+        update_valid_mask!(valid_mask, result.vectors)
+    end
+end
+
+"""
+    apply_local_validators!(vectors::StructArray{PIVVector}, validators::Vector{<:LocalValidator})
+
+Batch local validators into single loop for efficiency.
+"""
+function apply_local_validators!(vectors::StructArray{PIVVector}, validators::Vector{<:LocalValidator})
+    for i in eachindex(vectors)
+        vector = vectors[i]
+        if vector.status == :good  # Only validate good vectors
+            for validator in validators
+                if !is_valid(vector, validator)
+                    vectors.status[i] = :bad
+                    break  # No need to test further once marked bad
+                end
+            end
+        end
+    end
+end
+
+"""
+    is_valid(vector::PIVVector, validator::LocalValidator) -> Bool
+
+Test if individual vector passes validation criteria.
+"""
+is_valid(vector::PIVVector, v::PeakRatioValidator) = vector.peak_ratio >= v.threshold
+is_valid(vector::PIVVector, v::CorrelationMomentValidator) = vector.correlation_moment >= v.threshold
+
+function is_valid(vector::PIVVector, v::VelocityMagnitudeValidator)
+    mag = sqrt(vector.u^2 + vector.v^2)
+    return v.min <= mag <= v.max
+end
+
+"""
+    get_valid_mask(vectors::StructArray{PIVVector}) -> BitMatrix
+
+Create mask of currently valid vectors for neighborhood operations.
+"""
+function get_valid_mask(vectors::StructArray{PIVVector})
+    rows, cols = size(vectors)
+    mask = BitMatrix(undef, rows, cols)
+    for i in 1:rows, j in 1:cols
+        mask[i, j] = vectors[i, j].status == :good
+    end
+    return mask
+end
+
+"""
+    update_valid_mask!(mask::BitMatrix, vectors::StructArray{PIVVector})
+
+Update validity mask after validation step.
+"""
+function update_valid_mask!(mask::BitMatrix, vectors::StructArray{PIVVector})
+    rows, cols = size(vectors)
+    for i in 1:rows, j in 1:cols
+        mask[i, j] = vectors[i, j].status == :good
+    end
+end
+
+# Placeholder implementations for neighborhood validators
+# TODO: Implement these functions
+function apply_neighborhood_validator!(vectors::StructArray{PIVVector}, validator::LocalMedianValidator, valid_mask::BitMatrix)
+    # TODO: Implement local median validation
+    @warn "LocalMedianValidator not yet implemented"
+end
+
+function apply_neighborhood_validator!(vectors::StructArray{PIVVector}, validator::NormalizedResidualValidator, valid_mask::BitMatrix)
+    # TODO: Implement normalized residual validation  
+    @warn "NormalizedResidualValidator not yet implemented"
 end
 
 """

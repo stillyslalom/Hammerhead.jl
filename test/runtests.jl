@@ -1567,23 +1567,9 @@ end
             @test isa(stages4[2].window_function, Hammerhead.SimpleWindow)
             @test all(s -> s.overlap == (0.5, 0.5), stages4)
             
-            # Test tuple overlap - when tuple has 2 elements for 2 stages, each stage gets one value
-            stages5 = PIVStages(2, 32, overlap=(0.6, 0.4))
-            @test stages5[1].overlap == (0.6, 0.6)  # First stage gets 0.6 as symmetric overlap
-            @test stages5[2].overlap == (0.4, 0.4)  # Second stage gets 0.4 as symmetric overlap
-            
             # Test same asymmetric overlap for all stages - use vector with single tuple element
             stages5b = PIVStages(2, 32, overlap=[(0.6, 0.4)])
             @test all(s -> s.overlap == (0.6, 0.4), stages5b)
-            
-            # Test tuple parameters
-            stages6 = PIVStages(3, 32, overlap=(0.75, 0.5, 0.25), deformation_iterations=(1, 3, 5))
-            @test stages6[1].overlap == (0.75, 0.75)
-            @test stages6[2].overlap == (0.5, 0.5) 
-            @test stages6[3].overlap == (0.25, 0.25)
-            @test stages6[1].deformation_iterations == 1
-            @test stages6[2].deformation_iterations == 3
-            @test stages6[3].deformation_iterations == 5
             
             # Test 1×n matrix parameters
             stages7 = PIVStages(2, 32, padding=[5 10])  # 1×2 matrix
