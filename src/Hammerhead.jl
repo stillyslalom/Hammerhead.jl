@@ -2,6 +2,7 @@ module Hammerhead
 
 using FFTW
 using LinearAlgebra: mul!, ldiv!, inv, det, cond, eigvals, dot
+using Statistics: median!, std
 using ImageFiltering
 using StructArrays
 using Interpolations
@@ -780,20 +781,70 @@ function validate_vectors!(result::PIVResult, validation_pipeline::Tuple)
     
     validators = parse_validation_pipeline(validation_pipeline)
     
-    # Separate local and neighborhood validators
-    local_validators = filter(v -> v isa LocalValidator, validators)
-    neighborhood_validators = filter(v -> v isa NeighborhoodValidator, validators)
-    
-    # Apply all local validators in single batched loop
-    if !isempty(local_validators)
-        apply_local_validators!(result.vectors, local_validators)
+    # Internal method to group adjacent local validators
+    function group_batches(validators)
+        batches = []
+        i = 1
+        
+        while i <= length(validators)
+            if validators[i] isa LocalValidator
+                # Collect adjacent local validators
+                local_batch = LocalValidator[]
+                while i <= length(validators) && validators[i] isa LocalValidator
+                    push!(local_batch, validators[i])
+                    i += 1
+                end
+                # Return single validator or vector of validators
+                if length(local_batch) == 1
+                    push!(batches, local_batch[1])
+                else
+                    push!(batches, local_batch)
+                end
+            else
+                # Single neighborhood validator
+                push!(batches, validators[i])
+                i += 1
+            end
+        end
+        return batches
     end
     
-    # Apply neighborhood validators sequentially with masking
-    valid_mask = get_valid_mask(result.vectors)
-    for validator in neighborhood_validators
+    # Internal method dispatch for different validator batch types
+    apply_batch!(validator::LocalValidator, valid_mask) = begin
+        apply_local_validator!(result.vectors, validator)
+        update_valid_mask!(valid_mask, result.vectors)
+    end
+    
+    apply_batch!(validators::Vector{<:LocalValidator}, valid_mask) = begin
+        apply_local_validators!(result.vectors, validators)
+        update_valid_mask!(valid_mask, result.vectors)
+    end
+    
+    apply_batch!(validator::NeighborhoodValidator, valid_mask) = begin
         apply_neighborhood_validator!(result.vectors, validator, valid_mask)
         update_valid_mask!(valid_mask, result.vectors)
+    end
+    
+    # Group validators and process batches in sequence
+    validator_batches = group_batches(validators)
+    valid_mask = get_valid_mask(result.vectors)
+    
+    for batch in validator_batches
+        apply_batch!(batch, valid_mask)
+    end
+end
+
+"""
+    apply_local_validator!(vectors::StructArray{PIVVector}, validator::LocalValidator)
+
+Apply single local validator to vector field.
+"""
+function apply_local_validator!(vectors::StructArray{PIVVector}, validator::LocalValidator)
+    for i in eachindex(vectors)
+        vector = vectors[i]
+        if vector.status == :good && !is_valid(vector, validator)
+            vectors.status[i] = :bad
+        end
     end
 end
 
@@ -855,17 +906,245 @@ function update_valid_mask!(mask::BitMatrix, vectors::StructArray{PIVVector})
     end
 end
 
-# Placeholder implementations for neighborhood validators
-# TODO: Implement these functions
 function apply_neighborhood_validator!(vectors::StructArray{PIVVector}, validator::LocalMedianValidator, valid_mask::BitMatrix)
-    # TODO: Implement local median validation
-    @warn "LocalMedianValidator not yet implemented"
+    rows, cols = size(vectors)
+    window_size = validator.window_size
+    threshold = validator.threshold
+    
+    # Pre-allocate work buffers
+    max_neighbors = (2 * window_size + 1)^2 - 1
+    u_buffer = Vector{Float64}()
+    v_buffer = Vector{Float64}()
+    sizehint!(u_buffer, max_neighbors)
+    sizehint!(v_buffer, max_neighbors)
+    
+    for i in 1:rows, j in 1:cols
+        if vectors[i, j].status != :good
+            continue  # Skip vectors that are already marked as bad
+        end
+        
+        # Clear and collect neighborhood vectors
+        empty!(u_buffer)
+        empty!(v_buffer)
+        
+        # Define neighborhood bounds
+        i_min = max(1, i - window_size)
+        i_max = min(rows, i + window_size)
+        j_min = max(1, j - window_size)
+        j_max = min(cols, j + window_size)
+        
+        # Collect valid neighbors (excluding center point)
+        for ni in i_min:i_max, nj in j_min:j_max
+            if (ni != i || nj != j) && valid_mask[ni, nj]
+                push!(u_buffer, vectors[ni, nj].u)
+                push!(v_buffer, vectors[ni, nj].v)
+            end
+        end
+        
+        if length(u_buffer) < 3
+            # Not enough neighbors for robust statistics
+            continue
+        end
+        
+        # Calculate median and standard deviation (using in-place median for efficiency)
+        median_u = median!(u_buffer)
+        median_v = median!(v_buffer)
+        std_u = std(u_buffer)  # Note: u_buffer is now sorted from median!
+        std_v = std(v_buffer)  # Note: v_buffer is now sorted from median!
+        
+        # Test current vector against neighborhood statistics
+        current_u = vectors[i, j].u
+        current_v = vectors[i, j].v
+        
+        # Normalized deviation from median
+        dev_u = abs(current_u - median_u) / (std_u + 1e-10)  # Small epsilon to avoid division by zero
+        dev_v = abs(current_v - median_v) / (std_v + 1e-10)
+        
+        # Mark as outlier if either component exceeds threshold
+        if dev_u > threshold || dev_v > threshold
+            vectors.status[i, j] = :bad
+        end
+    end
 end
 
 function apply_neighborhood_validator!(vectors::StructArray{PIVVector}, validator::NormalizedResidualValidator, valid_mask::BitMatrix)
-    # TODO: Implement normalized residual validation  
-    @warn "NormalizedResidualValidator not yet implemented"
+    rows, cols = size(vectors)
+    window_size = validator.window_size
+    threshold = validator.threshold
+    
+    # Pre-allocate work buffers
+    max_neighbors = (2 * window_size + 1)^2 - 1
+    u_buffer = Vector{Float64}()
+    v_buffer = Vector{Float64}()
+    x_buffer = Vector{Float64}()
+    y_buffer = Vector{Float64}()
+    sizehint!(u_buffer, max_neighbors)
+    sizehint!(v_buffer, max_neighbors)
+    sizehint!(x_buffer, max_neighbors)
+    sizehint!(y_buffer, max_neighbors)
+    
+    for i in 1:rows, j in 1:cols
+        if vectors[i, j].status != :good
+            continue  # Skip vectors that are already marked as bad
+        end
+        
+        # Clear and collect neighborhood vectors with positions
+        empty!(u_buffer)
+        empty!(v_buffer) 
+        empty!(x_buffer)
+        empty!(y_buffer)
+        
+        # Define neighborhood bounds
+        i_min = max(1, i - window_size)
+        i_max = min(rows, i + window_size)
+        j_min = max(1, j - window_size)
+        j_max = min(cols, j + window_size)
+        
+        # Collect valid neighbors with their positions (excluding center point)
+        for ni in i_min:i_max, nj in j_min:j_max
+            if (ni != i || nj != j) && valid_mask[ni, nj]
+                push!(u_buffer, vectors[ni, nj].u)
+                push!(v_buffer, vectors[ni, nj].v)
+                push!(x_buffer, vectors[ni, nj].x)
+                push!(y_buffer, vectors[ni, nj].y)
+            end
+        end
+        
+        if length(u_buffer) < 4
+            # Not enough neighbors for interpolation (need at least 4 points for bilinear)
+            continue
+        end
+        
+        # Current vector position
+        current_x = vectors[i, j].x
+        current_y = vectors[i, j].y
+        current_u = vectors[i, j].u
+        current_v = vectors[i, j].v
+        
+        # Interpolate expected velocity at current position using neighbors
+        # Simple inverse distance weighting interpolation
+        total_weight = 0.0
+        interp_u = 0.0
+        interp_v = 0.0
+        
+        for k in 1:length(x_buffer)
+            # Distance to neighbor
+            dx = current_x - x_buffer[k]
+            dy = current_y - y_buffer[k]
+            dist_sq = dx*dx + dy*dy
+            
+            if dist_sq > 1e-10  # Avoid division by zero
+                weight = 1.0 / (dist_sq + 1e-6)  # Inverse distance weighting with small regularization
+                interp_u += weight * u_buffer[k]
+                interp_v += weight * v_buffer[k]
+                total_weight += weight
+            end
+        end
+        
+        if total_weight > 1e-10
+            interp_u /= total_weight
+            interp_v /= total_weight
+            
+            # Calculate residuals
+            residual_u = current_u - interp_u
+            residual_v = current_v - interp_v
+            
+            # Estimate local variance from neighborhood
+            variance_u = 0.0
+            variance_v = 0.0
+            for k in 1:length(u_buffer)
+                diff_u = u_buffer[k] - interp_u
+                diff_v = v_buffer[k] - interp_v
+                variance_u += diff_u * diff_u
+                variance_v += diff_v * diff_v
+            end
+            variance_u /= length(u_buffer)
+            variance_v /= length(v_buffer)
+            
+            # Normalized residuals
+            std_u = sqrt(variance_u + 1e-10)  # Small epsilon to avoid division by zero
+            std_v = sqrt(variance_v + 1e-10)
+            
+            norm_residual_u = abs(residual_u) / std_u
+            norm_residual_v = abs(residual_v) / std_v
+            
+            # Mark as outlier if either component exceeds threshold
+            if norm_residual_u > threshold || norm_residual_v > threshold
+                vectors.status[i, j] = :bad
+            end
+        end
+    end
 end
+
+# ============================================================================
+# Validators Sub-Module
+# ============================================================================
+
+"""
+    Validators
+
+Sub-module providing clean access to PIV vector validation types.
+
+# Usage
+```julia
+using Hammerhead.Validators
+
+# Clean validator names without "Validator" suffix
+validation = (PeakRatio(1.2), LocalMedian(window_size=3, threshold=2.0))
+```
+"""
+module Validators
+
+# Import parent module types and functions
+import ..PIVValidator, ..LocalValidator, ..NeighborhoodValidator
+import ..PeakRatioValidator, ..CorrelationMomentValidator, ..VelocityMagnitudeValidator
+import ..LocalMedianValidator, ..NormalizedResidualValidator
+
+# Export clean names without "Validator" suffix
+export PeakRatio, CorrelationMoment, VelocityMagnitude, LocalMedian, NormalizedResidual
+
+# Clean type aliases
+"""
+    PeakRatio(threshold::Float64)
+
+Validates vectors based on correlation peak ratio (primary/secondary peak).
+Alias for `PeakRatioValidator`.
+"""
+const PeakRatio = PeakRatioValidator
+
+"""
+    CorrelationMoment(threshold::Float64)
+
+Validates vectors based on correlation moment (peak sharpness).
+Alias for `CorrelationMomentValidator`.
+"""
+const CorrelationMoment = CorrelationMomentValidator
+
+"""
+    VelocityMagnitude(min::Float64, max::Float64)
+
+Validates vectors based on displacement magnitude bounds.
+Alias for `VelocityMagnitudeValidator`.
+"""
+const VelocityMagnitude = VelocityMagnitudeValidator
+
+"""
+    LocalMedian(window_size::Int, threshold::Float64)
+
+Validates vectors against median of local neighborhood.
+Alias for `LocalMedianValidator`.
+"""
+const LocalMedian = LocalMedianValidator
+
+"""
+    NormalizedResidual(window_size::Int, threshold::Float64)
+
+Validates vectors using normalized residual against local interpolated field.
+Alias for `NormalizedResidualValidator`.
+"""
+const NormalizedResidual = NormalizedResidualValidator
+
+end # module Validators
 
 """
     find_secondary_peak(correlation_magnitudes, primary_location, primary_value) -> secondary_value
@@ -1433,6 +1712,15 @@ function run_piv_stage(img1::AbstractArray{<:Real,2}, img2::AbstractArray{<:Real
     result.metadata["overlap"] = stage.overlap
     result.metadata["n_windows"] = n_windows
     result.metadata["n_threads"] = n_threads
+    
+    # Apply validation pipeline if configured
+    if !isempty(stage.validation)
+        if timer !== nothing
+            @timeit timer "Vector Validation" validate_vectors!(result, stage.validation)
+        else
+            validate_vectors!(result, stage.validation)
+        end
+    end
     
     return result
 end

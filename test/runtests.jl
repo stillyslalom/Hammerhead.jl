@@ -2527,4 +2527,255 @@ end
         end
     end # Edge Case & Negative Input Coverage
 
+    @testset "Vector Validation System" begin
+        # Import validation types for testing
+        using Hammerhead: PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidator,
+                          LocalMedianValidator, NormalizedResidualValidator, parse_validator,
+                          parse_validation_pipeline, validate_vectors!, apply_local_validators!,
+                          get_valid_mask, update_valid_mask!
+        using Hammerhead.Validators
+
+        @testset "Validator Type Hierarchy" begin
+            # Test that all validators have correct type hierarchy
+            @test PeakRatioValidator <: Hammerhead.LocalValidator
+            @test CorrelationMomentValidator <: Hammerhead.LocalValidator
+            @test VelocityMagnitudeValidator <: Hammerhead.LocalValidator
+            @test LocalMedianValidator <: Hammerhead.NeighborhoodValidator
+            @test NormalizedResidualValidator <: Hammerhead.NeighborhoodValidator
+            
+            # Test sub-module aliases
+            @test PeakRatio === PeakRatioValidator
+            @test CorrelationMoment === CorrelationMomentValidator
+            @test VelocityMagnitude === VelocityMagnitudeValidator
+            @test LocalMedian === LocalMedianValidator
+            @test NormalizedResidual === NormalizedResidualValidator
+        end
+        
+        @testset "Validator Parsing API" begin
+            # Test parsing validator objects (should return as-is)
+            validator1 = PeakRatioValidator(1.2)
+            @test parse_validator(validator1) === validator1
+            
+            # Test parsing symbol pairs for simple validators
+            @test parse_validator(:peak_ratio => 1.2) isa PeakRatioValidator
+            @test parse_validator(:peak_ratio => 1.2).threshold == 1.2
+            @test parse_validator(:correlation_moment => 0.1) isa CorrelationMomentValidator
+            @test parse_validator(:correlation_moment => 0.1).threshold == 0.1
+            
+            # Test parsing symbol pairs for complex validators
+            @test parse_validator(:local_median => (window_size=3, threshold=2.0)) isa LocalMedianValidator
+            @test parse_validator(:velocity_magnitude => (min=0.1, max=50.0)) isa VelocityMagnitudeValidator
+            @test parse_validator(:normalized_residual => (window_size=5, threshold=3.0)) isa NormalizedResidualValidator
+            
+            # Test validation pipeline parsing
+            pipeline = (:peak_ratio => 1.2, :local_median => (window_size=3, threshold=2.0))
+            parsed = parse_validation_pipeline(pipeline)
+            @test length(parsed) == 2
+            @test parsed[1] isa PeakRatioValidator
+            @test parsed[2] isa LocalMedianValidator
+            
+            # Test empty pipeline
+            @test parse_validation_pipeline(()) == ()
+            
+            # Test error on unknown validator
+            @test_throws ErrorException parse_validator(:unknown_validator => 1.0)
+        end
+        
+        @testset "Local Validators" begin
+            # Create test vectors with known properties
+            vectors = StructArray([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),   # Good vector
+                PIVVector(2.0, 1.0, 2.0, 2.0, :good, 0.8, 0.3),   # Low peak ratio
+                PIVVector(3.0, 1.0, 3.0, 3.0, :good, 1.5, 0.05),  # Low correlation moment
+                PIVVector(4.0, 1.0, 100.0, 100.0, :good, 1.5, 0.3), # High velocity magnitude
+                PIVVector(5.0, 1.0, 5.0, 5.0, :bad, 1.5, 0.3),    # Already bad
+            ])
+            
+            # Test PeakRatioValidator
+            validator = PeakRatioValidator(1.2)
+            test_vectors = deepcopy(vectors)
+            apply_local_validators!(test_vectors, [validator])
+            
+            @test test_vectors[1].status == :good  # 1.5 >= 1.2
+            @test test_vectors[2].status == :bad   # 0.8 < 1.2
+            @test test_vectors[3].status == :good  # 1.5 >= 1.2
+            @test test_vectors[4].status == :good  # 1.5 >= 1.2
+            @test test_vectors[5].status == :bad   # Already bad
+            
+            # Test CorrelationMomentValidator
+            validator = CorrelationMomentValidator(0.1)
+            test_vectors = deepcopy(vectors)
+            apply_local_validators!(test_vectors, [validator])
+            
+            @test test_vectors[1].status == :good  # 0.3 >= 0.1
+            @test test_vectors[2].status == :good  # 0.3 >= 0.1
+            @test test_vectors[3].status == :bad   # 0.05 < 0.1
+            @test test_vectors[4].status == :good  # 0.3 >= 0.1
+            @test test_vectors[5].status == :bad   # Already bad
+            
+            # Test VelocityMagnitudeValidator
+            validator = VelocityMagnitudeValidator(0.1, 10.0)
+            test_vectors = deepcopy(vectors)
+            apply_local_validators!(test_vectors, [validator])
+            
+            mag1 = sqrt(1.0^2 + 1.0^2)  # ≈ 1.41
+            mag4 = sqrt(100.0^2 + 100.0^2)  # ≈ 141.4
+            
+            @test test_vectors[1].status == :good  # mag ∈ [0.1, 10.0]
+            @test test_vectors[2].status == :good  # mag ∈ [0.1, 10.0]
+            @test test_vectors[3].status == :good  # mag ∈ [0.1, 10.0]
+            @test test_vectors[4].status == :bad   # mag > 10.0
+            @test test_vectors[5].status == :bad   # Already bad
+            
+            # Test batched local validators
+            validators = [PeakRatioValidator(1.2), CorrelationMomentValidator(0.1)]
+            test_vectors = deepcopy(vectors)
+            apply_local_validators!(test_vectors, validators)
+            
+            @test test_vectors[1].status == :good  # Passes both
+            @test test_vectors[2].status == :bad   # Fails peak ratio
+            @test test_vectors[3].status == :bad   # Fails correlation moment
+            @test test_vectors[4].status == :good  # Passes both
+            @test test_vectors[5].status == :bad   # Already bad
+        end
+        
+        @testset "Validation Masks" begin
+            # Create 3×3 grid of vectors
+            vectors = StructArray(reshape([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(2.0, 1.0, 2.0, 2.0, :bad, 1.5, 0.3),
+                PIVVector(3.0, 1.0, 3.0, 3.0, :good, 1.5, 0.3),
+                PIVVector(1.0, 2.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(2.0, 2.0, 2.0, 2.0, :good, 1.5, 0.3),
+                PIVVector(3.0, 2.0, 3.0, 3.0, :bad, 1.5, 0.3),
+                PIVVector(1.0, 3.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(2.0, 3.0, 2.0, 2.0, :good, 1.5, 0.3),
+                PIVVector(3.0, 3.0, 3.0, 3.3, :good, 1.5, 0.3),
+            ], 3, 3))
+            
+            # Test mask creation
+            mask = get_valid_mask(vectors)
+            expected_mask = [true true true; false true true; true false true]
+            @test mask == expected_mask
+            
+            # Test mask update
+            vectors[1, 1] = PIVVector(1.0, 1.0, 1.0, 1.0, :bad, 1.5, 0.3)
+            update_valid_mask!(mask, vectors)
+            expected_mask[1, 1] = false
+            @test mask == expected_mask
+        end
+        
+        @testset "PIVStage Integration" begin
+            # Test PIVStage with validation tuple
+            validation = (:peak_ratio => 1.2, :correlation_moment => 0.1)
+            stage = PIVStage((64, 64), validation=validation)
+            @test stage.validation == validation
+            
+            # Test PIVStage with validator objects
+            validation_objects = (PeakRatioValidator(1.2), CorrelationMomentValidator(0.1))
+            stage = PIVStage((64, 64), validation=validation_objects)
+            @test stage.validation == validation_objects
+            
+            # Test PIVStage with sub-module validators
+            validation_clean = (PeakRatio(1.2), CorrelationMoment(0.1))
+            stage = PIVStage((64, 64), validation=validation_clean)
+            @test stage.validation == validation_clean
+            
+            # Test empty validation
+            stage = PIVStage((64, 64))
+            @test stage.validation == ()
+            
+            # Test PIVStages with validation
+            stages = PIVStages(2, 32, validation=(:peak_ratio => 1.2,))
+            @test all(s.validation == (:peak_ratio => 1.2,) for s in stages)
+        end
+        
+        @testset "Full Validation Pipeline" begin
+            # Create test PIVResult with mixed quality vectors
+            vectors = StructArray(reshape([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),   # Good
+                PIVVector(2.0, 1.0, 2.0, 2.0, :good, 0.8, 0.3),   # Low peak ratio
+                PIVVector(3.0, 1.0, 3.0, 3.0, :good, 1.5, 0.05),  # Low correlation moment
+                PIVVector(1.0, 2.0, 1.0, 1.0, :good, 1.5, 0.3),   # Good
+                PIVVector(2.0, 2.0, 2.0, 2.0, :good, 1.5, 0.3),   # Good
+                PIVVector(3.0, 2.0, 3.0, 3.0, :good, 1.5, 0.3),   # Good  
+            ], 2, 3))
+            
+            result = PIVResult(vectors, Dict{String, Any}(), Dict{String, Any}())
+            
+            # Test validation pipeline
+            validation = (:peak_ratio => 1.2, :correlation_moment => 0.1)
+            validate_vectors!(result, validation)
+            
+            # Check results
+            @test result.vectors[1, 1].status == :good  # Passes both
+            @test result.vectors[2, 1].status == :bad   # Fails peak ratio
+            @test result.vectors[1, 2].status == :bad   # Fails correlation moment
+            @test result.vectors[1, 3].status == :good  # Passes both
+            @test result.vectors[2, 2].status == :good  # Passes both
+            @test result.vectors[2, 3].status == :good  # Passes both
+            
+            # Test empty validation pipeline with fresh good vectors
+            vectors_fresh = StructArray(reshape([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),   
+                PIVVector(2.0, 1.0, 2.0, 2.0, :good, 0.8, 0.3),   
+                PIVVector(3.0, 1.0, 3.0, 3.0, :good, 1.5, 0.05),  
+                PIVVector(1.0, 2.0, 1.0, 1.0, :good, 1.5, 0.3),   
+                PIVVector(2.0, 2.0, 2.0, 2.0, :good, 1.5, 0.3),   
+                PIVVector(3.0, 2.0, 3.0, 3.0, :good, 1.5, 0.3),   
+            ], 2, 3))
+            result_copy = PIVResult(vectors_fresh, Dict{String, Any}(), Dict{String, Any}())
+            validate_vectors!(result_copy, ())  # Empty validation
+            
+            # Should be unchanged
+            @test all(v.status == :good for v in result_copy.vectors)
+        end
+        
+        @testset "Edge Cases and Error Handling" begin
+            # Test with all bad vectors
+            vectors = StructArray([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :bad, 1.5, 0.3),
+                PIVVector(2.0, 1.0, 2.0, 2.0, :bad, 1.5, 0.3),
+            ])
+            
+            # Local validators should not change already bad vectors
+            apply_local_validators!(vectors, [PeakRatioValidator(10.0)])  # Very high threshold
+            @test all(v.status == :bad for v in vectors)
+            
+            # Test neighborhood validators with insufficient neighbors
+            vectors_2x2 = StructArray(reshape([
+                PIVVector(1.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(2.0, 1.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(1.0, 2.0, 1.0, 1.0, :good, 1.5, 0.3),
+                PIVVector(2.0, 2.0, 100.0, 100.0, :good, 1.5, 0.3),  # Outlier
+            ], 2, 2))
+            
+            # With window_size=3, boundary vectors should have insufficient neighbors
+            result = PIVResult(vectors_2x2, Dict{String, Any}(), Dict{String, Any}())
+            validation = (:local_median => (window_size=3, threshold=2.0),)
+            validate_vectors!(result, validation)
+            
+            # Insufficient neighbors should remain unchanged
+            # Only interior vectors with enough neighbors get validated
+        end
+        
+        @testset "Sub-module API" begin
+            # Test clean sub-module API
+            validation = (PeakRatio(1.2), CorrelationMoment(0.1), LocalMedian(3, 2.0))
+            
+            # Should work with PIVStage
+            stage = PIVStage((64, 64), validation=validation)
+            @test stage.validation == validation
+            
+            # Should work with validation pipeline parsing
+            parsed = parse_validation_pipeline(validation)
+            @test parsed == validation  # Should return as-is since already validator objects
+            
+            # Mixed API usage
+            mixed_validation = (PeakRatio(1.2), :correlation_moment => 0.1)
+            stage = PIVStage((64, 64), validation=mixed_validation)
+            @test stage.validation == mixed_validation
+        end
+    end # Vector Validation System
+
 end # Hammerhead.jl
