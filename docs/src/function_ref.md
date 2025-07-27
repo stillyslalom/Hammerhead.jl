@@ -23,6 +23,6 @@ Private = false
 
 ```@autodocs
 Modules = [Hammerhead.SyntheticData]
-Order = [:module, :type, :constant]
+Order = [:module, :function, :type, :constant, :macro]
 Private = false
 ```
