@@ -15,6 +15,6 @@ Convenient aliases for vector validation methods.
 
 ```@autodocs
 Modules = [Hammerhead.Validators]
-Order = [:type, :constant]
+Order = [:module, :type, :constant]
 Private = false
 ```
