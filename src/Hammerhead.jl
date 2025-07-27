@@ -844,8 +844,24 @@ end
 Apply vector replacement (hole filling) to PIV result.
 Uses robust iterative median approach by default for inter-stage stability.
 """
-function apply_vector_replacement!(result::PIVResult; method=:iterative_median)
+function apply_vector_replacement!(result::PIVResult; method=:iterative_median, abandon_garbage=true)
     if method == :iterative_median
+        # First, identify garbage regions that should be abandoned
+        if abandon_garbage
+            garbage_mask = detect_garbage_regions(result.vectors)
+            
+            # Mark garbage regions as permanently bad (don't attempt interpolation)
+            if any(garbage_mask)
+                for idx in CartesianIndices(garbage_mask)
+                    if garbage_mask[idx] && result.vectors[idx].status == :bad
+                        old = result.vectors[idx]
+                        result.vectors[idx] = PIVVector(old.x, old.y, old.u, old.v, :garbage, old.peak_ratio, old.correlation_moment)
+                    end
+                end
+            end
+        end
+        
+        # Detect holes (excluding garbage regions)
         holes = detect_holes(result.vectors)
         if !isempty(holes)
             replace_vectors!(result.vectors, holes, IterativeMedian())
@@ -1188,8 +1204,8 @@ end
 Detect connected components of bad vectors using ImageMorphology.jl.
 """
 function detect_holes(vectors::StructArray{PIVVector})
-    # Create binary mask of bad vectors
-    bad_mask = vectors.status .!= :good
+    # Create binary mask of bad vectors (exclude garbage regions from interpolation)
+    bad_mask = (vectors.status .== :bad)
     
     # Find connected components using ImageMorphology
     labeled = ImageMorphology.label_components(bad_mask)

@@ -2966,6 +2966,55 @@ end
             # Test error on unknown method
             @test_throws ErrorException apply_vector_replacement!(result2; method=:unknown)
         end
+        
+        @testset "Garbage Region Detection" begin
+            using Hammerhead: detect_garbage_regions
+            
+            # Create field with sparse bad region (low density)
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Create sparse bad region in center with very low good density
+            for i in 5:12, j in 5:12
+                # Make region extremely sparse (only ~10% good vectors)
+                if (i + j) % 10 != 0  # 90% bad
+                    old = vectors[i, j]
+                    vectors[i, j] = PIVVector(old.x, old.y, old.u, old.v, :bad, old.peak_ratio, old.correlation_moment)
+                end
+            end
+            
+            # Detect garbage regions
+            garbage_mask = detect_garbage_regions(vectors; min_good_density=0.3, analysis_window=7)
+            
+            # Should detect meaningful portion of sparse region as garbage
+            garbage_in_region = sum(garbage_mask[5:12, 5:12])
+            bad_in_region = sum(vectors[i, j].status == :bad for i in 5:12, j in 5:12)
+            detection_rate = garbage_in_region / bad_in_region
+            @test detection_rate >= 0.15  # At least 15% of bad vectors in sparse region should be garbage
+            
+            # Test integration with vector replacement
+            result = PIVResult(vectors, Dict{String, Any}(), Dict{String, Any}())
+            apply_vector_replacement!(result; abandon_garbage=true)
+            
+            # Should have both :garbage and :interpolated vectors
+            @test sum(v.status == :garbage for v in result.vectors) > 0
+            @test sum(v.status == :interpolated for v in result.vectors) > 0
+            
+            # Test disabling garbage detection - create fresh vectors
+            vectors2 = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                   for i in 1:16, j in 1:16])
+            for i in 5:12, j in 5:12
+                if (i + j) % 10 != 0  # Same sparse pattern
+                    old = vectors2[i, j]
+                    vectors2[i, j] = PIVVector(old.x, old.y, old.u, old.v, :bad, old.peak_ratio, old.correlation_moment)
+                end
+            end
+            result2 = PIVResult(vectors2, Dict{String, Any}(), Dict{String, Any}())
+            apply_vector_replacement!(result2; abandon_garbage=false)
+            
+            # Should not have any :garbage vectors when disabled
+            @test sum(v.status == :garbage for v in result2.vectors) == 0
+        end
     end # Vector Replacement System
 
 end # Hammerhead.jl
