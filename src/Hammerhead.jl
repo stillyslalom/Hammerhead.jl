@@ -2882,4 +2882,7 @@ function plot_piv(background_image::AbstractMatrix, piv_result::PIVResult;
 end
 
 
+# Include synthetic data generation submodule
+include("synthetic_data.jl")
+
 end # module Hammerhead

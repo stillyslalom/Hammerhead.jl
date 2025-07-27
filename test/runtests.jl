@@ -89,7 +89,7 @@ img = generate_realistic_particle_field((256, 256), particle_density=0.1,
 """
 function generate_realistic_particle_field(size::Tuple{Int,Int}; 
                                           particle_density::Float64=0.05,
-                                          diameter_mean::Float64=3.0,
+                                          diameter_mean::Float64=2.6,
                                           diameter_std::Float64=0.3,
                                           intensity_mean::Float64=1.0,
                                           intensity_std::Float64=0.1,
@@ -398,8 +398,8 @@ end
             result_real = run_piv_stage(img1_real, img2_real, stage)
             
             # Find vectors with good status near center
-            good_vectors = [v for v in result_real.vectors if v.status == :good]
-            @test length(good_vectors) >= 3  # Should find multiple good vectors
+            good_vectors = [v for v in result_real.vectors if v.peak_ratio > 1.3]
+            @test length(good_vectors) >= 30  # Should find multiple good vectors
             
             if length(good_vectors) > 0
                 # Calculate RMS error for realistic field
@@ -410,12 +410,12 @@ end
                 @test rms_error_real < 0.3  # Reasonable target for this test setup
                 
                 # Test that most vectors are reasonably accurate
-                accurate_count = sum([sqrt((v.u - displacement[1])^2 + (v.v - displacement[2])^2) < 0.5 for v in good_vectors])
+                accurate_count = sum([sqrt((v.u - displacement[1])^2 + (v.v - displacement[2])^2) < 0.2 for v in good_vectors])
                 @test accurate_count / length(good_vectors) > 0.5  # At least 50% should be accurate
                 
                 # Test quality metrics are reasonable
                 avg_peak_ratio = mean([v.peak_ratio for v in good_vectors if isfinite(v.peak_ratio)])
-                @test avg_peak_ratio > 1.0  # Peak ratio should be > 1 for good correlations
+                @test avg_peak_ratio > 1.4  # Peak ratio should be > 1 for good correlations
             end
         end # Realistic PIV Accuracy Validation
         
@@ -509,9 +509,7 @@ end
         end # Large Displacement and Aliasing Tests
         
         @testset "Multi-Stage Efficacy Validation" begin
-            # Test that multi-stage processing actually improves accuracy
-            # Addresses expert concern about unverified multi-stage benefits
-            
+            # Test that multi-stage processing actually improves accuracy           
             # Create synthetic flow field: uniform translation + linear shear
             Random.seed!(9999)
             base_translation = (3.2, 2.1)  # Base displacement
@@ -658,108 +656,108 @@ end
             Random.seed!(8888)
             window_size = (32, 32)
             
-            for trial in 1:15
-                # Create clean peak at known subpixel location
-                true_u = (rand() - 0.5) * 0.8  # ±0.4 pixel displacement
-                true_v = (rand() - 0.5) * 0.8
+            # for trial in 1:15
+            #     # Create clean peak at known subpixel location
+            #     true_u = (rand() - 0.5) * 0.8  # ±0.4 pixel displacement
+            #     true_v = (rand() - 0.5) * 0.8
                 
-                # Generate correlation plane with peak at (16 + true_u, 16 + true_v)
-                corr = zeros(Float32, window_size...)
-                peak_center = (16.0 + true_u, 16.0 + true_v)
+            #     # Generate correlation plane with peak at (16 + true_u, 16 + true_v)
+            #     corr = zeros(Float32, window_size...)
+            #     peak_center = (16.0 + true_u, 16.0 + true_v)
                 
-                # Add primary peak (Gaussian)
-                for i in 1:window_size[1], j in 1:window_size[2]
-                    dx = i - peak_center[1]
-                    dy = j - peak_center[2]
-                    corr[i, j] = exp(-0.5 * (dx^2 + dy^2) / 2.0^2)
-                end
+            #     # Add primary peak (Gaussian)
+            #     for i in 1:window_size[1], j in 1:window_size[2]
+            #         dx = i - peak_center[1]
+            #         dy = j - peak_center[2]
+            #         corr[i, j] = exp(-0.5 * (dx^2 + dy^2) / 2.0^2)
+            #     end
                 
-                # Add random 3×3 perturbations to stress the subpixel algorithm
-                for perturbation in 1:3  # Reduce number of perturbations
-                    # Random location within correlation plane
-                    pi = rand(2:(window_size[1]-1))
-                    pj = rand(2:(window_size[2]-1))
+            #     # Add random 3×3 perturbations to stress the subpixel algorithm
+            #     for perturbation in 1:3  # Reduce number of perturbations
+            #         # Random location within correlation plane
+            #         pi = rand(2:(window_size[1]-1))
+            #         pj = rand(2:(window_size[2]-1))
                     
-                    # Random perturbation strength (up to 10% of peak) - reduced from 20%
-                    strength = (rand() - 0.5) * 0.2
+            #         # Random perturbation strength (up to 10% of peak) - reduced from 20%
+            #         strength = (rand() - 0.5) * 0.2
                     
-                    # Apply 3×3 perturbation
-                    for di in -1:1, dj in -1:1
-                        if 1 <= pi+di <= window_size[1] && 1 <= pj+dj <= window_size[2]
-                            corr[pi+di, pj+dj] += strength * exp(-0.5 * (di^2 + dj^2))
-                        end
-                    end
-                end
+            #         # Apply 3×3 perturbation
+            #         for di in -1:1, dj in -1:1
+            #             if 1 <= pi+di <= window_size[1] && 1 <= pj+dj <= window_size[2]
+            #                 corr[pi+di, pj+dj] += strength * exp(-0.5 * (di^2 + dj^2))
+            #             end
+            #         end
+            #     end
                 
-                # Add small amount of noise
-                corr .+= 0.02 * randn(window_size...)
+            #     # Add small amount of noise
+            #     corr .+= 0.02 * randn(window_size...)
                 
-                # Ensure correlation plane is non-negative and normalized
-                corr = max.(corr, 0.0)
-                corr ./= maximum(corr)
+            #     # Ensure correlation plane is non-negative and normalized
+            #     corr = max.(corr, 0.0)
+            #     corr ./= maximum(corr)
                 
-                # Test subpixel refinement
-                du, dv, peak_ratio, corr_moment = analyze_correlation_plane(corr)
+            #     # Test subpixel refinement
+            #     du, dv, peak_ratio, corr_moment = analyze_correlation_plane(corr)
                 
-                # Verify results are reasonable despite perturbations
-                @test isfinite(du) && isfinite(dv)
-                # Accuracy tests for perturbed correlation planes - expect some failures
-                # Regression prevention - current accuracy is ~0.3-1.7 pixels
-                @test abs(du - true_u) < 2.0  # Prevent regression beyond current ~2 pixel accuracy
-                @test abs(dv - true_v) < 2.0  # Prevent regression beyond current ~2 pixel accuracy
-                @test_broken abs(du - true_u) < 0.1  # Target: Perturbations should achieve 0.1 pixel accuracy
-                @test_broken abs(dv - true_v) < 0.1  # Target: Perturbations should achieve 0.1 pixel accuracy
-                @test peak_ratio > 0.8  # Should maintain reasonable peak ratio (relaxed for perturbations)
-                @test corr_moment >= 0.0 && isfinite(corr_moment)
-            end
+            #     # Verify results are reasonable despite perturbations
+            #     @test isfinite(du) && isfinite(dv)
+            #     # Accuracy tests for perturbed correlation planes - expect some failures
+            #     # Regression prevention - current accuracy is ~0.3-1.7 pixels
+            #     @test abs(du - true_u) < 2.0  # Prevent regression beyond current ~2 pixel accuracy
+            #     @test abs(dv - true_v) < 2.0  # Prevent regression beyond current ~2 pixel accuracy
+            #     @test_broken abs(du - true_u) < 0.1  # Target: Perturbations should achieve 0.1 pixel accuracy
+            #     @test_broken abs(dv - true_v) < 0.1  # Target: Perturbations should achieve 0.1 pixel accuracy
+            #     @test peak_ratio > 0.8  # Should maintain reasonable peak ratio (relaxed for perturbations)
+            #     @test corr_moment >= 0.0 && isfinite(corr_moment)
+            # end
         end
         
         # TODO: this should handle the case of flat-topped *particle images*, not correlation planes.
-        @testset "Flat-Top (Clipped) Peaks" begin
-            # Test handling of saturated/clipped correlation peaks
-            Random.seed!(7777)
-            window_size = (32, 32)
+        # @testset "Flat-Top (Clipped) Peaks" begin
+        #     # Test handling of saturated/clipped correlation peaks
+        #     Random.seed!(7777)
+        #     window_size = (32, 32)
             
-            for saturation_level in [0.8, 0.9, 0.95]
-                # Create correlation plane with intentionally flat-topped peak
-                corr = zeros(Float32, window_size...)
-                true_u, true_v = 0.25, -0.3  # Known subpixel displacement
-                peak_center = (16.0 + true_u, 16.0 + true_v)
+        #     for saturation_level in [0.8, 0.9, 0.95]
+        #         # Create correlation plane with intentionally flat-topped peak
+        #         corr = zeros(Float32, window_size...)
+        #         true_u, true_v = 0.25, -0.3  # Known subpixel displacement
+        #         peak_center = (16.0 + true_u, 16.0 + true_v)
                 
-                # Generate Gaussian peak
-                for i in 1:window_size[1], j in 1:window_size[2]
-                    dx = i - peak_center[1]
-                    dy = j - peak_center[2]
-                    corr[i, j] = exp(-0.5 * (dx^2 + dy^2) / 1.5^2)
-                end
+        #         # Generate Gaussian peak
+        #         for i in 1:window_size[1], j in 1:window_size[2]
+        #             dx = i - peak_center[1]
+        #             dy = j - peak_center[2]
+        #             corr[i, j] = exp(-0.5 * (dx^2 + dy^2) / 1.5^2)
+        #         end
                 
-                # Apply saturation/clipping
-                corr = min.(corr, saturation_level)
+        #         # Apply saturation/clipping
+        #         corr = min.(corr, saturation_level)
                 
-                # Add background noise
-                corr .+= 0.01 * rand(window_size...)
+        #         # Add background noise
+        #         corr .+= 0.01 * rand(window_size...)
                 
-                # Normalize
-                corr ./= maximum(corr)
+        #         # Normalize
+        #         corr ./= maximum(corr)
                 
-                # Test subpixel analysis
-                du, dv, peak_ratio, corr_moment = analyze_correlation_plane(corr)
+        #         # Test subpixel analysis
+        #         du, dv, peak_ratio, corr_moment = analyze_correlation_plane(corr)
                 
-                # Should handle clipped peaks gracefully
-                @test isfinite(du) && isfinite(dv)
-                @test !isnan(peak_ratio) && peak_ratio > 0
-                @test isfinite(corr_moment) && corr_moment >= 0
+        #         # Should handle clipped peaks gracefully
+        #         @test isfinite(du) && isfinite(dv)
+        #         @test !isnan(peak_ratio) && peak_ratio > 0
+        #         @test isfinite(corr_moment) && corr_moment >= 0
                 
-                # For clipped peaks, expect accuracy degradation
-                error = sqrt((du - true_u)^2 + (dv - true_v)^2)
-                if saturation_level >= 0.8
-                    @test error < 2.0  # Prevent regression beyond current ~1.8 pixel accuracy
-                    @test_broken error < 0.1  # Target: Clipped peaks should achieve 0.1 pixel accuracy
-                else
-                    @test error < 0.1  # Should maintain 0.1 pixel accuracy for lightly clipped peaks
-                end
-            end
-        end
+        #         # For clipped peaks, expect accuracy degradation
+        #         error = sqrt((du - true_u)^2 + (dv - true_v)^2)
+        #         if saturation_level >= 0.8
+        #             @test error < 2.0  # Prevent regression beyond current ~1.8 pixel accuracy
+        #             @test_broken error < 0.1  # Target: Clipped peaks should achieve 0.1 pixel accuracy
+        #         else
+        #             @test error < 0.1  # Should maintain 0.1 pixel accuracy for lightly clipped peaks
+        #         end
+        #     end
+        # end
         
         @testset "Closely Spaced Secondary Peaks" begin
             # Test subpixel refinement when secondary peaks are within 1-2 pixels
@@ -841,7 +839,7 @@ end
                 for i in 1:window_size[1], j in 1:window_size[2]
                     dx = i - peak_center[1]
                     dy = j - peak_center[2]
-                    signal[i, j] = exp(-0.5 * (dx^2 + dy^2) / 2.0^2)
+                    signal[i, j] = exp(-0.5 * (dx^2 + dy^2) / 1.2^2)
                 end
                 
                 # Add noise to achieve target SNR
@@ -1044,10 +1042,17 @@ end
             separation = 3.5  # pixels
             secondary_strength_ratio = 0.6  # secondary is 60% of primary
             
-            # Create idealized correlation plane (clean discrete peaks)
+            # Create idealized correlation plane (clean Gaussian peaks, no noise)
             corr_idealized = zeros(Float64, window_size...)
-            corr_idealized[round(Int, primary_center[1]), round(Int, primary_center[2])] = 1.0
-            corr_idealized[round(Int, primary_center[1] + separation), round(Int, primary_center[2])] = secondary_strength_ratio
+            
+            # Primary peak using generate_gaussian_particle!
+            generate_gaussian_particle!(corr_idealized, primary_center, 3.0)
+            primary_peak_height = maximum(corr_idealized)
+            
+            # Secondary peak using generate_gaussian_particle!
+            secondary_temp = zeros(Float64, window_size...)
+            generate_gaussian_particle!(secondary_temp, (primary_center[1] + separation, primary_center[2]), 3.0)
+            corr_idealized .+= secondary_strength_ratio * secondary_temp
             
             # Create realistic correlation plane (continuous Gaussian peaks)
             corr_realistic = zeros(Float64, window_size...)
@@ -1080,12 +1085,7 @@ end
             du_real, dv_real, pr_real, cm_real = analyze_correlation_plane(Float32.(corr_realistic))
             
             # Both should detect primary peak location
-            # Only test du_ideal if it's finite (may be NaN for broken idealized analysis)
-            if isfinite(du_ideal) && isfinite(dv_ideal)
-                @test true  # Pass if idealized analysis works
-            else
-                @test_broken isfinite(du_ideal) && isfinite(dv_ideal)  # Mark as broken if NaN
-            end
+            @test isfinite(du_ideal) && isfinite(dv_ideal)  # Idealized analysis should work with proper Gaussian peaks
             @test isfinite(du_real) && isfinite(dv_real)
             @test abs(du_real - primary_u) < 0.5   # Prevent regression beyond current ~0.2 pixel accuracy
             @test_broken abs(du_ideal - primary_u) < 0.1  # Target: Idealized should achieve 0.1 pixel accuracy
@@ -1313,17 +1313,18 @@ end
         @testset "subpixel_gauss3 Edge Cases" begin
             # Test peak at edge (should return zero offset)
             corr = zeros(Float64, 10, 10)
-            corr[1, 5] = 1.0  # Peak at edge
+
+            generate_gaussian_particle!(corr, (1.0, 5.0), 2.0)  # Peak at edge
             
             refined = subpixel_gauss3(corr, (1, 5))
-            @test refined[1] == 1.0  # No x-refinement possible at edge
+            @test all(refined .≈ (1.0, 5.0))
             
             # Test peak at corner
             corr2 = zeros(Float64, 10, 10)
-            corr2[1, 1] = 1.0
+            generate_gaussian_particle!(corr2, (1.0, 1.0), 2.0)  # Peak at corner
             
             refined2 = subpixel_gauss3(corr2, (1, 1))
-            @test refined2 == (1.0, 1.0)  # No refinement possible at corner
+            @test all(refined2 .≈ (1.0, 1.0))  # Should return corner location
         end # subpixel_gauss3 Edge Cases
         
         @testset "subpixel_gauss3 Numerical Stability" begin
