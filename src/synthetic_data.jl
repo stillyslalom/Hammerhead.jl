@@ -11,7 +11,7 @@ module SyntheticData
 using Random
 using Distributions
 
-export ParticleField3D, generate_particle_field, displace_particles!, render_particle_image
+export ParticleField3D, generate_gaussian_particle!, generate_particle_field, displace_particles!, render_particle_image
 export generate_synthetic_piv_pair, linear_flow, vortex_flow, shear_flow
 export LaserSheet, GaussianLaserSheet
 

@@ -18,3 +18,11 @@ Modules = [Hammerhead.Validators]
 Order = [:module, :type, :constant]
 Private = false
 ```
+
+## Synthetic Data
+
+```@autodocs
+Modules = [Hammerhead.SyntheticData]
+Order = [:module, :type, :constant]
+Private = false
+```

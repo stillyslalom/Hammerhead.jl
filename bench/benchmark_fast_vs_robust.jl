@@ -3,6 +3,7 @@ using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
 using Hammerhead
+using Hammerhead.SyntheticData
 using TimerOutputs
 using Random
 using Statistics
@@ -43,15 +44,6 @@ function generate_benchmark_images(size_img=(256, 256), displacement=(2.0, 3.0),
     return img1, img2
 end
 
-function generate_gaussian_particle!(array::AbstractArray, centroid::Tuple{Float64, Float64}, diameter::Float64)
-    sigma = diameter / 2.0
-    for i in axes(array, 1), j in axes(array, 2)
-        x, y = i - centroid[1], j - centroid[2]
-        v = exp(-0.5 * (x^2 + y^2) / sigma^2)
-        v < 1e-10 && continue
-        array[i, j] += v
-    end
-end
 
 # Test secondary peak detection methods directly
 function benchmark_peak_detection()

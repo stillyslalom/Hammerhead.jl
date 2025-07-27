@@ -87,7 +87,11 @@ end
 function Base.show(io::IO, r::PIVResult)
     frac_good = sum(r.vectors.status .== :good) / length(r.vectors)
     print(io, "PIVResult with $(length(r.vectors)) vectors (",
-          "$(round(frac_good * 100, digits=1))% good)", r.metadata["timer"])
+          "$(round(frac_good * 100, digits=1))% good)")
+    timer = get(r.metadata, "timer", nothing)
+    if timer !== nothing
+        print(io, timer)
+    end
 end
 
 # Property forwarding: pivdata.x → pivdata.vectors.x
