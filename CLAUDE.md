@@ -55,6 +55,8 @@ julia --project=. bench/run_benchmarks.jl  # Comprehensive benchmarks
 - **Timing infrastructure**: TimerOutputs.jl integration for performance monitoring
 - **Benchmark suite**: Professional regression testing in `bench/`
 - **Transform validation**: Comprehensive affine transform validation for iterative deformation
+- **Vector replacement**: Robust iterative median hole-filling integrated with validation pipeline
+- **Validation system**: Comprehensive validator hierarchy with automatic interpolation
 
 ## Critical Guidelines
 
@@ -85,10 +87,17 @@ julia --project=. bench/run_benchmarks.jl  # Comprehensive benchmarks
 - **Professional tooling pays off**: Comprehensive benchmarking prevents regressions
 - **Complex eigenvalues need special handling**: 2D rotations have complex eigenvalues with |λ| = 1
 - **Validation is multifaceted**: Area preservation + condition number + eigenvalue bounds all matter
+- **Iterative robustness trumps single-pass accuracy**: For inter-stage methods, stability over multiple iterations is more critical than perfect accuracy on one pass
+- **Commercial practices > academic sophistication**: Proven industry approaches (iterative median) often outperform complex academic methods in production workflows
+- **Error propagation analysis is essential**: Test not just single-pass performance but multi-iteration stability - 9× error amplification would be catastrophic
+- **Frequency determines performance requirements**: Inter-stage methods run between every iteration - sub-millisecond performance becomes critical
+- **Benchmark realistic workflows, not synthetic cases**: Test the actual usage patterns (frequent calls, iterative workflows) not just isolated method performance
+- **Morphological operations for spatial analysis**: ImageMorphology.jl's connected components and dilation are cleaner than manual neighbor searching
+- **Realistic test data scales matter**: Use 16×16+ synthetic fields rather than tiny hand-crafted arrays for meaningful integration tests
 
 ## Dependencies
 
-**Core**: FFTW, ImageFiltering, LinearAlgebra, StructArrays, Interpolations, ImageIO, DSP, TimerOutputs
+**Core**: FFTW, ImageFiltering, LinearAlgebra, StructArrays, Interpolations, ImageIO, DSP, TimerOutputs, ImageMorphology
 
 ## Performance Targets
 

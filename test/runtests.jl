@@ -2707,10 +2707,10 @@ end
             validation = (:peak_ratio => 1.2, :correlation_moment => 0.1)
             validate_vectors!(result, validation)
             
-            # Check results
+            # Check results - failed vectors are now interpolated automatically
             @test result.vectors[1, 1].status == :good  # Passes both
-            @test result.vectors[2, 1].status == :bad   # Fails peak ratio
-            @test result.vectors[1, 2].status == :bad   # Fails correlation moment
+            @test result.vectors[2, 1].status == :interpolated   # Failed peak ratio, then interpolated
+            @test result.vectors[1, 2].status == :interpolated   # Failed correlation moment, then interpolated
             @test result.vectors[1, 3].status == :good  # Passes both
             @test result.vectors[2, 2].status == :good  # Passes both
             @test result.vectors[2, 3].status == :good  # Passes both
@@ -2777,5 +2777,195 @@ end
             @test stage.validation == mixed_validation
         end
     end # Vector Validation System
+
+    @testset "Vector Replacement (Hole Filling) System" begin
+        using Hammerhead: detect_holes, IterativeMedian, replace_vectors!, apply_vector_replacement!
+        
+        @testset "Hole Detection and Classification" begin
+            # Create realistic 16×16 field with synthetic flow
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j + 0.05*i, 0.05*j + 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Add different hole patterns
+            vectors[3, 3] = PIVVector(3.0, 3.0, NaN, NaN, :bad, 1.5, 0.3)  # Isolated hole
+            
+            # Small 2×2 cluster
+            vectors[8, 8] = PIVVector(8.0, 8.0, NaN, NaN, :bad, 1.5, 0.3)
+            vectors[8, 9] = PIVVector(9.0, 8.0, NaN, NaN, :bad, 1.5, 0.3)
+            vectors[9, 8] = PIVVector(8.0, 9.0, NaN, NaN, :bad, 1.5, 0.3)
+            vectors[9, 9] = PIVVector(9.0, 9.0, NaN, NaN, :bad, 1.5, 0.3)
+            
+            # Large irregular region (3×4)
+            for i in 12:14, j in 5:8
+                vectors[i, j] = PIVVector(Float64(j), Float64(i), NaN, NaN, :bad, 1.5, 0.3)
+            end
+            
+            holes = detect_holes(vectors)
+            @test length(holes) >= 2  # Should detect multiple hole regions
+            
+            # Verify classifications exist
+            hole_classifications = Set([hole.classification for hole in holes])
+            @test length(hole_classifications) >= 2  # Should have different classifications
+            
+            # Verify all hole indices point to bad vectors
+            for hole in holes
+                for idx in hole.indices
+                    @test vectors[idx].status == :bad
+                end
+            end
+        end
+        
+        @testset "Iterative Median Replacement" begin
+            # Create 16×16 field with linear flow pattern
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Add isolated hole in center with good neighbors
+            vectors[8, 8] = PIVVector(8.0, 8.0, NaN, NaN, :bad, 1.5, 0.3)
+            
+            # Store expected median values from neighbors
+            neighbor_u_values = [vectors[7,7].u, vectors[7,8].u, vectors[7,9].u,
+                               vectors[8,7].u, vectors[8,9].u,
+                               vectors[9,7].u, vectors[9,8].u, vectors[9,9].u]
+            neighbor_v_values = [vectors[7,7].v, vectors[7,8].v, vectors[7,9].v,
+                               vectors[8,7].v, vectors[8,9].v,
+                               vectors[9,7].v, vectors[9,8].v, vectors[9,9].v]
+            expected_u = median(neighbor_u_values)
+            expected_v = median(neighbor_v_values)
+            
+            # Apply iterative median
+            holes = detect_holes(vectors)
+            replace_vectors!(vectors, holes, IterativeMedian(5, 3, 3))
+            
+            # Verify replacement
+            @test vectors[8, 8].status == :interpolated
+            @test abs(vectors[8, 8].u - expected_u) < 1e-10
+            @test abs(vectors[8, 8].v - expected_v) < 1e-10
+            @test sum(v.status == :bad for v in vectors) == 0
+        end
+        
+        @testset "Integration with Validation Pipeline" begin
+            # Create 16×16 field with realistic PIV parameters
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j + 0.02*i, 0.02*j + 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Add vectors that will fail validation
+            vectors[5, 5] = PIVVector(5.0, 5.0, 0.5, 0.5, :good, 0.8, 0.3)    # Low peak ratio
+            vectors[10, 10] = PIVVector(10.0, 10.0, 1.0, 1.0, :good, 1.5, 0.05) # Low correlation moment
+            vectors[12, 7] = PIVVector(7.0, 12.0, 1.2, 1.2, :good, 0.9, 0.04)  # Fails both
+            
+            result = PIVResult(vectors, Dict{String, Any}(), Dict{String, Any}())
+            
+            # Apply validation with interpolation (this now includes replacement)
+            validation = (:peak_ratio => 1.2, :correlation_moment => 0.1)
+            validate_vectors!(result, validation)
+            
+            # Check that failed vectors were interpolated
+            @test result.vectors[5, 5].status == :interpolated
+            @test result.vectors[10, 10].status == :interpolated  
+            @test result.vectors[12, 7].status == :interpolated
+            @test sum(v.status == :bad for v in result.vectors) == 0
+            
+            # Verify interpolated values are reasonable (finite and within field range)
+            for v in result.vectors
+                if v.status == :interpolated
+                    @test isfinite(v.u) && isfinite(v.v)
+                    @test -1.0 <= v.u <= 3.0  # Reasonable range for this flow
+                    @test -1.0 <= v.v <= 3.0
+                end
+            end
+        end
+        
+        @testset "Robustness and Edge Cases" begin
+            # Test large sparse region that should remain partially unfilled
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Create large sparse bad region (most of center)
+            for i in 6:11, j in 6:11
+                if (i + j) % 3 == 0  # Sparse pattern - only some bad
+                    vectors[i, j] = PIVVector(Float64(j), Float64(i), NaN, NaN, :bad, 1.5, 0.3)
+                end
+            end
+            
+            initial_bad = sum(v.status == :bad for v in vectors)
+            
+            # Apply with conservative parameters
+            holes = detect_holes(vectors)
+            replace_vectors!(vectors, holes, IterativeMedian(3, 4, 3))  # Need 4 neighbors
+            
+            final_bad = sum(v.status == :bad for v in vectors)
+            interpolated = sum(v.status == :interpolated for v in vectors)
+            
+            # Should make some progress but not fill everything
+            @test final_bad <= initial_bad
+            @test interpolated >= 0
+            
+            # All interpolated vectors should be finite
+            for v in vectors
+                if v.status == :interpolated
+                    @test isfinite(v.u) && isfinite(v.v)
+                end
+            end
+        end
+        
+        @testset "Performance and Iterative Convergence" begin
+            # Create 16×16 field with connected bad region requiring multiple iterations
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Create diamond-shaped hole that expands from edges inward
+            center = (8, 8)
+            for i in 1:16, j in 1:16
+                dist = abs(i - center[1]) + abs(j - center[2])  # Manhattan distance
+                if 2 <= dist <= 4
+                    vectors[i, j] = PIVVector(Float64(j), Float64(i), NaN, NaN, :bad, 1.5, 0.3)
+                end
+            end
+            
+            initial_bad = sum(v.status == :bad for v in vectors)
+            @test initial_bad > 10  # Should have significant hole
+            
+            # Apply iterative median
+            holes = detect_holes(vectors)
+            replace_vectors!(vectors, holes, IterativeMedian(5, 3, 3))
+            
+            final_bad = sum(v.status == :bad for v in vectors)
+            interpolated = sum(v.status == :interpolated for v in vectors)
+            
+            # Should fill most or all of the hole
+            @test final_bad < initial_bad / 2  # At least 50% improvement
+            @test interpolated >= initial_bad / 2
+        end
+        
+        @testset "Symbol-based API" begin
+            # Test the user-facing symbol-based interface
+            vectors = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                  for i in 1:16, j in 1:16])
+            
+            # Add some bad vectors
+            vectors[5, 5] = PIVVector(5.0, 5.0, NaN, NaN, :bad, 1.5, 0.3)
+            vectors[10, 10] = PIVVector(10.0, 10.0, NaN, NaN, :bad, 1.5, 0.3)
+            
+            result = PIVResult(vectors, Dict{String, Any}(), Dict{String, Any}())
+            
+            # Test default method
+            apply_vector_replacement!(result)
+            @test sum(v.status == :interpolated for v in result.vectors) == 2
+            @test sum(v.status == :bad for v in result.vectors) == 0
+            
+            # Test explicit method specification
+            vectors2 = StructArray([PIVVector(Float64(j), Float64(i), 0.1*j, 0.1*i, :good, 1.5, 0.3) 
+                                   for i in 1:16, j in 1:16])
+            vectors2[8, 8] = PIVVector(8.0, 8.0, NaN, NaN, :bad, 1.5, 0.3)
+            result2 = PIVResult(vectors2, Dict{String, Any}(), Dict{String, Any}())
+            
+            apply_vector_replacement!(result2; method=:iterative_median)
+            @test sum(v.status == :interpolated for v in result2.vectors) == 1
+            
+            # Test error on unknown method
+            @test_throws ErrorException apply_vector_replacement!(result2; method=:unknown)
+        end
+    end # Vector Replacement System
 
 end # Hammerhead.jl

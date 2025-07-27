@@ -8,6 +8,7 @@ using StructArrays
 using Interpolations
 using ImageIO
 using ImageCore: Gray
+using ImageMorphology
 using DSP
 using TimerOutputs
 using CairoMakie
@@ -832,6 +833,26 @@ function validate_vectors!(result::PIVResult, validation_pipeline::Tuple)
     for batch in validator_batches
         apply_batch!(batch, valid_mask)
     end
+    
+    # Apply inter-stage interpolation using robust iterative median
+    apply_vector_replacement!(result)
+end
+
+"""
+    apply_vector_replacement!(result::PIVResult; method=:iterative_median)
+
+Apply vector replacement (hole filling) to PIV result.
+Uses robust iterative median approach by default for inter-stage stability.
+"""
+function apply_vector_replacement!(result::PIVResult; method=:iterative_median)
+    if method == :iterative_median
+        holes = detect_holes(result.vectors)
+        if !isempty(holes)
+            replace_vectors!(result.vectors, holes, IterativeMedian())
+        end
+    else
+        error("Unknown replacement method: $method")
+    end
 end
 
 """
@@ -1145,6 +1166,468 @@ Alias for `NormalizedResidualValidator`.
 const NormalizedResidual = NormalizedResidualValidator
 
 end # module Validators
+
+# ============================================================================
+# Vector Replacement (Hole Filling) System
+# ============================================================================
+
+"""
+    HoleRegion
+
+Represents a region of bad/missing vectors that needs replacement.
+"""
+struct HoleRegion
+    indices::Vector{CartesianIndex{2}}
+    bounding_box::Tuple{Int, Int, Int, Int}  # (min_i, max_i, min_j, max_j)
+    classification::Symbol  # :isolated, :small_cluster, :large_region
+end
+
+"""
+    detect_holes(vectors::StructArray{PIVVector}) -> Vector{HoleRegion}
+
+Detect connected components of bad vectors using ImageMorphology.jl.
+"""
+function detect_holes(vectors::StructArray{PIVVector})
+    # Create binary mask of bad vectors
+    bad_mask = vectors.status .!= :good
+    
+    # Find connected components using ImageMorphology
+    labeled = ImageMorphology.label_components(bad_mask)
+    
+    holes = HoleRegion[]
+    n_components = maximum(labeled)
+    
+    for label in 1:n_components
+        # Find all indices belonging to this component
+        component_mask = labeled .== label
+        indices = findall(component_mask)
+        
+        if !isempty(indices)
+            # Calculate bounding box in single loop
+            first_idx = indices[1]
+            min_i = max_i = first_idx.I[1]
+            min_j = max_j = first_idx.I[2]
+            
+            for idx in indices
+                i, j = idx.I[1], idx.I[2]
+                min_i = min(min_i, i)
+                max_i = max(max_i, i)
+                min_j = min(min_j, j)
+                max_j = max(max_j, j)
+            end
+            bounding_box = (min_i, max_i, min_j, max_j)
+            
+            # Classify hole by size and shape
+            classification = classify_hole(indices, bounding_box)
+            
+            push!(holes, HoleRegion(indices, bounding_box, classification))
+        end
+    end
+    
+    return holes
+end
+
+"""
+    classify_hole(indices, bounding_box) -> Symbol
+
+Classify hole region based on size and shape characteristics.
+"""
+function classify_hole(indices::Vector{CartesianIndex{2}}, bounding_box::Tuple{Int, Int, Int, Int})
+    min_i, max_i, min_j, max_j = bounding_box
+    n_pixels = length(indices)
+    
+    # Bounding box dimensions
+    height = max_i - min_i + 1
+    width = max_j - min_j + 1
+    bounding_area = height * width
+    
+    # Classification logic
+    if n_pixels == 1
+        return :isolated  # Single bad vector - use vector median
+    elseif height <= 2 && width <= 2 && bounding_area <= 4
+        return :small_cluster  # Small cluster - use inverse distance weighting
+    else
+        return :large_region  # Large or irregular hole - use Delaunay triangulation
+    end
+end
+
+"""
+    AbstractReplacementMethod
+
+Abstract base type for vector replacement methods.
+"""
+abstract type AbstractReplacementMethod end
+
+"""
+    VectorMedian <: AbstractReplacementMethod
+
+Fast median-based replacement for isolated (1×1) holes.
+"""
+struct VectorMedian <: AbstractReplacementMethod end
+
+"""
+    InverseDistanceWeighted <: AbstractReplacementMethod
+
+Inverse distance weighted interpolation for small clusters (≤2×2).
+"""
+struct InverseDistanceWeighted <: AbstractReplacementMethod
+    power::Float64
+    InverseDistanceWeighted(power::Float64 = 2.0) = new(power)
+end
+
+"""
+    DelaunayBarycentric <: AbstractReplacementMethod
+
+Delaunay triangulation with barycentric interpolation for large/irregular holes.
+"""
+struct DelaunayBarycentric <: AbstractReplacementMethod end
+
+"""
+    IterativeMedian <: AbstractReplacementMethod
+
+Iterative median-filling approach for robust inter-stage interpolation.
+Based on commercial PIV practices for maximum stability.
+"""
+struct IterativeMedian <: AbstractReplacementMethod
+    max_iterations::Int
+    min_neighbors::Int
+    neighborhood_size::Int
+    
+    IterativeMedian(max_iterations=5, min_neighbors=3, neighborhood_size=3) = 
+        new(max_iterations, min_neighbors, neighborhood_size)
+end
+
+"""
+    replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::VectorMedian)
+
+Replace isolated holes using median of neighboring good vectors.
+Fast method for single bad vectors.
+"""
+function replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::VectorMedian)
+    @assert hole.classification == :isolated "VectorMedian only supports isolated holes"
+    @assert length(hole.indices) == 1 "VectorMedian expects single-pixel holes"
+    
+    idx = hole.indices[1]
+    i, j = idx.I[1], idx.I[2]
+    rows, cols = size(vectors)
+    
+    # Collect neighboring good vectors in 3×3 neighborhood
+    u_neighbors = Float64[]
+    v_neighbors = Float64[]
+    
+    for di in -1:1, dj in -1:1
+        if di == 0 && dj == 0  # Skip the hole itself
+            continue
+        end
+        
+        ni, nj = i + di, j + dj
+        if 1 <= ni <= rows && 1 <= nj <= cols
+            neighbor = vectors[ni, nj]
+            if neighbor.status == :good
+                push!(u_neighbors, neighbor.u)
+                push!(v_neighbors, neighbor.v)
+            end
+        end
+    end
+    
+    # Replace with median if we have sufficient neighbors
+    if length(u_neighbors) >= 3  # Need at least 3 good neighbors for reliable median
+        # Calculate median displacements
+        median_u = median!(u_neighbors)
+        median_v = median!(v_neighbors)
+        
+        # Keep original position and quality metrics, update displacement and status
+        original = vectors[i, j]
+        vectors[i, j] = PIVVector(
+            original.x, original.y,           # Keep original position
+            median_u, median_v,               # Use median displacement
+            :interpolated,                    # Mark as interpolated
+            original.peak_ratio,              # Keep original quality metrics
+            original.correlation_moment
+        )
+    end
+    # If insufficient neighbors, leave as :bad for higher-level replacement method
+end
+
+"""
+    replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::InverseDistanceWeighted)
+
+Replace small cluster holes using inverse distance weighted interpolation.
+Efficient method for clusters ≤2×2.
+"""
+function replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::InverseDistanceWeighted)
+    @assert hole.classification == :small_cluster "InverseDistanceWeighted only supports small clusters"
+    
+    rows, cols = size(vectors)
+    min_i, max_i, min_j, max_j = hole.bounding_box
+    
+    # Expand search radius around hole cluster
+    search_radius = 2
+    search_min_i = max(1, min_i - search_radius)
+    search_max_i = min(rows, max_i + search_radius)
+    search_min_j = max(1, min_j - search_radius)
+    search_max_j = min(cols, max_j + search_radius)
+    
+    # Collect all good vectors in search area
+    good_vectors = Tuple{Int, Int, Float64, Float64}[]  # (i, j, u, v)
+    
+    for i in search_min_i:search_max_i, j in search_min_j:search_max_j
+        vector = vectors[i, j]
+        if vector.status == :good
+            push!(good_vectors, (i, j, vector.u, vector.v))
+        end
+    end
+    
+    # Need sufficient good vectors for interpolation
+    if length(good_vectors) < 3
+        return  # Leave as :bad for higher-level method
+    end
+    
+    # Replace each hole pixel using inverse distance weighting
+    for hole_idx in hole.indices
+        i, j = hole_idx.I[1], hole_idx.I[2]
+        
+        # Calculate weighted interpolation
+        weight_sum = 0.0
+        weighted_u = 0.0
+        weighted_v = 0.0
+        
+        for (gi, gj, gu, gv) in good_vectors
+            # Calculate Euclidean distance
+            distance = sqrt((i - gi)^2 + (j - gj)^2)
+            
+            # Avoid division by zero (shouldn't happen with hole detection)
+            if distance < 1e-10
+                continue
+            end
+            
+            # Inverse distance weight
+            weight = 1.0 / (distance^method.power)
+            weight_sum += weight
+            weighted_u += weight * gu
+            weighted_v += weight * gv
+        end
+        
+        # Apply interpolated values if we have valid weights
+        if weight_sum > 0.0
+            interpolated_u = weighted_u / weight_sum
+            interpolated_v = weighted_v / weight_sum
+            
+            # Keep original position and quality metrics, update displacement and status
+            original = vectors[i, j]
+            vectors[i, j] = PIVVector(
+                original.x, original.y,           # Keep original position
+                interpolated_u, interpolated_v,   # Use interpolated displacement
+                :interpolated,                    # Mark as interpolated
+                original.peak_ratio,              # Keep original quality metrics
+                original.correlation_moment
+            )
+        end
+    end
+end
+
+"""
+    replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::DelaunayBarycentric)
+
+Replace large/irregular holes using Delaunay triangulation with barycentric interpolation.
+Uses morphological operations to efficiently find boundary good pixels.
+"""
+function replace_vectors!(vectors::StructArray{PIVVector}, hole::HoleRegion, method::DelaunayBarycentric)
+    @assert hole.classification == :large_region "DelaunayBarycentric only supports large regions"
+    
+    rows, cols = size(vectors)
+    
+    # Create binary mask of this specific hole region
+    hole_mask = falses(rows, cols)
+    for idx in hole.indices
+        hole_mask[idx] = true
+    end
+    
+    # Use morphological dilation to expand hole by 1 pixel
+    dilated_mask = ImageMorphology.dilate(hole_mask)
+    
+    # Boundary region = dilated - original hole
+    boundary_mask = dilated_mask .& .!hole_mask
+    
+    # Collect good vectors from boundary pixels
+    boundary_points = Float64[]
+    boundary_u_values = Float64[]
+    boundary_v_values = Float64[]
+    
+    for idx in findall(boundary_mask)
+        i, j = idx.I[1], idx.I[2]
+        vector = vectors[i, j]
+        if vector.status == :good
+            append!(boundary_points, [Float64(i), Float64(j)])
+            push!(boundary_u_values, vector.u)
+            push!(boundary_v_values, vector.v)
+        end
+    end
+    
+    # Need at least 3 boundary points for triangulation
+    n_points = length(boundary_u_values)
+    if n_points < 3
+        return  # Cannot triangulate with < 3 points
+    end
+    
+    # Reshape points for interpolation function (N×2 matrix)
+    boundary_points_matrix = reshape(boundary_points, n_points, 2)
+    
+    # Collect all query points for batch interpolation
+    query_points = zeros(length(hole.indices), 2)
+    for (idx, hole_idx) in enumerate(hole.indices)
+        i, j = hole_idx.I[1], hole_idx.I[2]
+        query_points[idx, :] = [Float64(i), Float64(j)]
+    end
+    
+    try
+        # Batch interpolation for all hole pixels
+        interpolated_u_values = linear_barycentric_interpolation(boundary_points_matrix, boundary_u_values, query_points)
+        interpolated_v_values = linear_barycentric_interpolation(boundary_points_matrix, boundary_v_values, query_points)
+        
+        # Apply interpolated values to each hole pixel
+        for (idx, hole_idx) in enumerate(hole.indices)
+            interpolated_u = interpolated_u_values[idx]
+            interpolated_v = interpolated_v_values[idx]
+            
+            i, j = hole_idx.I[1], hole_idx.I[2]
+            original = vectors[i, j]
+            vectors[i, j] = PIVVector(
+                original.x, original.y,           # Keep original position
+                interpolated_u, interpolated_v,   # Use interpolated displacement
+                :interpolated,                    # Mark as interpolated
+                original.peak_ratio,              # Keep original quality metrics
+                original.correlation_moment
+            )
+        end
+    catch e
+        # If triangulation fails, leave all hole pixels as :bad
+        return
+    end
+end
+
+"""
+    replace_vectors!(vectors::StructArray{PIVVector}, holes::Vector{HoleRegion}, method::IterativeMedian)
+
+Iteratively fill all holes using robust median-based interpolation.
+Processes all holes together with multiple passes for stable convergence.
+"""
+function replace_vectors!(vectors::StructArray{PIVVector}, holes::Vector{HoleRegion}, method::IterativeMedian)
+    rows, cols = size(vectors)
+    half_window = method.neighborhood_size ÷ 2
+    
+    # Create combined bad mask from all holes
+    bad_mask = falses(rows, cols)
+    for hole in holes
+        for idx in hole.indices
+            bad_mask[idx] = true
+        end
+    end
+    
+    progress_made = true
+    iteration = 0
+    
+    while progress_made && iteration < method.max_iterations
+        iteration += 1
+        progress_made = false
+        newly_filled = CartesianIndex{2}[]
+        
+        # Scan all bad pixels to see which can be filled this iteration
+        for idx in findall(bad_mask)
+            i, j = idx.I[1], idx.I[2]
+            
+            # Collect good neighbors in window
+            u_neighbors = Float64[]
+            v_neighbors = Float64[]
+            
+            for di in -half_window:half_window, dj in -half_window:half_window
+                if di == 0 && dj == 0  # Skip center pixel
+                    continue
+                end
+                
+                ni, nj = i + di, j + dj
+                if (1 <= ni <= rows && 1 <= nj <= cols && 
+                    !bad_mask[ni, nj] && vectors[ni, nj].status != :bad)
+                    
+                    neighbor = vectors[ni, nj]
+                    push!(u_neighbors, neighbor.u)
+                    push!(v_neighbors, neighbor.v)
+                end
+            end
+            
+            # Fill if sufficient good neighbors
+            if length(u_neighbors) >= method.min_neighbors
+                median_u = median!(u_neighbors)
+                median_v = median!(v_neighbors)
+                
+                # Apply interpolation
+                original = vectors[i, j]
+                vectors[i, j] = PIVVector(
+                    original.x, original.y,
+                    median_u, median_v,
+                    :interpolated,
+                    original.peak_ratio,
+                    original.correlation_moment
+                )
+                
+                push!(newly_filled, idx)
+                progress_made = true
+            end
+        end
+        
+        # Update bad mask - remove newly filled pixels
+        for idx in newly_filled
+            bad_mask[idx] = false
+        end
+        
+        if !isempty(newly_filled)
+            @debug "Iteration $iteration: filled $(length(newly_filled)) pixels"
+        end
+    end
+    
+    # Mark remaining unfillable pixels as abandoned
+    remaining_bad = sum(bad_mask)
+    if remaining_bad > 0
+        @debug "Abandoned $remaining_bad pixels after $iteration iterations"
+        # Keep them as :bad - they're in regions too sparse to reliably fill
+    end
+end
+
+"""
+    detect_garbage_regions(vectors::StructArray{PIVVector}) -> BitMatrix
+
+Detect large regions of bad vectors that should be abandoned rather than filled.
+Uses morphological operations to identify regions too sparse for reliable interpolation.
+"""
+function detect_garbage_regions(vectors::StructArray{PIVVector}; 
+                               min_good_density=0.3, 
+                               analysis_window=7)
+    rows, cols = size(vectors)
+    garbage_mask = falses(rows, cols)
+    half_window = analysis_window ÷ 2
+    
+    for i in (half_window+1):(rows-half_window), j in (half_window+1):(cols-half_window)
+        if vectors[i, j].status == :bad
+            # Analyze local neighborhood density
+            window_area = analysis_window^2
+            good_count = 0
+            
+            for di in -half_window:half_window, dj in -half_window:half_window
+                ni, nj = i + di, j + dj
+                if vectors[ni, nj].status == :good
+                    good_count += 1
+                end
+            end
+            
+            good_density = good_count / window_area
+            if good_density < min_good_density
+                garbage_mask[i, j] = true
+            end
+        end
+    end
+    
+    return garbage_mask
+end
 
 """
     find_secondary_peak(correlation_magnitudes, primary_location, primary_value) -> secondary_value
