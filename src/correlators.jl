@@ -14,70 +14,147 @@ Abstract supertype for window correlators. Concrete subtypes:
 """
 abstract type Correlator end
 
-"""
-    CrossCorrelator{T}(window_size::Dims{2})
-    CrossCorrelator(window_size)  # T = Float32
+# Apodization weights applied to the mean-subtracted windows; ones(...) for :none.
+function apodization_window(::Type{T}, wsize::Dims{2}, apodization::Symbol) where {T}
+    apodization === :none && return ones(T, wsize)
+    apodization === :gauss ||
+        throw(ArgumentError("apodization must be :none or :gauss, got :$apodization"))
+    cr, cc = (wsize .+ 1) ./ 2
+    sr, sc = wsize ./ 4
+    return T[exp(-((i - cr)^2 / (2sr^2) + (j - cc)^2 / (2sc^2))) for i in 1:wsize[1], j in 1:wsize[2]]
+end
 
-FFT-based circular cross-correlation of two interrogation windows, with
-preallocated buffers and cached in-place FFTW plans.
+"""
+    CrossCorrelator{T}(window_size::Dims{2}; padding=false, apodization=:none)
+    CrossCorrelator(window_size; kwargs...)  # T = Float32
+
+FFT-based cross-correlation of two interrogation windows, with preallocated
+buffers and cached in-place FFTW plans.
+
+- `padding = true` zero-pads the FFT to twice the window size, replacing
+  circular with true linear correlation; this removes the wrap-around noise
+  that biases subpixel estimates toward zero, at roughly 4× the FFT cost.
+- `apodization = :gauss` applies a Gaussian window (σ = window/4) to the
+  mean-subtracted inputs to reduce edge effects and spectral leakage.
 """
 struct CrossCorrelator{T<:AbstractFloat,FP,IP} <: Correlator
     C1::Matrix{Complex{T}}
     C2::Matrix{Complex{T}}
     R::Matrix{T}
+    apod::Matrix{T}
+    gain::Matrix{T}  # overlap normalization for padded correlation; empty if unpadded
+    wsize::Dims{2}
     fp::FP
     ip::IP
 end
 
-function CrossCorrelator{T}(window_size::Dims{2}) where {T<:AbstractFloat}
-    C1 = zeros(Complex{T}, window_size)
+function CrossCorrelator{T}(window_size::Dims{2};
+                            padding::Bool = false, apodization::Symbol = :none) where {T<:AbstractFloat}
+    fft_size = padding ? 2 .* window_size : window_size
+    C1 = zeros(Complex{T}, fft_size)
     fp = plan_fft!(C1)
-    CrossCorrelator(C1, zeros(Complex{T}, window_size), zeros(T, window_size), fp, inv(fp))
+    ip = inv(fp)
+    apod = apodization_window(T, window_size, apodization)
+    gain = padding ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
+    CrossCorrelator(C1, zeros(Complex{T}, fft_size), zeros(T, fft_size),
+                    apod, gain, window_size, fp, ip)
 end
 
-CrossCorrelator(window_size::Dims{2}) = CrossCorrelator{Float32}(window_size)
+CrossCorrelator(window_size::Dims{2}; kwargs...) = CrossCorrelator{Float32}(window_size; kwargs...)
 
 """
-    PhaseCorrelator{T}(window_size::Dims{2}; filter_sigma = min(window_size...) / 8)
-    PhaseCorrelator(window_size)  # T = Float32
+    PhaseCorrelator{T}(window_size::Dims{2}; padding=false, apodization=:none,
+                       filter_sigma=min(fft_size...) / 8)
+    PhaseCorrelator(window_size; kwargs...)  # T = Float32
 
 Filtered phase correlation (normalized cross-power spectrum) of two
 interrogation windows, with preallocated buffers and cached in-place FFTW
 plans. More robust to illumination differences than plain cross-correlation.
+`padding` and `apodization` behave as for [`CrossCorrelator`](@ref).
 
 Whitening the spectrum gives noise-only high-frequency bins the same weight as
 signal-bearing ones, which destroys the peak for low-frequency content like
 particle images; the whitened spectrum is therefore weighted by a Gaussian
-low-pass with standard deviation `filter_sigma` (in FFT frequency bins).
+low-pass with standard deviation `filter_sigma` (in FFT frequency bins of the
+possibly padded transform).
 """
 struct PhaseCorrelator{T<:AbstractFloat,FP,IP} <: Correlator
     C1::Matrix{Complex{T}}
     C2::Matrix{Complex{T}}
     R::Matrix{T}
     W::Matrix{T}  # Gaussian spectral filter, in FFT (unshifted) bin order
+    apod::Matrix{T}
+    gain::Matrix{T}  # overlap normalization for padded correlation; empty if unpadded
+    wsize::Dims{2}
     fp::FP
     ip::IP
 end
 
 function PhaseCorrelator{T}(window_size::Dims{2};
-                            filter_sigma::Real = min(window_size...) / 8) where {T<:AbstractFloat}
+                            padding::Bool = false, apodization::Symbol = :none,
+                            filter_sigma::Real = min((padding ? 2 .* window_size : window_size)...) / 8) where {T<:AbstractFloat}
     filter_sigma > 0 || throw(ArgumentError("filter_sigma must be positive, got $filter_sigma"))
-    C1 = zeros(Complex{T}, window_size)
+    fft_size = padding ? 2 .* window_size : window_size
+    C1 = zeros(Complex{T}, fft_size)
     fp = plan_fft!(C1)
-    fr = fftfreq(window_size[1], window_size[1])
-    fc = fftfreq(window_size[2], window_size[2])
+    ip = inv(fp)
+    fr = fftfreq(fft_size[1], fft_size[1])
+    fc = fftfreq(fft_size[2], fft_size[2])
     W = T[exp(-(fi^2 + fj^2) / (2 * filter_sigma^2)) for fi in fr, fj in fc]
-    PhaseCorrelator(C1, zeros(Complex{T}, window_size), zeros(T, window_size), W, fp, inv(fp))
+    apod = apodization_window(T, window_size, apodization)
+    gain = padding ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
+    PhaseCorrelator(C1, zeros(Complex{T}, fft_size), zeros(T, fft_size), W,
+                    apod, gain, window_size, fp, ip)
 end
 
 PhaseCorrelator(window_size::Dims{2}; kwargs...) = PhaseCorrelator{Float32}(window_size; kwargs...)
 
 for CT in (CrossCorrelator, PhaseCorrelator)
     @eval Base.show(io::IO, c::$CT) =
-        print(io, $(string(nameof(CT))), "{", real(eltype(c.C1)), "}(", size(c.R, 1), "×", size(c.R, 2), ")")
+        print(io, $(string(nameof(CT))), "{", real(eltype(c.C1)), "}(",
+              c.wsize[1], "×", c.wsize[2],
+              size(c.R) == c.wsize ? "" : ", padded to $(size(c.R, 1))×$(size(c.R, 2))", ")")
 end
 
-window_size(c::Correlator) = size(c.R)
+window_size(c::Correlator) = c.wsize
+
+# Padded (linear) correlation weights each lag by the shrinking window overlap
+# — the autocorrelation of the apodization window (a triangle for :none) —
+# which biases the peak toward zero. Precompute the inverse as a gain plane in
+# the fftshifted layout of R, zeroed below 50% of the zero-lag weight: this
+# avoids amplifying noise at large lags and enforces the usual quarter-window
+# displacement limit. Uses C1 as scratch (zeroed on exit).
+function overlap_gain!(C1::Matrix{Complex{T}}, fp, ip, apod::Matrix{T}) where {T}
+    fill!(C1, zero(eltype(C1)))
+    C1[axes(apod, 1), axes(apod, 2)] .= apod
+    mul!(C1, fp, C1)
+    @. C1 = abs2(C1)
+    mul!(C1, ip, C1)
+    weight = zeros(T, size(C1))
+    fftshift_abs!(weight, C1)
+    fill!(C1, zero(eltype(C1)))
+    wmax = maximum(weight)
+    return T[w >= wmax / 2 ? wmax / w : zero(T) for w in weight]
+end
+
+# Copy the mean-subtracted, apodized windows into the (possibly padded) FFT
+# buffers. The in-place FFT overwrites the whole buffer, so the padding region
+# must be re-zeroed on every call.
+function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix)
+    T = eltype(c.R)
+    wr, wc = c.wsize
+    if size(c.C1) != c.wsize
+        fill!(c.C1, zero(eltype(c.C1)))
+        fill!(c.C2, zero(eltype(c.C2)))
+    end
+    meanA = T(sum(subA) / length(subA))
+    meanB = T(sum(subB) / length(subB))
+    @inbounds for j in 1:wc, i in 1:wr
+        c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
+        c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
+    end
+    return c
+end
 
 # Write the (cross-power) spectrum into c.C1, given FFTs of A in C1 and B in C2.
 function spectrum!(c::CrossCorrelator)
@@ -129,17 +206,15 @@ function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
     size(subA) == size(subB) == window_size(c) ||
         throw(DimensionMismatch("expected windows of size $(window_size(c)), got $(size(subA)) and $(size(subB))"))
 
-    # Subtract window means to remove the DC pedestal from the correlation
-    # plane; it doesn't move the integer peak but biases the subpixel fit.
-    c.C1 .= subA
-    c.C2 .= subB
-    c.C1 .-= sum(c.C1) / length(c.C1)
-    c.C2 .-= sum(c.C2) / length(c.C2)
+    # Mean subtraction removes the DC pedestal from the correlation plane; it
+    # doesn't move the integer peak but biases the subpixel fit.
+    load_windows!(c, subA, subB)
     mul!(c.C1, c.fp, c.C1)
     mul!(c.C2, c.fp, c.C2)
     spectrum!(c)
     mul!(c.C1, c.ip, c.C1)
     fftshift_abs!(c.R, c.C1)
+    isempty(c.gain) || (c.R .*= c.gain)
 
     peakidx = argmax(c.R)
     peak = c.R[peakidx]

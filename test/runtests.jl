@@ -45,6 +45,7 @@ end
     @test_throws ArgumentError PIVParameters(overlap = (32, 16))     # overlap == window
     @test_throws ArgumentError PIVParameters(overlap = -1)
     @test_throws ArgumentError PIVParameters(correlation_method = :fancy)
+    @test_throws ArgumentError PIVParameters(apodization = :hann)
     @test_throws ArgumentError PIVParameters(subpixel_method = :spline)
     @test_throws ArgumentError PIVParameters(deformation_iterations = -1)
     @test_throws ArgumentError PIVParameters(uod_threshold = 0)
@@ -87,6 +88,24 @@ end
     @test_throws DimensionMismatch correlate(c, imgA[1:32, 1:32], imgB[1:32, 1:32])
 end
 
+@testset "Padded and apodized correlation" begin
+    image_size = (64, 64)
+    dv, du = 2.2, 1.3
+    imgA, imgB = particle_pair(image_size, [image_size .÷ 2], dv, du)
+    for kwargs in ((padding = true,), (apodization = :gauss,),
+                   (padding = true, apodization = :gauss))
+        for C in (CrossCorrelator, PhaseCorrelator)
+            c = C{Float64}(image_size; kwargs...)
+            res = correlate(c, imgA, imgB)
+            @test size(res.correlation) ==
+                  (get(kwargs, :padding, false) ? 2 .* image_size : image_size)
+            @test res.du ≈ du atol = 0.1
+            @test res.dv ≈ dv atol = 0.1
+        end
+    end
+    @test_throws ArgumentError CrossCorrelator{Float64}(image_size; apodization = :hann)
+end
+
 @testset "Deformable correlation" begin
     image_size = (64, 64)
     dv, du = 3.6, -2.3
@@ -125,6 +144,21 @@ end
     result_def = run_piv(imgA, imgB, params_def)
     @test median(result_def.u) ≈ du atol = 0.1
     @test median(result_def.v) ≈ dv atol = 0.1
+
+    # Padding + overlap normalization + apodization removes the bias entirely.
+    params_pa = PIVParameters(window_size = 32, overlap = 16,
+                              padding = true, apodization = :gauss)
+    result_pa = run_piv(imgA, imgB, params_pa)
+    @test median(result_pa.u) ≈ du atol = 0.05
+    @test median(result_pa.v) ≈ dv atol = 0.05
+    @test count(abs.(result_pa.u .- du) .< 0.2) == length(result_pa.u)
+
+    # Threaded execution matches serial exactly.
+    r_ser = run_piv(imgA, imgB, params_pa; threaded = false)
+    r_thr = run_piv(imgA, imgB, params_pa; threaded = true)
+    @test r_ser.u == r_thr.u
+    @test r_ser.v == r_thr.v
+    @test r_ser.peak_ratio == r_thr.peak_ratio
 
     @test_throws DimensionMismatch run_piv(imgA, imgB[1:64, 1:64])
     @test_throws ArgumentError run_piv(imgA[1:16, 1:16], imgB[1:16, 1:16],
@@ -199,6 +233,18 @@ end
     @test nu ≈ [0.0] atol = 1e-12
     @test nv ≈ [1.0] atol = 1e-12
     @test_throws ArgumentError transform_vector_field([1.0], [0.0], [1.0], zeros(2), rot)
+end
+
+@testset "Makie extension stub" begin
+    # Without a Makie backend loaded, the stubs raise a helpful error.
+    err = try
+        plot_vector_field([1.0], [1.0], ones(1, 1), ones(1, 1))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException && occursin("Makie", err.msg)
+    @test_throws ErrorException plot_vector_field!(nothing)
 end
 
 end # top-level testset

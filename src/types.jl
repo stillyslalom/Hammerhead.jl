@@ -10,6 +10,10 @@ Immutable, validated configuration for a PIV analysis.
   `0 ≤ overlap < window_size`. An `Int` is expanded likewise.
 - `correlation_method = :cross`: `:cross` (standard FFT cross-correlation) or
   `:phase` (phase correlation).
+- `padding = false`: zero-pad the correlation FFT to twice the window size
+  (true linear correlation; removes the wrap-around bias at ~4× FFT cost).
+- `apodization = :none`: `:gauss` applies a Gaussian window to each
+  interrogation window before correlating.
 - `subpixel_method = :gauss3`: `:gauss3` (3-point Gaussian fit), `:gauss2d`
   (least-squares 2D Gaussian fit), or `:none`.
 - `deformation_iterations = 0`: number of iterative window-deformation passes;
@@ -22,6 +26,8 @@ struct PIVParameters
     window_size::Tuple{Int,Int}
     overlap::Tuple{Int,Int}
     correlation_method::Symbol
+    padding::Bool
+    apodization::Symbol
     subpixel_method::Symbol
     deformation_iterations::Int
     uod_enable::Bool
@@ -32,6 +38,8 @@ struct PIVParameters
         window_size::Union{Int,Tuple{Int,Int}} = (32, 32),
         overlap::Union{Int,Tuple{Int,Int}} = (16, 16),
         correlation_method::Symbol = :cross,
+        padding::Bool = false,
+        apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
         deformation_iterations::Int = 0,
         uod_enable::Bool = true,
@@ -46,6 +54,8 @@ struct PIVParameters
             throw(ArgumentError("overlap must satisfy 0 ≤ overlap < window_size, got overlap=$ov for window_size=$ws"))
         correlation_method in (:cross, :phase) ||
             throw(ArgumentError("correlation_method must be :cross or :phase, got :$correlation_method"))
+        apodization in (:none, :gauss) ||
+            throw(ArgumentError("apodization must be :none or :gauss, got :$apodization"))
         subpixel_method in (:gauss3, :gauss2d, :none) ||
             throw(ArgumentError("subpixel_method must be :gauss3, :gauss2d, or :none, got :$subpixel_method"))
         deformation_iterations >= 0 ||
@@ -54,14 +64,15 @@ struct PIVParameters
             throw(ArgumentError("uod_threshold must be positive, got $uod_threshold"))
         uod_neighborhood >= 1 ||
             throw(ArgumentError("uod_neighborhood must be at least 1, got $uod_neighborhood"))
-        new(ws, ov, correlation_method, subpixel_method, deformation_iterations,
-            uod_enable, Float64(uod_threshold), uod_neighborhood)
+        new(ws, ov, correlation_method, padding, apodization, subpixel_method,
+            deformation_iterations, uod_enable, Float64(uod_threshold), uod_neighborhood)
     end
 end
 
 function Base.show(io::IO, p::PIVParameters)
     print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
-        "correlation_method=:$(p.correlation_method), subpixel_method=:$(p.subpixel_method), ",
+        "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
+        "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
         "deformation_iterations=$(p.deformation_iterations), uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ")")
