@@ -42,6 +42,16 @@ Vectors failing validation (universal outlier detection, optional
 `result.outliers`. On a synthetic linear shear (±4 px), the multi-pass schedule
 above achieves ~0.04 px RMS where direct 16 px correlation gives ~0.14 px.
 
+## Preprocessing
+
+```julia
+bg = compute_background(images)            # ensemble :min (or :mean) background
+img = subtract_background(raw, bg)
+img = intensity_cap(img)                   # cap at median + 2σ
+img = highpass_filter(img; sigma = 3)      # remove sheet inhomogeneity
+img = clahe(img)                           # contrast-limited adaptive equalization
+```
+
 ## Visualization
 
 Plotting is provided as a package extension — load any Makie backend first:

@@ -4,15 +4,17 @@ using FFTW
 using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
-using Statistics: median
+using Statistics: median, std
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection
 export plot_vector_field, plot_vector_field!
+export compute_background, subtract_background, intensity_cap, highpass_filter, clahe
 
 include("types.jl")
+include("preprocessing.jl")
 include("correlators.jl")
 include("transforms.jl")
 include("quality.jl")

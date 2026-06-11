@@ -294,6 +294,44 @@ end
     @test_throws ArgumentError transform_vector_field([1.0], [0.0], [1.0], zeros(2), rot)
 end
 
+@testset "Preprocessing" begin
+    a = [1.0 5.0; 3.0 2.0]
+    b = [2.0 4.0; 1.0 6.0]
+    @test compute_background([a, b]) == [1.0 4.0; 1.0 2.0]
+    @test compute_background([a, b]; method = :mean) == [1.5 4.5; 2.0 4.0]
+    @test_throws ArgumentError compute_background([a]; method = :median)
+    @test_throws DimensionMismatch compute_background([a, zeros(3, 3)])
+    sub = subtract_background(a, b)
+    @test sub == [0.0 1.0; 2.0 0.0]  # clamped at zero
+
+    img = fill(1.0, 8, 8)
+    img[4, 4] = 100.0
+    capped = intensity_cap(img)
+    @test capped[4, 4] < 100.0 && capped[1, 1] == 1.0
+    @test_throws ArgumentError intensity_cap(img; n_sigma = 0)
+
+    # Highpass kills a uniform background but keeps a particle.
+    flat = fill(5.0, 32, 32)
+    @test maximum(highpass_filter(flat)) ≈ 0 atol = 1e-12
+    part = copy(flat)
+    add_particle!(part, (16.0, 16.0), 3.0)
+    hp = highpass_filter(part; sigma = 4)
+    @test hp[16, 16] > 0.5
+    @test hp[1, 1] ≈ 0 atol = 0.01
+
+    # CLAHE: output in [0,1], constant input is safe, contrast is stretched
+    # in a dim region.
+    rng = MersenneTwister(3)
+    dim = 0.1 .* rand(rng, 64, 64)
+    eq = clahe(dim)
+    @test size(eq) == size(dim)
+    @test all(0 .<= eq .<= 1)
+    @test std(eq) > std(dim)
+    @test clahe(zeros(16, 16)) == fill(0.5, 16, 16)
+    @test_throws ArgumentError clahe(dim; clip_limit = 0.5)
+    @test_throws ArgumentError clahe(dim; tiles = (0, 8))
+end
+
 @testset "Makie extension stub" begin
     # Without a Makie backend loaded, the stubs raise a helpful error.
     err = try
