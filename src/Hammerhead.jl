@@ -6,7 +6,7 @@ using Interpolations
 using LsqFit: curve_fit
 using Statistics: median
 
-export PIVParameters, PIVResult, run_piv
+export PIVParameters, PIVResult, run_piv, multipass_parameters
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection

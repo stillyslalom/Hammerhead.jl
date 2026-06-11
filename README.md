@@ -14,15 +14,17 @@ matrices — load image files with your preferred image package):
 ```julia
 using Hammerhead
 
-params = PIVParameters(
-    window_size = 32,            # interrogation window (px)
-    overlap = 16,                # 50% overlap
+# Multi-pass with symmetric image deformation: each pass uses the previous
+# validated field as a predictor and shrinks the window. Repeat the final
+# size for convergence sweeps.
+passes = multipass_parameters([64, 32, 16, 16];
     correlation_method = :cross, # or :phase
     padding = true,              # zero-padded (linear) correlation, overlap-normalized
     apodization = :gauss,        # Gaussian window on each interrogation window
-    deformation_iterations = 3,  # iterative window deformation
 )
-result = run_piv(imgA, imgB, params)  # threaded over windows when Julia has threads
+result = run_piv(imgA, imgB, passes)  # threaded over windows when Julia has threads
+
+# Single-pass: run_piv(imgA, imgB, PIVParameters(window_size = 32, overlap = 16))
 
 result.u, result.v            # displacement field (px), u along x/columns
 result.x, result.y            # interrogation grid centers (px)
@@ -35,6 +37,10 @@ Sign convention: a particle at `(row, col)` in the first image found at
 
 `padding = true` with `apodization = :gauss` is the most accurate configuration
 (unbiased, ~0.03 px RMS on synthetic data) at ~4× the FFT cost per window.
+Vectors failing validation (universal outlier detection, optional
+`min_peak_ratio`) are replaced with the local median and marked in
+`result.outliers`. On a synthetic linear shear (±4 px), the multi-pass schedule
+above achieves ~0.04 px RMS where direct 16 px correlation gives ~0.14 px.
 
 ## Visualization
 

@@ -47,9 +47,21 @@ end
     @test_throws ArgumentError PIVParameters(correlation_method = :fancy)
     @test_throws ArgumentError PIVParameters(apodization = :hann)
     @test_throws ArgumentError PIVParameters(subpixel_method = :spline)
-    @test_throws ArgumentError PIVParameters(deformation_iterations = -1)
     @test_throws ArgumentError PIVParameters(uod_threshold = 0)
     @test_throws ArgumentError PIVParameters(uod_neighborhood = 0)
+    @test_throws ArgumentError PIVParameters(min_peak_ratio = -1)
+end
+
+@testset "multipass_parameters" begin
+    passes = multipass_parameters([64, 32, 16]; padding = true, apodization = :gauss)
+    @test length(passes) == 3
+    @test passes[1].window_size == (64, 64) && passes[1].overlap == (32, 32)
+    @test passes[3].window_size == (16, 16) && passes[3].overlap == (8, 8)
+    @test all(p.padding && p.apodization === :gauss for p in passes)
+    @test multipass_parameters([(64, 32)])[1].window_size == (64, 32)
+    @test multipass_parameters([32]; overlap_fraction = 0.75)[1].overlap == (24, 24)
+    @test_throws ArgumentError multipass_parameters([32]; overlap_fraction = 1.0)
+    @test_throws ArgumentError multipass_parameters(Int[])
 end
 
 @testset "Correlators: known displacement" begin
@@ -139,12 +151,6 @@ end
         @test all(result.peak_ratio .> 1)
     end
 
-    # Iterative deformation cancels the bias: tighter tolerance.
-    params_def = PIVParameters(window_size = 32, overlap = 16, deformation_iterations = 3)
-    result_def = run_piv(imgA, imgB, params_def)
-    @test median(result_def.u) ≈ du atol = 0.1
-    @test median(result_def.v) ≈ dv atol = 0.1
-
     # Padding + overlap normalization + apodization removes the bias entirely.
     params_pa = PIVParameters(window_size = 32, overlap = 16,
                               padding = true, apodization = :gauss)
@@ -163,6 +169,59 @@ end
     @test_throws DimensionMismatch run_piv(imgA, imgB[1:64, 1:64])
     @test_throws ArgumentError run_piv(imgA[1:16, 1:16], imgB[1:16, 1:16],
                                        PIVParameters(window_size = 32))
+end
+
+@testset "run_piv: multi-pass on linear shear" begin
+    # u(y) = a*(y - 64), v = 0: ±4 px at the image edges, with strong
+    # in-window gradients — the case where image deformation matters.
+    rng = MersenneTwister(11)
+    a = 1 / 16
+    n = 128
+    imgA = zeros(n, n)
+    imgB = zeros(n, n)
+    for _ in 1:900
+        p = (rand(rng) * (n + 20) - 10, rand(rng) * (n + 20) - 10)
+        add_particle!(imgA, p, 3.0)
+        add_particle!(imgB, (p[1], p[2] + a * (p[1] - 64)), 3.0)
+    end
+    kw = (padding = true, apodization = :gauss)
+    rms_u(r) = sqrt(mean((r.u .- [a * (yi - 64) for yi in r.y, _ in r.x]) .^ 2))
+
+    single = run_piv(imgA, imgB, PIVParameters(; window_size = 16, overlap = 8, kw...))
+    multi = run_piv(imgA, imgB, multipass_parameters([64, 32, 16, 16]; kw...))
+    @test size(multi.u) == size(single.u)
+    @test rms_u(multi) < 0.08          # measured ≈ 0.04 px
+    @test rms_u(multi) < rms_u(single) # deformation beats direct correlation
+    @test sqrt(mean(multi.v .^ 2)) < 0.05
+    @test sum(multi.outliers) <= 3     # no false-positive validation on smooth shear
+end
+
+@testset "Vector replacement and smoothing" begin
+    u = [Float64(j) for i in 1:6, j in 1:6]  # u = column index
+    v = -copy(u)
+    u[3, 4] = 99.0
+    v[3, 4] = -99.0
+    invalid = falses(6, 6)
+    invalid[3, 4] = true
+    Hammerhead.replace_vectors!(u, v, invalid)
+    @test u[3, 4] ≈ 4.0  # median of valid neighbors restores the local value
+    @test v[3, 4] ≈ -4.0
+
+    # Fewer than 3 valid vectors anywhere: flagged entries are left unchanged.
+    u2 = fill(7.0, 3, 3)
+    v2 = zeros(3, 3)
+    invalid2 = trues(3, 3)
+    invalid2[1, 1] = false
+    u2[2, 2] = 42.0
+    Hammerhead.replace_vectors!(u2, v2, invalid2)
+    @test u2[2, 2] == 42.0
+    @test_throws ArgumentError Hammerhead.replace_vectors!(u2, zeros(2, 2), invalid2)
+
+    # smooth_field: constants exact, linear fields preserved in the interior.
+    @test Hammerhead.smooth_field(fill(3.0, 5, 5)) ≈ fill(3.0, 5, 5)
+    lin = [Float64(i + 2j) for i in 1:6, j in 1:6]
+    sm = Hammerhead.smooth_field(lin)
+    @test sm[2:5, 2:5] ≈ lin[2:5, 2:5]
 end
 
 @testset "Universal outlier detection" begin

@@ -16,11 +16,21 @@ Immutable, validated configuration for a PIV analysis.
   interrogation window before correlating.
 - `subpixel_method = :gauss3`: `:gauss3` (3-point Gaussian fit), `:gauss2d`
   (least-squares 2D Gaussian fit), or `:none`.
-- `deformation_iterations = 0`: number of iterative window-deformation passes;
-  `0` disables deformation.
-- `uod_enable = true`: run universal outlier detection on the result.
+- `uod_enable = true`: validate vectors with universal outlier detection.
 - `uod_threshold = 2.0`: UOD sensitivity (higher is less sensitive).
-- `uod_neighborhood = 1`: UOD neighborhood layers (1 → 3×3, 2 → 5×5, ...).
+- `uod_neighborhood = 2`: UOD neighborhood layers (1 → 3×3, 2 → 5×5, ...).
+  The 5×5 default tolerates smooth velocity gradients at the field edges,
+  where 3×3 neighborhoods falsely flag (and replacement then corrupts) the
+  outermost rows of e.g. a sheared field.
+- `min_peak_ratio = 1.0`: vectors whose correlation peak ratio falls below this
+  are flagged invalid; values ≤ 1 disable the check (the peak ratio is ≥ 1 by
+  construction).
+- `replace_outliers = true`: replace flagged vectors with the local median of
+  valid neighbors. Intermediate passes of a multi-pass run always replace,
+  regardless of this setting, to keep the predictor field well behaved.
+
+Multi-pass interrogation is configured with a vector of `PIVParameters` (one
+per pass) — see [`run_piv`](@ref) and [`multipass_parameters`](@ref).
 """
 struct PIVParameters
     window_size::Tuple{Int,Int}
@@ -29,10 +39,11 @@ struct PIVParameters
     padding::Bool
     apodization::Symbol
     subpixel_method::Symbol
-    deformation_iterations::Int
     uod_enable::Bool
     uod_threshold::Float64
     uod_neighborhood::Int
+    min_peak_ratio::Float64
+    replace_outliers::Bool
 
     function PIVParameters(;
         window_size::Union{Int,Tuple{Int,Int}} = (32, 32),
@@ -41,10 +52,11 @@ struct PIVParameters
         padding::Bool = false,
         apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
-        deformation_iterations::Int = 0,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
-        uod_neighborhood::Int = 1,
+        uod_neighborhood::Int = 2,
+        min_peak_ratio::Real = 1.0,
+        replace_outliers::Bool = true,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
         ov = overlap isa Int ? (overlap, overlap) : overlap
@@ -58,24 +70,24 @@ struct PIVParameters
             throw(ArgumentError("apodization must be :none or :gauss, got :$apodization"))
         subpixel_method in (:gauss3, :gauss2d, :none) ||
             throw(ArgumentError("subpixel_method must be :gauss3, :gauss2d, or :none, got :$subpixel_method"))
-        deformation_iterations >= 0 ||
-            throw(ArgumentError("deformation_iterations must be non-negative, got $deformation_iterations"))
         uod_threshold > 0 ||
             throw(ArgumentError("uod_threshold must be positive, got $uod_threshold"))
         uod_neighborhood >= 1 ||
             throw(ArgumentError("uod_neighborhood must be at least 1, got $uod_neighborhood"))
+        min_peak_ratio >= 0 ||
+            throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
-            deformation_iterations, uod_enable, Float64(uod_threshold), uod_neighborhood)
+            uod_enable, Float64(uod_threshold), uod_neighborhood,
+            Float64(min_peak_ratio), replace_outliers)
     end
 end
 
 function Base.show(io::IO, p::PIVParameters)
     print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
-        "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
-        "deformation_iterations=$(p.deformation_iterations), uod=",
+        "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
-        ")")
+        ", min_peak_ratio=$(p.min_peak_ratio), replace_outliers=$(p.replace_outliers))")
 end
 
 """
@@ -94,9 +106,11 @@ Result of [`run_piv`](@ref).
   is more reliable).
 - `correlation_moment`: second moment of the correlation peak per window (an
   uncertainty proxy; lower is sharper).
-- `outliers`: `BitMatrix` from universal outlier detection (`true` = outlier);
-  all `false` when UOD is disabled.
-- `parameters`: the `PIVParameters` used.
+- `outliers`: `BitMatrix` marking vectors that failed validation (UOD and/or
+  peak-ratio check). When outlier replacement is active, the `u`/`v` entries at
+  these positions hold the local-median replacement rather than the measured
+  displacement.
+- `parameters`: the `PIVParameters` of the (final) pass.
 """
 struct PIVResult
     x::Vector{Float64}

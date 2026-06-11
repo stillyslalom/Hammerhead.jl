@@ -61,6 +61,65 @@ function calculate_correlation_moment(R::AbstractMatrix{<:Real}, peakloc::Tuple{
 end
 
 """
+    replace_vectors!(u, v, invalid::AbstractMatrix{Bool})
+
+Replace each vector flagged in `invalid` with the component-wise median of the
+*valid* vectors in a square neighborhood, growing the neighborhood until at
+least 3 valid neighbors are found. Replacements are computed from the original
+field, so the result does not depend on traversal order. Vectors with no valid
+neighbors anywhere are left unchanged.
+"""
+function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::AbstractMatrix{Bool})
+    size(u) == size(v) == size(invalid) ||
+        throw(ArgumentError("u, v, and invalid must have the same dimensions"))
+    any(invalid) || return u, v
+    nr, nc = size(u)
+    uref = copy(u)
+    vref = copy(v)
+    bufu = Float64[]
+    bufv = Float64[]
+    max_radius = max(nr, nc) - 1
+    for c in 1:nc, r in 1:nr
+        invalid[r, c] || continue
+        for radius in 1:max_radius
+            empty!(bufu)
+            empty!(bufv)
+            for c2 in max(1, c - radius):min(nc, c + radius),
+                r2 in max(1, r - radius):min(nr, r + radius)
+                invalid[r2, c2] && continue
+                push!(bufu, uref[r2, c2])
+                push!(bufv, vref[r2, c2])
+            end
+            if length(bufu) >= 3
+                u[r, c] = median(bufu)
+                v[r, c] = median(bufv)
+                break
+            end
+        end
+    end
+    return u, v
+end
+
+"""
+    smooth_field(f::AbstractMatrix) -> Matrix{Float64}
+
+3×3 binomial (separable [1 2 1]/4) smoothing with replicated edges. Used to
+condition the predictor field between interrogation passes.
+"""
+function smooth_field(f::AbstractMatrix{<:Real})
+    nr, nc = size(f)
+    tmp = Matrix{Float64}(undef, nr, nc)
+    out = Matrix{Float64}(undef, nr, nc)
+    @inbounds for c in 1:nc, r in 1:nr
+        tmp[r, c] = 0.25 * (f[r, max(c - 1, 1)] + 2f[r, c] + f[r, min(c + 1, nc)])
+    end
+    @inbounds for c in 1:nc, r in 1:nr
+        out[r, c] = 0.25 * (tmp[max(r - 1, 1), c] + 2tmp[r, c] + tmp[min(r + 1, nr), c])
+    end
+    return out
+end
+
+"""
     universal_outlier_detection(u, v, threshold;
                                 neighborhood_size=1, epsilon=0.1) -> BitMatrix
 
