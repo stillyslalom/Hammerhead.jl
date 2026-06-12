@@ -177,3 +177,150 @@ function universal_outlier_detection(u::AbstractMatrix{T}, v::AbstractMatrix{T},
     end
     return is_outlier
 end
+
+"""
+    PIVValidator
+
+Abstract supertype for vector validation criteria. A validator is applied with
+[`apply_validator!`](@ref), which ORs the vectors it rejects into
+`result.outliers`; [`validate_vectors!`](@ref) applies a whole pipeline.
+"""
+abstract type PIVValidator end
+
+"""
+    LocalValidator <: PIVValidator
+
+Validators that judge each vector from its own properties alone.
+"""
+abstract type LocalValidator <: PIVValidator end
+
+"""
+    NeighborhoodValidator <: PIVValidator
+
+Validators that judge each vector relative to its spatial neighbors.
+"""
+abstract type NeighborhoodValidator <: PIVValidator end
+
+"""
+    PeakRatioValidator(threshold)
+
+Flag vectors whose correlation peak ratio falls below `threshold` (`NaN`
+ratios are flagged too). Pair spec: `:peak_ratio => threshold`.
+"""
+struct PeakRatioValidator <: LocalValidator
+    threshold::Float64
+end
+
+"""
+    CorrelationMomentValidator(threshold)
+
+Flag vectors whose correlation moment exceeds `threshold`, i.e. whose
+correlation peak is too broad (`NaN` moments are flagged too). Pair spec:
+`:correlation_moment => threshold`.
+"""
+struct CorrelationMomentValidator <: LocalValidator
+    threshold::Float64
+end
+
+"""
+    VelocityMagnitudeValidator(min, max)
+
+Flag vectors whose displacement magnitude lies outside `[min, max]` pixels
+(`NaN` magnitudes are flagged too). Pair spec:
+`:velocity_magnitude => (min = 0, max = 50)`; `min` defaults to 0.
+"""
+struct VelocityMagnitudeValidator <: LocalValidator
+    min::Float64
+    max::Float64
+end
+
+"""
+    UniversalOutlierValidator(threshold; neighborhood_size = 2, epsilon = 0.1)
+
+Flag vectors that fail the normalized median test — see
+[`universal_outlier_detection`](@ref) for the parameters. Pair spec:
+`:uod => (threshold = 2.0, neighborhood_size = 2, epsilon = 0.1)` (only
+`threshold` is required; `:universal_outlier` is an alias).
+"""
+struct UniversalOutlierValidator <: NeighborhoodValidator
+    threshold::Float64
+    neighborhood_size::Int
+    epsilon::Float64
+end
+
+UniversalOutlierValidator(threshold::Real; neighborhood_size::Int = 2, epsilon::Real = 0.1) =
+    UniversalOutlierValidator(Float64(threshold), neighborhood_size, Float64(epsilon))
+
+"""
+    parse_validator(spec) -> PIVValidator
+
+Normalize a validator specification: `PIVValidator` objects pass through, and
+`Symbol => value` pairs construct the corresponding validator (see the
+validator docstrings for the accepted pair forms).
+"""
+parse_validator(v::PIVValidator) = v
+
+function parse_validator(spec::Pair{Symbol, <:Real})
+    name, threshold = spec
+    name === :peak_ratio && return PeakRatioValidator(threshold)
+    name === :correlation_moment && return CorrelationMomentValidator(threshold)
+    throw(ArgumentError("unknown validator :$name (expected :peak_ratio or :correlation_moment)"))
+end
+
+function parse_validator(spec::Pair{Symbol, <:NamedTuple})
+    name, config = spec
+    if name === :uod || name === :universal_outlier
+        return UniversalOutlierValidator(config.threshold;
+            neighborhood_size = get(config, :neighborhood_size, 2),
+            epsilon = get(config, :epsilon, 0.1))
+    elseif name === :velocity_magnitude
+        return VelocityMagnitudeValidator(get(config, :min, 0.0), config.max)
+    end
+    throw(ArgumentError("unknown validator :$name (expected :uod or :velocity_magnitude)"))
+end
+
+parse_validator(spec) = throw(ArgumentError("cannot interpret $spec as a validator"))
+
+"""
+    validate_vectors!(result::PIVResult, pipeline) -> PIVResult
+
+Apply a validation pipeline — a single validator or specification, or a tuple
+of them (see [`parse_validator`](@ref)) — accumulating rejected vectors into
+`result.outliers`.
+"""
+function validate_vectors!(result::PIVResult, pipeline)
+    for spec in (pipeline isa Tuple ? pipeline : (pipeline,))
+        apply_validator!(result, parse_validator(spec))
+    end
+    return result
+end
+
+"""
+    apply_validator!(result::PIVResult, v::PIVValidator) -> PIVResult
+
+Apply a single validator, ORing the vectors it rejects into `result.outliers`.
+"""
+function apply_validator!(result::PIVResult, v::PeakRatioValidator)
+    # NaN ratios fail the comparison and are flagged.
+    @. result.outliers |= !(result.peak_ratio >= v.threshold)
+    return result
+end
+
+function apply_validator!(result::PIVResult, v::CorrelationMomentValidator)
+    @. result.outliers |= !(result.correlation_moment <= v.threshold)
+    return result
+end
+
+function apply_validator!(result::PIVResult, v::VelocityMagnitudeValidator)
+    @inbounds for i in eachindex(result.u)
+        mag = hypot(result.u[i], result.v[i])
+        (v.min <= mag <= v.max) || (result.outliers[i] = true)
+    end
+    return result
+end
+
+function apply_validator!(result::PIVResult, v::UniversalOutlierValidator)
+    result.outliers .|= universal_outlier_detection(result.u, result.v, v.threshold;
+        neighborhood_size = v.neighborhood_size, epsilon = v.epsilon)
+    return result
+end

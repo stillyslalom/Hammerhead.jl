@@ -344,4 +344,8 @@ end
     @test_throws ErrorException plot_vector_field!(nothing)
 end
 
+include("test_synthetic.jl")
+include("test_validation.jl")
+include("test_reference.jl")
+
 end # top-level testset

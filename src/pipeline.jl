@@ -12,8 +12,8 @@ Each pass tiles the images into interrogation windows (`window_size`,
 `overlap`), correlates each window pair (`correlation_method`, optionally
 zero-padded and apodized), refines the peak to subpixel precision
 (`subpixel_method`), and validates the resulting field (universal outlier
-detection and/or peak-ratio threshold) with local-median replacement of
-invalid vectors.
+detection, peak-ratio threshold, and any additional `validation` pipeline)
+with local-median replacement of invalid vectors.
 
 From the second pass on, the previous pass's validated field is used as a
 predictor: it is smoothed (`predictor_smoothing`), interpolated to pixel
@@ -138,20 +138,22 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     u .+= residual_u
     v .+= residual_v
 
-    invalid = falses(ny, nx)
+    result = PIVResult(x, y, u, v, peak_ratio, correlation_moment, falses(ny, nx), params)
+
     if params.uod_enable
-        invalid .= universal_outlier_detection(u, v, params.uod_threshold;
-                                               neighborhood_size = params.uod_neighborhood)
+        apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
+            neighborhood_size = params.uod_neighborhood))
     end
     if params.min_peak_ratio > 1
-        # NaN peak ratios fail the comparison and are flagged.
-        invalid .|= .!(peak_ratio .>= params.min_peak_ratio)
+        apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
     end
+    validate_vectors!(result, params.validation)
+
     if force_replace || params.replace_outliers
-        replace_vectors!(u, v, invalid)
+        replace_vectors!(result.u, result.v, result.outliers)
     end
 
-    return PIVResult(x, y, u, v, peak_ratio, correlation_moment, invalid, params)
+    return result
 end
 
 """

@@ -25,6 +25,11 @@ Immutable, validated configuration for a PIV analysis.
 - `min_peak_ratio = 1.0`: vectors whose correlation peak ratio falls below this
   are flagged invalid; values ≤ 1 disable the check (the peak ratio is ≥ 1 by
   construction).
+- `validation = ()`: tuple of additional validators applied after the UOD and
+  peak-ratio checks. Entries are validator objects or `Symbol => value` specs,
+  e.g. `(:peak_ratio => 1.3, :velocity_magnitude => (max = 50,))` — see
+  [`validate_vectors!`](@ref). Specs are parsed (and rejected if malformed)
+  at construction.
 - `replace_outliers = true`: replace flagged vectors with the local median of
   valid neighbors. Intermediate passes of a multi-pass run always replace,
   regardless of this setting, to keep the predictor field well behaved.
@@ -43,6 +48,7 @@ struct PIVParameters
     uod_threshold::Float64
     uod_neighborhood::Int
     min_peak_ratio::Float64
+    validation::Tuple
     replace_outliers::Bool
 
     function PIVParameters(;
@@ -56,6 +62,7 @@ struct PIVParameters
         uod_threshold::Real = 2.0,
         uod_neighborhood::Int = 2,
         min_peak_ratio::Real = 1.0,
+        validation::Tuple = (),
         replace_outliers::Bool = true,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
@@ -78,7 +85,7 @@ struct PIVParameters
             throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
             uod_enable, Float64(uod_threshold), uod_neighborhood,
-            Float64(min_peak_ratio), replace_outliers)
+            Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers)
     end
 end
 
@@ -87,7 +94,9 @@ function Base.show(io::IO, p::PIVParameters)
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
         "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
-        ", min_peak_ratio=$(p.min_peak_ratio), replace_outliers=$(p.replace_outliers))")
+        ", min_peak_ratio=$(p.min_peak_ratio)",
+        isempty(p.validation) ? "" : ", validation=$(p.validation)",
+        ", replace_outliers=$(p.replace_outliers))")
 end
 
 """
@@ -106,8 +115,9 @@ Result of [`run_piv`](@ref).
   is more reliable).
 - `correlation_moment`: second moment of the correlation peak per window (an
   uncertainty proxy; lower is sharper).
-- `outliers`: `BitMatrix` marking vectors that failed validation (UOD and/or
-  peak-ratio check). When outlier replacement is active, the `u`/`v` entries at
+- `outliers`: `BitMatrix` marking vectors that failed validation (UOD,
+  peak-ratio check, and/or the `validation` pipeline). When outlier
+  replacement is active, the `u`/`v` entries at
   these positions hold the local-median replacement rather than the measured
   displacement.
 - `parameters`: the `PIVParameters` of the (final) pass.

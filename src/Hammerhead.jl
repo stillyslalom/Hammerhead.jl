@@ -7,13 +7,18 @@ using LsqFit: curve_fit
 using Statistics: median, std
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters
+export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection
+export PIVValidator, LocalValidator, NeighborhoodValidator
+export PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidator, UniversalOutlierValidator
+export validate_vectors!, apply_validator!
 export plot_vector_field, plot_vector_field!
 export compute_background, subtract_background, intensity_cap, highpass_filter, clahe
 
 include("types.jl")
+include("synthetic_data.jl")
 include("preprocessing.jl")
 include("correlators.jl")
 include("transforms.jl")
