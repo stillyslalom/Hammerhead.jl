@@ -31,6 +31,19 @@ image_to_matrix(::Type, img, path) =
                         "(got $(summary(img))); load and slice it manually"))
 
 """
+    load_mask(path; threshold = 0.5, invert = false) -> BitMatrix
+
+Load an analysis mask from an image file: pixels with grayscale value
+`>= threshold` become `true` (excluded from analysis — see `mask` in
+[`run_piv`](@ref)). Use `invert = true` when dark pixels mark the excluded
+region instead.
+"""
+function load_mask(path::AbstractString; threshold::Real = 0.5, invert::Bool = false)
+    img = load_image(path)
+    return invert ? BitMatrix(img .< threshold) : BitMatrix(img .>= threshold)
+end
+
+"""
     image_pairs(files; mode = :paired) -> Vector{Tuple}
 
 Group an ordered list of frames (file paths or matrices) into correlation
@@ -104,7 +117,8 @@ Run PIV over a sequence of image pairs. `pairs` is a vector of 2-tuples whose
 entries are file paths (loaded with [`load_image`](@ref)) and/or real-valued
 matrices — see [`image_pairs`](@ref) for building it from a frame list.
 `params` is a single `PIVParameters` or a multi-pass schedule; remaining
-`kwargs` are forwarded to [`run_piv`](@ref).
+`kwargs` (e.g. `mask` for a static analysis mask shared by all pairs) are
+forwarded to [`run_piv`](@ref).
 
 - `preprocess`: function applied to each frame after loading, e.g.
   `img -> clahe!(subtract_background!(img, bg))`. Frames loaded from file

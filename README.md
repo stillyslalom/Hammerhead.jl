@@ -67,6 +67,23 @@ results = run_piv_sequence(pairs, passes;
 results = load_results("run42_piv.jld2") # reload later
 ```
 
+## Masking
+
+Exclude model geometry or reflection regions with an image-sized `Bool` mask
+(`true` = excluded):
+
+```julia
+mask = load_mask("impeller_mask.png")   # or polygon_mask(size(img), vertices), or any Bool array
+result = run_piv(imgA, imgB, passes; mask)
+result.mask                             # windows with no measurement (NaN vectors)
+```
+
+Windows whose masked-pixel fraction reaches `mask_threshold` (default 0.5)
+produce no vector: they hold `NaN`, are flagged in `result.mask`, and are
+excluded from outlier detection and replacement. Windows below the threshold
+are correlated over their valid pixels only, with no intensity step at the
+mask edge.
+
 ## Preprocessing
 
 Each operation has a mutating form that reuses the image buffer, so a chained

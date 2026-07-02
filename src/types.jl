@@ -123,6 +123,10 @@ single precision.
   replacement is active, the `u`/`v` entries at
   these positions hold the local-median replacement rather than the measured
   displacement.
+- `mask`: `BitMatrix` marking interrogation windows dropped because they
+  overlap the analysis mask (see `mask` in [`run_piv`](@ref)). Masked windows
+  hold `NaN` in `u`/`v`/`peak_ratio`/`correlation_moment` and are never
+  counted as outliers. All-false when no mask was supplied.
 - `parameters`: the `PIVParameters` of the (final) pass.
 """
 struct PIVResult{T<:AbstractFloat}
@@ -133,10 +137,12 @@ struct PIVResult{T<:AbstractFloat}
     peak_ratio::Matrix{T}
     correlation_moment::Matrix{T}
     outliers::BitMatrix
+    mask::BitMatrix
     parameters::PIVParameters
 end
 
 function Base.show(io::IO, r::PIVResult{T}) where {T}
     ny, nx = size(r.u)
-    print(io, "PIVResult{$T}($(nx)×$(ny) grid, $(sum(r.outliers)) outliers)")
+    print(io, "PIVResult{$T}($(nx)×$(ny) grid, $(sum(r.outliers)) outliers",
+          any(r.mask) ? ", $(sum(r.mask)) masked)" : ")")
 end

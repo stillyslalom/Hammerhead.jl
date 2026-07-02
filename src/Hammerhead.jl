@@ -13,6 +13,7 @@ using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters
 export load_image, image_pairs, save_results, load_results, run_piv_sequence
+export polygon_mask, load_mask
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
@@ -30,6 +31,7 @@ include("preprocessing.jl")
 include("correlators.jl")
 include("transforms.jl")
 include("quality.jl")
+include("masking.jl")
 include("pipeline.jl")
 include("io.jl")
 
@@ -39,7 +41,8 @@ include("io.jl")
 
 Plot a PIV vector field as arrows and return the `Makie.Figure`. The y-axis is
 reversed to match image (row-down) coordinates. Outliers are drawn in red when
-`highlight_outliers` is set; remaining `kwargs` are passed to `arrows2d!`.
+`highlight_outliers` is set; masked (`NaN`) vectors are skipped; remaining
+`kwargs` are passed to `arrows2d!`.
 
 Provided by a package extension: load a Makie backend first (e.g.
 `using GLMakie` or `using CairoMakie`).

@@ -11,7 +11,18 @@ function Hammerhead.plot_vector_field!(ax::Makie.Axis,
         throw(ArgumentError("u and v must have dimensions (length(y), length(x)) = $((length(y), length(x))), got $(size(u)) and $(size(v))"))
     points = vec([Makie.Point2f(x[j], y[i]) for i in eachindex(y), j in eachindex(x)])
     directions = vec([Makie.Vec2f(u[i, j], v[i, j]) for i in eachindex(y), j in eachindex(x)])
-    Makie.arrows2d!(ax, points, directions; kwargs...)
+    # NaN vectors (e.g. masked interrogation windows) are skipped, along with
+    # any matching per-vector attribute vectors (color, etc.).
+    keep = map(d -> !(isnan(d[1]) || isnan(d[2])), directions)
+    kw = Dict{Symbol,Any}(kwargs)
+    if !all(keep)
+        points = points[keep]
+        directions = directions[keep]
+        for (k, val) in kw
+            val isa AbstractVector && length(val) == length(keep) && (kw[k] = val[keep])
+        end
+    end
+    Makie.arrows2d!(ax, points, directions; kw...)
     return ax
 end
 

@@ -19,7 +19,7 @@ using Statistics
     moment[15, 15] = 1.0 # Correlation moment outlier
     u[20, 20] = 5.0 # UOD outlier (local deviation)
     
-    result = PIVResult(x, y, u, v, peak_ratio, moment, outliers, params)
+    result = PIVResult(x, y, u, v, peak_ratio, moment, outliers, falses(32, 32), params)
     
     @testset "PeakRatioValidator" begin
         r = deepcopy(result)

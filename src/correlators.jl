@@ -139,19 +139,47 @@ end
 
 # Copy the mean-subtracted, apodized windows into the (possibly padded) FFT
 # buffers. The in-place FFT overwrites the whole buffer, so the padding region
-# must be re-zeroed on every call.
-function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix)
+# must be re-zeroed on every call. Masked pixels (submask true) are loaded at
+# the valid-pixel mean, so they contribute exactly zero after mean subtraction
+# — no intensity step at the mask edge to bias the correlation peak.
+function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix,
+                       submask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     T = eltype(c.R)
     wr, wc = c.wsize
     if size(c.C1) != c.wsize
         fill!(c.C1, zero(eltype(c.C1)))
         fill!(c.C2, zero(eltype(c.C2)))
     end
-    meanA = T(sum(subA) / length(subA))
-    meanB = T(sum(subB) / length(subB))
-    @inbounds for j in 1:wc, i in 1:wr
-        c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
-        c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
+    if submask === nothing
+        meanA = T(sum(subA) / length(subA))
+        meanB = T(sum(subB) / length(subB))
+        @inbounds for j in 1:wc, i in 1:wr
+            c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
+            c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
+        end
+    else
+        size(submask) == c.wsize ||
+            throw(DimensionMismatch("mask must match the window size $(c.wsize), got $(size(submask))"))
+        sA = zero(T)
+        sB = zero(T)
+        n = 0
+        @inbounds for j in 1:wc, i in 1:wr
+            submask[i, j] && continue
+            sA += T(subA[i, j])
+            sB += T(subB[i, j])
+            n += 1
+        end
+        meanA = n > 0 ? sA / n : zero(T)
+        meanB = n > 0 ? sB / n : zero(T)
+        @inbounds for j in 1:wc, i in 1:wr
+            if submask[i, j]
+                c.C1[i, j] = zero(eltype(c.C1))
+                c.C2[i, j] = zero(eltype(c.C2))
+            else
+                c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
+                c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
+            end
+        end
     end
     return c
 end
@@ -183,9 +211,12 @@ function fftshift_abs!(R::AbstractMatrix{T}, C::AbstractMatrix{<:Complex}) where
 end
 
 """
-    correlate(c::Correlator, subA, subB; subpixel=:gauss3)
+    correlate(c::Correlator, subA, subB; subpixel=:gauss3, mask=nothing)
 
 Correlate two interrogation windows and locate the displacement peak.
+`mask` is an optional window-sized `Bool` matrix; `true` pixels are excluded
+from the correlation (they enter at the valid-pixel mean, contributing zero
+after mean subtraction).
 
 Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 - `du`, `dv`: subpixel displacement of `subB` relative to `subA` along columns
@@ -202,13 +233,14 @@ Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
     next `correlate` call. Copy it if you need to keep it.
 """
 function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
-                   subpixel::Symbol = :gauss3)
+                   subpixel::Symbol = :gauss3,
+                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     size(subA) == size(subB) == window_size(c) ||
         throw(DimensionMismatch("expected windows of size $(window_size(c)), got $(size(subA)) and $(size(subB))"))
 
     # Mean subtraction removes the DC pedestal from the correlation plane; it
     # doesn't move the integer peak but biases the subpixel fit.
-    load_windows!(c, subA, subB)
+    load_windows!(c, subA, subB, mask)
     mul!(c.C1, c.fp, c.C1)
     mul!(c.C2, c.fp, c.C2)
     spectrum!(c)

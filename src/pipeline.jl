@@ -1,7 +1,8 @@
 """
     run_piv(imgA, imgB, passes::AbstractVector{PIVParameters};
             threaded = Threads.nthreads() > 1,
-            predictor_smoothing = true) -> PIVResult
+            predictor_smoothing = true,
+            mask = nothing, mask_threshold = 0.5) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
 
 Run a (multi-pass) PIV analysis on an in-memory image pair. `imgA` and `imgB`
@@ -24,6 +25,15 @@ window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
 16])` — without violating the quarter-window displacement limit. Repeating the
 final window size adds convergence sweeps.
 
+`mask` is an optional image-sized `Bool` matrix marking pixels to exclude
+(`true` = excluded), e.g. model geometry or reflection regions — build one
+with [`polygon_mask`](@ref), [`load_mask`](@ref), or any Bool array. The mask
+describes static lab-frame geometry and is not warped between passes. Windows
+whose masked-pixel fraction reaches `mask_threshold` produce no vector: they
+are flagged in `result.mask`, hold `NaN`, are never counted as outliers, and
+neither enter validation neighborhoods nor donate to replacement medians.
+Windows below the threshold are correlated over their valid pixels only.
+
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
@@ -38,24 +48,39 @@ Returns the [`PIVResult`](@ref) of the final pass.
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  passes::AbstractVector{PIVParameters};
                  threaded::Bool = Threads.nthreads() > 1,
-                 predictor_smoothing::Bool = true)
+                 predictor_smoothing::Bool = true,
+                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                 mask_threshold::Real = 0.5)
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
+    mask === nothing || size(mask) == size(imgA) ||
+        throw(DimensionMismatch("mask must have the same size as the images, got $(size(mask))"))
+    0 < mask_threshold <= 1 ||
+        throw(ArgumentError("mask_threshold must be in (0, 1], got $mask_threshold"))
 
     result = nothing
     for (k, params) in enumerate(passes)
         predictor = if result === nothing
             nothing
         else
-            (x = result.x, y = result.y,
-             u = predictor_smoothing ? smooth_field(result.u) : result.u,
-             v = predictor_smoothing ? smooth_field(result.v) : result.v)
+            # Masked cells hold NaN; fill them from valid neighbors so the
+            # predictor interpolation and deformation stay finite everywhere.
+            pu, pv = result.u, result.v
+            if any(result.mask)
+                pu, pv = copy(pu), copy(pv)
+                replace_vectors!(pu, pv, result.mask)
+            end
+            if predictor_smoothing
+                pu, pv = smooth_field(pu), smooth_field(pv)
+            end
+            (x = result.x, y = result.y, u = pu, v = pv)
         end
         # Intermediate passes always replace invalid vectors: the predictor
         # field must stay well behaved for the deformation to converge.
         result = piv_pass(imgA, imgB, params, predictor;
-                          threaded, force_replace = k < length(passes))
+                          threaded, force_replace = k < length(passes),
+                          mask, mask_threshold)
     end
     return result
 end
@@ -93,7 +118,9 @@ end
 # One interrogation pass: deform by the predictor, correlate the residual on
 # the pass grid, add the predictor back, then validate and (maybe) replace.
 function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                  predictor; threaded::Bool, force_replace::Bool)
+                  predictor; threaded::Bool, force_replace::Bool,
+                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                  mask_threshold::Real = 0.5)
     nr, nc = size(imgA)
     wr, wc = params.window_size
     (wr <= nr && wc <= nc) ||
@@ -130,23 +157,41 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     peak_ratio = zeros(T, ny, nx)
     correlation_moment = zeros(T, ny, nx)
 
-    jobs = vec([(gi, gj, rs, cs) for (gi, rs) in enumerate(row_starts),
-                                     (gj, cs) in enumerate(col_starts)])
+    # Windows whose masked-pixel fraction reaches mask_threshold produce no
+    # vector; the rest are correlated over their valid pixels only.
+    grid_mask = falses(ny, nx)
+    if mask !== nothing
+        for (gj, cs) in enumerate(col_starts), (gi, rs) in enumerate(row_starts)
+            frac = count(view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))) / (wr * wc)
+            grid_mask[gi, gj] = frac >= mask_threshold
+        end
+    end
+
+    jobs = [(gi, gj, rs, cs) for (gj, cs) in enumerate(col_starts)
+                             for (gi, rs) in enumerate(row_starts)
+                             if !grid_mask[gi, gj]]
     nchunks = threaded ? min(Threads.nthreads(), length(jobs)) : 1
     if nchunks == 1
         process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
-                         jobs, warpA, warpB, params)
-    else
+                         jobs, warpA, warpB, params, mask)
+    elseif nchunks > 1
         chunk_size = cld(length(jobs), nchunks)
         @sync for chunk in Iterators.partition(jobs, chunk_size)
             Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
-                                            correlation_moment, chunk, warpA, warpB, params)
+                                            correlation_moment, chunk, warpA, warpB,
+                                            params, mask)
         end
     end
     u .+= residual_u
     v .+= residual_v
+    if any(grid_mask)
+        for f in (u, v, peak_ratio, correlation_moment)
+            f[grid_mask] .= T(NaN)
+        end
+    end
 
-    result = PIVResult(x, y, u, v, peak_ratio, correlation_moment, falses(ny, nx), params)
+    result = PIVResult(x, y, u, v, peak_ratio, correlation_moment,
+                       falses(ny, nx), grid_mask, params)
 
     if params.uod_enable
         apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
@@ -156,9 +201,18 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
     end
     validate_vectors!(result, params.validation)
+    # Masked windows carry no measurement: they are dropped, not "bad".
+    result.outliers .&= .!result.mask
 
     if force_replace || params.replace_outliers
-        replace_vectors!(result.u, result.v, result.outliers)
+        # Masked cells hold NaN and must not donate to replacement medians;
+        # flag them invalid for the fill, then restore their NaN.
+        invalid = result.outliers .| result.mask
+        if any(invalid)
+            replace_vectors!(result.u, result.v, invalid)
+            result.u[result.mask] .= T(NaN)
+            result.v[result.mask] .= T(NaN)
+        end
     end
 
     return result
@@ -199,14 +253,20 @@ make_correlator(params::PIVParameters, ::Type{T}) where {T} =
 # Every (gi, gj) is written by exactly one job and the per-window math doesn't
 # depend on chunking, so threaded results match serial results exactly.
 function process_windows!(u, v, peak_ratio, correlation_moment, jobs,
-                          imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters)
+                          imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
+                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     wr, wc = params.window_size
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     correlator = make_correlator(params, T)
     for (gi, gj, rs, cs) in jobs
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
-        res = correlate(correlator, subA, subB; subpixel = params.subpixel_method)
+        submask = mask === nothing ? nothing :
+                  view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
+        # Fully clean windows take the unmasked fast path.
+        submask !== nothing && !any(submask) && (submask = nothing)
+        res = correlate(correlator, subA, subB; subpixel = params.subpixel_method,
+                        mask = submask)
         u[gi, gj] = res.du
         v[gi, gj] = res.dv
         peak_ratio[gi, gj] = calculate_peak_ratio(res.correlation, res.peakloc)

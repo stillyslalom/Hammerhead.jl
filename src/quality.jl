@@ -124,7 +124,8 @@ end
 
 """
     universal_outlier_detection(u, v, threshold;
-                                neighborhood_size=1, epsilon=0.1) -> BitMatrix
+                                neighborhood_size=1, epsilon=0.1,
+                                exclude=nothing) -> BitMatrix
 
 Universal outlier detection (normalized median test, Westerweel & Scarano 2005)
 on a 2D vector field. For each vector, the residual relative to the median of
@@ -137,12 +138,18 @@ exceeds `threshold`.
 `v` (typically ≈ 0.1 px for PIV); it keeps ordinary subpixel noise in smooth
 regions from being flagged.
 
+Cells marked `true` in `exclude` (e.g. masked windows) are never flagged and
+never enter a neighbor median, so `NaN` entries there cannot poison the test.
+
 Returns a `BitMatrix` where `true` marks an outlier.
 """
 function universal_outlier_detection(u::AbstractMatrix{T}, v::AbstractMatrix{T},
                                      threshold::Real;
-                                     neighborhood_size::Int = 1, epsilon::Real = 0.1) where {T<:Real}
+                                     neighborhood_size::Int = 1, epsilon::Real = 0.1,
+                                     exclude::Union{Nothing,AbstractMatrix{Bool}} = nothing) where {T<:Real}
     size(u) == size(v) || throw(ArgumentError("u and v fields must have the same dimensions"))
+    exclude === nothing || size(exclude) == size(u) ||
+        throw(ArgumentError("exclude must have the same dimensions as u and v"))
     neighborhood_size >= 1 ||
         throw(ArgumentError("neighborhood_size must be at least 1, got $neighborhood_size"))
     epsilon > 0 || throw(ArgumentError("epsilon must be positive, got $epsilon"))
@@ -156,10 +163,12 @@ function universal_outlier_detection(u::AbstractMatrix{T}, v::AbstractMatrix{T},
     res_v = Vector{T}(undef, max_neighbors)
 
     for c in 1:nc, r in 1:nr
+        exclude !== nothing && exclude[r, c] && continue
         n = 0
         for nc2 in max(1, c - neighborhood_size):min(nc, c + neighborhood_size),
             nr2 in max(1, r - neighborhood_size):min(nr, r + neighborhood_size)
             (nr2 == r && nc2 == c) && continue
+            exclude !== nothing && exclude[nr2, nc2] && continue
             n += 1
             nbr_u[n] = u[nr2, nc2]
             nbr_v[n] = v[nr2, nc2]
@@ -324,6 +333,7 @@ end
 
 function apply_validator!(result::PIVResult, v::UniversalOutlierValidator)
     result.outliers .|= universal_outlier_detection(result.u, result.v, v.threshold;
-        neighborhood_size = v.neighborhood_size, epsilon = v.epsilon)
+        neighborhood_size = v.neighborhood_size, epsilon = v.epsilon,
+        exclude = any(result.mask) ? result.mask : nothing)
     return result
 end

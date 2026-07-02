@@ -80,12 +80,17 @@ Every challenge dataset ships as image files; nothing real can run without this.
 
 *Milestone:* end-to-end runs on 2A, 2B, 3C, 1A as files.
 
-### Phase 2 — Masking
+### Phase 2 — Masking ✅ (July 2026)
 Already the flagged next priority; touches every pipeline stage (correlation,
 validation, replacement).
 
-- Static binary masks (supplied for 1C)
-- Reflection / geometry exclusion regions
+- [x] Static binary masks: `run_piv(...; mask, mask_threshold)` with grid-level
+  `result.mask`; partially masked windows correlate over valid pixels only
+  (masked pixels enter at the valid mean — no intensity step); masked windows
+  are excluded from UOD neighborhoods, replacement medians, and the multi-pass
+  predictor (filled from valid neighbors before deformation)
+- [x] Reflection / geometry exclusion regions: `polygon_mask`, `load_mask`
+  (mask image files, e.g. the supplied 1C mask)
 
 *Milestone:* 1C (impeller), near-wall regions of 4B.
 
