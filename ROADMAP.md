@@ -115,9 +115,16 @@ The "how good" cases.
   measured ~6% pass-time cost at `n_peaks = 3`)
 - [x] Peak-locking diagnostics (`peak_locking`: fractional-part histogram +
   locking index)
-- [ ] Higher-order subpixel; resolution sweeps (3A)
-- [ ] Correlation-statistics uncertainty quantification + bias-error tooling (4F)
-- [ ] Garcia `smoothn`
+- [x] Higher-order subpixel: `:gauss9` closed-form 2D Gaussian regression
+  (Nobach & Honkanen — exact for rotated elliptical peaks, less locking);
+  resolution sweeps are an analysis task on top of `bench/`
+- [x] Bias-error tooling (4F): `error_statistics` against reference arrays or
+  `(x, y) -> value` functions (error maps + bias/RMS over valid vectors)
+- [x] Garcia `smoothn` (DCT-based penalized least squares, GCV-selected `s`,
+  weights/missing data, robust bisquare option)
+- [ ] Calibrated per-vector uncertainty (Wieneke 2015 correlation statistics)
+  — deferred to a session with the paper at hand; an approximate
+  reimplementation from memory would be worse than none
 
 *Milestone:* 3A, 4F, plus quality uplift across all cases.
 

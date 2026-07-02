@@ -14,8 +14,11 @@ Immutable, validated configuration for a PIV analysis.
   (true linear correlation; removes the wrap-around bias at ~4× FFT cost).
 - `apodization = :none`: `:gauss` applies a Gaussian window to each
   interrogation window before correlating.
-- `subpixel_method = :gauss3`: `:gauss3` (3-point Gaussian fit), `:gauss2d`
-  (least-squares 2D Gaussian fit), or `:none`.
+- `subpixel_method = :gauss3`: `:gauss3` (two independent 3-point Gaussian
+  fits), `:gauss9` (closed-form 2D Gaussian regression on the 3×3
+  neighborhood — exact for rotated elliptical peaks, less peak locking, only
+  marginally slower), `:gauss2d` (iterative least-squares 2D Gaussian fit),
+  or `:none`.
 - `n_peaks = 3`: number of correlation peaks located per window (primary +
   alternatives, ≥ 1). When > 1, vectors that fail validation are re-tested
   against their secondary/tertiary peak displacements and locally consistent
@@ -86,8 +89,8 @@ struct PIVParameters
             throw(ArgumentError("correlation_method must be :cross or :phase, got :$correlation_method"))
         apodization in (:none, :gauss) ||
             throw(ArgumentError("apodization must be :none or :gauss, got :$apodization"))
-        subpixel_method in (:gauss3, :gauss2d, :none) ||
-            throw(ArgumentError("subpixel_method must be :gauss3, :gauss2d, or :none, got :$subpixel_method"))
+        subpixel_method in (:gauss3, :gauss9, :gauss2d, :none) ||
+            throw(ArgumentError("subpixel_method must be :gauss3, :gauss9, :gauss2d, or :none, got :$subpixel_method"))
         n_peaks >= 1 ||
             throw(ArgumentError("n_peaks must be at least 1, got $n_peaks"))
         uod_threshold > 0 ||

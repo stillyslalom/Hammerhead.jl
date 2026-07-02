@@ -105,6 +105,47 @@ function validate_temporal!(results::AbstractVector{<:PIVResult};
 end
 
 """
+    error_statistics(result, u_ref, v_ref; include_invalid = false) -> NamedTuple
+
+Compare a PIV field against a known reference — the bias-error tooling for
+ground-truthed cases (e.g. PIV Challenge 4F solid-body rotation).
+`u_ref`/`v_ref` are grid-sized arrays or functions `(x, y) -> value`
+evaluated at the interrogation grid points. Returns
+`(; err_u, err_v, bias_u, bias_v, rms_u, rms_v, n)`: signed error fields
+(`NaN` where invalid) plus mean (bias) and RMS errors over the `n` valid
+vectors (finite, unmasked, and unflagged unless `include_invalid`).
+"""
+function error_statistics(result::PIVResult, u_ref, v_ref; include_invalid::Bool = false)
+    as_field(f) = f isa AbstractMatrix ? Float64.(f) :
+                  [Float64(f(xj, yi)) for yi in result.y, xj in result.x]
+    ur = as_field(u_ref)
+    vr = as_field(v_ref)
+    size(ur) == size(result.u) && size(vr) == size(result.u) ||
+        throw(ArgumentError("reference fields must match the $(size(result.u)) grid"))
+    err_u = fill(NaN, size(result.u))
+    err_v = fill(NaN, size(result.u))
+    su = sv = suu = svv = 0.0
+    n = 0
+    for i in eachindex(result.u)
+        sample_valid(result, i, include_invalid) || continue
+        eu = Float64(result.u[i]) - ur[i]
+        ev = Float64(result.v[i]) - vr[i]
+        err_u[i] = eu
+        err_v[i] = ev
+        su += eu
+        sv += ev
+        suu += eu^2
+        svv += ev^2
+        n += 1
+    end
+    scalar(x) = n > 0 ? x : NaN
+    return (; err_u, err_v,
+            bias_u = scalar(su / max(n, 1)), bias_v = scalar(sv / max(n, 1)),
+            rms_u = scalar(sqrt(suu / max(n, 1))), rms_v = scalar(sqrt(svv / max(n, 1))),
+            n)
+end
+
+"""
     peak_locking(displacements; nbins = 21) -> (fractions, counts, index)
 
 Diagnose peak locking from the fractional parts `f = x − round(x) ∈

@@ -123,6 +123,91 @@ function smooth_field(f::AbstractMatrix{<:Real})
 end
 
 """
+    smoothn(y; s = nothing, weights = nothing, robust = false) -> (; z, s)
+
+Penalized least-squares smoothing of a gridded field (Garcia, CSDA 2010),
+solved in the DCT domain. The smoothing parameter `s` is chosen by
+generalized cross-validation when not given; larger values smooth more.
+`weights` (same size, ≥ 0) express per-point confidence — e.g.
+`.!(result.outliers .| result.mask)` — and non-finite entries of `y`
+automatically get weight 0 and are filled from the smooth surface.
+`robust = true` adds bisquare reweighting passes that resist outliers not
+captured by the weights. Returns the smoothed field `z` and the `s` used.
+"""
+function smoothn(y::AbstractMatrix{<:Real};
+                 s::Union{Nothing,Real} = nothing,
+                 weights::Union{Nothing,AbstractMatrix{<:Real}} = nothing,
+                 robust::Bool = false, maxiter::Int = 100, tol::Real = 1e-3)
+    s === nothing || s > 0 || throw(ArgumentError("s must be positive, got $s"))
+    nr, nc = size(y)
+    W0 = weights === nothing ? ones(nr, nc) : Float64.(weights)
+    size(W0) == size(y) ||
+        throw(ArgumentError("weights must have the same size as y"))
+    all(>=(0), W0) || throw(ArgumentError("weights must be non-negative"))
+    y0 = Float64.(y)
+    finite = isfinite.(y0)
+    W0[.!finite] .= 0
+    nvalid = count(>(0), W0)
+    nvalid > 0 || throw(ArgumentError("y has no valid (finite, weighted) data"))
+    y0[.!finite] .= 0
+
+    # DCT-II eigenvalues of the discrete Laplacian, per dimension.
+    lam = [(-2 + 2 * cospi((i - 1) / nr)) + (-2 + 2 * cospi((j - 1) / nc))
+           for i in 1:nr, j in 1:nc]
+    lam2 = lam .^ 2
+    n = length(y0)
+
+    # GCV score for a candidate s given the current working DCT.
+    function gcv(scand, xdc)
+        gamma = 1 ./ (1 .+ scand .* lam2)
+        zc = idct(gamma .* xdc)
+        rss = 0.0
+        for i in eachindex(y0)
+            W0[i] > 0 || continue
+            rss += W0[i] * (y0[i] - zc[i])^2
+        end
+        return (rss / nvalid) / (1 - sum(gamma) / n)^2
+    end
+
+    valid_mean = sum(y0[W0 .> 0]) / nvalid
+    z = [W0[i] > 0 ? y0[i] : valid_mean for i in eachindex(y0)]
+    z = reshape(z, nr, nc)
+    W = copy(W0)
+    s_used = s === nothing ? 1.0 : Float64(s)
+    weighted = any(<(1), W)
+    for pass in 1:(robust ? 4 : 1)
+        for it in 1:maxiter
+            xdc = dct(W .* (y0 .- z) .+ z)
+            if s === nothing && it == 1
+                # Coarse log-grid GCV search; the score is smooth and flat
+                # near its minimum, so a refinement step buys little.
+                best = Inf
+                for ls in range(-6, 8; length = 43)
+                    g = gcv(exp10(ls), xdc)
+                    g < best && (best = g; s_used = exp10(ls))
+                end
+            end
+            znew = idct(xdc ./ (1 .+ s_used .* lam2))
+            rel = sqrt(sum(abs2, znew .- z) / max(sum(abs2, znew), eps()))
+            z = znew
+            (rel < tol || !weighted) && break
+        end
+        (robust && pass < 4) || break
+        # Bisquare reweighting from the studentized residuals.
+        r = y0 .- z
+        resid = [r[i] for i in eachindex(r) if W0[i] > 0]
+        sigma = 1.4826 * median!(abs.(resid))
+        sigma = max(sigma, eps())
+        W = [W0[i] * (abs(r[i]) < 4.685 * sigma ?
+                      (1 - (r[i] / (4.685 * sigma))^2)^2 : 0.0)
+             for i in eachindex(r)]
+        W = reshape(W, nr, nc)
+        weighted = true
+    end
+    return (; z, s = s_used)
+end
+
+"""
     universal_outlier_detection(u, v, threshold;
                                 neighborhood_size=1, epsilon=0.1,
                                 exclude=nothing) -> BitMatrix

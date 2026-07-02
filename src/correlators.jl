@@ -342,9 +342,10 @@ end
 # so du/dv/peak share the correlator's element type end to end.
 function refine_peak(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}, method::Symbol) where {T<:AbstractFloat}
     method === :gauss3 && return subpixel_gauss3(R, peakloc)
+    method === :gauss9 && return subpixel_gauss9(R, peakloc)
     method === :gauss2d && return subpixel_gauss2d(R, peakloc)
     method === :none && return (T(peakloc[1]), T(peakloc[2]))
-    throw(ArgumentError("unknown subpixel method :$method (expected :gauss3, :gauss2d, or :none)"))
+    throw(ArgumentError("unknown subpixel method :$method (expected :gauss3, :gauss9, :gauss2d, or :none)"))
 end
 
 """
@@ -376,6 +377,50 @@ function subpixel_gauss3(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}) where {T
         end
     end
     return (i + di, j + dj)
+end
+
+"""
+    subpixel_gauss9(R, peakloc::Tuple{Int,Int}) -> (row, col)
+
+Refine an integer correlation peak with a closed-form least-squares 2D
+Gaussian regression over the 3×3 neighborhood (log-paraboloid including the
+cross term, Nobach & Honkanen 2005). Unlike the two independent 1D fits of
+[`subpixel_gauss3`](@ref), this is exact for an elliptical — including
+rotated — Gaussian peak and exhibits less peak locking, at the cost of nine
+`log`s and a hardcoded 2×2 solve. Falls back to `subpixel_gauss3` at plane
+edges, on non-positive samples, or when the fitted surface has no interior
+maximum.
+"""
+function subpixel_gauss9(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}) where {T<:AbstractFloat}
+    nr, nc = size(R)
+    pr, pc = peakloc
+    (1 < pr < nr && 1 < pc < nc) || return subpixel_gauss3(R, peakloc)
+    sL = zero(T); sxL = zero(T); syL = zero(T)
+    sxxL = zero(T); syyL = zero(T); sxyL = zero(T)
+    @inbounds for dj in -1:1, di in -1:1
+        val = R[pr + di, pc + dj]
+        val > 0 || return subpixel_gauss3(R, peakloc)
+        L = log(val)
+        sL += L
+        sxL += dj * L
+        syL += di * L
+        sxxL += dj * dj * L
+        syyL += di * di * L
+        sxyL += di * dj * L
+    end
+    # Least-squares paraboloid a1·x + a2·y + a3·x² + a4·xy + a5·y² (+ a0) on
+    # the 3×3 stencil; the normal equations reduce to these closed forms.
+    a1 = sxL / 6
+    a2 = syL / 6
+    a3 = sxxL / 2 - sL / 3
+    a4 = sxyL / 4
+    a5 = syyL / 2 - sL / 3
+    D = 4 * a3 * a5 - a4^2
+    (a3 < 0 && D > 0) || return subpixel_gauss3(R, peakloc)  # not a maximum
+    dx = (a4 * a2 - 2 * a5 * a1) / D
+    dy = (a4 * a1 - 2 * a3 * a2) / D
+    (abs(dx) <= 1 && abs(dy) <= 1) || return subpixel_gauss3(R, peakloc)
+    return (pr + dy, pc + dx)
 end
 
 # 2D Gaussian peak model: p = [amplitude, col0, sigma_col, row0, sigma_row, offset];
