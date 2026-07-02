@@ -59,7 +59,8 @@ using Statistics
         y = [1.0, 2.0, 3.0]
         mk(uval, vval; out = falses(3, 2), msk = falses(3, 2)) =
             PIVResult(x, y, fill(uval, 3, 2), fill(vval, 3, 2),
-                      ones(3, 2), zeros(3, 2), out, msk, params)
+                      ones(3, 2), zeros(3, 2), fill(NaN, 3, 2), fill(NaN, 3, 2),
+                      out, msk, params)
         r1 = mk(2.0, 1.0)
         r2 = mk(4.0, -1.0)
         s = field_statistics([r1, r2])
@@ -85,12 +86,13 @@ using Statistics
         um = fill(2.0, 3, 2)
         um[2, 2] = NaN
         rm = PIVResult(x, y, um, fill(1.0, 3, 2), ones(3, 2), zeros(3, 2),
-                       falses(3, 2), msk, params)
+                       fill(NaN, 3, 2), fill(NaN, 3, 2), falses(3, 2), msk, params)
         sm = field_statistics([rm, rm])
         @test isnan(sm.mean_u[2, 2]) && sm.count[2, 2] == 0
 
         r_other = PIVResult([5.0, 6.0], y, zeros(3, 2), zeros(3, 2), ones(3, 2),
-                            zeros(3, 2), falses(3, 2), falses(3, 2), params)
+                            zeros(3, 2), fill(NaN, 3, 2), fill(NaN, 3, 2),
+                            falses(3, 2), falses(3, 2), params)
         @test_throws ArgumentError field_statistics([r1, r_other])
         @test_throws ArgumentError field_statistics(PIVResult[])
     end
@@ -102,6 +104,7 @@ using Statistics
         y = collect(1.0:4.0)
         results = [PIVResult(x, y, 3.0 .+ 0.05 .* randn(rng, 4, 4),
                              0.05 .* randn(rng, 4, 4), ones(4, 4), zeros(4, 4),
+                             fill(NaN, 4, 4), fill(NaN, 4, 4),
                              falses(4, 4), falses(4, 4), params) for _ in 1:10]
         results[5].u[2, 3] = 50.0  # temporally inconsistent, spatially plausible
         validate_temporal!(results)

@@ -3,9 +3,9 @@
 Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
 organized around the International PIV Challenge cases; see ROADMAP.md for
 phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
-PIV is out of scope). Phases 1 (file I/O & batch) and 2 (masking) are done;
-next is Phase 3 (ensemble correlation & time-series statistics), then
-accuracy/UQ, then stereo.
+PIV is out of scope). Phases 1 (file I/O & batch), 2 (masking), 3 (ensemble
+correlation & time-series statistics), and 4 (accuracy/UQ) are done; next is
+Phase 5 (stereo).
 
 ## Commands
 
@@ -25,6 +25,8 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `preprocessing.jl` — background subtraction, intensity cap, highpass, CLAHE
 - `correlators.jl` — `CrossCorrelator{T}`/`PhaseCorrelator{T}` cache FFTW
   plans + buffers per window size; subpixel peak fits
+- `uncertainty.jl` — Wieneke 2015 correlation-statistics uncertainty
+  (per-window `accumulate_uncertainty!` + `finalize_uncertainty`)
 - `transforms.jl` — affine transforms, image warping, registration
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
@@ -71,6 +73,18 @@ Two `PIV sequence failed` error logs during tests are intentional
   (5×5) because 3×3 falsely flags smooth gradients at field edges.
 - **`correlate` returns an aliased plane:** `res.correlation` is an internal
   buffer overwritten by the next call — copy before storing.
+- **Uncertainty (Wieneke 2015):** computed in `process_windows!` /
+  `accumulate_planes!` from the deformed windows, final pass only — the
+  method assumes the peak sits at ~zero residual, so it needs a converged
+  multipass schedule (repeat the final window size). Statistics accumulate
+  in Float64 (`2 × UQ_NSTATS` per window) and are additive across pairs
+  (that's how the ensemble path pools them). The covariance sums S_δ are
+  summed ring by ring until a ring's max drops below `0.05·S00`; inner rings
+  are taken whole because their negative members are real signal×noise
+  anticorrelation — a per-term positive threshold inflates σ 2–5× at high
+  noise. Estimates describe the random error only; near-outlier windows
+  legitimately report huge σ, so validation comparisons use medians over
+  non-outlier vectors.
 - **Threading:** `piv_pass` chunks windows across tasks, one correlator per
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
@@ -85,15 +99,16 @@ Two `PIV sequence failed` error logs during tests are intentional
 
 - `test/runtests.jl` defines the `particle_pair`/`add_particle!` helpers used
   by all included test files; new test files can rely on them.
-- Adding a `PIVResult` field breaks the direct constructor call in
-  `test_validation.jl` — update it.
+- Adding a `PIVResult` field breaks the direct constructor calls in
+  `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`, and
+  `bench/run_benchmarks.jl` — update them all.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test.
 
 ## Deferred backlog
 
-Phase 4 (accuracy/UQ: peak-locking diagnostics, calibrated uncertainty,
-secondary-peak substitution — needs multi-peak storage in `correlate` —
-Garcia `smoothn`), then Phase 5 (stereo). Also: physical units/scaling,
-multi-frame TIFF in `load_image`, dynamic (per-frame) masks, temporal
-spectra beyond the per-point `power_spectrum` utility.
+Phase 5 (stereo: calibration, disparity correction, dewarping, 3C
+reconstruction). Also: physical units/scaling, multi-frame TIFF in
+`load_image`, dynamic (per-frame) masks, temporal spectra beyond the
+per-point `power_spectrum` utility, uncertainty propagation into derived
+quantities (Wieneke 2015 §3.2: needs spatial error autocorrelation).

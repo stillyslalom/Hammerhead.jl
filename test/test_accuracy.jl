@@ -85,7 +85,8 @@ using Statistics
         out = falses(3, 4)
         out[2, 2] = true
         r = PIVResult(x, y, u_true .+ 0.5, v_true .- 0.25, ones(3, 4),
-                      zeros(3, 4), out, falses(3, 4), params)
+                      zeros(3, 4), fill(NaN, 3, 4), fill(NaN, 3, 4),
+                      out, falses(3, 4), params)
 
         es = error_statistics(r, (xj, yi) -> 0.1 * xj + 0.2 * yi,
                               (xj, yi) -> 0.3 * xj - 0.1 * yi)

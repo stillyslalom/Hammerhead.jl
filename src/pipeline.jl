@@ -25,6 +25,11 @@ window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
 16])` — without violating the quarter-window displacement limit. Repeating the
 final window size adds convergence sweeps.
 
+With `uncertainty = true` in the final pass's parameters, a per-vector
+measurement uncertainty is estimated from correlation statistics (Wieneke
+2015) into `uncertainty_u`/`uncertainty_v` of the result — see
+[`PIVParameters`](@ref) for its convergence requirements.
+
 `mask` is an optional image-sized `Bool` matrix marking pixels to exclude
 (`true` = excluded), e.g. model geometry or reflection regions — build one
 with [`polygon_mask`](@ref), [`load_mask`](@ref), or any Bool array. The mask
@@ -213,16 +218,26 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     n_alt = params.n_peaks - 1
     alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
+    # Wieneke (2015) uncertainty assumes the correlation peak of the deformed
+    # windows sits at ~zero residual, so it is only estimated on the final
+    # pass (force_replace marks intermediate passes). NaN when disabled.
+    unc = params.uncertainty && !force_replace
+    uncertainty_u = fill(T(NaN), ny, nx)
+    uncertainty_v = fill(T(NaN), ny, nx)
 
     nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
     if nchunks == 1
         process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
-                         alt_u, alt_v, grid.jobs, warpA, warpB, params, mask)
+                         alt_u, alt_v, unc ? uncertainty_u : nothing,
+                         unc ? uncertainty_v : nothing, grid.jobs, warpA, warpB,
+                         params, mask)
     elseif nchunks > 1
         chunk_size = cld(length(grid.jobs), nchunks)
         @sync for chunk in Iterators.partition(grid.jobs, chunk_size)
             Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
                                             correlation_moment, alt_u, alt_v,
+                                            unc ? uncertainty_u : nothing,
+                                            unc ? uncertainty_v : nothing,
                                             chunk, warpA, warpB, params, mask)
         end
     end
@@ -241,6 +256,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     end
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
+                       uncertainty_u, uncertainty_v,
                        falses(ny, nx), grid.grid_mask, params)
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
@@ -281,7 +297,8 @@ make_correlator(params::PIVParameters, ::Type{T}) where {T} =
 # concurrent tasks. Every (gi, gj) is written by exactly one job and the
 # per-window math doesn't depend on chunking, so threaded results match
 # serial results exactly.
-function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v, jobs,
+function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
+                          uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     wr, wc = params.window_size
@@ -290,6 +307,8 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v, jo
     k = max(params.n_peaks, 2)
     vals = Vector{T}(undef, k)
     locs = Vector{NTuple{2,Int}}(undef, k)
+    uscratch = uncertainty_u === nothing ? nothing : uncertainty_scratch(T, params.window_size)
+    ustats = uncertainty_u === nothing ? nothing : zeros(2, UQ_NSTATS)
     for (gi, gj, rs, cs) in jobs
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
@@ -311,6 +330,13 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v, jo
                 alt_u[gi, gj, m - 1] = aref[2] - res.center[2]
                 alt_v[gi, gj, m - 1] = aref[1] - res.center[1]
             end
+        end
+        if uncertainty_u !== nothing
+            fill!(ustats, 0.0)
+            accumulate_uncertainty!(ustats, uscratch, subA, subB, submask,
+                                    correlator.apod)
+            uncertainty_u[gi, gj] = finalize_uncertainty(T, view(ustats, 1, :))
+            uncertainty_v[gi, gj] = finalize_uncertainty(T, view(ustats, 2, :))
         end
     end
     return nothing

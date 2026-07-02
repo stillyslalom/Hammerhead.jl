@@ -70,8 +70,9 @@ println("\nValidation (128×128 vector field):")
 u = randn(rng, 128, 128)
 v = randn(rng, 128, 128)
 result = PIVResult(collect(1.0:128), collect(1.0:128), u, v,
-                   fill(2.0, 128, 128), fill(0.2, 128, 128), falses(128, 128),
-                   PIVParameters())
+                   fill(2.0, 128, 128), fill(0.2, 128, 128),
+                   fill(NaN, 128, 128), fill(NaN, 128, 128),
+                   falses(128, 128), falses(128, 128), PIVParameters())
 for (label, validator) in (
     "peak ratio        " => PeakRatioValidator(1.2),
     "velocity magnitude" => VelocityMagnitudeValidator(0.0, 5.0),

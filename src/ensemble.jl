@@ -19,6 +19,16 @@ previous pass's ensemble field acts as a shared deformation predictor for
 every pair. `peak_ratio` and `correlation_moment` describe the ensemble
 planes.
 
+With `uncertainty = true` the correlation-statistics estimator (Wieneke 2015,
+see [`PIVParameters`](@ref)) pools its per-window sums over all pairs — the
+ensemble correlation plane is itself such a sum — so `uncertainty_u` /
+`uncertainty_v` describe the noise-driven uncertainty of the ensemble-mean
+vector and shrink as pairs are added. Like ensemble correlation itself, this
+assumes the displacement is the same in every pair: genuine pair-to-pair flow
+fluctuation is not captured (its coherent window-wide shifts violate the
+estimator's short-range pixel-covariance assumption); quantify it with
+[`field_statistics`](@ref) over single-pair results instead.
+
 Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
 `mask_threshold` as in [`run_piv`](@ref); `preprocess`, `image_type`,
 `progress` as in [`run_piv_sequence`](@ref).
@@ -56,7 +66,7 @@ end
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
                        image_type, force_replace::Bool, meter)
-    local T, grid, accum, chunks, correlators, u, v, imgsize
+    local T, grid, accum, chunks, correlators, u, v, imgsize, uacc, uscratch
     first_pair = true
     for pair in pairs
         frameA, frameB = pair
@@ -83,6 +93,13 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             # paid once per pass, and each accumulator is written by exactly
             # one task per pair, so threaded results match serial exactly.
             correlators = [make_correlator(params, T) for _ in chunks]
+            # Uncertainty statistics pool across pairs (per-window Float64
+            # accumulators; each is written by exactly one task per pair).
+            # As in the single-pair path, only the final pass estimates them.
+            unc = params.uncertainty && !force_replace
+            uacc = unc ? new_uncertainty_stats(length(grid.jobs)) : nothing
+            uscratch = unc ? [uncertainty_scratch(T, params.window_size) for _ in chunks] :
+                       nothing
             first_pair = false
         else
             size(imgA) == imgsize ||
@@ -92,11 +109,14 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
         u, v = pu, pv  # identical for every pair (shared predictor)
         if length(chunks) == 1
             accumulate_planes!(accum, chunks[1], correlators[1], warpA, warpB,
-                               grid.jobs, params, mask)
+                               grid.jobs, params, mask, uacc,
+                               uscratch === nothing ? nothing : uscratch[1])
         elseif !isempty(chunks)
             @sync for (ci, cr) in enumerate(chunks)
                 Threads.@spawn accumulate_planes!(accum, cr, correlators[ci],
-                                                  warpA, warpB, grid.jobs, params, mask)
+                                                  warpA, warpB, grid.jobs, params, mask,
+                                                  uacc,
+                                                  uscratch === nothing ? nothing : uscratch[ci])
             end
         end
         next!(meter)
@@ -105,6 +125,8 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     ny, nx = length(grid.y), length(grid.x)
     peak_ratio = zeros(T, ny, nx)
     correlation_moment = zeros(T, ny, nx)
+    uncertainty_u = fill(T(NaN), ny, nx)
+    uncertainty_v = fill(T(NaN), ny, nx)
     n_alt = params.n_peaks - 1
     alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
@@ -126,6 +148,10 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
         v[gi, gj] += res.dv
         peak_ratio[gi, gj] = res.ratio
         correlation_moment[gi, gj] = res.moment
+        if uacc !== nothing
+            uncertainty_u[gi, gj] = finalize_uncertainty(T, view(uacc[j], 1, :))
+            uncertainty_v[gi, gj] = finalize_uncertainty(T, view(uacc[j], 2, :))
+        end
     end
     if any(grid.grid_mask)
         for f in (u, v, peak_ratio, correlation_moment)
@@ -134,14 +160,17 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     end
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
+                       uncertainty_u, uncertainty_v,
                        falses(ny, nx), grid.grid_mask, params)
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
 
-# Add the correlation planes of the windows in jobrange to their accumulators.
+# Add the correlation planes of the windows in jobrange to their accumulators,
+# and (when enabled) pool each window's uncertainty statistics across pairs.
 function accumulate_planes!(accum, jobrange, correlator, imgA, imgB, jobs,
-                            params::PIVParameters, mask)
+                            params::PIVParameters, mask,
+                            uacc = nothing, uscratch = nothing)
     wr, wc = params.window_size
     for j in jobrange
         gi, gj, rs, cs = jobs[j]
@@ -152,6 +181,9 @@ function accumulate_planes!(accum, jobrange, correlator, imgA, imgB, jobs,
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
         accum[j] .+= correlation_plane!(correlator, subA, subB, submask)
+        uacc === nothing ||
+            accumulate_uncertainty!(uacc[j], uscratch, subA, subB, submask,
+                                    correlator.apod)
     end
     return nothing
 end

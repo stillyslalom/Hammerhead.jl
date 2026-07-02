@@ -106,7 +106,7 @@ Turbulence and micro-PIV cases.
 
 *Milestone:* 2A, 3B, 3C, 4A.
 
-### Phase 4 — Accuracy, resolution & UQ (in progress)
+### Phase 4 — Accuracy, resolution & UQ ✅ (July 2026)
 The "how good" cases.
 
 - [x] Multi-peak detection (`find_peaks`, one plane scan per peak; top two are
@@ -122,9 +122,12 @@ The "how good" cases.
   `(x, y) -> value` functions (error maps + bias/RMS over valid vectors)
 - [x] Garcia `smoothn` (DCT-based penalized least squares, GCV-selected `s`,
   weights/missing data, robust bisquare option)
-- [ ] Calibrated per-vector uncertainty (Wieneke 2015 correlation statistics)
-  — deferred to a session with the paper at hand; an approximate
-  reimplementation from memory would be worse than none
+- [x] Calibrated per-vector uncertainty (Wieneke 2015 correlation statistics,
+  implemented from the paper — `reference/Wieneke_2015_*.pdf`): opt-in
+  `uncertainty` parameter fills `uncertainty_u`/`uncertainty_v` on the final
+  pass, from the deformed windows' correlation-difference statistics;
+  pooled across pairs in `run_piv_ensemble`. Validated against measured RMS
+  error on synthetic noise sweeps (median σ within ~±25% through 20% noise)
 
 *Milestone:* 3A, 4F, plus quality uplift across all cases.
 

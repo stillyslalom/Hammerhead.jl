@@ -28,6 +28,16 @@ Immutable, validated configuration for a PIV analysis.
   so values up to 2 are free; each additional peak costs about one extra
   scan of the correlation plane, and alternatives are always refined with
   the cheap 3-point fit.
+- `uncertainty = false`: estimate a per-vector measurement uncertainty from
+  correlation statistics (Wieneke 2015) into the `uncertainty_u` /
+  `uncertainty_v` fields of the result. The estimator analyzes the residual
+  asymmetry of the correlation peak between the two deformed windows and
+  assumes the peak sits at ~zero residual displacement, so it runs on the
+  final pass only and is meaningful only after multi-pass deformation has
+  converged — use a schedule that repeats the final window size (e.g.
+  `multipass_parameters([32, 16, 16])`). It estimates the random error only
+  (systematic bias such as peak locking is invisible to it) and is accurate
+  for uncertainties up to ~0.3 px.
 - `uod_enable = true`: validate vectors with universal outlier detection.
 - `uod_threshold = 2.0`: UOD sensitivity (higher is less sensitive).
 - `uod_neighborhood = 2`: UOD neighborhood layers (1 → 3×3, 2 → 5×5, ...).
@@ -57,6 +67,7 @@ struct PIVParameters
     apodization::Symbol
     subpixel_method::Symbol
     n_peaks::Int
+    uncertainty::Bool
     uod_enable::Bool
     uod_threshold::Float64
     uod_neighborhood::Int
@@ -72,6 +83,7 @@ struct PIVParameters
         apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
         n_peaks::Int = 3,
+        uncertainty::Bool = false,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
         uod_neighborhood::Int = 2,
@@ -100,7 +112,7 @@ struct PIVParameters
         min_peak_ratio >= 0 ||
             throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
-            n_peaks, uod_enable, Float64(uod_threshold), uod_neighborhood,
+            n_peaks, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers)
     end
 end
@@ -109,7 +121,7 @@ function Base.show(io::IO, p::PIVParameters)
     print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
         "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
-        "n_peaks=$(p.n_peaks), uod=",
+        "n_peaks=$(p.n_peaks), ", p.uncertainty ? "uncertainty=true, " : "", "uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ", min_peak_ratio=$(p.min_peak_ratio)",
         isempty(p.validation) ? "" : ", validation=$(p.validation)",
@@ -135,6 +147,14 @@ single precision.
   is more reliable).
 - `correlation_moment`: second moment of the correlation peak per window (an
   uncertainty proxy; lower is sharper).
+- `uncertainty_u`, `uncertainty_v`: per-vector measurement uncertainty (one
+  standard deviation, in pixels) of `u` and `v`, estimated from correlation
+  statistics (Wieneke 2015) when the `uncertainty` parameter is enabled.
+  `NaN` when disabled, for masked windows, and where the estimate is
+  undefined (no usable correlation signal, or noise beyond the ~0.3 px
+  validity of the method). The estimate describes the correlation
+  measurement at the window; it is not updated when validation replaces or
+  substitutes the vector.
 - `outliers`: `BitMatrix` marking vectors that failed validation (UOD,
   peak-ratio check, and/or the `validation` pipeline). When outlier
   replacement is active, the `u`/`v` entries at
@@ -153,6 +173,8 @@ struct PIVResult{T<:AbstractFloat}
     v::Matrix{T}
     peak_ratio::Matrix{T}
     correlation_moment::Matrix{T}
+    uncertainty_u::Matrix{T}
+    uncertainty_v::Matrix{T}
     outliers::BitMatrix
     mask::BitMatrix
     parameters::PIVParameters

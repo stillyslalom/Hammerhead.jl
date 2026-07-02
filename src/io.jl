@@ -67,7 +67,8 @@ function image_pairs(files::AbstractVector; mode::Symbol = :paired)
     end
 end
 
-const RESULTS_FORMAT_VERSION = 1
+# Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult.
+const RESULTS_FORMAT_VERSION = 2
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
