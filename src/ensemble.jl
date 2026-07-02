@@ -105,13 +105,27 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     ny, nx = length(grid.y), length(grid.x)
     peak_ratio = zeros(T, ny, nx)
     correlation_moment = zeros(T, ny, nx)
+    n_alt = params.n_peaks - 1
+    alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
+    alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
+    k = max(params.n_peaks, 2)
+    vals = Vector{T}(undef, k)
+    locs = Vector{NTuple{2,Int}}(undef, k)
     for (j, (gi, gj, _, _)) in enumerate(grid.jobs)
         R = accum[j]
-        res = locate_displacement(R, params.subpixel_method)
+        res = analyze_plane!(vals, locs, R, params)
+        if alt_u !== nothing
+            # Total alternative displacement = shared predictor + residual.
+            for m in 2:min(res.found, params.n_peaks)
+                aref = subpixel_gauss3(R, locs[m])
+                alt_u[gi, gj, m - 1] = u[gi, gj] + (aref[2] - res.center[2])
+                alt_v[gi, gj, m - 1] = v[gi, gj] + (aref[1] - res.center[1])
+            end
+        end
         u[gi, gj] += res.du
         v[gi, gj] += res.dv
-        peak_ratio[gi, gj] = calculate_peak_ratio(R, res.peakloc)
-        correlation_moment[gi, gj] = calculate_correlation_moment(R, res.refined_peakloc)
+        peak_ratio[gi, gj] = res.ratio
+        correlation_moment[gi, gj] = res.moment
     end
     if any(grid.grid_mask)
         for f in (u, v, peak_ratio, correlation_moment)
@@ -121,7 +135,8 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                        falses(ny, nx), grid.grid_mask, params)
-    return validate_and_replace!(result, params, force_replace)
+    return validate_and_replace!(result, params, force_replace;
+                                 alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
 
 # Add the correlation planes of the windows in jobrange to their accumulators.

@@ -48,8 +48,11 @@ precision for an eventual GPU port. Integer or `Float64` inputs use `Float64`.
 `padding = true` with `apodization = :gauss` is the most accurate configuration
 (unbiased, ~0.03 px RMS on synthetic data) at ~4× the FFT cost per window.
 Vectors failing validation (universal outlier detection, optional
-`min_peak_ratio`) are replaced with the local median and marked in
-`result.outliers`. On a synthetic linear shear (±4 px), the multi-pass schedule
+`min_peak_ratio`) are first re-tested against their secondary/tertiary
+correlation peaks (`n_peaks = 3` by default) — a locally consistent
+alternative is accepted as measured data — and otherwise replaced with the
+local median and marked in `result.outliers`. Peak locking can be diagnosed
+with `peak_locking(result.u)`. On a synthetic linear shear (±4 px), the multi-pass schedule
 above achieves ~0.04 px RMS where direct 16 px correlation gives ~0.14 px.
 
 ## Batch processing

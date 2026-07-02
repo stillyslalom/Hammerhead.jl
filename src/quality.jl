@@ -191,6 +191,64 @@ function universal_outlier_detection(u::AbstractMatrix{T}, v::AbstractMatrix{T},
 end
 
 """
+    substitute_alternatives!(result, alt_u, alt_v, params) -> n_substituted
+
+Peak substitution: for each vector flagged in `result.outliers` (masked
+windows excluded), test its alternative peak displacements — `alt_u`/`alt_v`
+are `(ny, nx, m)` arrays ordered by peak strength, `NaN` where absent —
+against the valid neighbors using the UOD criterion (median ± threshold ×
+(MAD + 0.1 px)). The first consistent alternative replaces the vector and
+clears its outlier flag: it is measured data, just not the tallest peak.
+Acceptance is judged against a snapshot of the field, so the result does not
+depend on traversal order.
+"""
+function substitute_alternatives!(result::PIVResult, alt_u::AbstractArray{<:Real,3},
+                                  alt_v::AbstractArray{<:Real,3}, params::PIVParameters)
+    any(result.outliers) || return 0
+    nr, nc = size(result.u)
+    er = params.uod_neighborhood
+    thr = params.uod_threshold
+    uref = copy(result.u)
+    vref = copy(result.v)
+    valid = .!(result.outliers .| result.mask)
+    bufu = Float64[]
+    bufv = Float64[]
+    nsub = 0
+    for c in 1:nc, r in 1:nr
+        (result.outliers[r, c] && !result.mask[r, c]) || continue
+        empty!(bufu)
+        empty!(bufv)
+        for c2 in max(1, c - er):min(nc, c + er), r2 in max(1, r - er):min(nr, r + er)
+            (r2 == r && c2 == c) && continue
+            valid[r2, c2] || continue
+            push!(bufu, uref[r2, c2])
+            push!(bufv, vref[r2, c2])
+        end
+        length(bufu) >= 3 || continue
+        med_u = median(bufu)
+        med_v = median(bufv)
+        bufu .= abs.(bufu .- med_u)   # reuse buffers for the MADs
+        bufv .= abs.(bufv .- med_v)
+        mad_u = median!(bufu)
+        mad_v = median!(bufv)
+        for m in axes(alt_u, 3)
+            au = alt_u[r, c, m]
+            av = alt_v[r, c, m]
+            isfinite(au) && isfinite(av) || break   # peaks are stored in order
+            if abs(au - med_u) / (mad_u + 0.1) <= thr &&
+               abs(av - med_v) / (mad_v + 0.1) <= thr
+                result.u[r, c] = au
+                result.v[r, c] = av
+                result.outliers[r, c] = false
+                nsub += 1
+                break
+            end
+        end
+    end
+    return nsub
+end
+
+"""
     PIVValidator
 
 Abstract supertype for vector validation criteria. A validator is applied with

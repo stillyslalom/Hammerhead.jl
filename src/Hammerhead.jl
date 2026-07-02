@@ -4,7 +4,7 @@ using FFTW
 using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
-using Statistics: median, std
+using Statistics: median, median!, std
 import FileIO
 using ImageCore: Colorant, Gray
 using ImageFiltering: imfilter, KernelFactors
@@ -15,6 +15,7 @@ export PIVParameters, PIVResult, run_piv, multipass_parameters
 export load_image, image_pairs, save_results, load_results, run_piv_sequence
 export polygon_mask, load_mask
 export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum
+export find_peaks, peak_locking
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field

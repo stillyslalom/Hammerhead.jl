@@ -414,6 +414,7 @@ end
 include("test_synthetic.jl")
 include("test_validation.jl")
 include("test_masking.jl")
+include("test_peaks.jl")
 include("test_ensemble.jl")
 include("test_io.jl")
 include("test_reference.jl")

@@ -106,14 +106,18 @@ Turbulence and micro-PIV cases.
 
 *Milestone:* 2A, 3B, 3C, 4A.
 
-### Phase 4 — Accuracy, resolution & UQ
+### Phase 4 — Accuracy, resolution & UQ (in progress)
 The "how good" cases.
 
-- Higher-order subpixel + peak-locking diagnostics; resolution sweeps (3A)
-- Correlation-statistics uncertainty quantification + bias-error tooling (4F)
-- Secondary-peak substitution during validation (needs multi-peak storage in
-  `correlate`)
-- Garcia `smoothn`
+- [x] Multi-peak detection (`find_peaks`, one plane scan per peak; top two are
+  free since the peak ratio needs both) + secondary/tertiary peak
+  substitution during validation (`n_peaks` parameter, on by default;
+  measured ~6% pass-time cost at `n_peaks = 3`)
+- [x] Peak-locking diagnostics (`peak_locking`: fractional-part histogram +
+  locking index)
+- [ ] Higher-order subpixel; resolution sweeps (3A)
+- [ ] Correlation-statistics uncertainty quantification + bias-error tooling (4F)
+- [ ] Garcia `smoothn`
 
 *Milestone:* 3A, 4F, plus quality uplift across all cases.
 

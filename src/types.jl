@@ -16,6 +16,15 @@ Immutable, validated configuration for a PIV analysis.
   interrogation window before correlating.
 - `subpixel_method = :gauss3`: `:gauss3` (3-point Gaussian fit), `:gauss2d`
   (least-squares 2D Gaussian fit), or `:none`.
+- `n_peaks = 3`: number of correlation peaks located per window (primary +
+  alternatives, ≥ 1). When > 1, vectors that fail validation are re-tested
+  against their secondary/tertiary peak displacements and locally consistent
+  alternatives are accepted before local-median replacement kicks in
+  ("peak substitution"; accepted cells are unflagged since they hold measured
+  data). The top two peaks are always located — the peak ratio needs both —
+  so values up to 2 are free; each additional peak costs about one extra
+  scan of the correlation plane, and alternatives are always refined with
+  the cheap 3-point fit.
 - `uod_enable = true`: validate vectors with universal outlier detection.
 - `uod_threshold = 2.0`: UOD sensitivity (higher is less sensitive).
 - `uod_neighborhood = 2`: UOD neighborhood layers (1 → 3×3, 2 → 5×5, ...).
@@ -44,6 +53,7 @@ struct PIVParameters
     padding::Bool
     apodization::Symbol
     subpixel_method::Symbol
+    n_peaks::Int
     uod_enable::Bool
     uod_threshold::Float64
     uod_neighborhood::Int
@@ -58,6 +68,7 @@ struct PIVParameters
         padding::Bool = false,
         apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
+        n_peaks::Int = 3,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
         uod_neighborhood::Int = 2,
@@ -77,6 +88,8 @@ struct PIVParameters
             throw(ArgumentError("apodization must be :none or :gauss, got :$apodization"))
         subpixel_method in (:gauss3, :gauss2d, :none) ||
             throw(ArgumentError("subpixel_method must be :gauss3, :gauss2d, or :none, got :$subpixel_method"))
+        n_peaks >= 1 ||
+            throw(ArgumentError("n_peaks must be at least 1, got $n_peaks"))
         uod_threshold > 0 ||
             throw(ArgumentError("uod_threshold must be positive, got $uod_threshold"))
         uod_neighborhood >= 1 ||
@@ -84,7 +97,7 @@ struct PIVParameters
         min_peak_ratio >= 0 ||
             throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
-            uod_enable, Float64(uod_threshold), uod_neighborhood,
+            n_peaks, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers)
     end
 end
@@ -92,7 +105,8 @@ end
 function Base.show(io::IO, p::PIVParameters)
     print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
-        "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), uod=",
+        "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
+        "n_peaks=$(p.n_peaks), uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ", min_peak_ratio=$(p.min_peak_ratio)",
         isempty(p.validation) ? "" : ", validation=$(p.validation)",

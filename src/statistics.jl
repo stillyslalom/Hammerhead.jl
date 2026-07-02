@@ -105,6 +105,40 @@ function validate_temporal!(results::AbstractVector{<:PIVResult};
 end
 
 """
+    peak_locking(displacements; nbins = 21) -> (fractions, counts, index)
+
+Diagnose peak locking from the fractional parts `f = x − round(x) ∈
+[−0.5, 0.5)` of a displacement sample (any array; non-finite entries are
+skipped). Returns the histogram bin centers and counts, plus a locking
+index comparing the sample density near integer displacements (`|f| ≤ 0.1`)
+with the density near half-integers (`|f| ≥ 0.4`): 0 for a uniform (locking
+free) distribution, → 1 as fractions pile up on integers, negative if they
+avoid them. `NaN` when there are no valid samples.
+"""
+function peak_locking(displacements::AbstractArray{<:Real}; nbins::Int = 21)
+    nbins >= 3 || throw(ArgumentError("nbins must be at least 3, got $nbins"))
+    counts = zeros(Int, nbins)
+    n_center = 0
+    n_edge = 0
+    nvalid = 0
+    for x in displacements
+        isfinite(x) || continue
+        f = x - round(x)
+        f >= 0.5 && (f -= 1.0)   # guard the round-half-even edge
+        counts[clamp(1 + floor(Int, (f + 0.5) * nbins), 1, nbins)] += 1
+        abs(f) <= 0.1 && (n_center += 1)
+        abs(f) >= 0.4 && (n_edge += 1)
+        nvalid += 1
+    end
+    fractions = [-0.5 + (b - 0.5) / nbins for b in 1:nbins]
+    # Both bands cover a 0.2 width, so their raw counts are comparable.
+    index = (n_center + n_edge) > 0 ?
+            (n_center - n_edge) / (n_center + n_edge) : NaN
+    nvalid == 0 && (index = NaN)
+    return (; fractions, counts, index)
+end
+
+"""
     power_spectrum(signal; dt = 1.0, window = :hann) -> (frequencies, psd)
 
 One-sided power spectral density of a uniformly sampled series (sampling

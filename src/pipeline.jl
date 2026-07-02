@@ -161,8 +161,11 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, predictor,
 end
 
 # Shared validation + replacement tail of a pass (single-pair or ensemble).
+# `alternatives` optionally carries the secondary/tertiary peak displacements
+# as a pair of (ny, nx, n_peaks-1) arrays (NaN where absent) for peak
+# substitution of flagged vectors.
 function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
-                               force_replace::Bool) where {T}
+                               force_replace::Bool; alternatives = nothing) where {T}
     if params.uod_enable
         apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
             neighborhood_size = params.uod_neighborhood))
@@ -173,6 +176,10 @@ function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
     validate_vectors!(result, params.validation)
     # Masked windows carry no measurement: they are dropped, not "bad".
     result.outliers .&= .!result.mask
+
+    if alternatives !== nothing
+        substitute_alternatives!(result, alternatives[1], alternatives[2], params)
+    end
 
     if force_replace || params.replace_outliers
         # Masked cells hold NaN and must not donate to replacement medians;
@@ -203,18 +210,27 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     residual_v = zeros(T, ny, nx)
     peak_ratio = zeros(T, ny, nx)
     correlation_moment = zeros(T, ny, nx)
+    n_alt = params.n_peaks - 1
+    alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
+    alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
 
     nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
     if nchunks == 1
         process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
-                         grid.jobs, warpA, warpB, params, mask)
+                         alt_u, alt_v, grid.jobs, warpA, warpB, params, mask)
     elseif nchunks > 1
         chunk_size = cld(length(grid.jobs), nchunks)
         @sync for chunk in Iterators.partition(grid.jobs, chunk_size)
             Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
-                                            correlation_moment, chunk, warpA, warpB,
-                                            params, mask)
+                                            correlation_moment, alt_u, alt_v,
+                                            chunk, warpA, warpB, params, mask)
         end
+    end
+    if alt_u !== nothing
+        # Alternatives are residuals in the deformed frame; add the shared
+        # predictor (u/v still hold it here) to make them total displacements.
+        alt_u .+= u
+        alt_v .+= v
     end
     u .+= residual_u
     v .+= residual_v
@@ -226,7 +242,8 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                        falses(ny, nx), grid.grid_mask, params)
-    return validate_and_replace!(result, params, force_replace)
+    return validate_and_replace!(result, params, force_replace;
+                                 alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
 
 """
@@ -260,15 +277,19 @@ make_correlator(params::PIVParameters, ::Type{T}) where {T} =
         CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
         PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
 
-# Each call gets its own correlator, so chunks can run on concurrent tasks.
-# Every (gi, gj) is written by exactly one job and the per-window math doesn't
-# depend on chunking, so threaded results match serial results exactly.
-function process_windows!(u, v, peak_ratio, correlation_moment, jobs,
+# Each call gets its own correlator and peak scratch, so chunks can run on
+# concurrent tasks. Every (gi, gj) is written by exactly one job and the
+# per-window math doesn't depend on chunking, so threaded results match
+# serial results exactly.
+function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     wr, wc = params.window_size
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     correlator = make_correlator(params, T)
+    k = max(params.n_peaks, 2)
+    vals = Vector{T}(undef, k)
+    locs = Vector{NTuple{2,Int}}(undef, k)
     for (gi, gj, rs, cs) in jobs
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
@@ -276,13 +297,21 @@ function process_windows!(u, v, peak_ratio, correlation_moment, jobs,
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
-        res = correlate(correlator, subA, subB; subpixel = params.subpixel_method,
-                        mask = submask)
+        R = correlation_plane!(correlator, subA, subB, submask)
+        res = analyze_plane!(vals, locs, R, params)
         u[gi, gj] = res.du
         v[gi, gj] = res.dv
-        peak_ratio[gi, gj] = calculate_peak_ratio(res.correlation, res.peakloc)
-        correlation_moment[gi, gj] = calculate_correlation_moment(
-            res.correlation, res.refined_peakloc)
+        peak_ratio[gi, gj] = res.ratio
+        correlation_moment[gi, gj] = res.moment
+        if alt_u !== nothing
+            # Alternatives use the cheap 3-point fit regardless of the
+            # primary's subpixel method — they are fallback candidates.
+            for m in 2:min(res.found, params.n_peaks)
+                aref = subpixel_gauss3(R, locs[m])
+                alt_u[gi, gj, m - 1] = aref[2] - res.center[2]
+                alt_v[gi, gj, m - 1] = aref[1] - res.center[1]
+            end
+        end
     end
     return nothing
 end
