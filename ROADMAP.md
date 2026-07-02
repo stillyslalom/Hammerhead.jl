@@ -94,12 +94,15 @@ validation, replacement).
 
 *Milestone:* 1C (impeller), near-wall regions of 4B.
 
-### Phase 3 — Ensemble & statistics
+### Phase 3 — Ensemble & statistics ✅ (July 2026)
 Turbulence and micro-PIV cases.
 
-- Ensemble / sum-of-correlation across a sequence (low-SNR micro-PIV)
-- Time-series statistics: mean, RMS, Reynolds stresses, spectra
-- Temporal validation across long sequences
+- [x] Ensemble / sum-of-correlation across a sequence (`run_piv_ensemble`,
+  multi-pass with shared deformation predictor; low-SNR micro-PIV)
+- [x] Time-series statistics: `field_statistics` (mean, RMS, Reynolds shear
+  stress, valid-sample counts) and a `power_spectrum` utility for spectra
+- [x] Temporal validation across long sequences (`validate_temporal!`,
+  per-point median/MAD test over time)
 
 *Milestone:* 2A, 3B, 3C, 4A.
 

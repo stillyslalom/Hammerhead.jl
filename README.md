@@ -67,6 +67,25 @@ results = run_piv_sequence(pairs, passes;
 results = load_results("run42_piv.jld2") # reload later
 ```
 
+## Ensemble correlation & statistics
+
+For low-SNR recordings of stationary flow (micro-PIV), sum the correlation
+planes across all pairs before peak detection instead of averaging noisy
+vector fields:
+
+```julia
+result = run_piv_ensemble(pairs, passes)     # same pairs/kwargs as run_piv_sequence
+```
+
+For time-resolved sequences, compute pointwise turbulence statistics and
+temporal validation over the results of `run_piv_sequence`:
+
+```julia
+validate_temporal!(results)                  # median/MAD test across time per point
+stats = field_statistics(results)            # mean_u/v, rms_u/v, reynolds_uv, count
+f, psd = power_spectrum([r.u[i, j] for r in results]; dt = 1e-4)
+```
+
 ## Masking
 
 Exclude model geometry or reflection regions with an image-sized `Bool` mask

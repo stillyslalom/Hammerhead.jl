@@ -34,6 +34,10 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
   (JLD2: `format_version` + `results/000001`… + optional `sources/…`),
   `run_piv_sequence` batch driver
+- `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
+  correlators reused across pairs; multi-pass via shared predictor)
+- `statistics.jl` — `field_statistics`, `validate_temporal!`,
+  `power_spectrum`
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie)
 
 ## Load-bearing conventions
@@ -88,7 +92,8 @@ Two `PIV sequence failed` error logs during tests are intentional
 
 ## Deferred backlog
 
-Ensemble correlation + time statistics (Phase 3, next), secondary-peak
-substitution during validation (needs multi-peak storage in `correlate`),
-Garcia `smoothn`, calibrated UQ, physical units/scaling, multi-frame TIFF in
-`load_image`, dynamic (per-frame) masks.
+Phase 4 (accuracy/UQ: peak-locking diagnostics, calibrated uncertainty,
+secondary-peak substitution — needs multi-peak storage in `correlate` —
+Garcia `smoothn`), then Phase 5 (stereo). Also: physical units/scaling,
+multi-frame TIFF in `load_image`, dynamic (per-frame) masks, temporal
+spectra beyond the per-point `power_spectrum` utility.

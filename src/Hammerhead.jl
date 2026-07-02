@@ -14,6 +14,7 @@ using ProgressMeter: Progress, next!
 export PIVParameters, PIVResult, run_piv, multipass_parameters
 export load_image, image_pairs, save_results, load_results, run_piv_sequence
 export polygon_mask, load_mask
+export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
@@ -34,6 +35,8 @@ include("quality.jl")
 include("masking.jl")
 include("pipeline.jl")
 include("io.jl")
+include("ensemble.jl")
+include("statistics.jl")
 
 """
     plot_vector_field(result::PIVResult; highlight_outliers=true, figure=(;), axis=(;), kwargs...)

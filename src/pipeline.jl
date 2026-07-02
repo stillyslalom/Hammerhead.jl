@@ -61,21 +61,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
 
     result = nothing
     for (k, params) in enumerate(passes)
-        predictor = if result === nothing
-            nothing
-        else
-            # Masked cells hold NaN; fill them from valid neighbors so the
-            # predictor interpolation and deformation stay finite everywhere.
-            pu, pv = result.u, result.v
-            if any(result.mask)
-                pu, pv = copy(pu), copy(pv)
-                replace_vectors!(pu, pv, result.mask)
-            end
-            if predictor_smoothing
-                pu, pv = smooth_field(pu), smooth_field(pv)
-            end
-            (x = result.x, y = result.y, u = pu, v = pv)
-        end
+        predictor = result === nothing ? nothing :
+                    build_predictor(result, predictor_smoothing)
         # Intermediate passes always replace invalid vectors: the predictor
         # field must stay well behaved for the deformation to converge.
         result = piv_pass(imgA, imgB, params, predictor;
@@ -83,6 +70,21 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           mask, mask_threshold)
     end
     return result
+end
+
+# Predictor for the next pass: masked cells (NaN) are filled from valid
+# neighbors so interpolation and deformation stay finite everywhere, then the
+# field is optionally smoothed.
+function build_predictor(result::PIVResult, smoothing::Bool)
+    pu, pv = result.u, result.v
+    if any(result.mask)
+        pu, pv = copy(pu), copy(pv)
+        replace_vectors!(pu, pv, result.mask)
+    end
+    if smoothing
+        pu, pv = smooth_field(pu), smooth_field(pv)
+    end
+    return (x = result.x, y = result.y, u = pu, v = pv)
 end
 
 run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
@@ -115,84 +117,52 @@ function multipass_parameters(window_sizes::AbstractVector;
             for w in window_sizes]
 end
 
-# One interrogation pass: deform by the predictor, correlate the residual on
-# the pass grid, add the predictor back, then validate and (maybe) replace.
-function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                  predictor; threaded::Bool, force_replace::Bool,
-                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                  mask_threshold::Real = 0.5)
-    nr, nc = size(imgA)
+# Interrogation grid of one pass: T-typed window-center coordinates, the
+# grid-level mask (windows whose masked-pixel fraction reaches mask_threshold
+# produce no vector), and the job list of remaining windows.
+function pass_grid(::Type{T}, imgsize::Dims{2}, params::PIVParameters,
+                   mask::Union{Nothing,AbstractMatrix{Bool}},
+                   mask_threshold::Real) where {T}
+    nr, nc = imgsize
     wr, wc = params.window_size
     (wr <= nr && wc <= nc) ||
         throw(ArgumentError("window size $(params.window_size) exceeds image size $((nr, nc))"))
-
-    step_r = wr - params.overlap[1]
-    step_c = wc - params.overlap[2]
-    row_starts = 1:step_r:(nr - wr + 1)
-    col_starts = 1:step_c:(nc - wc + 1)
-    ny = length(row_starts)
-    nx = length(col_starts)
-
-    # Pipeline precision follows the images; every per-pass array shares it.
-    T = float(promote_type(eltype(imgA), eltype(imgB)))
+    row_starts = 1:(wr - params.overlap[1]):(nr - wr + 1)
+    col_starts = 1:(wc - params.overlap[2]):(nc - wc + 1)
     x = T[cs + (wc - 1) / 2 for cs in col_starts]
     y = T[rs + (wr - 1) / 2 for rs in row_starts]
-
-    if predictor === nothing
-        warpA, warpB = imgA, imgB
-        u = zeros(T, ny, nx)
-        v = zeros(T, ny, nx)
-    else
-        itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
-                                        Gridded(Linear())), Flat())
-        itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
-                                        Gridded(Linear())), Flat())
-        warpA, warpB = deform_images(imgA, imgB, itp_u, itp_v)
-        u = T[itp_u(yi, xj) for yi in y, xj in x]
-        v = T[itp_v(yi, xj) for yi in y, xj in x]
-    end
-
-    residual_u = zeros(T, ny, nx)
-    residual_v = zeros(T, ny, nx)
-    peak_ratio = zeros(T, ny, nx)
-    correlation_moment = zeros(T, ny, nx)
-
-    # Windows whose masked-pixel fraction reaches mask_threshold produce no
-    # vector; the rest are correlated over their valid pixels only.
-    grid_mask = falses(ny, nx)
+    grid_mask = falses(length(row_starts), length(col_starts))
     if mask !== nothing
         for (gj, cs) in enumerate(col_starts), (gi, rs) in enumerate(row_starts)
             frac = count(view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))) / (wr * wc)
             grid_mask[gi, gj] = frac >= mask_threshold
         end
     end
-
     jobs = [(gi, gj, rs, cs) for (gj, cs) in enumerate(col_starts)
                              for (gi, rs) in enumerate(row_starts)
                              if !grid_mask[gi, gj]]
-    nchunks = threaded ? min(Threads.nthreads(), length(jobs)) : 1
-    if nchunks == 1
-        process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
-                         jobs, warpA, warpB, params, mask)
-    elseif nchunks > 1
-        chunk_size = cld(length(jobs), nchunks)
-        @sync for chunk in Iterators.partition(jobs, chunk_size)
-            Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
-                                            correlation_moment, chunk, warpA, warpB,
-                                            params, mask)
-        end
-    end
-    u .+= residual_u
-    v .+= residual_v
-    if any(grid_mask)
-        for f in (u, v, peak_ratio, correlation_moment)
-            f[grid_mask] .= T(NaN)
-        end
-    end
+    return (; x, y, grid_mask, jobs)
+end
 
-    result = PIVResult(x, y, u, v, peak_ratio, correlation_moment,
-                       falses(ny, nx), grid_mask, params)
+# Deform the image pair symmetrically by the predictor and evaluate the
+# predictor displacement on the pass grid.
+function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, predictor,
+                         x::AbstractVector, y::AbstractVector, ::Type{T}) where {T}
+    ny, nx = length(y), length(x)
+    predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
+    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
+                                    Gridded(Linear())), Flat())
+    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
+                                    Gridded(Linear())), Flat())
+    warpA, warpB = deform_images(imgA, imgB, itp_u, itp_v)
+    u = T[itp_u(yi, xj) for yi in y, xj in x]
+    v = T[itp_v(yi, xj) for yi in y, xj in x]
+    return warpA, warpB, u, v
+end
 
+# Shared validation + replacement tail of a pass (single-pair or ensemble).
+function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
+                               force_replace::Bool) where {T}
     if params.uod_enable
         apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
             neighborhood_size = params.uod_neighborhood))
@@ -214,8 +184,49 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
             result.v[result.mask] .= T(NaN)
         end
     end
-
     return result
+end
+
+# One interrogation pass: deform by the predictor, correlate the residual on
+# the pass grid, add the predictor back, then validate and (maybe) replace.
+function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
+                  predictor; threaded::Bool, force_replace::Bool,
+                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                  mask_threshold::Real = 0.5)
+    # Pipeline precision follows the images; every per-pass array shares it.
+    T = float(promote_type(eltype(imgA), eltype(imgB)))
+    grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
+    ny, nx = length(grid.y), length(grid.x)
+    warpA, warpB, u, v = apply_predictor(imgA, imgB, predictor, grid.x, grid.y, T)
+
+    residual_u = zeros(T, ny, nx)
+    residual_v = zeros(T, ny, nx)
+    peak_ratio = zeros(T, ny, nx)
+    correlation_moment = zeros(T, ny, nx)
+
+    nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
+    if nchunks == 1
+        process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
+                         grid.jobs, warpA, warpB, params, mask)
+    elseif nchunks > 1
+        chunk_size = cld(length(grid.jobs), nchunks)
+        @sync for chunk in Iterators.partition(grid.jobs, chunk_size)
+            Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
+                                            correlation_moment, chunk, warpA, warpB,
+                                            params, mask)
+        end
+    end
+    u .+= residual_u
+    v .+= residual_v
+    if any(grid.grid_mask)
+        for f in (u, v, peak_ratio, correlation_moment)
+            f[grid.grid_mask] .= T(NaN)
+        end
+    end
+
+    result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
+                       falses(ny, nx), grid.grid_mask, params)
+    return validate_and_replace!(result, params, force_replace)
 end
 
 """

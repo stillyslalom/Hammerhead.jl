@@ -235,9 +235,19 @@ Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
                    subpixel::Symbol = :gauss3,
                    mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+    R = correlation_plane!(c, subA, subB, mask)
+    res = locate_displacement(R, subpixel)
+    return (; res.du, res.dv, res.peak, res.peakloc, res.refined_peakloc, correlation = R)
+end
+
+# Compute the (fftshifted, overlap-normalized) correlation plane of two
+# windows into c.R and return it, without peak detection — the building block
+# shared by `correlate` and ensemble (sum-of-correlation) PIV. The returned
+# plane aliases c's internal buffer.
+function correlation_plane!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix,
+                            mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
     size(subA) == size(subB) == window_size(c) ||
         throw(DimensionMismatch("expected windows of size $(window_size(c)), got $(size(subA)) and $(size(subB))"))
-
     # Mean subtraction removes the DC pedestal from the correlation plane; it
     # doesn't move the integer peak but biases the subpixel fit.
     load_windows!(c, subA, subB, mask)
@@ -247,15 +257,18 @@ function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
     mul!(c.C1, c.ip, c.C1)
     fftshift_abs!(c.R, c.C1)
     isempty(c.gain) || (c.R .*= c.gain)
+    return c.R
+end
 
-    peakidx = argmax(c.R)
-    peak = c.R[peakidx]
+# Locate the displacement peak of a correlation plane (zero lag at center).
+function locate_displacement(R::AbstractMatrix{<:AbstractFloat}, subpixel::Symbol)
+    peakidx = argmax(R)
+    peak = R[peakidx]
     peakloc = Tuple(peakidx)
-    refined = refine_peak(c.R, peakloc, subpixel)
-    center = size(c.R) .÷ 2 .+ 1
-    dv = refined[1] - center[1]
-    du = refined[2] - center[2]
-    return (; du, dv, peak, peakloc, refined_peakloc = refined, correlation = c.R)
+    refined = refine_peak(R, peakloc, subpixel)
+    center = size(R) .÷ 2 .+ 1
+    return (; du = refined[2] - center[2], dv = refined[1] - center[1],
+            peak, peakloc, refined_peakloc = refined)
 end
 
 # All subpixel paths return coordinates in the correlation plane's precision T,
