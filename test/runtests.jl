@@ -171,6 +171,49 @@ end
                                        PIVParameters(window_size = 32))
 end
 
+@testset "Float32 pipeline" begin
+    rng = MersenneTwister(21)
+    image_size = (128, 128)
+    dv, du = 3.0, 2.0
+    positions = [(rand(rng) * 148 - 10, rand(rng) * 148 - 10) for _ in 1:250]
+    imgA, imgB = particle_pair(image_size, positions, dv, du)
+    imgA32, imgB32 = Float32.(imgA), Float32.(imgB)
+
+    # correlate: du/dv/peak share the correlator's precision.
+    c32 = CrossCorrelator{Float32}((64, 64))
+    pairA, pairB = particle_pair((64, 64), [(32.0, 32.0)], dv, du)
+    res32 = correlate(c32, Float32.(pairA), Float32.(pairB))
+    @test res32.du isa Float32 && res32.dv isa Float32 && res32.peak isa Float32
+    @test res32.du ≈ du atol = 0.1
+    @test res32.dv ≈ dv atol = 0.1
+    res32_2d = correlate(c32, Float32.(pairA), Float32.(pairB); subpixel = :gauss2d)
+    @test res32_2d.du isa Float32
+    res32_none = correlate(c32, Float32.(pairA), Float32.(pairB); subpixel = :none)
+    @test res32_none.du isa Float32
+
+    # run_piv: precision follows the images, single- and multi-pass.
+    params = PIVParameters(window_size = 32, overlap = 16)
+    result32 = run_piv(imgA32, imgB32, multipass_parameters([64, 32]))
+    @test result32 isa PIVResult{Float32}
+    @test eltype(result32.u) == eltype(result32.x) == eltype(result32.peak_ratio) == Float32
+    @test median(result32.u) ≈ du atol = 0.25
+    @test median(result32.v) ≈ dv atol = 0.25
+    # ... and agrees with the Float64 analysis to well below measurement noise.
+    result64 = run_piv(imgA, imgB, multipass_parameters([64, 32]))
+    @test maximum(abs, result32.u .- result64.u) < 0.05
+    # Mixed inputs promote to Float64.
+    @test run_piv(imgA32, imgB, params) isa PIVResult{Float64}
+
+    # Preprocessing preserves Float32; wrappers still copy.
+    f32 = rand(rng, Float32, 32, 32)
+    @test subtract_background(f32, zeros(Float32, 32, 32)) isa Matrix{Float32}
+    @test intensity_cap(f32) isa Matrix{Float32}
+    @test highpass_filter(f32) isa Matrix{Float32}
+    @test clahe(f32) isa Matrix{Float32}
+    buf32 = copy(f32)
+    @test highpass_filter!(buf32) === buf32
+end
+
 @testset "run_piv: multi-pass on linear shear" begin
     # u(y) = a*(y - 64), v = 0: ±4 px at the image edges, with strong
     # in-window gradients — the case where image deformation matters.
@@ -330,6 +373,30 @@ end
     @test clahe(zeros(16, 16)) == fill(0.5, 16, 16)
     @test_throws ArgumentError clahe(dim; clip_limit = 0.5)
     @test_throws ArgumentError clahe(dim; tiles = (0, 8))
+
+    # Mutating variants return their (reused) buffer and match the allocating
+    # versions exactly.
+    raw = rand(rng, 16, 16) .+ 0.5
+    bg2 = fill(0.2, 16, 16)
+    buf = copy(raw)
+    @test subtract_background!(buf, bg2) === buf
+    @test buf == subtract_background(raw, bg2)
+
+    buf = copy(raw)
+    buf[5, 5] = 50.0
+    reference = intensity_cap(buf)
+    @test intensity_cap!(buf) === buf
+    @test buf == reference
+
+    buf = copy(part)
+    @test highpass_filter!(buf; sigma = 4) === buf
+    @test buf == hp
+
+    buf = copy(dim)
+    @test clahe!(buf) === buf
+    @test buf == eq
+    z = zeros(16, 16)
+    @test clahe!(z) === z && z == fill(0.5, 16, 16)
 end
 
 @testset "Makie extension stub" begin
@@ -346,6 +413,7 @@ end
 
 include("test_synthetic.jl")
 include("test_validation.jl")
+include("test_io.jl")
 include("test_reference.jl")
 
 end # top-level testset

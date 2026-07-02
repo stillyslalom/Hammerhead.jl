@@ -5,8 +5,14 @@ using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
 using Statistics: median, std
+import FileIO
+using ImageCore: Colorant, Gray
+using ImageFiltering: imfilter, KernelFactors
+using JLD2: jldopen
+using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters
+export load_image, image_pairs, save_results, load_results, run_piv_sequence
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
@@ -16,6 +22,7 @@ export PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidato
 export validate_vectors!, apply_validator!
 export plot_vector_field, plot_vector_field!
 export compute_background, subtract_background, intensity_cap, highpass_filter, clahe
+export subtract_background!, intensity_cap!, highpass_filter!, clahe!
 
 include("types.jl")
 include("synthetic_data.jl")
@@ -24,6 +31,7 @@ include("correlators.jl")
 include("transforms.jl")
 include("quality.jl")
 include("pipeline.jl")
+include("io.jl")
 
 """
     plot_vector_field(result::PIVResult; highlight_outliers=true, figure=(;), axis=(;), kwargs...)

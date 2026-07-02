@@ -8,10 +8,14 @@ Documentation for [Hammerhead](https://github.com/stillyslalom/Hammerhead.jl),
 a Julia package for particle image velocimetry (PIV).
 
 [`run_piv`](@ref) operates on in-memory image pairs (any equally sized
-real-valued matrices):
+real-valued matrices); [`load_image`](@ref) loads image files as grayscale
+`Matrix{Float64}`:
 
 ```julia
 using Hammerhead
+
+imgA = load_image("frame_0001.tif")
+imgB = load_image("frame_0002.tif")
 
 # Multi-pass with symmetric image deformation: each pass uses the previous
 # validated field as a predictor and shrinks the window.
@@ -25,6 +29,11 @@ result.u, result.v    # displacement field (px), u along x/columns
 result.x, result.y    # interrogation grid centers (px)
 result.outliers       # validation mask
 ```
+
+Whole recordings are processed with [`run_piv_sequence`](@ref), which loads
+frame pairs (see [`image_pairs`](@ref)), applies optional preprocessing, and
+persists results incrementally to JLD2 ([`save_results`](@ref) /
+[`load_results`](@ref)).
 
 See the [Function Reference](function_ref.md) for the public API and
 [Internals](internals.md) for implementation details.

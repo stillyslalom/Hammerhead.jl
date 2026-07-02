@@ -100,9 +100,12 @@ function Base.show(io::IO, p::PIVParameters)
 end
 
 """
-    PIVResult
+    PIVResult{T<:AbstractFloat}
 
-Result of [`run_piv`](@ref).
+Result of [`run_piv`](@ref). The numeric precision `T` follows the input
+images: `float(promote_type(eltype(imgA), eltype(imgB)))`, e.g. `Float32`
+images produce a `PIVResult{Float32}` and the whole pipeline runs in
+single precision.
 
 # Fields
 - `x`, `y`: window-center coordinates of the interrogation grid (`x` along
@@ -122,18 +125,18 @@ Result of [`run_piv`](@ref).
   displacement.
 - `parameters`: the `PIVParameters` of the (final) pass.
 """
-struct PIVResult
-    x::Vector{Float64}
-    y::Vector{Float64}
-    u::Matrix{Float64}
-    v::Matrix{Float64}
-    peak_ratio::Matrix{Float64}
-    correlation_moment::Matrix{Float64}
+struct PIVResult{T<:AbstractFloat}
+    x::Vector{T}
+    y::Vector{T}
+    u::Matrix{T}
+    v::Matrix{T}
+    peak_ratio::Matrix{T}
+    correlation_moment::Matrix{T}
     outliers::BitMatrix
     parameters::PIVParameters
 end
 
-function Base.show(io::IO, r::PIVResult)
+function Base.show(io::IO, r::PIVResult{T}) where {T}
     ny, nx = size(r.u)
-    print(io, "PIVResult($(nx)×$(ny) grid, $(sum(r.outliers)) outliers)")
+    print(io, "PIVResult{$T}($(nx)×$(ny) grid, $(sum(r.outliers)) outliers)")
 end

@@ -27,6 +27,12 @@ final window size adds convergence sweeps.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
+The numeric precision of the analysis follows the images:
+`T = float(promote_type(eltype(imgA), eltype(imgB)))` is used for the
+correlators, deformation, and every field of the returned
+[`PIVResult`](@ref)`{T}`. Feed `Float32` matrices (e.g.
+`load_image(Float32, path)`) to run the whole pipeline in single precision.
+
 Returns the [`PIVResult`](@ref) of the final pass.
 """
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
@@ -100,27 +106,29 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     ny = length(row_starts)
     nx = length(col_starts)
 
-    x = [cs + (wc - 1) / 2 for cs in col_starts]
-    y = [rs + (wr - 1) / 2 for rs in row_starts]
+    # Pipeline precision follows the images; every per-pass array shares it.
+    T = float(promote_type(eltype(imgA), eltype(imgB)))
+    x = T[cs + (wc - 1) / 2 for cs in col_starts]
+    y = T[rs + (wr - 1) / 2 for rs in row_starts]
 
     if predictor === nothing
         warpA, warpB = imgA, imgB
-        u = zeros(ny, nx)
-        v = zeros(ny, nx)
+        u = zeros(T, ny, nx)
+        v = zeros(T, ny, nx)
     else
         itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
                                         Gridded(Linear())), Flat())
         itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
                                         Gridded(Linear())), Flat())
         warpA, warpB = deform_images(imgA, imgB, itp_u, itp_v)
-        u = [Float64(itp_u(yi, xj)) for yi in y, xj in x]
-        v = [Float64(itp_v(yi, xj)) for yi in y, xj in x]
+        u = T[itp_u(yi, xj) for yi in y, xj in x]
+        v = T[itp_v(yi, xj) for yi in y, xj in x]
     end
 
-    residual_u = zeros(ny, nx)
-    residual_v = zeros(ny, nx)
-    peak_ratio = zeros(ny, nx)
-    correlation_moment = zeros(ny, nx)
+    residual_u = zeros(T, ny, nx)
+    residual_v = zeros(T, ny, nx)
+    peak_ratio = zeros(T, ny, nx)
+    correlation_moment = zeros(T, ny, nx)
 
     jobs = vec([(gi, gj, rs, cs) for (gi, rs) in enumerate(row_starts),
                                      (gj, cs) in enumerate(col_starts)])

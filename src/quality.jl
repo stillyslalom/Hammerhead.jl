@@ -101,20 +101,23 @@ function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::Abstrac
 end
 
 """
-    smooth_field(f::AbstractMatrix) -> Matrix{Float64}
+    smooth_field(f::AbstractMatrix) -> Matrix{float(eltype(f))}
 
-3×3 binomial (separable [1 2 1]/4) smoothing with replicated edges. Used to
-condition the predictor field between interrogation passes.
+3×3 binomial (separable [1 2 1]/4) smoothing with replicated edges, preserving
+the field's floating-point precision. Used to condition the predictor field
+between interrogation passes.
 """
 function smooth_field(f::AbstractMatrix{<:Real})
+    T = float(eltype(f))
+    quarter = T(1) / 4
     nr, nc = size(f)
-    tmp = Matrix{Float64}(undef, nr, nc)
-    out = Matrix{Float64}(undef, nr, nc)
+    tmp = Matrix{T}(undef, nr, nc)
+    out = Matrix{T}(undef, nr, nc)
     @inbounds for c in 1:nc, r in 1:nr
-        tmp[r, c] = 0.25 * (f[r, max(c - 1, 1)] + 2f[r, c] + f[r, min(c + 1, nc)])
+        tmp[r, c] = quarter * (f[r, max(c - 1, 1)] + 2f[r, c] + f[r, min(c + 1, nc)])
     end
     @inbounds for c in 1:nc, r in 1:nr
-        out[r, c] = 0.25 * (tmp[max(r - 1, 1), c] + 2tmp[r, c] + tmp[min(r + 1, nr), c])
+        out[r, c] = quarter * (tmp[max(r - 1, 1), c] + 2tmp[r, c] + tmp[min(r + 1, nr), c])
     end
     return out
 end

@@ -223,13 +223,15 @@ function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
     center = size(c.R) .÷ 2 .+ 1
     dv = refined[1] - center[1]
     du = refined[2] - center[2]
-    return (; du, dv, peak = Float64(peak), peakloc, refined_peakloc = refined, correlation = c.R)
+    return (; du, dv, peak, peakloc, refined_peakloc = refined, correlation = c.R)
 end
 
-function refine_peak(R::AbstractMatrix, peakloc::Tuple{Int,Int}, method::Symbol)
+# All subpixel paths return coordinates in the correlation plane's precision T,
+# so du/dv/peak share the correlator's element type end to end.
+function refine_peak(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}, method::Symbol) where {T<:AbstractFloat}
     method === :gauss3 && return subpixel_gauss3(R, peakloc)
     method === :gauss2d && return subpixel_gauss2d(R, peakloc)
-    method === :none && return float.(peakloc)
+    method === :none && return (T(peakloc[1]), T(peakloc[2]))
     throw(ArgumentError("unknown subpixel method :$method (expected :gauss3, :gauss2d, or :none)"))
 end
 
@@ -277,9 +279,11 @@ end
 
 Refine an integer correlation peak by least-squares fitting a 2D Gaussian to
 the 3×3 neighborhood around it. Falls back to [`subpixel_gauss3`](@ref) when
-the peak sits on the matrix edge or the fit fails to converge.
+the peak sits on the matrix edge or the fit fails to converge. The fit itself
+runs in `Float64` (LsqFit on 9 points, CPU); the result is returned in the
+precision of `R`.
 """
-function subpixel_gauss2d(R::AbstractMatrix{<:AbstractFloat}, peakloc::Tuple{Int,Int})
+function subpixel_gauss2d(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}) where {T<:AbstractFloat}
     nr, nc = size(R)
     pr, pc = peakloc
     (1 < pr < nr && 1 < pc < nc) || return subpixel_gauss3(R, peakloc)
@@ -298,7 +302,7 @@ function subpixel_gauss2d(R::AbstractMatrix{<:AbstractFloat}, peakloc::Tuple{Int
 
     try
         fit = curve_fit(gauss2d_model, xy, z, p0; lower, upper)
-        return (fit.param[4], fit.param[2])
+        return (T(fit.param[4]), T(fit.param[2]))
     catch
         return subpixel_gauss3(R, peakloc)
     end
@@ -319,8 +323,8 @@ accumulated displacement and the remaining fields describing the final pass.
 function correlate_deformable(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
                               iterations::Int = 3, subpixel::Symbol = :gauss3, tol::Real = 1e-3)
     iterations >= 1 || throw(ArgumentError("iterations must be at least 1, got $iterations"))
-    du = 0.0
-    dv = 0.0
+    du = zero(eltype(c.R))
+    dv = zero(eltype(c.R))
     res = correlate(c, subA, subB; subpixel)
     du += res.du
     dv += res.dv

@@ -1,6 +1,13 @@
 # Image preprocessing for PIV: background removal, intensity conditioning, and
-# contrast enhancement. All functions take real-valued matrices and return
-# Matrix{Float64}, ready for run_piv.
+# contrast enhancement. The mutating versions (`subtract_background!`,
+# `intensity_cap!`, `highpass_filter!`, `clahe!`) are the core implementations
+# and operate on floating-point buffers (Float32 or Float64) so chained
+# pipelines don't allocate at each step; the non-mutating names are thin
+# copying wrappers accepting any real-valued matrix and returning a matrix of
+# `float(eltype(img))` (integers promote to Float64), ready for run_piv.
+
+# Copy `img` into a fresh floating-point buffer the mutating functions can own.
+float_copy(img::AbstractMatrix{<:Real}) = float(eltype(img)).(img)
 
 """
     compute_background(images; method=:min) -> Matrix{Float64}
@@ -30,85 +37,93 @@ end
 
 """
     subtract_background(img, background) -> Matrix{Float64}
+    subtract_background!(img, background) -> img
 
 Subtract a background image (see [`compute_background`](@ref)), clamping the
-result at zero.
+result at zero. The mutating version overwrites the floating-point `img`
+without allocating.
 """
-function subtract_background(img::AbstractMatrix{<:Real}, background::AbstractMatrix{<:Real})
+function subtract_background!(img::AbstractMatrix{<:AbstractFloat}, background::AbstractMatrix{<:Real})
     size(img) == size(background) ||
         throw(DimensionMismatch("image and background must have the same size"))
-    return max.(Float64.(img) .- background, 0.0)
+    img .= max.(img .- background, zero(eltype(img)))
+    return img
 end
+
+subtract_background(img::AbstractMatrix{<:Real}, background::AbstractMatrix{<:Real}) =
+    subtract_background!(float_copy(img), background)
 
 """
     intensity_cap(img; n_sigma=2) -> Matrix{Float64}
+    intensity_cap!(img; n_sigma=2) -> img
 
 Cap pixel intensities at `median + n_sigma * std` (Shavit et al. 2007),
 limiting the influence of overexposed particles and reflections on the
-correlation.
+correlation. The mutating version overwrites the floating-point `img`.
 """
-function intensity_cap(img::AbstractMatrix{<:Real}; n_sigma::Real = 2)
+function intensity_cap!(img::AbstractMatrix{<:AbstractFloat}; n_sigma::Real = 2)
     n_sigma > 0 || throw(ArgumentError("n_sigma must be positive, got $n_sigma"))
-    v = vec(Float64.(img))
+    v = vec(img)
     cap = median(v) + n_sigma * std(v)
-    return min.(Float64.(img), cap)
+    img .= min.(img, cap)
+    return img
 end
 
-# Separable Gaussian blur with replicated edges (kernel radius 3σ).
-function gaussian_blur(img::AbstractMatrix{<:Real}, sigma::Real)
+intensity_cap(img::AbstractMatrix{<:Real}; n_sigma::Real = 2) =
+    intensity_cap!(float_copy(img); n_sigma)
+
+# Separable Gaussian blur with replicated edges (kernel radius 3σ), in the
+# image's own precision.
+function gaussian_blur(img::AbstractMatrix{<:AbstractFloat}, sigma::Real)
     sigma > 0 || throw(ArgumentError("sigma must be positive, got $sigma"))
-    radius = max(1, ceil(Int, 3sigma))
-    k = [exp(-x^2 / (2sigma^2)) for x in -radius:radius]
-    k ./= sum(k)
-    nr, nc = size(img)
-    tmp = Matrix{Float64}(undef, nr, nc)
-    out = Matrix{Float64}(undef, nr, nc)
-    @inbounds for c in 1:nc, r in 1:nr
-        s = 0.0
-        for (i, x) in enumerate(-radius:radius)
-            s += k[i] * img[r, clamp(c + x, 1, nc)]
-        end
-        tmp[r, c] = s
-    end
-    @inbounds for c in 1:nc, r in 1:nr
-        s = 0.0
-        for (i, x) in enumerate(-radius:radius)
-            s += k[i] * tmp[clamp(r + x, 1, nr), c]
-        end
-        out[r, c] = s
-    end
-    return out
+    l = 2 * max(1, ceil(Int, 3sigma)) + 1
+    return imfilter(eltype(img), img, KernelFactors.gaussian((sigma, sigma), (l, l)), "replicate")
 end
 
 """
     highpass_filter(img; sigma=3) -> Matrix{Float64}
+    highpass_filter!(img; sigma=3) -> img
 
 Remove low-frequency background (sheet inhomogeneity, glare) by subtracting a
 Gaussian blur of scale `sigma` pixels, clamping at zero. `sigma` should be a
-few times the particle image diameter so particles survive the filter.
+few times the particle image diameter so particles survive the filter. The
+mutating version overwrites the floating-point `img`; the blur itself requires
+one internal buffer.
 """
+function highpass_filter!(img::AbstractMatrix{<:AbstractFloat}; sigma::Real = 3)
+    blur = gaussian_blur(img, sigma)
+    img .= max.(img .- blur, zero(eltype(img)))
+    return img
+end
+
 highpass_filter(img::AbstractMatrix{<:Real}; sigma::Real = 3) =
-    max.(Float64.(img) .- gaussian_blur(img, sigma), 0.0)
+    highpass_filter!(float_copy(img); sigma)
 
 """
     clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix{Float64}
+    clahe!(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> img
 
 Contrast-limited adaptive histogram equalization. The image is divided into
 `tiles`, each tile's histogram is clipped at `clip_limit` times the uniform
 bin count (excess redistributed) and converted to a CDF mapping; pixel values
 are remapped with bilinear interpolation between the four surrounding tile
 mappings. Output is in `[0, 1]`. Standard preprocessing for unevenly
-illuminated PIV recordings.
+illuminated PIV recordings. The mutating version remaps the floating-point
+`img` in place.
 """
-function clahe(img::AbstractMatrix{<:Real};
-               tiles::Tuple{Int,Int} = (8, 8), clip_limit::Real = 2.0, nbins::Int = 256)
+# Kept in-house rather than delegating to ImageContrastAdjustment's
+# AdaptiveEqualization: that implementation silently `imresize`s images whose
+# dimensions don't divide evenly into blocks, and the interpolation round-trip
+# perturbs subpixel particle intensity distributions.
+function clahe!(img::AbstractMatrix{<:AbstractFloat};
+                tiles::Tuple{Int,Int} = (8, 8), clip_limit::Real = 2.0, nbins::Int = 256)
     all(>=(1), tiles) || throw(ArgumentError("tiles must be positive, got $tiles"))
     clip_limit >= 1 || throw(ArgumentError("clip_limit must be at least 1, got $clip_limit"))
     nbins >= 2 || throw(ArgumentError("nbins must be at least 2, got $nbins"))
     nr, nc = size(img)
     tr, tc = min(tiles[1], nr), min(tiles[2], nc)
     lo, hi = extrema(img)
-    hi > lo || return fill(0.5, nr, nc)
+    hi > lo || return fill!(img, 0.5)
     scale = (nbins - 1) / (hi - lo)
     binof(x) = 1 + round(Int, (x - lo) * scale)
 
@@ -142,7 +157,8 @@ function clahe(img::AbstractMatrix{<:Real};
 
     rcent = [(redges[i] + redges[i + 1] + 1) / 2 for i in 1:tr]
     ccent = [(cedges[j] + cedges[j + 1] + 1) / 2 for j in 1:tc]
-    out = Matrix{Float64}(undef, nr, nc)
+    # Each output pixel depends only on the input value at the same position
+    # (the tile mappings are already built), so the remap is safely in-place.
     @inbounds for c in 1:nc
         tj1 = clamp(searchsortedfirst(ccent, c), 1, tc)
         tj0 = max(tj1 - 1, 1)
@@ -154,9 +170,11 @@ function clahe(img::AbstractMatrix{<:Real};
             wr = rcent[ti1] == rcent[ti0] ? 0.0 :
                  clamp((r - rcent[ti0]) / (rcent[ti1] - rcent[ti0]), 0.0, 1.0)
             k = binof(img[r, c])
-            out[r, c] = (1 - wr) * ((1 - wc) * maps[k, ti0, tj0] + wc * maps[k, ti0, tj1]) +
+            img[r, c] = (1 - wr) * ((1 - wc) * maps[k, ti0, tj0] + wc * maps[k, ti0, tj1]) +
                         wr * ((1 - wc) * maps[k, ti1, tj0] + wc * maps[k, ti1, tj1])
         end
     end
-    return out
+    return img
 end
+
+clahe(img::AbstractMatrix{<:Real}; kwargs...) = clahe!(float_copy(img); kwargs...)
