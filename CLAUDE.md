@@ -4,8 +4,11 @@ Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
 organized around the International PIV Challenge cases; see ROADMAP.md for
 phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
 PIV is out of scope). Phases 1 (file I/O & batch), 2 (masking), 3 (ensemble
-correlation & time-series statistics), and 4 (accuracy/UQ) are done; next is
-Phase 5 (stereo).
+correlation & time-series statistics), and 4 (accuracy/UQ) are done. Phase 5
+(stereo) is in progress: camera calibration + target detection are done;
+remaining are dewarping, 3C reconstruction (new `StereoPIVResult` type — do
+not extend `PIVResult`), and Wieneke 2005 self-calibration. Case 4E data
+(particle + calibration images) sits in `cases/` (gitignored).
 
 ## Commands
 
@@ -28,6 +31,12 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `uncertainty.jl` — Wieneke 2015 correlation-statistics uncertainty
   (per-window `accumulate_uncertainty!` + `finalize_uncertainty`)
 - `transforms.jl` — affine transforms, image warping, registration
+- `calibration.jl` — `PinholeCamera` (normalized DLT) / `SoloffCamera`
+  (19-term polynomial), `calibrate_camera`, `world_to_pixel` /
+  `pixel_to_world`, fit-quality metrics
+- `target_detection.jl` — `detect_calibration_grid` (dot-grid plates →
+  indexed point pairs), `calibration_points`, `render_calibration_target`
+  (synthetic ground-truth fixture)
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`
@@ -85,6 +94,18 @@ Two `PIV sequence failed` error logs during tests are intentional
   noise. Estimates describe the random error only; near-outlier windows
   legitimately report huge σ, so validation comparisons use medians over
   non-outlier vectors.
+- **Calibration (Phase 5):** a deliberate Float64 island — offline
+  once-per-experiment fits, not the image hot path. World axes are anchored
+  to image orientation (+X = lattice direction nearest image-right, +Y
+  nearest image-up; assumes roughly upright cameras) with the origin dot
+  fixed by the square fiducial + `origin_offset` (4E: `(30.0, 7.5)` mm);
+  multi-camera frame consistency depends on the marker. Two-level plates are
+  indexed as one 45°-rotated combined lattice; the level is the index parity
+  (`indices` are in half-spacing units). Pinhole DLT needs ≥ 2 Z planes,
+  Soloff ≥ 3. On the real 4E plates, ~0.5 px per-dot residuals are
+  *repeatable* across planes (plate dot-position tolerance, not detection
+  error — don't chase them); plane-to-plane detection repeatability is
+  0.15–0.3 px.
 - **Threading:** `piv_pass` chunks windows across tasks, one correlator per
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
@@ -104,11 +125,18 @@ Two `PIV sequence failed` error logs during tests are intentional
   `bench/run_benchmarks.jl` — update them all.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test.
+- `test_calibration.jl` builds its own stereo fixture (`make_test_camera` +
+  `render_calibration_target`); the real 4E images in `cases/` are *not*
+  used by tests (not committed). Rendered marker positions must avoid dot
+  lattice sites (including back-level half-sites) or blobs merge and corrupt
+  centroids.
 
 ## Deferred backlog
 
-Phase 5 (stereo: calibration, disparity correction, dewarping, 3C
-reconstruction). Also: physical units/scaling, multi-frame TIFF in
+Phase 5 remainder (dewarping to a common plane, 3C reconstruction with a new
+`StereoPIVResult`, Wieneke 2005 disparity self-calibration — ask the user to
+fetch the paper into `reference/` when starting that slice). Also: physical
+units/scaling, target detection for rolled cameras, multi-frame TIFF in
 `load_image`, dynamic (per-frame) masks, temporal spectra beyond the
 per-point `power_spectrum` utility, uncertainty propagation into derived
 quantities (Wieneke 2015 §3.2: needs spatial error autocorrelation).

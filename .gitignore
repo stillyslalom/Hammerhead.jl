@@ -1,4 +1,5 @@
 /Manifest*.toml
+/cases/
 /docs/Manifest*.toml
 /docs/build/
 *.log

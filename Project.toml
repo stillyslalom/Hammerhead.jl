@@ -4,6 +4,7 @@ authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
 version = "0.1.0-DEV"
 
 [deps]
+CoordinateTransformations = "150eb455-5306-5404-9cee-2592286d6298"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
 ImageCore = "a09fc81d-aa75-5fe9-8630-4744c3626534"
@@ -15,6 +16,7 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LsqFit = "2fda8390-95c7-5789-9bda-21331edee243"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [weakdeps]
@@ -24,6 +26,7 @@ Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 HammerheadMakieExt = "Makie"
 
 [compat]
+CoordinateTransformations = "0.6.4"
 FFTW = "1.8"
 FileIO = "1.16"
 ImageCore = "0.10"
@@ -36,6 +39,7 @@ LsqFit = "0.15"
 Makie = "0.24"
 ProgressMeter = "1.7"
 Random = "1"
+StaticArrays = "1.9.18"
 Statistics = "1"
 julia = "1.10"
 

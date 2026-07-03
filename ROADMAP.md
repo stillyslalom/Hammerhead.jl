@@ -131,15 +131,32 @@ The "how good" cases.
 
 *Milestone:* 3A, 4F, plus quality uplift across all cases.
 
-### Phase 5 — Stereo PIV (2D3C) — final phase
+### Phase 5 — Stereo PIV (2D3C) — final phase (in progress)
 The largest lift; reuses the 2D correlation engine per camera.
 
-- Camera calibration (pinhole / Soloff), target-based calibration
-- Disparity / self-calibration correction
-- Image dewarping / back-projection to a common measurement plane
-- Three-component reconstruction from two views
+- [x] Camera calibration models + fitting (July 2026): `PinholeCamera`
+  (normalized DLT) and `SoloffCamera` (19-term cubic-in-XY, quadratic-in-Z
+  polynomial), `calibrate_camera` on (pixel, world) point pairs, forward and
+  inverse mappings (`world_to_pixel` / `pixel_to_world`, Newton inversion for
+  Soloff), `calibration_quality` / `reprojection_errors` fit metrics
+- [x] Target-based calibration (July 2026): `detect_calibration_grid` for
+  rectilinear dot grids (LaVision-style, single- and two-level plates) —
+  subpixel intensity-weighted centroids, homography-refined lattice indexing,
+  square/triangle fiducial classification, marker-anchored origin
+  (`origin_offset`, e.g. `(30.0, 7.5)` for case 4E) — plus
+  `render_calibration_target`, the ground-truth synthetic fixture. Validated
+  on the real 4E calibration images: both cameras, all 7 planes, full grid +
+  markers on every image; residuals (~0.6–1 px RMS) are dominated by the
+  plate's per-dot position tolerance (repeatable across planes), while
+  plane-to-plane detection repeatability is 0.15–0.3 px
+- [ ] Image dewarping / back-projection to a common measurement plane
+- [ ] Three-component (u, v, w) reconstruction from two views; stereo result
+  type
+- [ ] Disparity / self-calibration correction (Wieneke 2005)
 
-*Milestone:* 4E (time-resolved stereo vortex ring).
+*Milestone:* 4E (time-resolved stereo vortex ring). The case data (particle
+and calibration images) lives in `cases/4th_PIV-Challenge_Case_E/`, which is
+gitignored; the instructions PDF is in `reference/`.
 
 ## Coverage trajectory
 

@@ -5,6 +5,8 @@ using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
 using Statistics: median, median!, std
+using StaticArrays
+using CoordinateTransformations: AffineMap
 import FileIO
 using ImageCore: Colorant, Gray
 using ImageFiltering: imfilter, KernelFactors
@@ -19,6 +21,9 @@ export find_peaks, peak_locking, smoothn, error_statistics
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
+export CameraCalibration, PinholeCamera, SoloffCamera, calibrate_camera
+export world_to_pixel, pixel_to_world, reprojection_errors, calibration_quality
+export CalibrationGrid, detect_calibration_grid, calibration_points, render_calibration_target
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection
 export PIVValidator, LocalValidator, NeighborhoodValidator
 export PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidator, UniversalOutlierValidator
@@ -33,6 +38,8 @@ include("preprocessing.jl")
 include("correlators.jl")
 include("uncertainty.jl")
 include("transforms.jl")
+include("calibration.jl")
+include("target_detection.jl")
 include("quality.jl")
 include("masking.jl")
 include("pipeline.jl")
