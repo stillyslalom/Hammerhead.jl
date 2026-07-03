@@ -5,9 +5,10 @@ organized around the International PIV Challenge cases; see ROADMAP.md for
 phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
 PIV is out of scope). Phases 1 (file I/O & batch), 2 (masking), 3 (ensemble
 correlation & time-series statistics), and 4 (accuracy/UQ) are done. Phase 5
-(stereo) is in progress: camera calibration + target detection are done;
-remaining are dewarping, 3C reconstruction (new `StereoPIVResult` type — do
-not extend `PIVResult`), and Wieneke 2005 self-calibration. Case 4E data
+(stereo) is in progress: camera calibration, target detection, and dewarping
+to a common plane are done; remaining are 3C reconstruction (new
+`StereoPIVResult` type — do not extend `PIVResult`) and Wieneke 2005
+self-calibration. Case 4E data
 (particle + calibration images) sits in `cases/` (gitignored).
 
 ## Commands
@@ -37,6 +38,9 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `target_detection.jl` — `detect_calibration_grid` (dot-grid plates →
   indexed point pairs), `calibration_points`, `render_calibration_target`
   (synthetic ground-truth fixture)
+- `dewarp.jl` — `DewarpGrid` (world-plane pixel grid spec, shared per rig) +
+  `ImageDewarper` (per-camera precomputed source-coordinate map), `dewarp[!]`
+  cubic B-spline resampling onto the common plane
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`
@@ -106,6 +110,17 @@ Two `PIV sequence failed` error logs during tests are intentional
   *repeatable* across planes (plate dot-position tolerance, not detection
   error — don't chase them); plane-to-plane detection repeatability is
   0.15–0.3 px.
+- **Dewarping (Phase 5, slice 2):** the dewarped image is indexed
+  `out[r, c] = world (grid.x[c], grid.y[r], grid.z)` in the order the ranges
+  are given (ascending `y` puts +Y *down* the image; pass descending `y` for
+  display orientation); displacements convert to world units as
+  `du·step(x)`, `dv·step(y)`, signs included. The `ImageDewarper` coordinate
+  map is Float64 (built once per camera from `world_to_pixel` — no Newton
+  needed, it's the forward map) but `dewarp!` output precision follows the
+  image. Out-of-view nodes: zero-filled, flagged in `dw.mask` (`true` =
+  excluded, static lab-frame) — feed it to `run_piv(...; mask)`; stereo
+  overlap is `dw1.mask .| dw2.mask`. Choose the grid finer than the target
+  vector spacing (correlation windows live on dewarped images).
 - **Threading:** `piv_pass` chunks windows across tasks, one correlator per
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
@@ -133,9 +148,9 @@ Two `PIV sequence failed` error logs during tests are intentional
 
 ## Deferred backlog
 
-Phase 5 remainder (dewarping to a common plane, 3C reconstruction with a new
-`StereoPIVResult`, Wieneke 2005 disparity self-calibration — ask the user to
-fetch the paper into `reference/` when starting that slice). Also: physical
+Phase 5 remainder (3C reconstruction with a new `StereoPIVResult`, Wieneke
+2005 disparity self-calibration — ask the user to fetch the paper into
+`reference/` when starting that slice). Also: physical
 units/scaling, target detection for rolled cameras, multi-frame TIFF in
 `load_image`, dynamic (per-frame) masks, temporal spectra beyond the
 per-point `power_spectrum` utility, uncertainty propagation into derived

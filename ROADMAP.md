@@ -149,7 +149,14 @@ The largest lift; reuses the 2D correlation engine per camera.
   markers on every image; residuals (~0.6–1 px RMS) are dominated by the
   plate's per-dot position tolerance (repeatable across planes), while
   plane-to-plane detection repeatability is 0.15–0.3 px
-- [ ] Image dewarping / back-projection to a common measurement plane
+- [x] Image dewarping / back-projection to a common measurement plane
+  (July 2026): `DewarpGrid` (world extent + resolution + plane `z`, shared by
+  all cameras and by the later stereo vector grid) and `ImageDewarper`
+  (per-camera map, built once via `world_to_pixel` per grid node and reused
+  across a whole sequence) with in-place `dewarp!` (cubic B-spline
+  resampling, output precision follows the image). Out-of-view nodes are
+  zero-filled and reported in a static lab-frame validity mask
+  (`true` = excluded) that plugs straight into `run_piv(...; mask)`
 - [ ] Three-component (u, v, w) reconstruction from two views; stereo result
   type
 - [ ] Disparity / self-calibration correction (Wieneke 2005)
