@@ -67,8 +67,9 @@ function image_pairs(files::AbstractVector; mode::Symbol = :paired)
     end
 end
 
-# Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult.
-const RESULTS_FORMAT_VERSION = 2
+# Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult;
+# version 3 allows StereoPIVResult entries alongside PIVResult.
+const RESULTS_FORMAT_VERSION = 3
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
@@ -76,11 +77,12 @@ source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
 """
     save_results(path, results) -> path
 
-Save a `PIVResult` or vector of `PIVResult`s to a JLD2 file (conventionally
-`*.jld2`), overwriting `path` if it exists. Read back with
-[`load_results`](@ref).
+Save a [`PIVResult`](@ref) or [`StereoPIVResult`](@ref) (or a vector of them)
+to a JLD2 file (conventionally `*.jld2`), overwriting `path` if it exists.
+Read back with [`load_results`](@ref).
 """
-function save_results(path::AbstractString, results::AbstractVector{<:PIVResult})
+function save_results(path::AbstractString,
+                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult}})
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         for (i, r) in enumerate(results)
@@ -90,22 +92,24 @@ function save_results(path::AbstractString, results::AbstractVector{<:PIVResult}
     return path
 end
 
-save_results(path::AbstractString, result::PIVResult) = save_results(path, [result])
+save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult}) =
+    save_results(path, [result])
 
 """
-    load_results(path) -> Vector{PIVResult}
+    load_results(path) -> Vector
 
-Load the results stored in a JLD2 file written by [`save_results`](@ref) or
-[`run_piv_sequence`](@ref), in sequence order. Files written by
-`run_piv_sequence(...; output = path)` from file-path pairs also carry the
-source image paths, retrievable with `JLD2.load(path, "sources/000001")` etc.
+Load the results (`PIVResult` and/or `StereoPIVResult` entries) stored in a
+JLD2 file written by [`save_results`](@ref) or [`run_piv_sequence`](@ref), in
+sequence order. Files written by `run_piv_sequence(...; output = path)` from
+file-path pairs also carry the source image paths, retrievable with
+`JLD2.load(path, "sources/000001")` etc.
 """
 function load_results(path::AbstractString)
     jldopen(path, "r") do f
         haskey(f, "results") ||
             throw(ArgumentError("$path has no \"results\" group; not a Hammerhead results file"))
         g = f["results"]
-        return PIVResult[g[k] for k in sort!(keys(g))]
+        return [g[k] for k in sort!(keys(g))]
     end
 end
 

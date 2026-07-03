@@ -5,10 +5,9 @@ organized around the International PIV Challenge cases; see ROADMAP.md for
 phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
 PIV is out of scope). Phases 1 (file I/O & batch), 2 (masking), 3 (ensemble
 correlation & time-series statistics), and 4 (accuracy/UQ) are done. Phase 5
-(stereo) is in progress: camera calibration, target detection, and dewarping
-to a common plane are done; remaining are 3C reconstruction (new
-`StereoPIVResult` type — do not extend `PIVResult`) and Wieneke 2005
-self-calibration. Case 4E data
+(stereo) is in progress: camera calibration, target detection, dewarping to
+a common plane, and 3C reconstruction (`run_piv_stereo` → `StereoPIVResult`)
+are done; the remaining item is Wieneke 2005 self-calibration. Case 4E data
 (particle + calibration images) sits in `cases/` (gitignored).
 
 ## Commands
@@ -46,9 +45,13 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `masking.jl` — `polygon_mask`
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
   image deformation), `process_windows!`
+- `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
+  dewarped images → geometric least-squares 3C reconstruction with
+  uncertainty propagation)
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
-  (JLD2: `format_version` + `results/000001`… + optional `sources/…`),
-  `run_piv_sequence` batch driver
+  (JLD2: `format_version` + `results/000001`… + optional `sources/…`;
+  entries may be `PIVResult` or `StereoPIVResult`), `run_piv_sequence`
+  batch driver
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor)
 - `statistics.jl` — `field_statistics`, `validate_temporal!`,
@@ -121,6 +124,21 @@ Two `PIV sequence failed` error logs during tests are intentional
   excluded, static lab-frame) — feed it to `run_piv(...; mask)`; stereo
   overlap is `dw1.mask .| dw2.mask`. Choose the grid finer than the target
   vector spacing (correlation windows live on dewarped images).
+- **Stereo 3C (Phase 5, slice 3):** `run_piv_stereo` takes raw frames + two
+  `ImageDewarper`s sharing one `DewarpGrid`; both cameras run with identical
+  parameters and the union node mask (`dw1.mask .| dw2.mask .| user`), so
+  the per-camera vector grids and masks match exactly. Per point, camera *i*
+  measures `uᵢ = dx − dz·tXᵢ`, `vᵢ = dy − dz·tYᵢ` in world units (via
+  `u·step(x)`, `v·step(y)`, signs included), where `(tXᵢ, tYᵢ)` =
+  `ray_slopes` (in-plane drift per unit Z of the viewing ray, central
+  differences of `world_to_pixel`); an unweighted 4×3 LSQ solves
+  `(u, v, w)`, and per-camera Wieneke σ propagate through the same
+  pseudoinverse (independent-error assumption). Degenerate (parallel-ray)
+  points come out NaN. `StereoPIVResult` keeps mask/outliers as unions
+  (masked ≠ outlier preserved; flagged vectors were reconstructed from
+  replaced 2C data) plus both per-camera `PIVResult`s. Reconstruction is a
+  Float64 island (O(vector grid), converted on store); no dt/velocity
+  scaling (still deferred).
 - **Threading:** `piv_pass` chunks windows across tasks, one correlator per
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
@@ -136,8 +154,8 @@ Two `PIV sequence failed` error logs during tests are intentional
 - `test/runtests.jl` defines the `particle_pair`/`add_particle!` helpers used
   by all included test files; new test files can rely on them.
 - Adding a `PIVResult` field breaks the direct constructor calls in
-  `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`, and
-  `bench/run_benchmarks.jl` — update them all.
+  `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
+  `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test.
 - `test_calibration.jl` builds its own stereo fixture (`make_test_camera` +
@@ -148,9 +166,8 @@ Two `PIV sequence failed` error logs during tests are intentional
 
 ## Deferred backlog
 
-Phase 5 remainder (3C reconstruction with a new `StereoPIVResult`, Wieneke
-2005 disparity self-calibration — ask the user to fetch the paper into
-`reference/` when starting that slice). Also: physical
+Phase 5 remainder (Wieneke 2005 disparity self-calibration — ask the user to
+fetch the paper into `reference/` when starting that slice). Also: physical
 units/scaling, target detection for rolled cameras, multi-frame TIFF in
 `load_image`, dynamic (per-frame) masks, temporal spectra beyond the
 per-point `power_spectrum` utility, uncertainty propagation into derived

@@ -25,6 +25,7 @@ export CameraCalibration, PinholeCamera, SoloffCamera, calibrate_camera
 export world_to_pixel, pixel_to_world, reprojection_errors, calibration_quality
 export CalibrationGrid, detect_calibration_grid, calibration_points, render_calibration_target
 export DewarpGrid, ImageDewarper, dewarp, dewarp!
+export StereoPIVResult, run_piv_stereo
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection
 export PIVValidator, LocalValidator, NeighborhoodValidator
 export PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidator, UniversalOutlierValidator
@@ -45,6 +46,7 @@ include("dewarp.jl")
 include("quality.jl")
 include("masking.jl")
 include("pipeline.jl")
+include("stereo.jl")
 include("io.jl")
 include("ensemble.jl")
 include("statistics.jl")

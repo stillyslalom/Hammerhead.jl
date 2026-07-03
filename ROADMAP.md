@@ -157,8 +157,17 @@ The largest lift; reuses the 2D correlation engine per camera.
   resampling, output precision follows the image). Out-of-view nodes are
   zero-filled and reported in a static lab-frame validity mask
   (`true` = excluded) that plugs straight into `run_piv(...; mask)`
-- [ ] Three-component (u, v, w) reconstruction from two views; stereo result
-  type
+- [x] Three-component (u, v, w) reconstruction from two views (July 2026):
+  `run_piv_stereo` dewarps each camera's frame pair onto the shared grid
+  (reusing buffers), runs the 2D engine per camera with identical parameters
+  and the combined validity mask, and solves each vector's four-equation
+  geometric least squares — `uᵢ = dx − dz·tXᵢ`, `vᵢ = dy − dz·tYᵢ` with the
+  viewing-ray slopes evaluated from the calibration — for `(u, v, w)` in
+  world units. Per-camera Wieneke (2015) uncertainties propagate through the
+  same least-squares operator. Results land in the new `StereoPIVResult`
+  (world-coordinate vector grid, union outlier/mask flags, both per-camera
+  `PIVResult`s retained), handled by `save_results`/`load_results`
+  (format v3)
 - [ ] Disparity / self-calibration correction (Wieneke 2005)
 
 *Milestone:* 4E (time-resolved stereo vortex ring). The case data (particle
