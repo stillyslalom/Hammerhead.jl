@@ -131,7 +131,7 @@ The "how good" cases.
 
 *Milestone:* 3A, 4F, plus quality uplift across all cases.
 
-### Phase 5 — Stereo PIV (2D3C) — final phase (in progress)
+### Phase 5 — Stereo PIV (2D3C) — final phase ✅ (July 2026)
 The largest lift; reuses the 2D correlation engine per camera.
 
 - [x] Camera calibration models + fitting (July 2026): `PinholeCamera`
@@ -168,7 +168,21 @@ The largest lift; reuses the 2D correlation engine per camera.
   (world-coordinate vector grid, union outlier/mask flags, both per-camera
   `PIVResult`s retained), handled by `save_results`/`load_results`
   (format v3)
-- [ ] Disparity / self-calibration correction (Wieneke 2005)
+- [x] Disparity / self-calibration correction (July 2026; Wieneke 2005,
+  implemented from the paper — `reference/Wieneke_2005_*.pdf`):
+  `self_calibrate` cross-correlates the two cameras' dewarped images of the
+  same instants (ensemble sum-of-correlation over 1–n instants, single
+  large-window pass), triangulates the disparity vectors to world points on
+  the true light-sheet plane, fits a plane through them, and rigidly
+  transforms both camera models so that plane becomes the measurement plane —
+  iterated to convergence (residual disparity < 0.01 px on the synthetic
+  fixtures, vs the ~0.1 px the paper reports for real setups). A corrected
+  `PinholeCamera` absorbs the transform into its projection matrix; other
+  models come back wrapped in the new `TransformedCamera`. Returns
+  replacement `ImageDewarper`s (drop-in for `run_piv_stereo`) plus a
+  `SelfCalibrationReport` — per-pass disparity/triangulation statistics,
+  fitted plane parameters, the cumulative world transform, and (opt-in) the
+  disparity vector maps
 
 *Milestone:* 4E (time-resolved stereo vortex ring). The case data (particle
 and calibration images) lives in `cases/4th_PIV-Challenge_Case_E/`, which is

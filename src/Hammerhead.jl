@@ -21,8 +21,9 @@ export find_peaks, peak_locking, smoothn, error_statistics
 export SyntheticData
 export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deformable
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
-export CameraCalibration, PinholeCamera, SoloffCamera, calibrate_camera
+export CameraCalibration, PinholeCamera, SoloffCamera, TransformedCamera, calibrate_camera
 export world_to_pixel, pixel_to_world, reprojection_errors, calibration_quality
+export self_calibrate, SelfCalibrationReport
 export CalibrationGrid, detect_calibration_grid, calibration_points, render_calibration_target
 export DewarpGrid, ImageDewarper, dewarp, dewarp!
 export StereoPIVResult, run_piv_stereo
@@ -49,6 +50,7 @@ include("pipeline.jl")
 include("stereo.jl")
 include("io.jl")
 include("ensemble.jl")
+include("selfcal.jl")
 include("statistics.jl")
 
 """

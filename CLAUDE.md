@@ -3,12 +3,13 @@
 Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
 organized around the International PIV Challenge cases; see ROADMAP.md for
 phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
-PIV is out of scope). Phases 1 (file I/O & batch), 2 (masking), 3 (ensemble
-correlation & time-series statistics), and 4 (accuracy/UQ) are done. Phase 5
-(stereo) is in progress: camera calibration, target detection, dewarping to
-a common plane, and 3C reconstruction (`run_piv_stereo` → `StereoPIVResult`)
-are done; the remaining item is Wieneke 2005 self-calibration. Case 4E data
-(particle + calibration images) sits in `cases/` (gitignored).
+PIV is out of scope). All five phases are done: 1 (file I/O & batch),
+2 (masking), 3 (ensemble correlation & time-series statistics),
+4 (accuracy/UQ), and 5 (stereo: camera calibration, target detection,
+dewarping, 3C reconstruction via `run_piv_stereo` → `StereoPIVResult`, and
+Wieneke 2005 disparity self-calibration via `self_calibrate`) — every planar
+and stereo Challenge case is now reachable. Case 4E data (particle +
+calibration images) sits in `cases/` (gitignored).
 
 ## Commands
 
@@ -32,8 +33,9 @@ Two `PIV sequence failed` error logs during tests are intentional
   (per-window `accumulate_uncertainty!` + `finalize_uncertainty`)
 - `transforms.jl` — affine transforms, image warping, registration
 - `calibration.jl` — `PinholeCamera` (normalized DLT) / `SoloffCamera`
-  (19-term polynomial), `calibrate_camera`, `world_to_pixel` /
-  `pixel_to_world`, fit-quality metrics
+  (19-term polynomial) / `TransformedCamera` (rigid world pre-transform
+  wrapper), `calibrate_camera`, `world_to_pixel` / `pixel_to_world`,
+  `apply_world_transform`, fit-quality metrics
 - `target_detection.jl` — `detect_calibration_grid` (dot-grid plates →
   indexed point pairs), `calibration_points`, `render_calibration_target`
   (synthetic ground-truth fixture)
@@ -54,6 +56,9 @@ Two `PIV sequence failed` error logs during tests are intentional
   batch driver
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor)
+- `selfcal.jl` — `self_calibrate` (Wieneke 2005 disparity self-calibration:
+  ensemble cam1↔cam2 disparity map → triangulation → sheet-plane fit →
+  rigid world transform of both cameras) + `SelfCalibrationReport`
 - `statistics.jl` — `field_statistics`, `validate_temporal!`,
   `power_spectrum`
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie)
@@ -139,7 +144,24 @@ Two `PIV sequence failed` error logs during tests are intentional
   replaced 2C data) plus both per-camera `PIVResult`s. Reconstruction is a
   Float64 island (O(vector grid), converted on store); no dt/velocity
   scaling (still deferred).
-- **Threading:** `piv_pass` chunks windows across tasks, one correlator per
+- **Self-calibration (Phase 5, slice 4):** `self_calibrate(frames1, frames2,
+  dw1, dw2)` fixes sheet↔plate misregistration. Disparity = ensemble
+  cam1-vs-cam2 correlation of same-instant dewarped images (single pass,
+  large windows — the outer correct-and-redewarp loop iterates, default ≤ 3
+  corrections plus a trailing verification measurement, so `report.passes`
+  has one entry per *measurement* with `plane === nothing` on non-correcting
+  passes). Triangulation reuses the `ray_slopes` 4×3 system (unknown
+  `(X, Y, ζ)`, symmetric ∓d/2 attribution — second-order error the iteration
+  absorbs); vectors with > `max_triangulation_error` (0.5 px) residual are
+  rejected. The rigid transform maps the fitted plane to `z = grid.z` with
+  the paper's anchoring (+Z sheet normal, +X old X projected onto the sheet,
+  cam1's view of the old origin fixed) and is applied to BOTH cameras:
+  `PinholeCamera` bakes it into `P` exactly, everything else gets the exact
+  `TransformedCamera` wrapper (re-wrapping collapses, so iteration doesn't
+  nest). Scalar diagnostics are always recorded; per-pass disparity
+  `PIVResult`s only with `keep_disparity_maps = true`. If the first
+  measurement is already below `tol` the input dewarpers are returned
+  `===`-identical.
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
 - **Ecosystem policy:** use JuliaImages packages (FileIO/ImageIO,
@@ -163,12 +185,18 @@ Two `PIV sequence failed` error logs during tests are intentional
   used by tests (not committed). Rendered marker positions must avoid dot
   lattice sites (including back-level half-sites) or blobs merge and corrupt
   centroids.
+- `test_selfcal.jl` renders particles on a displaced/tilted sheet
+  `z = a + bX + cY` through cameras calibrated to `z = 0` (`sheet_instant` /
+  `sheet_pair_frames`) — ground truth for the recovered plane, the corrected
+  frame (`report.R * w + report.t` must land on the sheet), and post-fix
+  reconstruction.
 
 ## Deferred backlog
 
-Phase 5 remainder (Wieneke 2005 disparity self-calibration — ask the user to
-fetch the paper into `reference/` when starting that slice). Also: physical
-units/scaling, target detection for rolled cameras, multi-frame TIFF in
-`load_image`, dynamic (per-frame) masks, temporal spectra beyond the
-per-point `power_spectrum` utility, uncertainty propagation into derived
-quantities (Wieneke 2015 §3.2: needs spatial error autocorrelation).
+Physical units/scaling (dt/velocity — still absent from `StereoPIVResult`
+too), target detection for rolled cameras, multi-frame TIFF in `load_image`,
+dynamic (per-frame) masks, temporal spectra beyond the per-point
+`power_spectrum` utility, uncertainty propagation into derived quantities
+(Wieneke 2015 §3.2: needs spatial error autocorrelation), light-sheet
+thickness/overlap estimation from disparity correlation peak widths
+(Wieneke 2005 §5).

@@ -122,9 +122,9 @@ end
 Map pixel coordinates `(x, y)` back to the world point `(X, Y, z)` on the
 plane at out-of-plane position `z`. For a [`PinholeCamera`](@ref) this is an
 exact linear solve (the ray–plane intersection); for a
-[`SoloffCamera`](@ref) it is a 2D Newton iteration and returns a NaN-filled
-point if the iteration fails to converge (e.g. for pixels far outside the
-calibrated domain).
+[`SoloffCamera`](@ref) or [`TransformedCamera`](@ref) it is a 2D Newton
+iteration and returns a NaN-filled point if the iteration fails to converge
+(e.g. for pixels far outside the calibrated domain).
 """
 function pixel_to_world(cam::PinholeCamera, pixel, z::Real)
     x, y = Float64(pixel[1]), Float64(pixel[2])
@@ -161,6 +161,101 @@ function pixel_to_world(cam::SoloffCamera, pixel, z::Real; maxiter::Int = 50)
         XY -= J \ r
     end
     return SVector(NaN, NaN, Float64(z))
+end
+
+# --- Rigid world-frame transforms ---------------------------------------------
+
+"""
+    TransformedCamera(cam::CameraCalibration, R, t)
+
+Camera model pre-composed with a rigid world-coordinate transform: a point
+`w` in the transformed (new) world frame maps to the pixel
+`world_to_pixel(cam, R * w + t)`, where the 3×3 rotation `R` and 3-vector
+`t` express the new frame in the original calibration's frame. Wrapping a
+`TransformedCamera` collapses into a single composed transform.
+
+Produced by [`self_calibrate`](@ref) when correcting camera models whose
+functional form cannot absorb a world rotation exactly (e.g.
+[`SoloffCamera`](@ref) — a [`PinholeCamera`](@ref) correction is instead
+baked directly into its projection matrix). Behaves like any other
+[`CameraCalibration`](@ref): `world_to_pixel`, `pixel_to_world`, and
+[`ImageDewarper`](@ref) all apply.
+"""
+struct TransformedCamera{C<:CameraCalibration} <: CameraCalibration
+    cam::C
+    R::SMatrix{3,3,Float64,9}
+    t::SVector{3,Float64}
+
+    function TransformedCamera(cam::C, R::AbstractMatrix{<:Real},
+                               t::AbstractVector{<:Real}) where {C<:CameraCalibration}
+        Rs, ts = _check_rigid(R, t)
+        return new{C}(cam, Rs, ts)
+    end
+end
+
+TransformedCamera(tc::TransformedCamera, R::AbstractMatrix{<:Real},
+                  t::AbstractVector{<:Real}) =
+    TransformedCamera(tc.cam, tc.R * SMatrix{3,3,Float64}(R),
+                      tc.R * SVector{3,Float64}(t) + tc.t)
+
+function _check_rigid(R::AbstractMatrix{<:Real}, t::AbstractVector{<:Real})
+    size(R) == (3, 3) || throw(ArgumentError("R must be 3×3, got $(size(R))"))
+    length(t) == 3 || throw(ArgumentError("t must have length 3, got $(length(t))"))
+    Rs = SMatrix{3,3,Float64}(R)
+    norm(Rs' * Rs - I) < 1e-6 && det(Rs) > 0 ||
+        throw(ArgumentError("R must be a proper rotation matrix"))
+    return Rs, SVector{3,Float64}(t)
+end
+
+Base.show(io::IO, tc::TransformedCamera) =
+    print(io, "TransformedCamera(", tc.cam, ", t = ", round.(tc.t; sigdigits = 4), ")")
+
+function world_to_pixel(cam::TransformedCamera, world)
+    w = SVector(Float64(world[1]), Float64(world[2]), Float64(world[3]))
+    return world_to_pixel(cam.cam, cam.R * w + cam.t)
+end
+
+function pixel_to_world(cam::TransformedCamera, pixel, z::Real; maxiter::Int = 30)
+    target = SVector(Float64(pixel[1]), Float64(pixel[2]))
+    zf = Float64(z)
+    # Initial guess: invert the inner camera at the depth where the
+    # transformed plane sits, then pull the point back into the new frame.
+    z0 = (cam.R * SVector(0.0, 0.0, zf) + cam.t)[3]
+    w0 = cam.R' * (pixel_to_world(cam.cam, pixel, z0) - cam.t)
+    XY = all(isfinite, w0) ? SVector(w0[1], w0[2]) : zero(SVector{2,Float64})
+    tol = 1e-8 * (1 + norm(target))
+    for _ in 1:maxiter
+        r = world_to_pixel(cam, SVector(XY[1], XY[2], zf)) - target
+        norm(r) <= tol && return SVector(XY[1], XY[2], zf)
+        δ = 1e-4 * (1 + max(abs(XY[1]), abs(XY[2])))
+        dpx = (world_to_pixel(cam, SVector(XY[1] + δ, XY[2], zf)) -
+               world_to_pixel(cam, SVector(XY[1] - δ, XY[2], zf))) / (2δ)
+        dpy = (world_to_pixel(cam, SVector(XY[1], XY[2] + δ, zf)) -
+               world_to_pixel(cam, SVector(XY[1], XY[2] - δ, zf))) / (2δ)
+        J = @SMatrix [dpx[1] dpy[1]; dpx[2] dpy[2]]
+        (all(isfinite, J) && abs(det(J)) > 1e-14) || break
+        XY -= J \ r
+    end
+    return SVector(NaN, NaN, zf)
+end
+
+"""
+    apply_world_transform(cam::CameraCalibration, R, t) -> CameraCalibration
+
+Pre-compose `cam` with a rigid world transform: the returned camera maps a
+point `w` of the new world frame as `cam` maps `R * w + t`. A
+[`PinholeCamera`](@ref) absorbs the transform exactly into its projection
+matrix; other models are wrapped in a [`TransformedCamera`](@ref) (nested
+wrappers collapse into one).
+"""
+apply_world_transform(cam::CameraCalibration, R::AbstractMatrix{<:Real},
+                      t::AbstractVector{<:Real}) = TransformedCamera(cam, R, t)
+
+function apply_world_transform(cam::PinholeCamera, R::AbstractMatrix{<:Real},
+                               t::AbstractVector{<:Real})
+    Rs, ts = _check_rigid(R, t)
+    M = vcat(hcat(Rs, ts), SMatrix{1,4,Float64}(0.0, 0.0, 0.0, 1.0))
+    return PinholeCamera(cam.P * M)
 end
 
 # --- Fitting -----------------------------------------------------------------
