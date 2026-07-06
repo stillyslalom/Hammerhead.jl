@@ -214,7 +214,8 @@ how-to inventory defines the GUI's task model.
   tests: (a) *first vector field* — synthetic Lamb–Oseen pair, `run_piv`,
   multipass, ground-truth error check, uncertainty, outliers + masking;
   (b) *stereo end-to-end* — `render_calibration_target` →
-  `calibrate_camera` → dewarp → `self_calibrate` → `run_piv_stereo`
+  `calibrate_camera` → dewarp → `self_calibrate` → `run_piv_stereo`.
+  A third, real-data tutorial followed (see the follow-up note below)
 - [x] How-to guides seeded from workflows the test suite already exercises:
   masking reflections/geometry, preprocessing chains, ensemble correlation
   for low SNR, validation tuning, batch processing + JLD2 round-trips,
@@ -237,6 +238,22 @@ how-to inventory defines the GUI's task model.
 
 *Milestone:* a newcomer goes from `] add Hammerhead` to a validated stereo
 field without reading source; the API is frozen enough to build a GUI on.
+
+*Follow-up (done, July 2026):* a third Literate tutorial analyzes a real
+recording — PIV Challenge 2001 case A (wing-tip vortex with seeding
+dropout in the core), using the pair already committed at
+`test/reference_images/A/` for the reference test, so the docs build needs
+no download step. It runs the accuracy configuration with per-vector
+uncertainty on the real pair and teaches judgment *without* ground truth:
+outlier flags vs. peak-ratio/uncertainty maps (both point at the empty
+core unprompted), and preprocessing candidates (`highpass_filter`,
+`intensity_cap`, `clahe`) judged by measured peak-ratio distributions —
+on this recording the textbook high-pass and capping steps demonstrably
+hurt. Multi-frame real-data demos (`compute_background`,
+`run_piv_ensemble` on e.g. cases 2A/4A) remain deferred: sequences are
+too large to commit, so they need build-time download from
+pivchallenge.org (e.g. DataDeps.jl) within the docs CI budget; the
+how-to guides cover those workflows synthetically for now.
 
 ### Phase 7 — GUI: HammerheadGUI.jl (planned)
 

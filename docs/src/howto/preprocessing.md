@@ -62,4 +62,6 @@ leave your arrays untouched.
 Preprocessing that helps correlation can also destroy information (an
 aggressive high-pass erases large particles). Sanity-check on one pair
 before running a batch: process with and without the chain and compare
-`result.peak_ratio` distributions — the chain should raise it.
+`result.peak_ratio` distributions — the chain should raise it. The
+[real-data tutorial](../tutorials/real_data.md) works this comparison on a
+real wind-tunnel recording, where the textbook chain turns out to *hurt*.

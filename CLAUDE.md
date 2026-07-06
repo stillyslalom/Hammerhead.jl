@@ -33,8 +33,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
   them into `docs/src/tutorials/` (gitignored) with executable `@example`
   blocks, so the docs build runs them end to end — they are integration
-  tests. They must stay fully synthetic: `cases/` is gitignored and must
-  never be referenced by executed doc code.
+  tests. Executed doc code must never reference `cases/` (gitignored);
+  synthetic data and committed fixtures are the only inputs — the
+  real-data tutorial loads the PIV Challenge case-A pair from
+  `test/reference_images/A/` via `pkgdir(Hammerhead)`.
 - Reference pages use `@autodocs` filtered by source file (`Pages =
   ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
   added to one of the reference pages (and every documented binding must
@@ -242,4 +244,8 @@ dynamic (per-frame) masks, temporal spectra beyond the per-point
 `power_spectrum` utility, uncertainty propagation into derived quantities
 (Wieneke 2015 §3.2: needs spatial error autocorrelation), light-sheet
 thickness/overlap estimation from disparity correlation peak widths
-(Wieneke 2005 §5).
+(Wieneke 2005 §5), multi-frame real-data doc demos (`compute_background` /
+`run_piv_ensemble` on Challenge sequences like 2A/4A — the committed
+case-A pair covers the single-pair real-data tutorial, but sequences are
+too large to commit and need build-time download from pivchallenge.org,
+e.g. DataDeps.jl in `docs/Project.toml`, within the docs CI budget).

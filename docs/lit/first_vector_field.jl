@@ -197,6 +197,8 @@ plot_vector_field(result_masked)
 
 # ## Where to go next
 #
+# - The same workflow on a real wind-tunnel recording, where there is no
+#   ground truth to check against: [the real-data tutorial](real_data.md).
 # - Real image files: [`load_image`](@ref) and the
 #   [batch-processing guide](../howto/batch.md).
 # - Polygon and image-file masks: the [masking guide](../howto/masking.md).

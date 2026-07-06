@@ -45,7 +45,8 @@ persists results incrementally to JLD2 ([`save_results`](@ref) /
 The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
 
 - **Tutorials** — guided, executable walkthroughs. Start with
-  [Your first vector field](tutorials/first_vector_field.md), then
+  [Your first vector field](tutorials/first_vector_field.md), continue with
+  a [real wind-tunnel recording](tutorials/real_data.md), then
   [Stereo PIV end to end](tutorials/stereo.md).
 - **How-to guides** — recipes for specific jobs:
   [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
