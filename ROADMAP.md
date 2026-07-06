@@ -190,42 +190,50 @@ The largest lift; reuses the 2D correlation engine per camera.
 and calibration images) lives in `cases/4th_PIV-Challenge_Case_E/`, which is
 gitignored; the instructions PDF is in `reference/`.
 
-### Phase 6 — Documentation (planned)
+### Phase 6 — Documentation ✅ (July 2026)
 
 Structure follows [Diátaxis](https://diataxis.fr/) (tutorials, how-to guides,
-reference, explanation). Docs come **before** the GUI: writing the tutorials
-is an API audit (warts get fixed before a GUI fossilizes them), and the
+reference, explanation). Docs came **before** the GUI: writing the tutorials
+was an API audit (warts get fixed before a GUI fossilizes them), and the
 how-to inventory defines the GUI's task model.
 
-- [ ] Restructure `docs/src` into the four Diátaxis categories (landing page
+- [x] Restructured `docs/src` into the four Diátaxis categories (landing page
   keeps the quick example)
-- [ ] Explanation pages ported from CLAUDE.md's conventions section
+- [x] Explanation pages ported from CLAUDE.md's conventions section
   (user-facing rewrite; CLAUDE.md keeps the maintainer-only gotchas):
   coordinate & sign conventions, correlation accuracy (padding, apodization,
   bias), multipass & image deformation, the masking model, uncertainty
   methodology (Wieneke 2015), stereo geometry & self-calibration
   (Wieneke 2005), the precision-follows-images policy
-- [ ] Split the oversized `function_ref.md` by topic (core pipeline &
+- [x] Split the oversized `function_ref.md` by topic (core pipeline &
   parameters; preprocessing; validation & quality; calibration / dewarping /
-  stereo / self-calibration; I/O & batch; ensemble & statistics) — also
-  fixes the Documenter size warning
-- [ ] Two Literate.jl tutorials, fully synthetic (`cases/` is gitignored),
-  executed by the docs build so they double as integration tests:
-  (a) *first vector field* — synthetic pair, `run_piv`, multipass,
-  outliers, uncertainty; (b) *stereo end-to-end* —
-  `render_calibration_target` → `calibrate_camera` → dewarp →
-  `self_calibrate` → `run_piv_stereo`
-- [ ] How-to guides seeded from workflows the test suite already exercises:
+  stereo / self-calibration; I/O & batch; ensemble & statistics; synthetic
+  data; internals) — also fixed the Documenter size warning
+- [x] Two Literate.jl tutorials (`docs/lit/`), fully synthetic (`cases/` is
+  gitignored), executed by the docs build so they double as integration
+  tests: (a) *first vector field* — synthetic Lamb–Oseen pair, `run_piv`,
+  multipass, ground-truth error check, uncertainty, outliers + masking;
+  (b) *stereo end-to-end* — `render_calibration_target` →
+  `calibrate_camera` → dewarp → `self_calibrate` → `run_piv_stereo`
+- [x] How-to guides seeded from workflows the test suite already exercises:
   masking reflections/geometry, preprocessing chains, ensemble correlation
   for low SNR, validation tuning, batch processing + JLD2 round-trips,
   calibrating a real stereo rig (target requirements, `origin_offset`,
-  self-calibration on real recordings)
-- [ ] Docs infrastructure: Literate.jl + DocumenterCitations (the
-  implemented-from-paper methods deserve citations; papers in `reference/`),
-  CairoMakie-generated figures at build time
-- [ ] API-wart audit driven by the tutorial writing; breaking fixes land now,
-  while nothing depends on the API
-- [ ] Tag and register Hammerhead 0.1.0
+  self-calibration on real recordings; prose-only — case data is not
+  committed)
+- [x] Docs infrastructure: Literate.jl + DocumenterCitations
+  (`docs/src/refs.bib`, papers in `reference/`), CairoMakie-generated
+  figures at build time (docs env only; the core package gained no deps)
+- [x] API-wart audit driven by the tutorial writing: added
+  `calibration_quality(cam, grids, zs)` (mirrors `calibrate_camera`),
+  docstrings for the allocating preprocessing forms
+  (`subtract_background`, `intensity_cap`, `highpass_filter`, `clahe`),
+  fixed the `ImageDewarper` mask-size docstring, documented the
+  forward-Euler ground-truth contract of `SyntheticData`. No breaking
+  renames needed — the API survived the tutorials intact
+- [x] Version bumped 0.1.0-DEV → 0.1.0, ready to tag; General-registry
+  registration (JuliaRegistrator comment on the release commit) is the
+  remaining manual step
 
 *Milestone:* a newcomer goes from `] add Hammerhead` to a validated stereo
 field without reading source; the API is frozen enough to build a GUI on.

@@ -142,8 +142,11 @@ end
 """
     displace_particles!(particles::ParticleField3D, velocity_function, dt, t = 0.0)
 
-Displace particles in place by one step `dt` of `velocity_function`
-(signature `(x, y, z, t) -> (u, v, w)`, evaluated at time `t`).
+Displace particles in place by one forward-Euler step of `velocity_function`
+(signature `(x, y, z, t) -> (u, v, w)`): each particle moves by its local
+velocity — evaluated at its current position and time `t` — times `dt`. The
+exact displacement of every particle is therefore the velocity field at its
+launch point, whatever the field's curvature.
 """
 function displace_particles!(particles::ParticleField3D, velocity_function, dt::Real, t::Real = 0.0)
     for i in eachindex(particles.x)
@@ -234,8 +237,11 @@ end
 
 Generate a synthetic PIV image pair with known ground truth: a random particle
 field is rendered at time `t0`, displaced through `velocity_function`
-(signature `(x, y, z, t) -> (u, v, w)`) over `dt`, and rendered again. Out-of-
-plane motion changes particle brightness via the laser sheet profile.
+(signature `(x, y, z, t) -> (u, v, w)`) over `dt`, and rendered again. The
+displacement is a single forward-Euler step (see
+[`displace_particles!`](@ref)), so each particle's true displacement is
+exactly `velocity × dt` at its starting position. Out-of-plane motion changes
+particle brightness via the laser sheet profile.
 
 # Keywords
 - `particle_density = 0.05`: particles per pixel

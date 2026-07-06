@@ -5,7 +5,12 @@ CurrentModule = Hammerhead
 # Hammerhead
 
 Documentation for [Hammerhead](https://github.com/stillyslalom/Hammerhead.jl),
-a Julia package for particle image velocimetry (PIV).
+a Julia package for particle image velocimetry (PIV): planar (2D2C) and
+stereoscopic (2D3C) analysis with multi-pass image deformation, vector
+validation, per-vector uncertainty quantification, ensemble correlation,
+camera calibration, and disparity self-calibration.
+
+## Quick example
 
 [`run_piv`](@ref) operates on in-memory image pairs (any equally sized
 real-valued matrices); [`load_image`](@ref) loads image files as grayscale
@@ -27,7 +32,7 @@ result = run_piv(imgA, imgB, passes)
 
 result.u, result.v    # displacement field (px), u along x/columns
 result.x, result.y    # interrogation grid centers (px)
-result.outliers       # validation mask
+result.outliers       # validation flags
 ```
 
 Whole recordings are processed with [`run_piv_sequence`](@ref), which loads
@@ -35,5 +40,26 @@ frame pairs (see [`image_pairs`](@ref)), applies optional preprocessing, and
 persists results incrementally to JLD2 ([`save_results`](@ref) /
 [`load_results`](@ref)).
 
-See the [Function Reference](function_ref.md) for the public API and
-[Internals](internals.md) for implementation details.
+## Where to go next
+
+The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
+
+- **Tutorials** — guided, executable walkthroughs. Start with
+  [Your first vector field](tutorials/first_vector_field.md), then
+  [Stereo PIV end to end](tutorials/stereo.md).
+- **How-to guides** — recipes for specific jobs:
+  [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
+  [validation tuning](howto/validation.md),
+  [ensemble correlation](howto/ensemble.md),
+  [batch processing](howto/batch.md), and
+  [calibrating a real stereo rig](howto/stereo_rig.md).
+- **Explanation** — how and why Hammerhead works the way it does:
+  [coordinate conventions](explanation/conventions.md),
+  [correlation accuracy](explanation/correlation.md),
+  [multi-pass deformation](explanation/multipass.md),
+  [the masking model](explanation/masking.md),
+  [uncertainty quantification](explanation/uncertainty.md),
+  [stereo geometry and self-calibration](explanation/stereo.md), and the
+  [numeric precision policy](explanation/precision.md).
+- **Reference** — the API, one page per topic, starting at
+  [Core pipeline and parameters](reference/pipeline.md).

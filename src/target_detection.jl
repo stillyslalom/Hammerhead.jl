@@ -414,14 +414,9 @@ function calibration_points(grid::CalibrationGrid, z::Real)
     return grid.pixels, world
 end
 
-"""
-    calibrate_camera(grids::AbstractVector{CalibrationGrid}, zs; model = :soloff)
-
-Calibrate a camera from dot grids detected at several plate positions `zs`
-(reference-level Z of each grid, world units).
-"""
-function calibrate_camera(grids::AbstractVector{CalibrationGrid},
-                          zs::AbstractVector{<:Real}; model::Symbol = :soloff)
+# Concatenated (pixel, world) point pairs of several detected grids.
+function _collect_calibration_points(grids::AbstractVector{CalibrationGrid},
+                                     zs::AbstractVector{<:Real})
     length(grids) == length(zs) ||
         throw(ArgumentError("got $(length(grids)) grids but $(length(zs)) z positions"))
     pixels = SVector{2,Float64}[]
@@ -431,7 +426,33 @@ function calibrate_camera(grids::AbstractVector{CalibrationGrid},
         append!(pixels, px)
         append!(world, wd)
     end
+    return pixels, world
+end
+
+"""
+    calibrate_camera(grids::AbstractVector{CalibrationGrid}, zs; model = :soloff)
+
+Calibrate a camera from dot grids detected at several plate positions `zs`
+(reference-level Z of each grid, world units).
+"""
+function calibrate_camera(grids::AbstractVector{CalibrationGrid},
+                          zs::AbstractVector{<:Real}; model::Symbol = :soloff)
+    pixels, world = _collect_calibration_points(grids, zs)
     return calibrate_camera(pixels, world; model)
+end
+
+"""
+    calibration_quality(cam::CameraCalibration, grids::AbstractVector{CalibrationGrid}, zs)
+        -> (rms, max, n)
+
+Reprojection-error summary of `cam` over dot grids detected at several plate
+positions `zs`, as accepted by `calibrate_camera(grids, zs)`.
+"""
+function calibration_quality(cam::CameraCalibration,
+                             grids::AbstractVector{CalibrationGrid},
+                             zs::AbstractVector{<:Real})
+    pixels, world = _collect_calibration_points(grids, zs)
+    return calibration_quality(cam, pixels, world)
 end
 
 # --- Synthetic target rendering (test fixture for the stereo rig) ------------

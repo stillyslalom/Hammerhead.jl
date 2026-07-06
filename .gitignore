@@ -3,3 +3,4 @@
 /docs/Manifest*.toml
 /docs/build/
 *.log
+/docs/src/tutorials/

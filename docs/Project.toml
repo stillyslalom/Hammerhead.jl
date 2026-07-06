@@ -1,3 +1,6 @@
 [deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DocumenterCitations = "daee34ce-89f3-4625-b898-19384cb65244"
 Hammerhead = "5ded7e7b-b945-48ee-9a66-c5dce433a0a7"
+Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"

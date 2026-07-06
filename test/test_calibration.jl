@@ -187,6 +187,9 @@ end
 
         fit = calibrate_camera(grids, zs)
         @test calibration_quality(fit, pxs, wds).rms < 0.1
+        # Grid/zs convenience method sees the same point set.
+        @test calibration_quality(fit, grids, zs) == calibration_quality(fit, pxs, wds)
+        @test_throws ArgumentError calibration_quality(fit, grids, zs[1:2])
         fitp = calibrate_camera(grids, zs; model = :pinhole)
         @test calibration_quality(fitp, pxs, wds).rms < 0.1
         push!(fits, fit)

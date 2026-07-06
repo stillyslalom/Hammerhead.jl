@@ -50,6 +50,12 @@ function subtract_background!(img::AbstractMatrix{<:AbstractFloat}, background::
     return img
 end
 
+"""
+    subtract_background(img, background) -> Matrix
+
+Allocating form of [`subtract_background!`](@ref): returns a new
+floating-point matrix and leaves `img` untouched.
+"""
 subtract_background(img::AbstractMatrix{<:Real}, background::AbstractMatrix{<:Real}) =
     subtract_background!(float_copy(img), background)
 
@@ -69,6 +75,12 @@ function intensity_cap!(img::AbstractMatrix{<:AbstractFloat}; n_sigma::Real = 2)
     return img
 end
 
+"""
+    intensity_cap(img; n_sigma=2) -> Matrix
+
+Allocating form of [`intensity_cap!`](@ref): returns a new floating-point
+matrix and leaves `img` untouched.
+"""
 intensity_cap(img::AbstractMatrix{<:Real}; n_sigma::Real = 2) =
     intensity_cap!(float_copy(img); n_sigma)
 
@@ -96,9 +108,19 @@ function highpass_filter!(img::AbstractMatrix{<:AbstractFloat}; sigma::Real = 3)
     return img
 end
 
+"""
+    highpass_filter(img; sigma=3) -> Matrix
+
+Allocating form of [`highpass_filter!`](@ref): returns a new floating-point
+matrix and leaves `img` untouched.
+"""
 highpass_filter(img::AbstractMatrix{<:Real}; sigma::Real = 3) =
     highpass_filter!(float_copy(img); sigma)
 
+# Kept in-house rather than delegating to ImageContrastAdjustment's
+# AdaptiveEqualization: that implementation silently `imresize`s images whose
+# dimensions don't divide evenly into blocks, and the interpolation round-trip
+# perturbs subpixel particle intensity distributions.
 """
     clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix{Float64}
     clahe!(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> img
@@ -111,10 +133,6 @@ mappings. Output is in `[0, 1]`. Standard preprocessing for unevenly
 illuminated PIV recordings. The mutating version remaps the floating-point
 `img` in place.
 """
-# Kept in-house rather than delegating to ImageContrastAdjustment's
-# AdaptiveEqualization: that implementation silently `imresize`s images whose
-# dimensions don't divide evenly into blocks, and the interpolation round-trip
-# perturbs subpixel particle intensity distributions.
 function clahe!(img::AbstractMatrix{<:AbstractFloat};
                 tiles::Tuple{Int,Int} = (8, 8), clip_limit::Real = 2.0, nbins::Int = 256)
     all(>=(1), tiles) || throw(ArgumentError("tiles must be positive, got $tiles"))
@@ -177,4 +195,10 @@ function clahe!(img::AbstractMatrix{<:AbstractFloat};
     return img
 end
 
+"""
+    clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix
+
+Allocating form of [`clahe!`](@ref): returns a new floating-point matrix and
+leaves `img` untouched.
+"""
 clahe(img::AbstractMatrix{<:Real}; kwargs...) = clahe!(float_copy(img); kwargs...)

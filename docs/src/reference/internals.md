@@ -1,3 +1,7 @@
+```@meta
+CurrentModule = Hammerhead
+```
+
 # Internals
 
 Non-exported functions and types. These are implementation details and may

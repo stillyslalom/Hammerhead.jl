@@ -1,0 +1,58 @@
+```@meta
+CurrentModule = Hammerhead
+```
+
+# Core pipeline and parameters
+
+The single-pair and multi-pass PIV engine: [`run_piv`](@ref) and its
+configuration ([`PIVParameters`](@ref), [`multipass_parameters`](@ref)),
+the [`PIVResult`](@ref) container, analysis masks, correlators, and
+plotting. See the [first tutorial](../tutorials/first_vector_field.md) for a
+guided walkthrough.
+
+```@index
+Pages = ["pipeline.md"]
+```
+
+## Running an analysis
+
+```@autodocs
+Modules = [Hammerhead]
+Pages = ["types.jl", "pipeline.jl"]
+Private = false
+```
+
+## Masks
+
+Analysis masks are image-sized `Bool` matrices, `true` marking excluded
+pixels — see the [masking how-to](../howto/masking.md) and
+[the masking model](../explanation/masking.md). Masks built from image files
+use [`load_mask`](@ref).
+
+```@autodocs
+Modules = [Hammerhead]
+Pages = ["masking.jl"]
+Private = false
+```
+
+## Correlators
+
+Lower-level access to the FFT correlation engine used by [`run_piv`](@ref):
+correlator objects cache FFTW plans and buffers per window size.
+
+```@autodocs
+Modules = [Hammerhead]
+Pages = ["correlators.jl"]
+Private = false
+```
+
+## Plotting
+
+Provided by a package extension — load a Makie backend (e.g. `using GLMakie`
+or `using CairoMakie`) to activate the methods.
+
+```@autodocs
+Modules = [Hammerhead]
+Pages = ["Hammerhead.jl"]
+Private = false
+```

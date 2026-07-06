@@ -9,17 +9,45 @@ PIV is out of scope). All five phases are done: 1 (file I/O & batch),
 dewarping, 3C reconstruction via `run_piv_stereo` → `StereoPIVResult`, and
 Wieneke 2005 disparity self-calibration via `self_calibrate`) — every planar
 and stereo Challenge case is now reachable. Case 4E data (particle +
-calibration images) sits in `cases/` (gitignored).
+calibration images) sits in `cases/` (gitignored). Phase 6 (Diátaxis docs,
+July 2026) is also done; version is 0.1.0, awaiting first General-registry
+registration (a maintainer action). Next up: Phase 7 (HammerheadGUI
+monorepo).
 
 ## Commands
 
 ```bash
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
-julia --project=docs docs/make.jl                    # docs ("skipping deployment" warning is normal locally)
+julia --project=docs docs/make.jl                    # docs, ~4 min: executes both tutorials ("skipping deployment" warning is normal locally)
 ```
 
 Two `PIV sequence failed` error logs during tests are intentional
 (failure-propagation tests), not failures.
+
+## Documentation (docs/)
+
+Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
+`howto/`, `explanation/`, `reference/`, plus `index.md` and `references.md`
+(bibliography). Rules that keep the build green:
+
+- Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
+  them into `docs/src/tutorials/` (gitignored) with executable `@example`
+  blocks, so the docs build runs them end to end — they are integration
+  tests. They must stay fully synthetic: `cases/` is gitignored and must
+  never be referenced by executed doc code.
+- Reference pages use `@autodocs` filtered by source file (`Pages =
+  ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
+  added to one of the reference pages (and every documented binding must
+  appear somewhere) or `makedocs` fails its checkdocs pass.
+  `reference/internals.md` catches all non-exported docstrings via
+  `Public = false`.
+- Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
+  style); cite as `[Wieneke2005](@cite)` / `[Wieneke2015](@citet)`. PDFs
+  for content-checking live in `reference/`.
+- Docs-only deps (Literate, DocumenterCitations, CairoMakie) live in
+  `docs/Project.toml`; the core package must not gain doc/GUI deps.
+- Explanation pages are the user-facing rewrite of the conventions below —
+  when a convention changes, update both.
 
 ## Architecture (src/, included in this order)
 
@@ -37,8 +65,9 @@ Two `PIV sequence failed` error logs during tests are intentional
   wrapper), `calibrate_camera`, `world_to_pixel` / `pixel_to_world`,
   `apply_world_transform`, fit-quality metrics
 - `target_detection.jl` — `detect_calibration_grid` (dot-grid plates →
-  indexed point pairs), `calibration_points`, `render_calibration_target`
-  (synthetic ground-truth fixture)
+  indexed point pairs), `calibration_points`, `calibrate_camera` /
+  `calibration_quality` convenience methods on `(grids, zs)`,
+  `render_calibration_target` (synthetic ground-truth fixture)
 - `dewarp.jl` — `DewarpGrid` (world-plane pixel grid spec, shared per rig) +
   `ImageDewarper` (per-camera precomputed source-coordinate map), `dewarp[!]`
   cubic B-spline resampling onto the common plane
@@ -175,6 +204,12 @@ Two `PIV sequence failed` error logs during tests are intentional
 
 - `test/runtests.jl` defines the `particle_pair`/`add_particle!` helpers used
   by all included test files; new test files can rely on them.
+- `SyntheticData` ground truth is a forward-Euler step: each particle's true
+  displacement is its launch-point velocity × dt. Symmetric-deformation
+  measurements attribute vectors to trajectory *midpoints*, so sub-0.1 px
+  accuracy checks against curved flows must evaluate the reference at
+  `x − d/2` (see the first tutorial) — comparing against the grid-point
+  velocity leaves an O(|d|²·∇V/2) floor that looks like measurement error.
 - Adding a `PIVResult` field breaks the direct constructor calls in
   `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
   `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.

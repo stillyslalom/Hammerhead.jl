@@ -71,7 +71,7 @@ resampling — build the dewarper once per camera and reuse it across a whole
 sequence. `image_size` is the camera's image size `(rows, cols)`.
 
 Grid nodes whose source coordinate falls outside the camera's image (or is
-non-finite) are recorded in `mask`, an image-sized `BitMatrix` in the
+non-finite) are recorded in `mask`, a grid-sized `BitMatrix` in the
 package mask convention (`true` = excluded, static lab-frame geometry) —
 pass it to `run_piv(...; mask)` on the dewarped images, and combine the
 cameras' masks with `.|` for the stereo overlap region.
