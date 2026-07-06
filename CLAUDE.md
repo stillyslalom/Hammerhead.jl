@@ -215,6 +215,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test.
+- `MersenneTwister` streams changed between Julia 1.10 and 1.11 (seed
+  hashing), so seeded-MT test scenarios are not reproducible across the CI
+  matrix. Knife-edge scenarios (constructed peak orderings, tight
+  acceptance bands) must use `StableRNGs` and keep their critical geometry
+  deterministic — see the peak-substitution testset in `test_peaks.jl`
+  (fixed dense-particle positions; narrow tripled-amplitude reflection dots
+  so the reflection's autocorrelation tail stays inside the `find_peaks`
+  exclusion radius). Tolerance-based statistical testsets are fine with MT.
 - `test_calibration.jl` builds its own stereo fixture (`make_test_camera` +
   `render_calibration_target`); the real 4E images in `cases/` are *not*
   used by tests (not committed). Rendered marker positions must avoid dot

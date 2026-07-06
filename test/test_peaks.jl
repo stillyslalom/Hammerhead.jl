@@ -1,6 +1,7 @@
 using Hammerhead
 using Test
 using Random
+using StableRNGs
 using Statistics
 
 @testset "Multi-peak detection & substitution" begin
@@ -44,23 +45,36 @@ using Statistics
         # and the secondary peak recovers the real displacement.
         # replace_outliers = false distinguishes substitution (measured
         # value, unflagged) from median replacement.
-        rng = MersenneTwister(23)
+        # StableRNG, not MersenneTwister: the scenario's peak ordering
+        # (reflection > true > cross-talk) is tuned to this exact particle
+        # layout, and MersenneTwister streams changed between Julia 1.10
+        # and 1.11 (seed hashing).
+        rng = StableRNG(23)
         n = 128
         dv, du = 4.0, 5.0
         positions = [(rand(rng) * (n + 20) - 10, rand(rng) * (n + 20) - 10) for _ in 1:250]
         imgA, imgB = particle_pair((n, n), positions, dv, du)
         # Densify true seeding inside the reflection window so the true peak
-        # clearly beats reflection×particle cross-talk (but not the reflection).
-        for _ in 1:10
-            p = (66 + rand(rng) * 26, 66 + rand(rng) * 26)
+        # clearly beats reflection×particle cross-talk (but not the
+        # reflection). Fixed positions — the peak ordering must not depend
+        # on an RNG stream — kept ≥ 3.5 px from every reflection dot and
+        # ≥ 5 px (in both frames) from the window border, so no wrap-around
+        # cross-talk peaks form in the unpadded correlation.
+        for p in [(70.5, 70.5), (70.0, 79.5), (70.5, 87.5), (77.0, 71.0),
+                  (76.5, 79.0), (72.5, 84.5), (83.0, 74.5), (88.0, 76.5),
+                  (84.0, 84.5), (87.5, 88.0), (73.5, 78.5), (79.0, 68.0)]
             add_particle!(imgA, p, 3.0)
             add_particle!(imgB, (p[1] + dv, p[2] + du), 3.0)
         end
+        # The reflection dots are narrow and bright (tripled amplitude,
+        # diameter 2): a sharp zero-displacement autocorrelation peak whose
+        # tail dies off within the find_peaks exclusion radius. Broad dots
+        # would put their own shoulder ring into the alternative-peak slots
+        # and tilt the true peak's subpixel fit.
         for p in [(72.0, 74.0), (78.0, 86.0), (86.0, 71.0), (90.0, 84.0),
                   (74.0, 90.0), (82.0, 78.0)]
-            for img in (imgA, imgB)
-                add_particle!(img, p, 3.0)
-                add_particle!(img, p, 3.0)   # doubled amplitude, static
+            for img in (imgA, imgB), _ in 1:3
+                add_particle!(img, p, 2.0)
             end
         end
 
