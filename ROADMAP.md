@@ -57,6 +57,8 @@ file-based single-pair runs on the real cases (1A, 3C frames).
 
 Each phase ends at a coherent "can now attempt cases X" milestone. Phases 1–4
 extend the existing in-memory matrix engine; Phase 5 adds a second camera.
+Phases 6–7 grow the adoption surface (documentation, GUI) now that the
+Challenge target set is reachable.
 
 **Ecosystem policy:** lean on the JuliaImages ecosystem instead of from-scratch
 implementations where a maintained package exists — FileIO/ImageIO for image
@@ -187,6 +189,91 @@ The largest lift; reuses the 2D correlation engine per camera.
 *Milestone:* 4E (time-resolved stereo vortex ring). The case data (particle
 and calibration images) lives in `cases/4th_PIV-Challenge_Case_E/`, which is
 gitignored; the instructions PDF is in `reference/`.
+
+### Phase 6 — Documentation (planned)
+
+Structure follows [Diátaxis](https://diataxis.fr/) (tutorials, how-to guides,
+reference, explanation). Docs come **before** the GUI: writing the tutorials
+is an API audit (warts get fixed before a GUI fossilizes them), and the
+how-to inventory defines the GUI's task model.
+
+- [ ] Restructure `docs/src` into the four Diátaxis categories (landing page
+  keeps the quick example)
+- [ ] Explanation pages ported from CLAUDE.md's conventions section
+  (user-facing rewrite; CLAUDE.md keeps the maintainer-only gotchas):
+  coordinate & sign conventions, correlation accuracy (padding, apodization,
+  bias), multipass & image deformation, the masking model, uncertainty
+  methodology (Wieneke 2015), stereo geometry & self-calibration
+  (Wieneke 2005), the precision-follows-images policy
+- [ ] Split the oversized `function_ref.md` by topic (core pipeline &
+  parameters; preprocessing; validation & quality; calibration / dewarping /
+  stereo / self-calibration; I/O & batch; ensemble & statistics) — also
+  fixes the Documenter size warning
+- [ ] Two Literate.jl tutorials, fully synthetic (`cases/` is gitignored),
+  executed by the docs build so they double as integration tests:
+  (a) *first vector field* — synthetic pair, `run_piv`, multipass,
+  outliers, uncertainty; (b) *stereo end-to-end* —
+  `render_calibration_target` → `calibrate_camera` → dewarp →
+  `self_calibrate` → `run_piv_stereo`
+- [ ] How-to guides seeded from workflows the test suite already exercises:
+  masking reflections/geometry, preprocessing chains, ensemble correlation
+  for low SNR, validation tuning, batch processing + JLD2 round-trips,
+  calibrating a real stereo rig (target requirements, `origin_offset`,
+  self-calibration on real recordings)
+- [ ] Docs infrastructure: Literate.jl + DocumenterCitations (the
+  implemented-from-paper methods deserve citations; papers in `reference/`),
+  CairoMakie-generated figures at build time
+- [ ] API-wart audit driven by the tutorial writing; breaking fixes land now,
+  while nothing depends on the API
+- [ ] Tag and register Hammerhead 0.1.0
+
+*Milestone:* a newcomer goes from `] add Hammerhead` to a validated stereo
+field without reading source; the API is frozen enough to build a GUI on.
+
+### Phase 7 — GUI: HammerheadGUI.jl (planned)
+
+**Structure (settled July 2026):** monorepo subdirectory package,
+Makie-style — Hammerhead stays at the repo root, the GUI lives in
+`HammerheadGUI/` with its own Project.toml, registered with
+`subdir=` and TagBot monorepo tags (copy Makie's CI/Registrator/TagBot
+wiring rather than deriving it). Dev-time coupling to the core via
+`[sources]` (Julia ≥ 1.11) or `Pkg.develop` in CI; releases go core-first,
+then GUI compat bump. The GUI package is where the GLMakie hard dependency
+lives — the core package never gains GUI deps.
+
+**Framework (settled July 2026):** pure GLMakie + NativeFileDialog for v1.
+Rationale: the PIV-specific hard parts (image pan/zoom, polygon mask
+editing, frame scrubbing, vector picking, stereo/disparity views) are canvas
+work where GLMakie is strong; the widget chrome Makie lacks (tables,
+docking, rich forms) is the cheap part of this app; and the third-party
+bridges to richer chrome (Gtk4Makie.jl, QMLMakie.jl) are the
+least-maintained joint in any alternative stack — they sit on churning
+internals of two frameworks at once. All application state/logic lives in a
+framework-free controller layer (plain Julia + Observables) so the widget
+shell stays swappable (Gtk4-embedded GLMakie or Bonito/WGLMakie re-skin
+later, without rewriting canvas interactions) and testable without a GL
+context. The mask editor is the framework proving ground; if pure Makie
+handles it plus one parameter form comfortably, the framework question is
+closed.
+
+- [ ] Monorepo conversion: `HammerheadGUI/` skeleton, CI matrix
+  (`Pkg.develop` of the core before GUI tests, xvfb for GLMakie on Linux
+  runners), Registrator subdir + TagBot wiring
+- [ ] Result explorer — read-only viewer for `PIVResult`/`StereoPIVResult`
+  (field overlays, vector inspection, outlier/uncertainty display); binds
+  only to the most stable API surface
+- [ ] Mask editor — polygon drawing/editing over the image, exporting the
+  package mask convention; biggest usability win over the CLI and the
+  framework proving ground
+- [ ] Parameter form + batch runner — `PIVParameters` editing, sequence
+  processing with progress and incremental JLD2 output
+- [ ] Calibration & self-calibration diagnostics — grid-detection review,
+  reprojection errors, disparity-map viewer for `SelfCalibrationReport`
+- [ ] Packaging pass — PrecompileTools workload; evaluate a PackageCompiler
+  app bundle for non-Julia lab users
+
+*Milestone:* a lab user can mask, process, and inspect a recording without
+writing Julia.
 
 ## Coverage trajectory
 
