@@ -249,11 +249,27 @@ outlier flags vs. peak-ratio/uncertainty maps (both point at the empty
 core unprompted), and preprocessing candidates (`highpass_filter`,
 `intensity_cap`, `clahe`) judged by measured peak-ratio distributions —
 on this recording the textbook high-pass and capping steps demonstrably
-hurt. Multi-frame real-data demos (`compute_background`,
-`run_piv_ensemble` on e.g. cases 2A/4A) remain deferred: sequences are
-too large to commit, so they need build-time download from
-pivchallenge.org (e.g. DataDeps.jl) within the docs CI budget; the
-how-to guides cover those workflows synthetically for now.
+hurt.
+
+*Second follow-up (done, July 2026):* a fourth Literate tutorial runs the
+full Phase 5 stereo chain on real data — a minimal slice of Challenge
+case 4E (cameras 1 + 3, calibration planes z = −3/0/+3 mm, frames 50–51)
+committed losslessly re-encoded to 16-bit PNG at `test/reference_images/E/`
+(~7 MB), which also backs a new smoke-level stereo reference testset. The
+tutorial teaches the real-data judgment calls: plate-tolerance calibration
+residuals (~0.7/1.1 px RMS, repeatable — don't chase), grid extent derived
+from the measured stereo overlap, judging self-calibration when
+`converged = false` at the default tolerance (signed median disparity
+collapses 2.7 px → ~0.03 px while the RMS floors at ~0.46 px of
+sheet-thickness decorrelation; triangulation RMS ~0.1 px), reading σw/σu
+(~4 on this shallow-angle rig) as rig geometry, and a corrected-vs-
+uncorrected comparison showing the correction buys the coordinate system
+(sheet 0.7 mm behind the plate, 0.25° tilt), not the vector magnitudes.
+Multi-frame real-data demos (`compute_background`, `run_piv_ensemble` on
+e.g. cases 2A/4A) remain deferred: sequences are too large to commit, so
+they need build-time download from pivchallenge.org (e.g. DataDeps.jl)
+within the docs CI budget; the how-to guides cover those workflows
+synthetically for now.
 
 ### Phase 7 — GUI: HammerheadGUI.jl (planned)
 

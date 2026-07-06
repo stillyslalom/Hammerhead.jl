@@ -4,9 +4,11 @@
 ready for [`run_piv_stereo`](@ref). This guide describes the workflow on
 real data, using the 4th International PIV Challenge case E
 [Kahler2016](@cite) — a time-resolved stereo vortex ring recorded with a
-LaVision two-level dot-grid plate — as the running example. For an
-executable end-to-end walkthrough on synthetic data, see the
-[stereo tutorial](../tutorials/stereo.md); for the theory, see
+LaVision two-level dot-grid plate — as the running example. For
+executable end-to-end walkthroughs, see the
+[stereo tutorial](../tutorials/stereo.md) (synthetic, with ground truth)
+and [stereo on a real recording](../tutorials/stereo_real.md) (the 4E
+data itself); for the theory, see
 [stereo geometry and self-calibration](../explanation/stereo.md).
 
 ## What the target must provide
@@ -89,8 +91,14 @@ dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2)
 
 Inspect the report before trusting it:
 
-- `report.converged` and the last pass's `disparity_rms` — below ~0.1 px
-  is a well-corrected setup on real data [Wieneke2005](@cite).
+- Don't judge by `report.converged` alone: on real data the residual
+  disparity RMS floors at the sheet-thickness decorrelation level (0.1 px
+  on thin-sheet setups [Wieneke2005](@cite); ~0.5 px on the 4E
+  recordings), which can sit above the default `tol`. Misalignment is
+  *systematic*, so the signed median disparity components — computed from
+  the maps with `keep_disparity_maps = true` — are the sharper test; the
+  [real-recording tutorial](../tutorials/stereo_real.md) walks through
+  this judgment.
 - The first pass's `plane` — its offset and tilt tell you how far the
   plate actually was from the sheet; millimeters are normal.
 - A large `triangulation_rms` with a small final disparity suggests

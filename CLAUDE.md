@@ -9,7 +9,8 @@ PIV is out of scope). All five phases are done: 1 (file I/O & batch),
 dewarping, 3C reconstruction via `run_piv_stereo` → `StereoPIVResult`, and
 Wieneke 2005 disparity self-calibration via `self_calibrate`) — every planar
 and stereo Challenge case is now reachable. Case 4E data (particle +
-calibration images) sits in `cases/` (gitignored). Phase 6 (Diátaxis docs,
+calibration images) sits in `cases/` (gitignored); a minimal 4E subset
+for the docs and tests is committed at `test/reference_images/E/`. Phase 6 (Diátaxis docs,
 July 2026) is also done; version is 0.1.0, awaiting first General-registry
 registration (a maintainer action). Next up: Phase 7 (HammerheadGUI
 monorepo).
@@ -18,7 +19,7 @@ monorepo).
 
 ```bash
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
-julia --project=docs docs/make.jl                    # docs, ~4 min: executes both tutorials ("skipping deployment" warning is normal locally)
+julia --project=docs docs/make.jl                    # docs, ~6 min: executes all four tutorials ("skipping deployment" warning is normal locally)
 ```
 
 Two `PIV sequence failed` error logs during tests are intentional
@@ -35,8 +36,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   blocks, so the docs build runs them end to end — they are integration
   tests. Executed doc code must never reference `cases/` (gitignored);
   synthetic data and committed fixtures are the only inputs — the
-  real-data tutorial loads the PIV Challenge case-A pair from
-  `test/reference_images/A/` via `pkgdir(Hammerhead)`.
+  real-data tutorials load committed PIV Challenge subsets via
+  `pkgdir(Hammerhead)`: the case-A pair from `test/reference_images/A/`
+  and the case-4E stereo slice from `test/reference_images/E/` (cameras
+  1 + 3, calibration planes z = −3/0/+3 mm, frames 50–51, losslessly
+  re-encoded 16-bit PNG). The 4E calibrations are fit to those images'
+  pixel coordinates — never crop or re-encode them independently.
 - Reference pages use `@autodocs` filtered by source file (`Pages =
   ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
   added to one of the reference pages (and every documented binding must
@@ -216,7 +221,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
   `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
-  end-to-end reference test.
+  end-to-end reference test; `test/reference_images/E/` holds the case-4E
+  stereo subset (16-bit PNGs + readme) shared by the stereo reference
+  testset and the real-data stereo tutorial. The 4E bounds are smoke-level
+  around the measured numbers (first-pass disparity RMS ≈ 2.8 px, fitted
+  plane offset ≈ −0.67 mm, residual RMS ≈ 0.46 px, median σu ≈ 3 µm /
+  σw ≈ 13 µm) — real data with no ground truth, so don't tighten them
+  into accuracy claims.
 - `MersenneTwister` streams changed between Julia 1.10 and 1.11 (seed
   hashing), so seeded-MT test scenarios are not reproducible across the CI
   matrix. Knife-edge scenarios (constructed peak orderings, tight

@@ -201,7 +201,10 @@ end
 
 # ## Where to go next
 #
-# - The same workflow on a real rig, including what residuals to expect
+# - The same chain on a real experiment — plate-tolerance residuals,
+#   judging self-calibration without a convergence flag, reading σw/σu:
+#   [Stereo on a real recording](stereo_real.md).
+# - The rig-calibration checklist, including what residuals to expect
 #   from physical plates: [Calibrate a real stereo rig](../howto/stereo_rig.md).
 # - What the disparity self-calibration actually does:
 #   [Stereo geometry and self-calibration](../explanation/stereo.md).
