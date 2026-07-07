@@ -23,6 +23,9 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   edits the multi-pass `PIVParameters` schedule, runs `run_piv_sequence`
   with live progress, cancellation, incremental JLD2 output, and an
   "explore results" hand-off
+- **Fast startup** (done) — a PrecompileTools workload brings
+  time-to-first-window to ~1 s after loading; a PackageCompiler app bundle
+  for non-Julia users is still to be evaluated
 - **Calibration & self-calibration diagnostics** (done) —
   `calibration_review(images, zs; spacing, …)` reviews grid detection and
   reprojection errors plane by plane; `selfcal_review(report)` summarizes a

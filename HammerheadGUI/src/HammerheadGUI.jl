@@ -64,4 +64,35 @@ include("views/mask_editor.jl")
 include("views/batch_runner.jl")
 include("views/calibration_review.jl")
 
+using PrecompileTools: @setup_workload, @compile_workload
+
+# Time-to-first-window workload: run the pipeline once and build each view
+# (Figure construction only — no GL context at precompile time, so no
+# colorbuffer/display).
+@setup_workload begin
+    imgA = rand(64, 64)
+    imgB = circshift(imgA, (2, 3))
+    @compile_workload begin
+        r = run_piv(imgA, imgB, PIVParameters(window_size = 32))
+        ex = ResultExplorer(r)
+        result_explorer(ex)
+        set_field!(ex, :peak_ratio)
+        select_nearest!(ex, r.x[1], r.y[1])
+        describe_selection(ex)
+
+        me = MaskEditor(imgA)
+        mask_editor(me)
+        Controllers.click!(me, 5.0, 5.0)
+        Controllers.click!(me, 20.0, 5.0)
+        Controllers.click!(me, 20.0, 20.0)
+        close_active!(me)
+        polygon_mask(me)
+
+        bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
+                         padding = false, apodization = :none)
+        batch_runner(bc)
+        start!(bc; async = false)
+    end
+end
+
 end # module HammerheadGUI

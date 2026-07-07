@@ -358,8 +358,13 @@ closed.
   the rigid-correction size, plus the disparity maps (when
   `keep_disparity_maps = true`) in an embedded result explorer — enabled
   by the new `result_explorer!(gridposition, ex)` embeddable form
-- [ ] Packaging pass — PrecompileTools workload; evaluate a PackageCompiler
-  app bundle for non-Julia lab users
+- [x] Packaging pass, part 1 (July 2026) — PrecompileTools workload
+  (runs the pipeline once and builds each view at precompile time, no GL
+  context needed): time-to-first-window 26.4 s → 1.2 s after `using
+  HammerheadGUI` (~6 s), for a one-time ~30 s precompile
+- [ ] Packaging pass, part 2 — evaluate a PackageCompiler app bundle for
+  non-Julia lab users (feasibility, size, GLMakie relocatability — see
+  Makie's `_relocatability.yml` CI)
 
 *Milestone:* a lab user can mask, process, and inspect a recording without
 writing Julia.
