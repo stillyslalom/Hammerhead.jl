@@ -1,4 +1,5 @@
 using Hammerhead
+using HammerheadGUI
 using Documenter
 using DocumenterCitations
 using Literate
@@ -17,7 +18,7 @@ for tutorial in TUTORIALS
 end
 
 makedocs(;
-    modules=[Hammerhead],
+    modules=[Hammerhead, HammerheadGUI],
     authors="Alex Ames <alexander.m.ames@gmail.com> and contributors",
     sitename="Hammerhead.jl",
     plugins=[bib],
@@ -59,6 +60,7 @@ makedocs(;
             "I/O and batch processing" => "reference/io.md",
             "Ensemble and statistics" => "reference/ensemble.md",
             "Synthetic data" => "reference/synthetic.md",
+            "GUI (HammerheadGUI)" => "reference/gui.md",
             "Internals" => "reference/internals.md",
         ],
         "Bibliography" => "references.md",
