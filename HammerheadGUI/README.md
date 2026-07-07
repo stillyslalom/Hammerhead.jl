@@ -23,7 +23,10 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   edits the multi-pass `PIVParameters` schedule, runs `run_piv_sequence`
   with live progress, cancellation, incremental JLD2 output, and an
   "explore results" hand-off
-- Calibration & self-calibration diagnostics
+- **Calibration & self-calibration diagnostics** (done) —
+  `calibration_review(images, zs; spacing, …)` reviews grid detection and
+  reprojection errors plane by plane; `selfcal_review(report)` summarizes a
+  `SelfCalibrationReport` and browses its disparity maps
 
 ## Architecture rule
 

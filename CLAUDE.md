@@ -129,8 +129,12 @@ the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
 callback inside `@async` — cooperative, so GL renders keep happening off
 `run_piv`'s internal thread-spawn yields while observables stay on the
 primary thread; cancel = throw `BatchCancelled` from the callback, which
-keeps finished pairs in the incremental output). Shared widget↔controller
-sync helpers live in `views/widgets.jl`. View gotchas learned:
+keeps finished pairs in the incremental output); `CalibrationReview`/
+`calibration_review` + `selfcal_review` (grid-detection/reprojection review
+and the `SelfCalibrationReport` browser — its disparity maps open in an
+embedded explorer via `result_explorer!(gridposition, ex)`, the embeddable
+form all composite views should use). Shared widget↔controller sync helpers
+live in `views/widgets.jl`. View gotchas learned:
 recreate heatmap/arrows per refresh instead of updating per-argument
 observables (sequential x/y/data updates render transiently mismatched
 grids); preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`

@@ -347,8 +347,17 @@ closed.
   observables update from the primary thread. With the form done, the
   Phase 7 framework question is closed: pure GLMakie covered both the
   canvas work and the widget chrome — no Gtk4/QML bridge needed
-- [ ] Calibration & self-calibration diagnostics — grid-detection review,
-  reprojection errors, disparity-map viewer for `SelfCalibrationReport`
+- [x] Calibration & self-calibration diagnostics (July 2026) —
+  `calibration_review(images, zs; detect_kwargs...)`: per-plane
+  grid-detection review (plate image, detected dots colored by
+  reprojection error, fiducial markers outlined), plane slider, camera
+  model menu (`soloff`/`pinhole`, switching refits; a failed fit — e.g.
+  soloff on 2 planes — reports why instead of erroring), per-plane and
+  overall `calibration_quality` summaries. `selfcal_review(report)`:
+  per-pass disparity/triangulation statistics with the fitted planes and
+  the rigid-correction size, plus the disparity maps (when
+  `keep_disparity_maps = true`) in an embedded result explorer — enabled
+  by the new `result_explorer!(gridposition, ex)` embeddable form
 - [ ] Packaging pass — PrecompileTools workload; evaluate a PackageCompiler
   app bundle for non-Julia lab users
 

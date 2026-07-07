@@ -19,9 +19,21 @@ result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwa
 
 function result_explorer(ex::ResultExplorer; size = (1000, 700))
     fig = Figure(; size)
+    result_explorer!(fig[1, 1], ex)
+    return fig
+end
+
+"""
+    result_explorer!(target, ex::ResultExplorer) -> GridLayout
+
+Build the result-explorer view into `target` (a `GridPosition`, e.g.
+`fig[1, 2]`), for embedding in a larger layout.
+"""
+function result_explorer!(target, ex::ResultExplorer)
+    gl = GridLayout(target)
     n = nframes(ex)
 
-    ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "y",
+    ax = Axis(gl[1, 1]; xlabel = "x", ylabel = "y",
               yreversed = true, aspect = DataAspect(),
               title = ex.path === nothing ? "" : basename(ex.path))
 
@@ -29,9 +41,9 @@ function result_explorer(ex::ResultExplorer; size = (1000, 700))
     # recreated per refresh (grid sizes may change across a mixed sequence).
     crange = Observable((0.0, 1.0))
     clabel = Observable("")
-    Colorbar(fig[1, 2]; colormap = :viridis, limits = crange, label = clabel)
+    Colorbar(gl[1, 2]; colormap = :viridis, limits = crange, label = clabel)
 
-    controls = GridLayout(fig[1, 3]; tellheight = false, valign = :top)
+    controls = GridLayout(gl[1, 3]; tellheight = false, valign = :top)
     Label(controls[1, 1], "field"; halign = :left, font = :bold)
     menu = Menu(controls[2, 1]; options = [("|displacement|", :magnitude)])
     toggles = GridLayout(controls[3, 1]; halign = :left)
@@ -41,11 +53,11 @@ function result_explorer(ex::ResultExplorer; size = (1000, 700))
     Label(toggles[2, 2], "flag outliers"; halign = :left)
     Label(controls[4, 1], "click a vector to inspect"; halign = :left, font = :bold)
     info = Label(controls[5, 1], ""; halign = :left, justification = :left)
-    colsize!(fig.layout, 3, Fixed(230))
+    colsize!(gl, 3, Fixed(230))
 
-    Label(fig[2, 1:3][1, 1], "frame")
-    slider = Slider(fig[2, 1:3][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
-    Label(fig[2, 1:3][1, 3], lift(i -> "$i / $n", ex.frame))
+    Label(gl[2, 1:3][1, 1], "frame")
+    slider = Slider(gl[2, 1:3][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
+    Label(gl[2, 1:3][1, 3], lift(i -> "$i / $n", ex.frame))
 
     # Widget -> controller (equality guards break the notification cycles;
     # Observables notify even when the value is unchanged).
@@ -139,5 +151,5 @@ function result_explorer(ex::ResultExplorer; size = (1000, 700))
 
     refresh_menu!()
     refresh_plots!()
-    return fig
+    return gl
 end

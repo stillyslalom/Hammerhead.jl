@@ -276,4 +276,100 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         @test size(img2) == size(img1)
         @test img2 != img1
     end
+
+    @testset "CalibrationReview controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # synthetic plate through a known pinhole rig (recipe from the core
+        # test suite's make_test_camera fixture)
+        θ = deg2rad(20.0)
+        R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
+        camC = R' * [0.0, 0.0, -500.0]
+        K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
+        cam = PinholeCamera(K, R, -R * camC)
+        zs = [-3.0, 0.0, 3.0]
+        plates = [render_calibration_target(cam, (512, 512); spacing = 15.0,
+                                            z = z,
+                                            marker_square = (-30.0, -7.5),
+                                            marker_triangle = (-15.0, -7.5))
+                  for z in zs]
+
+        cr = CalibrationReview(plates, zs;
+                               spacing = 15.0, origin_offset = (30.0, 7.5))
+        @test nplanes(cr) == 3
+        @test cr.camera[] isa SoloffCamera
+        @test cr.fit_message[] == ""
+        pe = C.plane_errors(cr)
+        @test length(pe.errors) == length(pe.pixels)
+        @test maximum(pe.errors) < 0.1   # synthetic plates: subpixel-exact
+        @test occursin("rms", C.plane_summary(cr))
+        @test occursin("3 planes", C.fit_summary(cr))
+        set_plane!(cr, 99)
+        @test cr.plane[] == 3
+
+        # switching the model refits
+        cr.model[] = :pinhole
+        @test cr.camera[] isa PinholeCamera
+        @test maximum(C.plane_errors(cr).errors) < 0.1
+
+        # soloff needs 3 planes: 2-plane review reports the failed fit
+        cr2 = CalibrationReview(plates[1:2], zs[1:2];
+                                spacing = 15.0, origin_offset = (30.0, 7.5))
+        @test cr2.camera[] === nothing
+        @test !isempty(cr2.fit_message[])
+        @test C.plane_errors(cr2) === nothing
+        @test occursin("no fit", C.fit_summary(cr2))
+
+        @test_throws ArgumentError CalibrationReview(plates, zs[1:2]; spacing = 15.0)
+
+        # self-calibration summary (direct SelfCalPass/Report construction —
+        # breaks when the report types gain fields, like the core fixtures)
+        passes = [Hammerhead.SelfCalPass(2.85, 2.74, 1200, 0.10,
+                                         (a = -0.674, b = 0.001, c = -0.004)),
+                  Hammerhead.SelfCalPass(0.46, -0.03, 1200, 0.09, nothing)]
+        report = SelfCalibrationReport(passes, false, 0.05,
+                                       [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                       [0.0, 0.0, 0.674], [r_unc, r_plain])
+        s = C.selfcal_summary(report)
+        @test occursin("pass 1", s) && occursin("plane a = -0.674", s)
+        @test occursin("no correction", s)
+        @test occursin("not converged", s)
+        @test occursin("shift 0.674", s)
+    end
+
+    @testset "calibration & selfcal views (offscreen)" begin
+        θ = deg2rad(20.0)
+        R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
+        camC = R' * [0.0, 0.0, -500.0]
+        K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
+        cam = PinholeCamera(K, R, -R * camC)
+        zs = [-3.0, 0.0, 3.0]
+        plates = [render_calibration_target(cam, (512, 512); spacing = 15.0,
+                                            z = z,
+                                            marker_square = (-30.0, -7.5),
+                                            marker_triangle = (-15.0, -7.5))
+                  for z in zs]
+        cr = CalibrationReview(plates, zs;
+                               spacing = 15.0, origin_offset = (30.0, 7.5))
+        fig = calibration_review(cr)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (720, 1000)
+        set_plane!(cr, 2)
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test img2 != img1
+
+        passes = [Hammerhead.SelfCalPass(2.85, 2.74, 1200, 0.10,
+                                         (a = -0.674, b = 0.001, c = -0.004)),
+                  Hammerhead.SelfCalPass(0.46, -0.03, 1200, 0.09, nothing)]
+        with_maps = SelfCalibrationReport(passes, false, 0.05,
+                                          [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                          [0.0, 0.0, 0.674], [r_unc, r_plain])
+        figm = selfcal_review(with_maps)
+        @test !isempty(colorbuffer(figm; px_per_unit = 1))
+        without = SelfCalibrationReport(passes, false, 0.05,
+                                        [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                        [0.0, 0.0, 0.674], PIVResult[])
+        fign = selfcal_review(without)
+        @test !isempty(colorbuffer(fign; px_per_unit = 1))
+    end
 end
