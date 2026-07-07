@@ -306,9 +306,20 @@ closed.
   (tags `HammerheadGUI-v*`); CompatHelper over both packages.
   Registration remains manual: `@JuliaRegistrator register subdir=HammerheadGUI`
   on the release commit, after the core is registered
-- [ ] Result explorer — read-only viewer for `PIVResult`/`StereoPIVResult`
-  (field overlays, vector inspection, outlier/uncertainty display); binds
-  only to the most stable API surface
+- [x] Result explorer (July 2026) — read-only viewer for
+  `PIVResult`/`StereoPIVResult` sequences (mixed files allowed):
+  `result_explorer(results | path | ResultExplorer)` shows a selectable
+  scalar field (displacement magnitude, components, diagnostics,
+  uncertainty when present) as a heatmap in image orientation, the vector
+  field as arrows with outliers in red, a frame slider, and
+  click-to-inspect per-vector summaries. Established the controller/view
+  split: `HammerheadGUI.Controllers` is a Makie-free submodule (Hammerhead
+  + Observables + Printf only — the module boundary enforces the rule)
+  holding all state as a `ResultExplorer` controller, fully tested without
+  a GL context; the view recreates heatmap/arrow plots per refresh
+  (per-argument observable updates would render transiently mismatched
+  grids) and restores `targetlimits` (not `limits!`) so zoom survives
+  refreshes without un-reversing the y axis
 - [ ] Mask editor — polygon drawing/editing over the image, exporting the
   package mask convention; biggest usability win over the CLI and the
   framework proving ground

@@ -9,9 +9,12 @@ this package is where the GLMakie hard dependency lives.
 
 ## Status
 
-Skeleton (Phase 7 in the repo [ROADMAP](../ROADMAP.md)). Planned components:
+Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
 
-- Result explorer — read-only viewer for `PIVResult` / `StereoPIVResult`
+- **Result explorer** (done) — `result_explorer(results_or_path)` opens a
+  read-only viewer for `PIVResult` / `StereoPIVResult` sequences: scalar
+  field heatmap (magnitude, components, diagnostics, uncertainty), vector
+  arrows with outliers flagged, frame scrubbing, click-to-inspect
 - Mask editor — polygon drawing/editing, exporting the package mask convention
 - Parameter form + batch runner
 - Calibration & self-calibration diagnostics

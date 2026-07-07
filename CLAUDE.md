@@ -117,6 +117,20 @@ a GL context); Makie code renders controllers and pushes input into them but
 controllers never import Makie. The mask editor is the framework proving
 ground for pure-GLMakie widget chrome.
 
+Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
+(only Hammerhead + Observables + Printf in scope — the module boundary
+enforces the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
+GLMakie shells. Result explorer: `ResultExplorer` controller +
+`result_explorer(source) -> Figure` view. View gotchas learned there:
+recreate heatmap/arrows per refresh instead of updating per-argument
+observables (sequential x/y/data updates render transiently mismatched
+grids); preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`
+normalizes the rect and silently undoes `yreversed`; guard every
+widget↔controller observable pair with equality checks (Observables notify
+on same-value writes, so unguarded two-way wiring loops forever);
+`colorbuffer(fig)` may return the screen's reused framebuffer — `copy` it
+before comparing renders in tests.
+
 ## Load-bearing conventions
 
 - **Sign convention (package-wide):** a particle at `(row, col)` in image A
@@ -238,6 +252,8 @@ ground for pure-GLMakie widget chrome.
 - Adding a `PIVResult` field breaks the direct constructor calls in
   `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
   `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
+  Adding a `StereoPIVResult` field likewise breaks the fixture in
+  `HammerheadGUI/test/runtests.jl`.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test; `test/reference_images/E/` holds the case-4E
   stereo subset (16-bit PNGs + readme) shared by the stereo reference
