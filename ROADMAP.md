@@ -333,8 +333,20 @@ closed.
   canvas interactions, changing polygon sets (recreate-per-refresh), and
   widget chrome comfortably — no widget-toolkit bridge needed so far; the
   parameter form is the remaining half of the framework question
-- [ ] Parameter form + batch runner — `PIVParameters` editing, sequence
-  processing with progress and incremental JLD2 output
+- [x] Parameter form + batch runner (July 2026) — `batch_runner()`: frame
+  picking + pairing mode, a curated `PIVParameters` form (multi-pass window
+  schedule, overlap, correlation/apodization/subpixel, padding,
+  uncertainty; defaults = the accuracy configuration), optional mask image
+  and incremental JLD2 output, live progress with cancellation (stops
+  after the pair in flight, finished pairs stay on disk), and an
+  "explore results" hand-off into the result explorer. Runs through
+  `run_piv_sequence`, whose `progress` option now also accepts a
+  per-pair callback (the one core API addition Phase 7 has needed); the
+  batch executes in a cooperative `@async` task, so the render loop stays
+  live off `run_piv`'s internal thread-spawn yield points while
+  observables update from the primary thread. With the form done, the
+  Phase 7 framework question is closed: pure GLMakie covered both the
+  canvas work and the widget chrome — no Gtk4/QML bridge needed
 - [ ] Calibration & self-calibration diagnostics — grid-detection review,
   reprojection errors, disparity-map viewer for `SelfCalibrationReport`
 - [ ] Packaging pass — PrecompileTools workload; evaluate a PackageCompiler

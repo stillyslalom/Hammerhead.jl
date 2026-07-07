@@ -199,4 +199,81 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         @test size(img2) == size(img1)
         @test img2 != img1
     end
+
+    @testset "BatchRunner controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        @test C.parse_schedule("64, 32 32") == [64, 32, 32]
+        @test_throws ArgumentError C.parse_schedule("64, nope")
+        @test_throws ArgumentError C.parse_schedule(" ")
+        @test_throws ArgumentError C.parse_schedule("0, 32")
+
+        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                         window_schedule = [32, 32])
+        @test C.validate(bc) === nothing
+        @test length(C.frame_pairs(bc)) == 2
+        bc.pair_mode[] = :chained
+        @test length(C.frame_pairs(bc)) == 3
+        bc.pair_mode[] = :paired
+
+        ps = C.build_parameters(bc)
+        @test length(ps) == 2
+        @test ps[end].window_size == (32, 32) && ps[end].overlap == (16, 16)
+        @test ps[end].padding && ps[end].apodization == :gauss
+        set_schedule!(bc, "48 24")
+        @test bc.window_schedule[] == [48, 24]
+
+        @test C.validate(BatchRunner()) == "add frames first"
+        odd = BatchRunner(files = Any[imgA, imgB, imgA])
+        @test occursin("even number", C.validate(odd))
+
+        # synchronous run: progress trace, results, incremental output
+        out = joinpath(mktempdir(), "batch.jld2")
+        bc2 = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                          window_schedule = [32], output_path = out,
+                          padding = false, apodization = :none)
+        seen = Tuple{Int,Int}[]
+        on(p -> push!(seen, p), bc2.progress)
+        start!(bc2; async = false)
+        @test !bc2.running[]
+        @test bc2.results[] !== nothing && length(bc2.results[]) == 2
+        @test seen[end] == (2, 2)
+        @test occursin("done", bc2.status[])
+        @test length(load_results(out)) == 2
+
+        # cancellation after the first pair keeps it in the output
+        out2 = joinpath(mktempdir(), "cancelled.jld2")
+        bc3 = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                          window_schedule = [32], output_path = out2,
+                          padding = false, apodization = :none)
+        on(p -> p[1] == 1 && cancel!(bc3), bc3.progress)
+        start!(bc3; async = false)
+        @test occursin("cancelled", bc3.status[])
+        @test bc3.results[] === nothing
+        @test length(load_results(out2)) == 1
+
+        # the mask forwards into run_piv
+        m = falses(size(imgA)); m[1:48, 1:48] .= true
+        bc4 = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
+                          mask = m, padding = false, apodization = :none)
+        start!(bc4; async = false)
+        @test any(bc4.results[][1].mask)
+    end
+
+    @testset "batch_runner view (offscreen)" begin
+        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                         window_schedule = [32],
+                         padding = false, apodization = :none)
+        fig = batch_runner(bc)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (520, 900)
+
+        set_schedule!(bc, "64 32")   # form summary label updates
+        bc.uncertainty[] = true      # toggle syncs back into the widget
+        start!(bc; async = false)    # status + progress labels update
+        @test occursin("done", bc.status[])
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test size(img2) == size(img1)
+        @test img2 != img1
+    end
 end

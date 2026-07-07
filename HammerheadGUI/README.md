@@ -19,7 +19,10 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   polygons over the image (left-click add/select, right-click close);
   `polygon_mask(editor)` exports the package mask convention and
   "save mask…" writes a mask image `load_mask` reads back
-- Parameter form + batch runner
+- **Parameter form + batch runner** (done) — `batch_runner()` picks frames,
+  edits the multi-pass `PIVParameters` schedule, runs `run_piv_sequence`
+  with live progress, cancellation, incremental JLD2 output, and an
+  "explore results" hand-off
 - Calibration & self-calibration diagnostics
 
 ## Architecture rule

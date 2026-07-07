@@ -121,11 +121,16 @@ Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
 (only Hammerhead + Observables + Printf in scope — the module boundary
 enforces the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
 GLMakie shells. Components so far (each = controller + view pair, same
-naming): `ResultExplorer`/`result_explorer` and `MaskEditor`/`mask_editor`
+naming): `ResultExplorer`/`result_explorer`; `MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
-the mask, `save_mask` writes the white-=-excluded image `load_mask` reads).
-View gotchas learned:
+the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
+`BatchRunner`/`batch_runner` (runs `run_piv_sequence` with its progress
+callback inside `@async` — cooperative, so GL renders keep happening off
+`run_piv`'s internal thread-spawn yields while observables stay on the
+primary thread; cancel = throw `BatchCancelled` from the callback, which
+keeps finished pairs in the incremental output). Shared widget↔controller
+sync helpers live in `views/widgets.jl`. View gotchas learned:
 recreate heatmap/arrows per refresh instead of updating per-argument
 observables (sequential x/y/data updates render transiently mismatched
 grids); preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`
@@ -133,7 +138,8 @@ normalizes the rect and silently undoes `yreversed`; guard every
 widget↔controller observable pair with equality checks (Observables notify
 on same-value writes, so unguarded two-way wiring loops forever);
 `colorbuffer(fig)` may return the screen's reused framebuffer — `copy` it
-before comparing renders in tests.
+before comparing renders in tests; `word_wrap` labels need an explicit
+`width` (with `tellwidth = false` they wrap at a bogus narrow width).
 
 ## Load-bearing conventions
 

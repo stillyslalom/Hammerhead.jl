@@ -45,9 +45,8 @@ function mask_editor(me::MaskEditor; size = (1000, 700))
     save_btn = Button(controls[7, 1]; label = "save mask…", tellwidth = false)
     colsize!(fig.layout, 2, Fixed(180))
 
-    # Widget <-> controller (equality guards break the notification cycle).
-    on(a -> a == me.show_mask[] || (me.show_mask[] = a), mask_toggle.active)
-    on(v -> v == mask_toggle.active[] || (mask_toggle.active[] = v), me.show_mask)
+    # Widget <-> controller.
+    _sync_toggle!(mask_toggle, me.show_mask)
     on(_ -> close_active!(me), close_btn.clicks)
     on(_ -> undo_vertex!(me), undo_btn.clicks)
     on(_ -> delete_selected!(me), delete_btn.clicks)

@@ -89,6 +89,25 @@ using Statistics
                                   preprocess = img -> 2 .* img, progress = false)
         @test res_pp[1].u ≈ direct.u atol = 1e-6
 
+        # Progress callback: called once per pair, in order.
+        calls = Tuple{Int,Int}[]
+        run_piv_sequence([(imgA, imgB), (imgA, imgB)], params;
+                         progress = (i, n) -> push!(calls, (i, n)))
+        @test calls == [(1, 2), (2, 2)]
+
+        # Throwing from the callback aborts the batch but keeps the pairs
+        # finished before the abort in the incremental output.
+        mktempdir() do dir
+            out = joinpath(dir, "aborted.jld2")
+            struct_free_abort = ErrorException("stop")
+            @test_throws ErrorException run_piv_sequence(
+                [(imgA, imgB), (imgA, imgB), (imgA, imgB)], params;
+                output = out, progress = (i, n) -> i == 2 && throw(struct_free_abort))
+            kept = load_results(out)
+            @test length(kept) == 2
+            @test kept[1].u == direct.u
+        end
+
         mktempdir() do dir
             # File pairs with incrementally persisted output.
             frames = [imgA, imgB, imgA, imgB]

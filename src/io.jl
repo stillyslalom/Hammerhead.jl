@@ -134,7 +134,10 @@ forwarded to [`run_piv`](@ref).
   incrementally as they complete, so a crashed batch keeps its finished pairs.
   For file-path pairs the source paths are stored alongside. Read back with
   [`load_results`](@ref).
-- `progress`: show a progress meter.
+- `progress`: show a progress meter (`true`/`false`), or a function
+  `(i, n) -> nothing` called after each completed pair (for driving an
+  external progress display). Throwing from the callback aborts the batch;
+  pairs finished before the abort stay in `output`.
 - `image_type`: element type frames are loaded as (default `Float64`);
   `Float32` runs the pipeline in single precision. In-memory matrix pairs are
   used as-is, so convert those yourself.
@@ -143,7 +146,7 @@ function run_piv_sequence(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
                           preprocess = nothing,
                           output::Union{Nothing,AbstractString} = nothing,
-                          progress::Bool = true,
+                          progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
@@ -151,7 +154,7 @@ function run_piv_sequence(pairs::AbstractVector,
     file = output === nothing ? nothing : jldopen(output, "w")
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
-        meter = Progress(length(pairs); desc = "PIV sequence: ", enabled = progress)
+        meter = Progress(length(pairs); desc = "PIV sequence: ", enabled = progress === true)
         for (i, pair) in enumerate(pairs)
             frameA, frameB = pair
             try
@@ -172,7 +175,7 @@ function run_piv_sequence(pairs::AbstractVector,
                     file[source_key(i)] = [String(frameA), String(frameB)]
                 end
             end
-            next!(meter)
+            progress isa Function ? progress(i, length(pairs)) : next!(meter)
         end
     finally
         file === nothing || close(file)

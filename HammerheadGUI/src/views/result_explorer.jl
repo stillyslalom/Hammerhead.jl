@@ -49,10 +49,8 @@ function result_explorer(ex::ResultExplorer; size = (1000, 700))
 
     # Widget -> controller (equality guards break the notification cycles;
     # Observables notify even when the value is unchanged).
-    on(a -> a == ex.show_vectors[] || (ex.show_vectors[] = a), vec_toggle.active)
-    on(v -> v == vec_toggle.active[] || (vec_toggle.active[] = v), ex.show_vectors)
-    on(a -> a == ex.highlight_outliers[] || (ex.highlight_outliers[] = a), out_toggle.active)
-    on(v -> v == out_toggle.active[] || (out_toggle.active[] = v), ex.highlight_outliers)
+    _sync_toggle!(vec_toggle, ex.show_vectors)
+    _sync_toggle!(out_toggle, ex.highlight_outliers)
     on(slider.value) do i
         i == ex.frame[] || set_frame!(ex, i)
     end
