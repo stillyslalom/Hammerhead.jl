@@ -108,7 +108,10 @@ Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
 `Pkg.develop`s the core instead so lts/1.10 works, and wraps tests in
-`xvfb-run`). Releases go core-first, then GUI compat bump; registration is
+`xvfb-run`). The develop step sets `JULIA_PKG_PRECOMPILE_AUTO=0`: GLMakie
+precompilation needs a DISPLAY (only the test step runs under xvfb), and
+`Pkg.test` recompiles with its own flags (`--check-bounds=yes`) anyway, so
+precompiling in the develop step both fails and wastes ~8 CI minutes. Releases go core-first, then GUI compat bump; registration is
 `@JuliaRegistrator register subdir=HammerheadGUI`, TagBot tags
 `HammerheadGUI-v*` (second TagBot job), CompatHelper covers both packages via
 `subdirs`. Architecture rule: all application state/logic lives in a
