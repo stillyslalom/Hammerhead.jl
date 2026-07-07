@@ -129,4 +129,74 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         figs = result_explorer(r_stereo)
         @test !isempty(colorbuffer(figs; px_per_unit = 1))
     end
+
+    @testset "MaskEditor controller (no GL)" begin
+        me = MaskEditor(imgA)
+
+        # drawing gestures: empty-background click starts a polygon,
+        # subsequent clicks add vertices, alt-click commits
+        HammerheadGUI.Controllers.click!(me, 20.0, 10.0)
+        HammerheadGUI.Controllers.click!(me, 60.0, 10.0)
+        @test length(me.active[]) == 2
+        HammerheadGUI.Controllers.alt_click!(me)          # < 3 vertices: cancel
+        @test isempty(me.active[]) && isempty(me.polygons[])
+        for (x, y) in ((20.0, 10.0), (60.0, 10.0), (60.0, 50.0), (20.0, 50.0))
+            HammerheadGUI.Controllers.click!(me, x, y)
+        end
+        undo_vertex!(me)                                  # drop and re-add a corner
+        @test length(me.active[]) == 3
+        add_vertex!(me, 20.0, 50.0)
+        @test close_active!(me)
+        @test length(me.polygons[]) == 1 && isempty(me.active[])
+
+        # the committed rectangle matches polygon_mask directly
+        m = polygon_mask(me)
+        @test m == polygon_mask(size(imgA), [(20, 10), (60, 10), (60, 50), (20, 50)])
+        @test m[30, 40] && !m[80, 40]
+
+        # selection: click inside selects, alt-click deselects, delete removes
+        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)
+        @test me.selected[] == 1
+        @test isempty(me.active[])                        # selecting ≠ drawing
+        HammerheadGUI.Controllers.alt_click!(me)
+        @test me.selected[] === nothing
+        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)
+        delete_selected!(me)
+        @test isempty(me.polygons[]) && me.selected[] === nothing
+        @test !any(polygon_mask(me))
+
+        # seeded polygons, union masks, clear
+        seeded = MaskEditor(imgA; polygons = [[(5, 5), (15, 5), (15, 15), (5, 15)],
+                                              [(30, 30), (40, 30), (40, 40), (30, 40)]])
+        @test HammerheadGUI.Controllers.polygon_at(seeded, 10.0, 10.0) == 1
+        @test HammerheadGUI.Controllers.polygon_at(seeded, 100.0, 100.0) === nothing
+        ms = polygon_mask(seeded)
+        @test ms[10, 10] && ms[35, 35] && !ms[25, 25]
+        clear_polygons!(seeded)
+        @test isempty(seeded.polygons[])
+        @test_throws ArgumentError MaskEditor(imgA; polygons = [[(0, 0), (1, 1)]])
+
+        # save_mask round-trips through load_mask
+        me2 = MaskEditor(imgA; polygons = [[(20, 10), (60, 10), (60, 50), (20, 50)]])
+        path = joinpath(mktempdir(), "mask.png")
+        save_mask(me2, path)
+        @test load_mask(path) == polygon_mask(me2)
+    end
+
+    @testset "mask_editor view (offscreen)" begin
+        me = MaskEditor(imgA; polygons = [[(20, 10), (60, 10), (60, 50), (20, 50)]])
+        fig = mask_editor(me; size = (900, 650))
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (650, 900)
+
+        # drive editing through the controller and re-render
+        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)  # select
+        me.show_mask[] = true
+        for (x, y) in ((80.0, 80.0), (110.0, 80.0), (110.0, 110.0))
+            add_vertex!(me, x, y)
+        end
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test size(img2) == size(img1)
+        @test img2 != img1
+    end
 end

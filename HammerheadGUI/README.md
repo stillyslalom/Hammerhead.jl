@@ -15,7 +15,10 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   read-only viewer for `PIVResult` / `StereoPIVResult` sequences: scalar
   field heatmap (magnitude, components, diagnostics, uncertainty), vector
   arrows with outliers flagged, frame scrubbing, click-to-inspect
-- Mask editor — polygon drawing/editing, exporting the package mask convention
+- **Mask editor** (done) — `mask_editor(image_or_path)` draws exclusion
+  polygons over the image (left-click add/select, right-click close);
+  `polygon_mask(editor)` exports the package mask convention and
+  "save mask…" writes a mask image `load_mask` reads back
 - Parameter form + batch runner
 - Calibration & self-calibration diagnostics
 

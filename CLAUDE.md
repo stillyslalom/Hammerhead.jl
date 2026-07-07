@@ -120,8 +120,12 @@ ground for pure-GLMakie widget chrome.
 Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
 (only Hammerhead + Observables + Printf in scope — the module boundary
 enforces the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
-GLMakie shells. Result explorer: `ResultExplorer` controller +
-`result_explorer(source) -> Figure` view. View gotchas learned there:
+GLMakie shells. Components so far (each = controller + view pair, same
+naming): `ResultExplorer`/`result_explorer` and `MaskEditor`/`mask_editor`
+(gesture API `click!`/`alt_click!` holds the editing model; the view only
+forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
+the mask, `save_mask` writes the white-=-excluded image `load_mask` reads).
+View gotchas learned:
 recreate heatmap/arrows per refresh instead of updating per-argument
 observables (sequential x/y/data updates render transiently mismatched
 grids); preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`

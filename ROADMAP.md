@@ -320,9 +320,19 @@ closed.
   (per-argument observable updates would render transiently mismatched
   grids) and restores `targetlimits` (not `limits!`) so zoom survives
   refreshes without un-reversing the y axis
-- [ ] Mask editor — polygon drawing/editing over the image, exporting the
-  package mask convention; biggest usability win over the CLI and the
-  framework proving ground
+- [x] Mask editor (July 2026) — `mask_editor(image | path | MaskEditor)`:
+  polygon drawing over the image (left-click adds vertices / selects,
+  right-click closes, Backspace/Delete edit), committed polygons with
+  selection highlight, live mask overlay, and export in the package mask
+  convention — `polygon_mask(editor)` returns the combined `true`-=-excluded
+  BitMatrix and "save mask…" (NativeFileDialog) writes the white-=-excluded
+  grayscale image `load_mask` reads back (round-trip tested). The gesture
+  logic lives in the `MaskEditor` controller (click!/alt_click! are plain
+  functions on observables), so the whole editing model is unit-tested
+  without GL. As the framework proving ground: pure GLMakie handled the
+  canvas interactions, changing polygon sets (recreate-per-refresh), and
+  widget chrome comfortably — no widget-toolkit bridge needed so far; the
+  parameter form is the remaining half of the framework question
 - [ ] Parameter form + batch runner — `PIVParameters` editing, sequence
   processing with progress and incremental JLD2 output
 - [ ] Calibration & self-calibration diagnostics — grid-detection review,
