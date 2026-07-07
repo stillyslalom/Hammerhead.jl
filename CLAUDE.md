@@ -12,14 +12,17 @@ and stereo Challenge case is now reachable. Case 4E data (particle +
 calibration images) sits in `cases/` (gitignored); a minimal 4E subset
 for the docs and tests is committed at `test/reference_images/E/`. Phase 6 (Diátaxis docs,
 July 2026) is also done; version is 0.1.0, awaiting first General-registry
-registration (a maintainer action). Next up: Phase 7 (HammerheadGUI
-monorepo).
+registration (a maintainer action). Phase 7 (HammerheadGUI) is underway:
+the monorepo conversion is done (skeleton package, CI/TagBot/CompatHelper
+subdir wiring); the GUI components (result explorer, mask editor, parameter
+form, calibration diagnostics, packaging) are next.
 
 ## Commands
 
 ```bash
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
 julia --project=docs docs/make.jl                    # docs, ~6 min: executes all four tutorials ("skipping deployment" warning is normal locally)
+julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
 ```
 
 Two `PIV sequence failed` error logs during tests are intentional
@@ -98,6 +101,21 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `statistics.jl` — `field_statistics`, `validate_temporal!`,
   `power_spectrum`
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie)
+
+## HammerheadGUI (HammerheadGUI/)
+
+Monorepo subdirectory package, Makie-style: own Project.toml (this is where
+the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
+`[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
+`Pkg.develop`s the core instead so lts/1.10 works, and wraps tests in
+`xvfb-run`). Releases go core-first, then GUI compat bump; registration is
+`@JuliaRegistrator register subdir=HammerheadGUI`, TagBot tags
+`HammerheadGUI-v*` (second TagBot job), CompatHelper covers both packages via
+`subdirs`. Architecture rule: all application state/logic lives in a
+framework-free controller layer (plain Julia + Observables, testable without
+a GL context); Makie code renders controllers and pushes input into them but
+controllers never import Makie. The mask editor is the framework proving
+ground for pure-GLMakie widget chrome.
 
 ## Load-bearing conventions
 

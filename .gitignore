@@ -1,4 +1,5 @@
 /Manifest*.toml
+/HammerheadGUI/Manifest*.toml
 /cases/
 /docs/Manifest*.toml
 /docs/build/

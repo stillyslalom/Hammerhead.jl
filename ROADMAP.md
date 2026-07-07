@@ -297,9 +297,15 @@ context. The mask editor is the framework proving ground; if pure Makie
 handles it plus one parameter form comfortably, the framework question is
 closed.
 
-- [ ] Monorepo conversion: `HammerheadGUI/` skeleton, CI matrix
-  (`Pkg.develop` of the core before GUI tests, xvfb for GLMakie on Linux
-  runners), Registrator subdir + TagBot wiring
+- [x] Monorepo conversion (July 2026): `HammerheadGUI/` skeleton package
+  (GLMakie + NativeFileDialog + Observables hard deps, `[sources]` dev
+  coupling to the core, smoke tests for offscreen GL rendering and the
+  core-pipeline + Makie-extension path); CI `gui` job (lts + 1 matrix,
+  `Pkg.develop` of the core before GUI tests, xvfb for GLMakie on the
+  Linux runners); TagBot second job with `subdir: HammerheadGUI`
+  (tags `HammerheadGUI-v*`); CompatHelper over both packages.
+  Registration remains manual: `@JuliaRegistrator register subdir=HammerheadGUI`
+  on the release commit, after the core is registered
 - [ ] Result explorer — read-only viewer for `PIVResult`/`StereoPIVResult`
   (field overlays, vector inspection, outlier/uncertainty display); binds
   only to the most stable API surface
