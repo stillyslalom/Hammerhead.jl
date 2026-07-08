@@ -59,6 +59,40 @@ A [`StereoPIVResult`](@ref) reports `x`/`y` in world units on the dewarp
 grid and `(u, v, w)` in world units per frame interval, with `w` along
 world +Z. As in 2D, no time scaling is applied.
 
+## Particle tracking (PTV)
+
+Particle tracking measures the same displacement as PIV but per *particle*
+instead of per *window*, and it is the better tool wherever the seeding is
+sparse or Lagrangian information matters: low-density flows, the near-wall
+region where large windows straddle a velocity gradient, or any case where you
+want individual particle paths rather than an Eulerian field. Everything on
+this page still holds — `u` along x, `v` along y, pixels per frame interval,
+no time scaling — with three PTV-specific conventions.
+
+**Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
+*frame-A* particle positions and `u`/`v` as the displacement to frame B. This
+differs from PIV's symmetric image deformation, which attributes each vector to
+the *midpoint* of the trajectory. Frame-A attribution matches the
+forward-Euler contract of the synthetic generator exactly (each particle's true
+displacement is the velocity at its launch point), so ground-truth comparisons
+are direct — no midpoint correction, no interpolation error.
+
+**Flag, don't replace.** A tracked displacement is a measurement of one
+specific particle; there is nothing meaningful to substitute for it. So the
+scattered outlier test [Duncan2010](@cite) only *flags* suspicious vectors (in
+`result.outliers`) and leaves `u`/`v` untouched — unlike PIV, which replaces
+flagged windows with a local median. In the multi-frame tracker, a flagged link
+is simply not made (it would poison the constant-velocity predictor
+downstream).
+
+**Hybrid by default.** With sparse seeding the true displacement can exceed the
+particle spacing, and pure nearest-neighbor matching then links the wrong
+particles. [`run_ptv`](@ref) therefore runs a coarse [`run_piv`](@ref)
+internally to predict where each particle goes, and matches against that
+prediction [Keane1995](@cite) — so it works out of the box at realistic
+displacements. Pass an existing `PIVResult`, a displacement NamedTuple, or
+`nothing` (pure nearest neighbor) to override.
+
 ## Grid layout
 
 Interrogation windows tile the image starting at the top-left corner with a

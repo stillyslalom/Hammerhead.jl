@@ -15,13 +15,18 @@ July 2026) is also done; version is 0.1.0, awaiting first General-registry
 registration (a maintainer action). Phase 7 (HammerheadGUI) is underway:
 the monorepo conversion is done (skeleton package, CI/TagBot/CompatHelper
 subdir wiring); the GUI components (result explorer, mask editor, parameter
-form, calibration diagnostics, packaging) are next.
+form, calibration diagnostics, packaging) are next. Phase 8 (2D2C PTV,
+July 2026) is done: per-frame particle detection (`detect_particles`),
+hybrid PIV-guided two-frame tracking (`run_ptv` → `PTVResult`, with
+`ptv_to_grid` binning and `run_ptv_sequence` batch), scattered validation,
+multi-frame trajectory linking (`track_particles` → `TrackingResult`), and
+docs — all synthetic-verified, no new deps.
 
 ## Commands
 
 ```bash
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
-julia --project=docs docs/make.jl                    # docs, ~6 min: executes all four tutorials ("skipping deployment" warning is normal locally)
+julia --project=docs docs/make.jl                    # docs, ~7 min: executes all six tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
 ```
 
@@ -86,13 +91,22 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `masking.jl` — `polygon_mask`
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
   image deformation), `process_windows!`
+- `particles.jl` — `Particles` (struct-of-arrays) + `detect_particles`
+  (local-maxima + 3-point log-Gaussian fits) and the shared uniform-cell
+  neighbor list (`build_cell_list`/`within_radius!`/`knn`) used by dedupe,
+  matching, and scattered UOD
+- `ptv.jl` — `PTVParameters`, `PTVResult`, `run_ptv` (hybrid PIV-guided
+  greedy matching via `greedy_match`), `scattered_uod`, `ptv_to_grid`
+  (`bin_to_grid`)
+- `tracking.jl` — `Trajectory`, `TrackingResult`, `track_particles`
+  (constant-velocity + field predictor linking), `trajectory_velocities`
 - `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation)
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
-  (JLD2: `format_version` + `results/000001`… + optional `sources/…`;
-  entries may be `PIVResult` or `StereoPIVResult`), `run_piv_sequence`
-  batch driver
+  (JLD2: `format_version` 4 + `results/000001`… + optional `sources/…`;
+  entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`),
+  `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`)
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor)
 - `selfcal.jl` — `self_calibrate` (Wieneke 2005 disparity self-calibration:
@@ -249,6 +263,23 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   `===`-identical.
   task (correlators are mutable state); results must stay bitwise identical
   to serial (tested).
+- **PTV (Phase 8):** `PTVResult.x/y` are the **frame-A** particle positions,
+  `u/v` the displacement to frame B — this matches the `SyntheticData`
+  forward-Euler contract exactly, so ground-truth tests compare directly with
+  **no** midpoint correction (unlike PIV's symmetric deformation). Detection
+  is in-house (local maxima + 3-point log-Gaussian fits) because PIV-density
+  particles overlap and connected-component blobs merge — the sanctioned
+  ecosystem-policy exception. Matching is predictor-guided greedy one-to-one
+  (`run_ptv` runs a coarse `run_piv` internally by default); scattered UOD
+  (Duncan 2010) **flags but never replaces** — a track is a measurement of one
+  particle. All neighbor searches (dedupe, match candidates, kNN for UOD) use
+  the in-house uniform cell list in `particles.jl`, not NearestNeighbors.jl
+  (the no-new-deps rule). `run_ptv` short-circuits to an empty result when
+  either frame has no detections (skips the image-size-sensitive predictor).
+  Pixels only, no dt/velocity scaling. `particles.jl` is included before
+  `ptv.jl`, so `detect_particles`'s `params` argument is unannotated
+  (`PTVParameters` is defined later — a default-value expression is evaluated
+  only at call time, unlike a type annotation).
 - **Ecosystem policy:** use JuliaImages packages (FileIO/ImageIO,
   ImageFiltering, JLD2) unless they compromise subpixel fidelity — CLAHE
   deliberately stays in-house because ImageContrastAdjustment silently
@@ -270,7 +301,18 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
   `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
   Adding a `StereoPIVResult` field likewise breaks the fixture in
-  `HammerheadGUI/test/runtests.jl`.
+  `HammerheadGUI/test/runtests.jl`. Adding a `PTVResult` field breaks the
+  direct constructor call in `test_ptv.jl` (the `ptv_to_grid` sparse-corner
+  fixture).
+- `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
+  (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
+  fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
+  use `MersenneTwister`. Tracking is verified on an *off-frame*-centered
+  vortex (smooth rotation, no near-singular core) with a thick sheet (no
+  dropout): a few percent of full tracks legitimately deviate >0.5 px from
+  the nearest truth path near the frame edges (detection error, not identity
+  switches — asserted via a small per-step displacement bound), so the test
+  bounds recall ≥85% and within-0.5 px ≥95% rather than demanding every track.
 - `test/reference_images/A/` holds PIV Challenge case A TIFFs for the
   end-to-end reference test; `test/reference_images/E/` holds the case-4E
   stereo subset (16-bit PNGs + readme) shared by the stereo reference
@@ -311,3 +353,10 @@ thickness/overlap estimation from disparity correlation peak widths
 case-A pair covers the single-pair real-data tutorial, but sequences are
 too large to commit and need build-time download from pivchallenge.org,
 e.g. DataDeps.jl in `docs/Project.toml`, within the docs CI budget).
+
+PTV (Phase 8) deferrals: gap bridging / track re-acquisition (no bridging in
+v1 — an unmatched head just terminates), relaxation-method matching, match
+costs beyond distance (intensity/diameter similarity), per-particle position
+uncertainty, world-unit PTV results (needs the units/scaling item above),
+stereo PTV, GUI explorer support for `PTVResult`/`TrackingResult`, and the
+Duncan et al. distance-weighted scattered-UOD variant (v1 is the plain test).

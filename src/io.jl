@@ -68,8 +68,9 @@ function image_pairs(files::AbstractVector; mode::Symbol = :paired)
 end
 
 # Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult;
-# version 3 allows StereoPIVResult entries alongside PIVResult.
-const RESULTS_FORMAT_VERSION = 3
+# version 3 allows StereoPIVResult entries alongside PIVResult;
+# version 4 allows PTVResult entries.
+const RESULTS_FORMAT_VERSION = 4
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
@@ -77,12 +78,12 @@ source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
 """
     save_results(path, results) -> path
 
-Save a [`PIVResult`](@ref) or [`StereoPIVResult`](@ref) (or a vector of them)
-to a JLD2 file (conventionally `*.jld2`), overwriting `path` if it exists.
-Read back with [`load_results`](@ref).
+Save a [`PIVResult`](@ref), [`StereoPIVResult`](@ref), or [`PTVResult`](@ref)
+(or a vector of them, possibly mixed) to a JLD2 file (conventionally `*.jld2`),
+overwriting `path` if it exists. Read back with [`load_results`](@ref).
 """
 function save_results(path::AbstractString,
-                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult}})
+                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult}})
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         for (i, r) in enumerate(results)
@@ -92,7 +93,7 @@ function save_results(path::AbstractString,
     return path
 end
 
-save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult}) =
+save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult}) =
     save_results(path, [result])
 
 """
@@ -149,12 +150,50 @@ function run_piv_sequence(pairs::AbstractVector,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
+    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; kwargs...), PIVResult, pairs;
+                  preprocess, output, progress, image_type, label = "PIV")
+end
+
+"""
+    run_ptv_sequence(pairs, params = PTVParameters();
+                     preprocess = nothing, output = nothing,
+                     progress = true, kwargs...) -> Vector{PTVResult}
+
+Run PTV over a sequence of image pairs, mirroring [`run_piv_sequence`](@ref):
+`pairs` entries are file paths (loaded with [`load_image`](@ref)) and/or
+real-valued matrices, `params` is a [`PTVParameters`](@ref), and the same
+`preprocess`, `output` (incremental JLD2), `progress`, and `image_type`
+options apply. Remaining `kwargs` (e.g. `predictor` or `mask`) are forwarded to
+[`run_ptv`](@ref). Results are [`PTVResult`](@ref)s; when `output` is a path
+they are persisted incrementally as they complete (with source paths for
+file-path pairs), readable with [`load_results`](@ref).
+"""
+function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVParameters();
+                          preprocess = nothing,
+                          output::Union{Nothing,AbstractString} = nothing,
+                          progress::Union{Bool,Function} = true,
+                          image_type::Type{<:AbstractFloat} = Float64,
+                          kwargs...)
+    _run_sequence((imgA, imgB) -> run_ptv(imgA, imgB, params; kwargs...), PTVResult, pairs;
+                  preprocess, output, progress, image_type, label = "PTV")
+end
+
+# Shared sequence driver: iterate `pairs`, load/preprocess each frame, run
+# `process(imgA, imgB)` (a PIV or PTV closure), persist incrementally, and
+# log-and-rethrow per pair. `R` is the result element type; `label` names the
+# analysis in progress/error messages.
+function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
+                       preprocess = nothing,
+                       output::Union{Nothing,AbstractString} = nothing,
+                       progress::Union{Bool,Function} = true,
+                       image_type::Type{<:AbstractFloat} = Float64,
+                       label::AbstractString = "PIV") where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
-    results = Vector{PIVResult}(undef, length(pairs))
+    results = Vector{R}(undef, length(pairs))
     file = output === nothing ? nothing : jldopen(output, "w")
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
-        meter = Progress(length(pairs); desc = "PIV sequence: ", enabled = progress === true)
+        meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
         for (i, pair) in enumerate(pairs)
             frameA, frameB = pair
             try
@@ -164,9 +203,9 @@ function run_piv_sequence(pairs::AbstractVector,
                     imgA = preprocess(imgA)
                     imgB = preprocess(imgB)
                 end
-                results[i] = run_piv(imgA, imgB, params; kwargs...)
+                results[i] = process(imgA, imgB)
             catch
-                @error "PIV sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
+                @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
                 rethrow()
             end
             if file !== nothing

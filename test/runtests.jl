@@ -422,6 +422,7 @@ include("test_peaks.jl")
 include("test_accuracy.jl")
 include("test_uncertainty.jl")
 include("test_ensemble.jl")
+include("test_ptv.jl")
 include("test_io.jl")
 include("test_reference.jl")
 

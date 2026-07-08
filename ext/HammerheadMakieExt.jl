@@ -43,6 +43,27 @@ function Hammerhead.plot_vector_field(result::PIVResult;
     return fig
 end
 
+# Scattered PTV vectors: arrows at each frame-A match position (not a grid).
+function Hammerhead.plot_vector_field!(ax::Makie.Axis, result::PTVResult;
+                                       highlight_outliers::Bool = true, kwargs...)
+    points = [Makie.Point2f(result.x[i], result.y[i]) for i in eachindex(result.x)]
+    directions = [Makie.Vec2f(result.u[i], result.v[i]) for i in eachindex(result.u)]
+    if highlight_outliers && any(result.outliers)
+        color = [o ? :red : :black for o in result.outliers]
+        Makie.arrows2d!(ax, points, directions; color, kwargs...)
+    else
+        Makie.arrows2d!(ax, points, directions; kwargs...)
+    end
+    return ax
+end
+
+function Hammerhead.plot_vector_field(result::PTVResult;
+                                      figure = (;), axis = (;), kwargs...)
+    fig, ax = _vector_field_figure(; figure, axis)
+    Hammerhead.plot_vector_field!(ax, result; kwargs...)
+    return fig
+end
+
 function Hammerhead.plot_vector_field(x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
                                       u::AbstractMatrix{<:Real}, v::AbstractMatrix{<:Real};
                                       figure = (;), axis = (;), kwargs...)

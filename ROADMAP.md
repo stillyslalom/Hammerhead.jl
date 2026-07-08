@@ -369,6 +369,39 @@ closed.
 *Milestone:* a lab user can mask, process, and inspect a recording without
 writing Julia.
 
+### Phase 8 — Particle tracking (2D2C PTV) (July 2026)
+
+Scattered velocimetry and Lagrangian tracks for the low-density regime, where
+per-window cross-correlation gives up and per-particle tracking takes over.
+Verified against 1B/2B-style synthetic scenes (there is no dedicated PTV
+Challenge case); all synthetic, no new dependencies.
+
+- [x] Detection (July 2026) — `detect_particles`: robust-threshold local
+  maxima with independent 3-point log-Gaussian subpixel fits (centroid
+  fallback for clipped/saturated peaks), diameter filtering, and brightness-
+  ordered dedupe over an in-house uniform cell list. In-house rather than
+  connected-component blob labeling because PIV-density particle images
+  overlap (the sanctioned ecosystem-policy exception)
+- [x] Two-frame matching (July 2026) — `run_ptv`: hybrid PIV-guided
+  nearest-neighbor with global cost-sorted greedy one-to-one assignment
+  (Keane, Adrian & Zhang 1995); frame-A attribution (exact against the
+  synthetic forward-Euler truth, no midpoint correction). Predictor is the
+  internal coarse `run_piv` by default, or a supplied `PIVResult` / field /
+  `nothing` (pure NN). Scattered normalized-median validation (Duncan et al.
+  2010) that flags but never replaces. `ptv_to_grid` bins tracks back onto an
+  interrogation grid (masked-`PIVResult` conventions)
+- [x] Trajectory linking (July 2026) — `track_particles`: chains matches
+  across a sequence with constant-velocity prediction for established heads
+  and a field predictor for fresh ones; flagged links rejected; no gap
+  bridging in v1. `trajectory_velocities` for per-point finite differences
+- [x] Batch & serialization (July 2026) — `run_ptv_sequence` mirrors
+  `run_piv_sequence` (shared driver); `save_results`/`load_results` widened to
+  `PTVResult` (format version 4, mixed-type files), scattered
+  `plot_vector_field` method, tutorial + reference docs
+
+*Milestone:* scattered velocimetry and Lagrangian tracks on any planar
+recording.
+
 ## Coverage trajectory
 
 | Stage | Cases reachable |
