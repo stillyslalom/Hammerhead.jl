@@ -152,11 +152,11 @@ The algorithm is:
 See [`PTVParameters`](@ref) for the detection parameters and [`run_ptv`](@ref)
 for the full tracking pipeline.
 """
-# `params` is intentionally unannotated: `PTVParameters` is defined in ptv.jl,
-# which is included after this file (its default-value expression is only
-# evaluated at call time, so the forward reference is fine).
 function detect_particles(img::AbstractMatrix{<:Real}, params = PTVParameters();
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+    # `params` is intentionally unannotated: `PTVParameters` is defined in ptv.jl,
+    # which is included after this file (its default-value expression is only
+    # evaluated at call time, so the forward reference is fine).
     mask === nothing || size(mask) == size(img) ||
         throw(DimensionMismatch("mask must have the same size as the image, got $(size(mask))"))
     T = float(eltype(img))
