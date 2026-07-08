@@ -79,7 +79,7 @@ for k in eachindex(ptv.index_a)
     ta, tb = mA[ptv.index_a[k]], mB[ptv.index_b[k]]
     (ta > 0 && tb > 0) || continue
     if ta == tb
-        correct += 1
+        global correct += 1
         push!(errs, hypot(ptv.u[k] - (truthB.x[tb] - truthA.x[ta]),
                           ptv.v[k] - (truthB.y[tb] - truthA.y[ta])))
     end

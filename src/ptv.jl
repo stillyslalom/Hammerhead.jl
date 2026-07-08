@@ -329,7 +329,7 @@ single bin whose center is nearest its frame-A position, and each bin value is
 the component-wise **median** of its vectors (robust to residual mismatches).
 Bins with fewer than `min_count` vectors are masked (`mask = true`, `NaN`
 fields), so the result plugs straight into the masked-result conventions
-([`field_statistics`](@ref), [`build_predictor`](@ref), plotting). Outlier-
+([`field_statistics`](@ref), plotting). Outlier-
 flagged vectors are excluded unless `include_outliers`.
 
 This is a **binned PTV field**, not a correlation measurement: `peak_ratio`,
