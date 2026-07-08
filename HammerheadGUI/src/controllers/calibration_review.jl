@@ -126,7 +126,7 @@ failure message.
 function fit_summary(cr::CalibrationReview)
     cr.camera[] === nothing && return "no fit: $(cr.fit_message[])"
     q = calibration_quality(cr.camera[], cr.grids, cr.zs)
-    return ":$(cr.model[]) fit over $(nplanes(cr)) planes\n" *
+    return "$(cr.model[]) fit over $(nplanes(cr)) planes\n" *
            "rms $(_fmt(q.rms)) px, max $(_fmt(q.max)) px ($(q.n) dots)"
 end
 

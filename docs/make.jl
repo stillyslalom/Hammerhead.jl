@@ -11,7 +11,7 @@ bib = CitationBibliography(joinpath(@__DIR__, "src", "refs.bib"); style=:authory
 # Tutorials are Literate.jl scripts, converted to Documenter markdown with
 # executable @example blocks — the docs build runs them, so they double as
 # integration tests.
-const TUTORIALS = ["first_vector_field.jl", "real_data.jl", "stereo.jl", "stereo_real.jl"]
+const TUTORIALS = ["first_vector_field.jl", "real_data.jl", "stereo.jl", "stereo_real.jl", "gui_tour.jl"]
 for tutorial in TUTORIALS
     Literate.markdown(joinpath(@__DIR__, "lit", tutorial),
                       joinpath(@__DIR__, "src", "tutorials"); documenter=true)
@@ -34,6 +34,7 @@ makedocs(;
             "A real recording: tip vortex" => "tutorials/real_data.md",
             "Stereo PIV end to end" => "tutorials/stereo.md",
             "Stereo on a real recording: vortex ring" => "tutorials/stereo_real.md",
+            "A tour of the GUI" => "tutorials/gui_tour.md",
         ],
         "How-to guides" => [
             "Mask reflections and geometry" => "howto/masking.md",
@@ -42,6 +43,7 @@ makedocs(;
             "Ensemble correlation for low SNR" => "howto/ensemble.md",
             "Batch processing and result files" => "howto/batch.md",
             "Calibrate a real stereo rig" => "howto/stereo_rig.md",
+            "Work interactively with the GUI" => "howto/gui.md",
         ],
         "Explanation" => [
             "Coordinates, signs, and units" => "explanation/conventions.md",
@@ -51,6 +53,7 @@ makedocs(;
             "Uncertainty quantification" => "explanation/uncertainty.md",
             "Stereo geometry and self-calibration" => "explanation/stereo.md",
             "Numeric precision policy" => "explanation/precision.md",
+            "The GUI's controller–view split" => "explanation/gui.md",
         ],
         "Reference" => [
             "Core pipeline and parameters" => "reference/pipeline.md",
