@@ -143,4 +143,59 @@ using Statistics
         @test_throws ArgumentError run_piv_sequence([(imgA, :nope)], params;
                                                     progress = false)
     end
+
+    @testset "frame_index_strings" begin
+        @test frame_index_strings("path/to/img_0001.tif", "path/to/img_0002.tif") ==
+              ("0001", "0002")
+        @test frame_index_strings("a/f_099.png", "b/f_100.png") == ("099", "100")   # different lengths
+        @test frame_index_strings("run10_A.tif", "run20_A.tif") == ("10", "20")     # index mid-name
+        @test frame_index_strings("x/0007.tif", "x/0012.tif") == ("0007", "0012")   # whole stem numeric
+        @test frame_index_strings("cam1_5.tif", "cam1_6.tif") == ("5", "6")         # single digit
+        @test_throws ArgumentError frame_index_strings("a/same.tif", "b/same.png")  # identical stems
+    end
+
+    @testset "run_piv_sequence per-pair output" begin
+        rng = MersenneTwister(21)
+        positions = [(rand(rng) * 148 - 10, rand(rng) * 148 - 10) for _ in 1:250]
+        imgA, imgB = particle_pair((128, 128), positions, 2.0, 3.0)
+        params = PIVParameters(window_size = 32, overlap = 16)
+
+        # Function output with matrix pairs → index-based naming, one file each.
+        mktempdir() do dir
+            out = (i, pair) -> joinpath(dir, "sub", "pair_$i.jld2")
+            res = run_piv_sequence([(imgA, imgB), (imgB, imgA)], params;
+                                   output = out, progress = false)
+            @test length(res) == 2
+            for i in 1:2
+                path = joinpath(dir, "sub", "pair_$i.jld2")
+                @test isfile(path)                             # parent dir created
+                loaded = load_results(path)
+                @test length(loaded) == 1
+                @test loaded[1].u == res[i].u
+            end
+        end
+
+        # Function output with path pairs → per-pair file names from the frame
+        # indices, and sources recorded in each single-result file.
+        mktempdir() do dir
+            files = [joinpath(dir, "img_000$i.tif") for i in 1:4]
+            for (f, img) in zip(files, (imgA, imgB, imgA, imgB))
+                save(f, Gray{N0f16}.(clamp.(img, 0, 1)))
+            end
+            out = (i, pair) -> begin
+                a, b = frame_index_strings(pair...)
+                joinpath(dir, "piv_$(a)_$(b).jld2")
+            end
+            res = run_piv_sequence(image_pairs(files), params;
+                                   output = out, progress = false)
+            p1 = joinpath(dir, "piv_0001_0002.jld2")
+            p2 = joinpath(dir, "piv_0003_0004.jld2")
+            @test isfile(p1) && isfile(p2)
+            @test load_results(p1)[1].u == res[1].u
+            jldopen(p1, "r") do f
+                @test f["format_version"] == 4
+                @test f["sources/000001"] == [files[1], files[2]]
+            end
+        end
+    end
 end

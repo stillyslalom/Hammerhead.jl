@@ -4,7 +4,7 @@ using FFTW
 using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
-using Statistics: median, median!, std
+using Statistics: median, median!, std, quantile
 using StaticArrays
 using CoordinateTransformations: AffineMap
 import FileIO
@@ -14,7 +14,7 @@ using JLD2: jldopen
 using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters
-export load_image, image_pairs, save_results, load_results, run_piv_sequence
+export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export polygon_mask, load_mask
 export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum
 export find_peaks, peak_locking, smoothn, error_statistics
@@ -25,7 +25,7 @@ export CameraCalibration, PinholeCamera, SoloffCamera, TransformedCamera, calibr
 export world_to_pixel, pixel_to_world, reprojection_errors, calibration_quality
 export self_calibrate, SelfCalibrationReport
 export CalibrationGrid, detect_calibration_grid, calibration_points, render_calibration_target
-export DewarpGrid, ImageDewarper, dewarp, dewarp!
+export DewarpGrid, ImageDewarper, dewarp, dewarp!, common_dewarp_grid
 export StereoPIVResult, run_piv_stereo
 export Particles, detect_particles, PTVParameters, PTVResult, run_ptv, run_ptv_sequence, ptv_to_grid
 export Trajectory, TrackingResult, track_particles, trajectory_velocities
@@ -58,17 +58,53 @@ include("ensemble.jl")
 include("selfcal.jl")
 include("statistics.jl")
 
+# Auto arrow-length scale for plot_vector_field: the multiplier that maps the
+# 0.99-quantile magnitude among the selected vectors to `target_length` (the
+# plotted grid spacing), so the busiest arrows span roughly one grid cell.
+# `valid` selects the vectors entering the quantile (e.g. non-masked,
+# non-outlier); `nothing` selects all. Falls back to all finite vectors when
+# the selection is empty, and returns `nothing` (meaning "leave lengths as
+# measured") when there is nothing with positive magnitude to scale.
+function arrow_lengthscale(u, v, valid, target_length::Real)
+    mags = Float64[]
+    for i in eachindex(u, v)
+        (valid === nothing || valid[i]) || continue
+        m = hypot(float(u[i]), float(v[i]))
+        isfinite(m) && push!(mags, m)
+    end
+    if isempty(mags)
+        for i in eachindex(u, v)
+            m = hypot(float(u[i]), float(v[i]))
+            isfinite(m) && push!(mags, m)
+        end
+    end
+    isempty(mags) && return nothing
+    q = quantile(mags, 0.99)
+    (isfinite(q) && q > 0) || return nothing
+    return target_length / q
+end
+
+# Spacing of a regular grid axis (used to size auto-scaled arrows).
+grid_axis_step(x) = length(x) > 1 ? abs(float(x[2]) - float(x[1])) : 1.0
+
 """
-    plot_vector_field(result::PIVResult; highlight_outliers=true, figure=(;), axis=(;), kwargs...)
+    plot_vector_field(result::PIVResult; stride=1, lengthscale=:auto, show_replaced=true, replaced_color=:orangered, figure=(;), axis=(;), kwargs...)
     plot_vector_field(result::PTVResult; highlight_outliers=true, figure=(;), axis=(;), kwargs...)
-    plot_vector_field(x, y, u, v; figure=(;), axis=(;), kwargs...)
+    plot_vector_field(x, y, u, v; stride=1, lengthscale=:auto, figure=(;), axis=(;), kwargs...)
 
 Plot a PIV or PTV vector field as arrows and return the `Makie.Figure`. The
 y-axis is reversed to match image (row-down) coordinates. For a
 [`PIVResult`](@ref) the arrows sit on the interrogation grid; for a
 [`PTVResult`](@ref) they are scattered at the frame-A particle positions.
-Outliers are drawn in red when `highlight_outliers` is set; masked (`NaN`)
-vectors are skipped; remaining `kwargs` are passed to `arrows2d!`.
+
+For grid fields, `stride` plots every `stride`-th vector in each direction
+(inspect a high-resolution field without a solid mat of arrows), and
+`lengthscale = :auto` scales the arrows so the 0.99-quantile of the valid
+vectors' magnitudes spans one plotted grid cell (`stride ×` the grid spacing);
+pass a `Real` for a manual multiplier. Flagged/replaced vectors
+(`result.outliers`) are drawn in `replaced_color` when `show_replaced` is
+true and omitted otherwise; masked (`NaN`) vectors are always skipped;
+remaining `kwargs` are passed to `arrows2d!`.
 
 Provided by a package extension: load a Makie backend first (e.g.
 `using GLMakie` or `using CairoMakie`).
@@ -76,9 +112,9 @@ Provided by a package extension: load a Makie backend first (e.g.
 function plot_vector_field end
 
 """
-    plot_vector_field!(ax, result::PIVResult; highlight_outliers=true, kwargs...)
+    plot_vector_field!(ax, result::PIVResult; stride=1, lengthscale=:auto, show_replaced=true, replaced_color=:orangered, kwargs...)
     plot_vector_field!(ax, result::PTVResult; highlight_outliers=true, kwargs...)
-    plot_vector_field!(ax, x, y, u, v; kwargs...)
+    plot_vector_field!(ax, x, y, u, v; stride=1, lengthscale=:auto, kwargs...)
 
 Like [`plot_vector_field`](@ref), but draws into an existing `Makie.Axis`.
 """

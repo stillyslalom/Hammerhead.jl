@@ -360,7 +360,8 @@ abstract type NeighborhoodValidator <: PIVValidator end
     PeakRatioValidator(threshold)
 
 Flag vectors whose correlation peak ratio falls below `threshold` (`NaN`
-ratios are flagged too). Pair spec: `:peak_ratio => threshold`.
+ratios are flagged too). Pair spec: `:peak_ratio => threshold`. See the
+[validation how-to](../howto/validation.md) for the full list of validators.
 """
 struct PeakRatioValidator <: LocalValidator
     threshold::Float64
@@ -371,7 +372,8 @@ end
 
 Flag vectors whose correlation moment exceeds `threshold`, i.e. whose
 correlation peak is too broad (`NaN` moments are flagged too). Pair spec:
-`:correlation_moment => threshold`.
+`:correlation_moment => threshold`. See the
+[validation how-to](../howto/validation.md) for the full list of validators.
 """
 struct CorrelationMomentValidator <: LocalValidator
     threshold::Float64
@@ -382,7 +384,8 @@ end
 
 Flag vectors whose displacement magnitude lies outside `[min, max]` pixels
 (`NaN` magnitudes are flagged too). Pair spec:
-`:velocity_magnitude => (min = 0, max = 50)`; `min` defaults to 0.
+`:velocity_magnitude => (min = 0, max = 50)`; `min` defaults to 0. See the
+[validation how-to](../howto/validation.md) for the full list of validators.
 """
 struct VelocityMagnitudeValidator <: LocalValidator
     min::Float64
@@ -395,7 +398,8 @@ end
 Flag vectors that fail the normalized median test — see
 [`universal_outlier_detection`](@ref) for the parameters. Pair spec:
 `:uod => (threshold = 2.0, neighborhood_size = 2, epsilon = 0.1)` (only
-`threshold` is required; `:universal_outlier` is an alias).
+`threshold` is required; `:universal_outlier` is an alias). See the
+[validation how-to](../howto/validation.md) for the full list of validators.
 """
 struct UniversalOutlierValidator <: NeighborhoodValidator
     threshold::Float64

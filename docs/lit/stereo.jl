@@ -98,9 +98,16 @@ cams[1]
 #
 # A [`DewarpGrid`](@ref) defines the measurement plane as a regular grid of
 # world coordinates, shared by both cameras; an [`ImageDewarper`](@ref) per
-# camera precomputes the resampling map once and reuses it for every frame:
+# camera precomputes the resampling map once and reuses it for every frame.
+#
+# The dewarped image is indexed `out[r, c] = world (x[c], y[r], z)` in the
+# order the ranges are given, so a **descending** `y` range puts world +Y at
+# the top — the image displays upright. (An ascending `y` would flip it, with
+# +Y running *down* the image; PIV downstream is unaffected either way because
+# `dv * step(y)` carries the sign — see
+# [Stereo geometry and self-calibration](../explanation/stereo.md).)
 
-grid = DewarpGrid(x = -25.0:0.2:25.0, y = -25.0:0.2:25.0)
+grid = DewarpGrid(x = -25.0:0.2:25.0, y = 25.0:-0.2:-25.0)
 dw1 = ImageDewarper(cams[1], grid, image_size)
 dw2 = ImageDewarper(cams[2], grid, image_size)
 

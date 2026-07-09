@@ -3,37 +3,72 @@ module HammerheadMakieExt
 using Hammerhead
 using Makie
 
+# Resolve the arrow-length multiplier: a `Real` is used verbatim, `:auto`
+# scales the 0.99-quantile of the selected vectors to one plotted grid cell.
+function _resolve_lengthscale(lengthscale, u, v, valid, stride::Int, x, y)
+    lengthscale isa Real && return Float64(lengthscale)
+    lengthscale === :auto ||
+        throw(ArgumentError("lengthscale must be :auto or a real number, got $lengthscale"))
+    target = stride * min(Hammerhead.grid_axis_step(x), Hammerhead.grid_axis_step(y))
+    ls = Hammerhead.arrow_lengthscale(u, v, valid, target)
+    return ls === nothing ? 1.0 : ls
+end
+
 function Hammerhead.plot_vector_field!(ax::Makie.Axis,
                                        x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
                                        u::AbstractMatrix{<:Real}, v::AbstractMatrix{<:Real};
-                                       kwargs...)
+                                       stride::Int = 1, lengthscale = :auto, kwargs...)
     size(u) == size(v) == (length(y), length(x)) ||
         throw(ArgumentError("u and v must have dimensions (length(y), length(x)) = $((length(y), length(x))), got $(size(u)) and $(size(v))"))
-    points = vec([Makie.Point2f(x[j], y[i]) for i in eachindex(y), j in eachindex(x)])
-    directions = vec([Makie.Vec2f(u[i, j], v[i, j]) for i in eachindex(y), j in eachindex(x)])
-    # NaN vectors (e.g. masked interrogation windows) are skipped, along with
-    # any matching per-vector attribute vectors (color, etc.).
-    keep = map(d -> !(isnan(d[1]) || isnan(d[2])), directions)
-    kw = Dict{Symbol,Any}(kwargs)
-    if !all(keep)
-        points = points[keep]
-        directions = directions[keep]
-        for (k, val) in kw
-            val isa AbstractVector && length(val) == length(keep) && (kw[k] = val[keep])
-        end
+    stride >= 1 || throw(ArgumentError("stride must be at least 1, got $stride"))
+    ny, nx = length(y), length(x)
+    # Directions are pre-scaled here (backend-independent) rather than via a
+    # Makie length attribute.
+    scale = _resolve_lengthscale(lengthscale, u, v, nothing, stride, x, y)
+    points = Makie.Point2f[]
+    directions = Makie.Vec2f[]
+    keepidx = Int[]                              # column-major linear index into the full grid
+    for j in 1:stride:nx, i in 1:stride:ny
+        (isnan(u[i, j]) || isnan(v[i, j])) && continue
+        push!(points, Makie.Point2f(x[j], y[i]))
+        push!(directions, Makie.Vec2f(scale * u[i, j], scale * v[i, j]))
+        push!(keepidx, (j - 1) * ny + i)
     end
+    # Subsample any full-grid per-vector attribute vectors (color, etc.) to the
+    # strided, NaN-filtered subset.
+    kw = Dict{Symbol,Any}(kwargs)
+    for (k, val) in kw
+        val isa AbstractVector && length(val) == ny * nx && (kw[k] = val[keepidx])
+    end
+    isempty(points) && return ax
     Makie.arrows2d!(ax, points, directions; kw...)
     return ax
 end
 
 function Hammerhead.plot_vector_field!(ax::Makie.Axis, result::PIVResult;
-                                       highlight_outliers::Bool = true, kwargs...)
-    if highlight_outliers && any(result.outliers)
-        color = [o ? :red : :black for o in vec(result.outliers)]
-        return Hammerhead.plot_vector_field!(ax, result.x, result.y, result.u, result.v;
-                                             color, kwargs...)
+                                       stride::Int = 1, lengthscale = :auto,
+                                       show_replaced::Bool = true,
+                                       replaced_color = :orangered,
+                                       color = :black, kwargs...)
+    stride >= 1 || throw(ArgumentError("stride must be at least 1, got $stride"))
+    u, v = result.u, result.v
+    # Valid vectors (not masked, not flagged) set the auto length scale.
+    valid = .!(result.mask .| result.outliers)
+    scale = _resolve_lengthscale(lengthscale, u, v, valid, stride, result.x, result.y)
+    flagged = result.outliers .& .!result.mask
+    if any(flagged)
+        u2, v2 = copy(u), copy(v)
+        if !show_replaced
+            u2[flagged] .= convert(eltype(u2), NaN)
+            v2[flagged] .= convert(eltype(v2), NaN)
+        end
+        colors = [flagged[i] ? replaced_color : color for i in eachindex(u)]
+        return Hammerhead.plot_vector_field!(ax, result.x, result.y, u2, v2;
+                                             stride, lengthscale = scale,
+                                             color = colors, kwargs...)
     end
-    return Hammerhead.plot_vector_field!(ax, result.x, result.y, result.u, result.v; kwargs...)
+    return Hammerhead.plot_vector_field!(ax, result.x, result.y, u, v;
+                                         stride, lengthscale = scale, color, kwargs...)
 end
 
 function Hammerhead.plot_vector_field(result::PIVResult;

@@ -62,6 +62,20 @@ end
     @test multipass_parameters([32]; overlap_fraction = 0.75)[1].overlap == (24, 24)
     @test_throws ArgumentError multipass_parameters([32]; overlap_fraction = 1.0)
     @test_throws ArgumentError multipass_parameters(Int[])
+
+    # `final` overrides apply only to the last entry; shared kwargs still apply.
+    fp = multipass_parameters([64, 32, 16]; padding = true,
+                              final = (n_peaks = 2, keep_correlation_planes = true))
+    @test all(p.padding for p in fp)                          # shared kwarg on every pass
+    @test fp[1].n_peaks == 3 && fp[2].n_peaks == 3            # default, unaffected
+    @test fp[3].n_peaks == 2 && fp[3].keep_correlation_planes # override on last only
+    @test !fp[1].keep_correlation_planes && !fp[2].keep_correlation_planes
+    # Empty `final` is a no-op.
+    a = multipass_parameters([64, 32]; padding = true, final = (;))
+    b = multipass_parameters([64, 32]; padding = true)
+    @test [string(p) for p in a] == [string(p) for p in b]
+    # Applies even to a length-1 schedule.
+    @test multipass_parameters([32]; final = (n_peaks = 1,))[1].n_peaks == 1
 end
 
 @testset "Correlators: known displacement" begin
@@ -239,6 +253,45 @@ end
     @test sum(multi.outliers) <= 3     # no false-positive validation on smooth shear
 end
 
+@testset "keep_correlation_planes" begin
+    rng = MersenneTwister(3)
+    n = 96
+    imgA = zeros(n, n); imgB = zeros(n, n)
+    for _ in 1:400
+        p = (rand(rng) * n, rand(rng) * n)
+        add_particle!(imgA, p, 3.0)
+        add_particle!(imgB, (p[1] + 2.0, p[2] + 1.0), 3.0)
+    end
+    @test !PIVParameters().keep_correlation_planes                 # default off
+    @test PIVParameters(keep_correlation_planes = true).keep_correlation_planes
+
+    r0 = run_piv(imgA, imgB, PIVParameters(window_size = 32, overlap = 16))
+    @test r0.correlation_planes === nothing                        # opt-in
+
+    passes = multipass_parameters([32, 32]; final = (keep_correlation_planes = true,))
+    r = run_piv(imgA, imgB, passes)
+    @test r.correlation_planes isa Matrix{Union{Nothing,Matrix{Float64}}}
+    @test size(r.correlation_planes) == size(r.u)
+    @test all(p -> p isa Matrix{Float64} && size(p) == (32, 32), r.correlation_planes)
+
+    # Threaded and serial store identical planes.
+    rs = run_piv(imgA, imgB, passes; threaded = false)
+    rt = run_piv(imgA, imgB, passes; threaded = true)
+    @test rs.u == rt.u && rs.correlation_planes == rt.correlation_planes
+
+    # A masked window stores `nothing`, and JLD2 round-trips the planes.
+    mask = falses(n, n); mask[1:40, 1:40] .= true
+    rmask = run_piv(imgA, imgB, passes; mask)
+    @test any(isnothing, rmask.correlation_planes)
+    @test all(i -> !rmask.mask[i] || isnothing(rmask.correlation_planes[i]),
+              eachindex(rmask.mask))     # masked ⟹ nothing plane
+    tmp = tempname() * ".jld2"
+    save_results(tmp, r)
+    r2 = load_results(tmp)[1]
+    @test r2.correlation_planes == r.correlation_planes
+    Base.rm(tmp; force = true)
+end
+
 @testset "Vector replacement and smoothing" begin
     u = [Float64(j) for i in 1:6, j in 1:6]  # u = column index
     v = -copy(u)
@@ -409,6 +462,25 @@ end
     end
     @test err isa ErrorException && occursin("Makie", err.msg)
     @test_throws ErrorException plot_vector_field!(nothing)
+end
+
+@testset "arrow_lengthscale (plot auto scaling)" begin
+    # 0.99-quantile magnitude maps to the target length.
+    u = fill(1.0, 4, 4); v = zeros(4, 4)       # 15 vectors of magnitude 1
+    u[1, 1] = 10.0                              # one large (magnitude 10)
+    q_all = quantile([hypot(u[i], v[i]) for i in eachindex(u)], 0.99)
+    @test Hammerhead.arrow_lengthscale(u, v, nothing, 10.0) ≈ 10.0 / q_all
+    # `valid` excluding the large vector ⟹ smaller quantile ⟹ larger scale.
+    valid = trues(4, 4); valid[1, 1] = false
+    @test Hammerhead.arrow_lengthscale(u, v, valid, 10.0) >
+          Hammerhead.arrow_lengthscale(u, v, nothing, 10.0)
+    # Zero field ⟹ no scaling; all-NaN ⟹ no scaling (NaNs are ignored).
+    @test Hammerhead.arrow_lengthscale(zeros(3, 3), zeros(3, 3), nothing, 5.0) === nothing
+    @test Hammerhead.arrow_lengthscale(fill(NaN, 2, 2), fill(NaN, 2, 2), nothing, 5.0) === nothing
+    # Empty `valid` selection falls back to all-finite vectors.
+    @test Hammerhead.arrow_lengthscale(u, v, falses(4, 4), 10.0) ≈ 10.0 / q_all
+    @test Hammerhead.grid_axis_step([2.0, 5.0, 8.0]) ≈ 3.0
+    @test Hammerhead.grid_axis_step([1.0]) == 1.0
 end
 
 include("test_synthetic.jl")

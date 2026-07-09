@@ -55,6 +55,13 @@ Immutable, validated configuration for a PIV analysis.
 - `replace_outliers = true`: replace flagged vectors with the local median of
   valid neighbors. Intermediate passes of a multi-pass run always replace,
   regardless of this setting, to keep the predictor field well behaved.
+- `keep_correlation_planes = false`: retain each window's full correlation
+  plane in the result's `correlation_planes` field for inspection. **Opt-in
+  and memory-heavy** — a 32² window on a 100×100 grid in `Float64` is
+  ~800 MB — so intended for small regions or coarse grids. As
+  [`run_piv`](@ref) returns the final pass, set it on the final pass only
+  (pair it with the `final` keyword of [`multipass_parameters`](@ref)). See
+  [`PIVResult`](@ref).
 
 Multi-pass interrogation is configured with a vector of `PIVParameters` (one
 per pass) — see [`run_piv`](@ref) and [`multipass_parameters`](@ref).
@@ -74,6 +81,7 @@ struct PIVParameters
     min_peak_ratio::Float64
     validation::Tuple
     replace_outliers::Bool
+    keep_correlation_planes::Bool
 
     function PIVParameters(;
         window_size::Union{Int,Tuple{Int,Int}} = (32, 32),
@@ -90,6 +98,7 @@ struct PIVParameters
         min_peak_ratio::Real = 1.0,
         validation::Tuple = (),
         replace_outliers::Bool = true,
+        keep_correlation_planes::Bool = false,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
         ov = overlap isa Int ? (overlap, overlap) : overlap
@@ -113,7 +122,8 @@ struct PIVParameters
             throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
             n_peaks, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
-            Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers)
+            Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers,
+            keep_correlation_planes)
     end
 end
 
@@ -125,7 +135,8 @@ function Base.show(io::IO, p::PIVParameters)
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ", min_peak_ratio=$(p.min_peak_ratio)",
         isempty(p.validation) ? "" : ", validation=$(p.validation)",
-        ", replace_outliers=$(p.replace_outliers))")
+        ", replace_outliers=$(p.replace_outliers)",
+        p.keep_correlation_planes ? ", keep_correlation_planes=true" : "", ")")
 end
 
 """
@@ -165,6 +176,11 @@ single precision.
   hold `NaN` in `u`/`v`/`peak_ratio`/`correlation_moment` and are never
   counted as outliers. All-false when no mask was supplied.
 - `parameters`: the `PIVParameters` of the (final) pass.
+- `correlation_planes`: `nothing` unless the pass's
+  `keep_correlation_planes` was set, in which case a
+  `Matrix{Union{Nothing,Matrix{T}}}` indexed like the vector grid, holding a
+  copy of each window's full correlation plane (`nothing` for masked/dropped
+  windows). Opt-in and memory-heavy — see [`PIVParameters`](@ref).
 """
 struct PIVResult{T<:AbstractFloat}
     x::Vector{T}
@@ -178,7 +194,23 @@ struct PIVResult{T<:AbstractFloat}
     outliers::BitMatrix
     mask::BitMatrix
     parameters::PIVParameters
+    correlation_planes::Union{Nothing,Matrix{Union{Nothing,Matrix{T}}}}
 end
+
+# Backward-compatible constructors: no correlation planes stored. Keep the
+# many 11-argument call sites (tests, benchmarks, ensemble/stereo/ptv) valid,
+# in both the inferred (`PIVResult(...)`) and explicit (`PIVResult{T}(...)`) forms.
+PIVResult(x::AbstractVector, y::AbstractVector, u::AbstractMatrix, v::AbstractMatrix,
+          peak_ratio::AbstractMatrix, correlation_moment::AbstractMatrix,
+          uncertainty_u::AbstractMatrix, uncertainty_v::AbstractMatrix,
+          outliers, mask, parameters::PIVParameters) =
+    PIVResult(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+              uncertainty_v, outliers, mask, parameters, nothing)
+
+PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+             uncertainty_v, outliers, mask, parameters) where {T} =
+    PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+                 uncertainty_v, outliers, mask, parameters, nothing)
 
 function Base.show(io::IO, r::PIVResult{T}) where {T}
     ny, nx = size(r.u)

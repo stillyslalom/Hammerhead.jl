@@ -22,7 +22,6 @@
 
 using Hammerhead
 using Statistics: median
-using LinearAlgebra: norm
 
 dir = joinpath(pkgdir(Hammerhead), "test", "reference_images", "E")
 plate(cam, k) = load_image(joinpath(dir, "E_camera_$(cam)_z_$(k).png"))
@@ -90,28 +89,16 @@ cam3 = calibrate_camera(grids3, zs)
 #
 # Both cameras must be dewarped onto one world-plane grid. On real data
 # the grid's extent is not a design parameter you know in advance — it is
-# whatever region both cameras actually see. Map each camera's image
-# border to the z = 0 world plane and intersect the bounding boxes:
+# whatever region both cameras actually see. [`common_dewarp_grid`](@ref)
+# constructs it: it projects each camera's image border to the z = 0 world
+# plane, intersects the footprints (camera 3's smaller footprint sets the
+# limits here), and — with `spacing = :auto` — matches the coarsest camera's
+# resolution so dewarping discards no information. Its `y` range comes out
+# **descending**, so the dewarped image displays upright (world +Y up); PIV
+# downstream is orientation-agnostic because `dv * step(y)` carries the sign
+# (see [Stereo geometry and self-calibration](../explanation/stereo.md)).
 
-border = [(px, py) for px in (1, 512, 1024), py in (1, 512, 1024)
-          if px in (1, 1024) || py in (1, 1024)]      # corners + edge midpoints
-function world_bounds(cam)
-    ws = filter(w -> all(isfinite, w),                # Newton can fail far outside
-                [pixel_to_world(cam, p, 0.0) for p in border])
-    (extrema(getindex.(ws, 1)), extrema(getindex.(ws, 2)))
-end
-(x1, y1), (x3, y3) = world_bounds(cam1), world_bounds(cam3)
-xlims = (max(x1[1], x3[1]), min(x1[2], x3[2]))
-ylims = (max(y1[1], y3[1]), min(y1[2], y3[2]))
-(xlims = xlims, ylims = ylims)
-
-# Camera 3's smaller footprint sets the limits. For the resolution,
-# match the finer camera so dewarping doesn't discard information:
-
-px_per_mm = norm(world_to_pixel(cam1, (1.0, 0.0, 0.0)) -
-                 world_to_pixel(cam1, (0.0, 0.0, 0.0)))
-st = 1 / px_per_mm
-grid = DewarpGrid(x = xlims[1]:st:xlims[2], y = ylims[1]:st:ylims[2])
+grid = common_dewarp_grid((cam1, cam3), (1024, 1024), 0.0)
 dw1 = ImageDewarper(cam1, grid, (1024, 1024))
 dw3 = ImageDewarper(cam3, grid, (1024, 1024))
 grid
@@ -170,7 +157,7 @@ report
 # to a sheet sitting about 0.7 mm behind the plate's z = 0, tilted a
 # quarter of a degree. One correction removes it; the later passes find
 # essentially no further plane (offsets of a few micrometers) while the
-# disparity RMS stalls near 0.46 px. That residual is not misalignment —
+# disparity RMS stalls near 0.5 px. That residual is not misalignment —
 # it is decorrelation noise: the light sheet has thickness, the two
 # cameras weight particles across it differently, and no rigid transform
 # can remove that. Two diagnostics separate "noise floor" from "still
@@ -187,7 +174,7 @@ maps = report.disparity_maps
       median_dv = round(median(m.v[ok]); digits = 2))
  end for m in maps]
 
-# A 2.7 px systematic v-disparity became a few hundredths of a pixel —
+# A 2.8 px systematic v-disparity became a few hundredths of a pixel —
 # two orders of magnitude below the residual RMS. The correction is done.
 #
 # 2. **The triangulation RMS** (~0.1 px here): how well the disparity

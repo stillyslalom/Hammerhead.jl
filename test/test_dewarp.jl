@@ -183,3 +183,47 @@ end
     @test_throws DimensionMismatch dewarp(dw, img[1:256, :])
     @test_throws DimensionMismatch dewarp!(zeros(3, 3), dw, img)
 end
+
+@testset "common_dewarp_grid" begin
+    cam1 = make_test_camera(yaw_deg = -20.0)
+    cam2 = make_test_camera(yaw_deg = 20.0)
+    imsize = (512, 512)
+
+    gi = common_dewarp_grid((cam1, cam2), imsize, 0.0)                 # intersection default
+    @test gi isa DewarpGrid
+    @test step(gi.y) < 0                                              # descending y (display upright)
+    @test step(gi.x) > 0
+
+    # The intersection's center is inside each camera's footprint at z = 0, and
+    # both cameras see most of the grid (real overlap, not an empty box).
+    Xc = (first(gi.x) + last(gi.x)) / 2
+    Yc = (first(gi.y) + last(gi.y)) / 2
+    for cam in (cam1, cam2)
+        p = world_to_pixel(cam, (Xc, Yc, 0.0))
+        @test 1 <= p[1] <= imsize[2] && 1 <= p[2] <= imsize[1]
+        dw = ImageDewarper(cam, gi, imsize)
+        @test count(dw.mask) / length(dw.mask) < 0.1                 # mostly in view
+    end
+
+    # Union covers at least the intersection.
+    gu = common_dewarp_grid((cam1, cam2), imsize, 0.0; coverage = :union)
+    @test first(gu.x) <= first(gi.x) && last(gu.x) >= last(gi.x)
+    @test min(first(gu.y), last(gu.y)) <= min(first(gi.y), last(gi.y))
+    @test max(first(gu.y), last(gu.y)) >= max(first(gi.y), last(gi.y))
+
+    # Spacing override is respected; :auto uses the coarsest camera's resolution.
+    gs = common_dewarp_grid((cam1, cam2), imsize, 0.0; spacing = 0.4)
+    @test abs(step(gs.x)) ≈ 0.4 atol = 0.01
+    @test abs(step(gi.x)) > 0                                        # :auto produced a finite spacing
+
+    # Per-camera image sizes accepted as a vector.
+    @test common_dewarp_grid((cam1, cam2), [imsize, imsize], 0.0) isa DewarpGrid
+
+    # Positive margin shrinks; a huge margin empties the region.
+    gm = common_dewarp_grid((cam1, cam2), imsize, 0.0; margin = 2.0)
+    @test first(gm.x) > first(gi.x) && last(gm.x) < last(gi.x)
+    @test_throws ArgumentError common_dewarp_grid((cam1, cam2), imsize, 0.0; margin = 1e6)
+
+    @test_throws ArgumentError common_dewarp_grid((cam1,), imsize, 0.0; coverage = :both)
+    @test_throws ArgumentError common_dewarp_grid((), imsize, 0.0)
+end
