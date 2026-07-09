@@ -127,6 +127,9 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     correlation_moment = zeros(T, ny, nx)
     uncertainty_u = fill(T(NaN), ny, nx)
     uncertainty_v = fill(T(NaN), ny, nx)
+    # Opt-in full-plane storage: the summed ensemble plane per window.
+    planes = params.keep_correlation_planes ?
+             fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
     n_alt = params.n_peaks - 1
     alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
@@ -135,6 +138,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     locs = Vector{NTuple{2,Int}}(undef, k)
     for (j, (gi, gj, _, _)) in enumerate(grid.jobs)
         R = accum[j]
+        planes === nothing || (planes[gi, gj] = copy(R))
         res = analyze_plane!(vals, locs, R, params)
         if alt_u !== nothing
             # Total alternative displacement = shared predictor + residual.
@@ -161,7 +165,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                        uncertainty_u, uncertainty_v,
-                       falses(ny, nx), grid.grid_mask, params)
+                       falses(ny, nx), grid.grid_mask, params, planes)
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end

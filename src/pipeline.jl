@@ -13,8 +13,10 @@ Each pass tiles the images into interrogation windows (`window_size`,
 `overlap`), correlates each window pair (`correlation_method`, optionally
 zero-padded and apodized), refines the peak to subpixel precision
 (`subpixel_method`), and validates the resulting field (universal outlier
-detection, peak-ratio threshold, and any additional `validation` pipeline)
-with local-median replacement of invalid vectors.
+detection, peak-ratio threshold, and any additional `validation` pipeline —
+see the [validation how-to](../howto/validation.md) for the full list of
+validators and their pair-spec syntax) with local-median replacement of
+invalid vectors.
 
 From the second pass on, the previous pass's validated field is used as a
 predictor: it is smoothed (`predictor_smoothing`), interpolated to pixel
@@ -97,12 +99,26 @@ run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     run_piv(imgA, imgB, [params]; kwargs...)
 
 """
-    multipass_parameters(window_sizes; overlap_fraction = 0.5, kwargs...) -> Vector{PIVParameters}
+    multipass_parameters(window_sizes; overlap_fraction = 0.5, final = (;), kwargs...) -> Vector{PIVParameters}
 
 Build a multi-pass schedule with one `PIVParameters` per entry of
 `window_sizes` (integers or `(rows, cols)` tuples), each with `overlap =
 floor(window_size * overlap_fraction)`. All remaining keyword arguments are
 forwarded to every pass.
+
+`final` is a `NamedTuple` of keyword overrides applied to the **last** entry
+only (its fields override the shared `kwargs` for that pass); it applies even
+to a length-1 schedule. Use it for settings you want only on the final pass —
+e.g. saving correlation planes for inspection, or turning off outlier
+replacement:
+
+```julia
+passes = multipass_parameters([64, 32, 16]; padding = true,
+                              final = (n_peaks = 3, keep_correlation_planes = true))
+```
+
+A schedule is just a `Vector{PIVParameters}`, so arbitrary per-pass control is
+always available by constructing the entries directly.
 
 ```julia
 passes = multipass_parameters([64, 32, 16]; padding = true, apodization = :gauss)
@@ -110,16 +126,20 @@ result = run_piv(imgA, imgB, passes)
 ```
 """
 function multipass_parameters(window_sizes::AbstractVector;
-                              overlap_fraction::Real = 0.5, kwargs...)
+                              overlap_fraction::Real = 0.5,
+                              final::NamedTuple = (;), kwargs...)
     0 <= overlap_fraction < 1 ||
         throw(ArgumentError("overlap_fraction must be in [0, 1), got $overlap_fraction"))
     isempty(window_sizes) && throw(ArgumentError("window_sizes must not be empty"))
+    shared = values(kwargs)
+    n = length(window_sizes)
     return [begin
                 ws = w isa Integer ? (Int(w), Int(w)) : (Int(w[1]), Int(w[2]))
+                extra = i == n ? merge(shared, final) : shared
                 PIVParameters(; window_size = ws,
-                              overlap = floor.(Int, ws .* overlap_fraction), kwargs...)
+                              overlap = floor.(Int, ws .* overlap_fraction), extra...)
             end
-            for w in window_sizes]
+            for (i, w) in enumerate(window_sizes)]
 end
 
 # Interrogation grid of one pass: T-typed window-center coordinates, the
@@ -224,13 +244,18 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     unc = params.uncertainty && !force_replace
     uncertainty_u = fill(T(NaN), ny, nx)
     uncertainty_v = fill(T(NaN), ny, nx)
+    # Opt-in full-plane storage: one cell per window (masked/skipped windows,
+    # which are absent from grid.jobs, stay `nothing`). Each job writes only
+    # its own cell, so the threaded path needs no locking.
+    planes = params.keep_correlation_planes ?
+             fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
 
     nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
     if nchunks == 1
         process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
                          alt_u, alt_v, unc ? uncertainty_u : nothing,
                          unc ? uncertainty_v : nothing, grid.jobs, warpA, warpB,
-                         params, mask)
+                         params, mask, planes)
     elseif nchunks > 1
         chunk_size = cld(length(grid.jobs), nchunks)
         @sync for chunk in Iterators.partition(grid.jobs, chunk_size)
@@ -238,7 +263,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                                             correlation_moment, alt_u, alt_v,
                                             unc ? uncertainty_u : nothing,
                                             unc ? uncertainty_v : nothing,
-                                            chunk, warpA, warpB, params, mask)
+                                            chunk, warpA, warpB, params, mask, planes)
         end
     end
     if alt_u !== nothing
@@ -257,7 +282,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
 
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                        uncertainty_u, uncertainty_v,
-                       falses(ny, nx), grid.grid_mask, params)
+                       falses(ny, nx), grid.grid_mask, params, planes)
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
@@ -300,7 +325,8 @@ make_correlator(params::PIVParameters, ::Type{T}) where {T} =
 function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                          planes = nothing)
     wr, wc = params.window_size
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     correlator = make_correlator(params, T)
@@ -317,6 +343,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
         R = correlation_plane!(correlator, subA, subB, submask)
+        # R is an aliased internal buffer, overwritten by the next window —
+        # copy before retaining it.
+        planes === nothing || (planes[gi, gj] = copy(R))
         res = analyze_plane!(vals, locs, R, params)
         u[gi, gj] = res.du
         v[gi, gj] = res.dv

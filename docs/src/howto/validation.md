@@ -47,10 +47,22 @@ params = PIVParameters(
 )
 ```
 
-See [`validate_vectors!`](@ref) and the validator types
-([`UniversalOutlierValidator`](@ref), [`PeakRatioValidator`](@ref),
-[`CorrelationMomentValidator`](@ref),
-[`VelocityMagnitudeValidator`](@ref)) for the accepted forms.
+## The validators, in one place
+
+Every validator can be given either as a validator object or as a
+`Symbol => value` **pair spec** in the `validation` tuple. The full set:
+
+| Validator | Flags a vector when… | Pair spec | Default / recommended |
+|---|---|---|---|
+| [`UniversalOutlierValidator`](@ref) | its normalized median residual vs. its neighbors exceeds `threshold` (the default UOD; runs even without a spec) | `:uod => (threshold = 2.0, neighborhood_size = 2, epsilon = 0.1)` (alias `:universal_outlier`; only `threshold` is required) | `threshold = 2.0`, `neighborhood_size = 2` (5×5), `epsilon = 0.1` px |
+| [`PeakRatioValidator`](@ref) | its correlation peak ratio is below `threshold` (`NaN` too) | `:peak_ratio => threshold` | off (`1.0`); `1.3` to enable |
+| [`CorrelationMomentValidator`](@ref) | its correlation peak is broader than `threshold` (`NaN` too) | `:correlation_moment => threshold` | data-dependent; e.g. `4.0` |
+| [`VelocityMagnitudeValidator`](@ref) | its displacement magnitude is outside `[min, max]` px (`NaN` too) | `:velocity_magnitude => (min = 0, max = 50)` (`min` defaults to `0`) | set `max` to your physical limit |
+
+The UOD and peak-ratio checks have dedicated `PIVParameters` keywords
+(`uod_threshold`/`uod_neighborhood`, `min_peak_ratio`); the rest go in the
+`validation` tuple. See [`validate_vectors!`](@ref) for how a pipeline is
+applied.
 
 - **For time-resolved sequences**, add [`validate_temporal!`](@ref) after
   processing: a vector consistent with its spatial neighbors can still be

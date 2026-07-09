@@ -67,6 +67,56 @@ function image_pairs(files::AbstractVector; mode::Symbol = :paired)
     end
 end
 
+"""
+    frame_index_strings(pathA, pathB) -> (strA, strB)
+
+Extract the differing frame-index substrings from a pair of frame paths:
+strip each path's directory and extension, then return the portions of the
+two stems that differ, with any shared leading/trailing **digits** of that
+field kept intact (so a zero-padded index is not truncated). Handy for
+naming per-pair output files — see the `output` keyword of
+[`run_piv_sequence`](@ref).
+
+```jldoctest
+julia> frame_index_strings("path/to/img_0001.tif", "path/to/img_0002.tif")
+("0001", "0002")
+
+julia> frame_index_strings("a/f_099.png", "a/f_100.png")
+("099", "100")
+```
+
+Throws an `ArgumentError` if the two stems are identical (no differing field).
+"""
+function frame_index_strings(pathA::AbstractString, pathB::AbstractString)
+    a = collect(splitext(basename(String(pathA)))[1])
+    b = collect(splitext(basename(String(pathB)))[1])
+    la, lb = length(a), length(b)
+    p = 0                                        # longest common prefix
+    while p < min(la, lb) && a[p + 1] == b[p + 1]
+        p += 1
+    end
+    s = 0                                        # longest common suffix (past the prefix)
+    while s < min(la, lb) - p && a[la - s] == b[lb - s]
+        s += 1
+    end
+    # Don't split a numeric field: pull shared digits adjacent to the differing
+    # region out of the common prefix/suffix and back into the returned middles.
+    while p >= 1 && isdigit(a[p]) &&
+          ((p < la - s && isdigit(a[p + 1])) || (p < lb - s && isdigit(b[p + 1])))
+        p -= 1
+    end
+    while s >= 1 && isdigit(a[la - s + 1]) &&
+          ((la - s > p && isdigit(a[la - s])) || (lb - s > p && isdigit(b[lb - s])))
+        s -= 1
+    end
+    midA = String(a[(p + 1):(la - s)])
+    midB = String(b[(p + 1):(lb - s)])
+    (isempty(midA) || isempty(midB)) &&
+        throw(ArgumentError("no differing frame index between \"$pathA\" and \"$pathB\" " *
+                            "(identical stems)"))
+    return (midA, midB)
+end
+
 # Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult;
 # version 3 allows StereoPIVResult entries alongside PIVResult;
 # version 4 allows PTVResult entries.
@@ -131,10 +181,15 @@ forwarded to [`run_piv`](@ref).
   paths are fresh buffers, so mutating preprocessors are safe; in-memory
   matrix pairs are passed through as-is — use the allocating versions there
   to leave the caller's arrays untouched.
-- `output`: path of a JLD2 file (overwritten) to which results are written
-  incrementally as they complete, so a crashed batch keeps its finished pairs.
-  For file-path pairs the source paths are stored alongside. Read back with
-  [`load_results`](@ref).
+- `output`: either a path of a single JLD2 file (overwritten) to which all
+  results are written incrementally as they complete — so a crashed batch
+  keeps its finished pairs — or a function `(i, pair) -> outpath` mapping the
+  1-based pair index and the original pair tuple to a per-pair output path
+  (each written as its own single-result JLD2 file as that pair completes;
+  parent directories are created). For file-path pairs the source paths are
+  stored alongside in either mode. Read any of these back with
+  [`load_results`](@ref); see [`frame_index_strings`](@ref) for building
+  per-pair names from the frame paths.
 - `progress`: show a progress meter (`true`/`false`), or a function
   `(i, n) -> nothing` called after each completed pair (for driving an
   external progress display). Throwing from the callback aborts the batch;
@@ -146,7 +201,7 @@ forwarded to [`run_piv`](@ref).
 function run_piv_sequence(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
                           preprocess = nothing,
-                          output::Union{Nothing,AbstractString} = nothing,
+                          output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
@@ -170,7 +225,7 @@ file-path pairs), readable with [`load_results`](@ref).
 """
 function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVParameters();
                           preprocess = nothing,
-                          output::Union{Nothing,AbstractString} = nothing,
+                          output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
@@ -181,16 +236,18 @@ end
 # Shared sequence driver: iterate `pairs`, load/preprocess each frame, run
 # `process(imgA, imgB)` (a PIV or PTV closure), persist incrementally, and
 # log-and-rethrow per pair. `R` is the result element type; `label` names the
-# analysis in progress/error messages.
+# analysis in progress/error messages. `output` is either a single JLD2 path
+# (all results in one file) or a function `(i, pair) -> outpath` (one
+# single-result file per pair); both write incrementally as pairs complete.
 function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        preprocess = nothing,
-                       output::Union{Nothing,AbstractString} = nothing,
+                       output::Union{Nothing,AbstractString,Function} = nothing,
                        progress::Union{Bool,Function} = true,
                        image_type::Type{<:AbstractFloat} = Float64,
                        label::AbstractString = "PIV") where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     results = Vector{R}(undef, length(pairs))
-    file = output === nothing ? nothing : jldopen(output, "w")
+    file = output isa AbstractString ? jldopen(output, "w") : nothing
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
@@ -213,6 +270,8 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 if frameA isa AbstractString && frameB isa AbstractString
                     file[source_key(i)] = [String(frameA), String(frameB)]
                 end
+            elseif output isa Function
+                write_pair_file(String(output(i, pair)), results[i], frameA, frameB)
             end
             progress isa Function ? progress(i, length(pairs)) : next!(meter)
         end
@@ -220,6 +279,22 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
         file === nothing || close(file)
     end
     return results
+end
+
+# One-result-per-file writer for the function-`output` sequence mode: a
+# standalone results file (readable by `load_results`) recording the pair's
+# source paths when the pair entries are file paths.
+function write_pair_file(path::AbstractString, result, frameA, frameB)
+    dir = dirname(path)
+    isempty(dir) || mkpath(dir)
+    jldopen(path, "w") do f
+        f["format_version"] = RESULTS_FORMAT_VERSION
+        f[result_key(1)] = result
+        if frameA isa AbstractString && frameB isa AbstractString
+            f[source_key(1)] = [String(frameA), String(frameB)]
+        end
+    end
+    return path
 end
 
 frame_label(x::AbstractString) = x

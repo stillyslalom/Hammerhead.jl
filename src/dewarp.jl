@@ -62,6 +62,115 @@ Base.show(io::IO, g::DewarpGrid) =
           last(g.y), ", z = ", g.z, ")")
 
 """
+    common_dewarp_grid(cameras, image_size, z = 0.0;
+                       spacing = :auto, margin = 0.0,
+                       coverage = :intersection) -> DewarpGrid
+
+Construct a [`DewarpGrid`](@ref) covering the world-plane region that a set of
+cameras jointly image at out-of-plane position `z` — the grid-construction
+step of a stereo (or multi-camera) analysis, without hand-tuning extents.
+
+`cameras` is an iterable of [`CameraCalibration`](@ref)s; `image_size` is the
+pixel size `(rows, cols)` used for every camera, or a vector of per-camera
+sizes. Each camera's image border is projected to the `z` plane
+([`pixel_to_world`](@ref), ~50 samples per edge) and reduced to an
+axis-aligned world bounding box.
+
+- `coverage = :intersection` (default — the stereo case) keeps only the
+  region **all** cameras see; `:union` keeps everything **any** camera sees
+  (out-of-view nodes are still flagged per camera in [`ImageDewarper`](@ref)'s
+  `mask`). An empty intersection throws.
+- `margin` (world units) shrinks the region on all sides when positive, grows
+  it when negative.
+- `spacing = :auto` estimates each camera's median world-units-per-pixel over
+  its footprint and uses the **coarsest** camera's value, so no camera is
+  resampled below its native resolution; pass a `Real` to set it directly.
+
+The `y` range is built **descending** so the dewarped image displays upright
+(world +Y up); PIV downstream is orientation-agnostic (`dv * step(y)` carries
+the sign — see [`DewarpGrid`](@ref)).
+"""
+function common_dewarp_grid(cameras, image_size, z::Real = 0.0;
+                            spacing::Union{Symbol,Real} = :auto,
+                            margin::Real = 0.0,
+                            coverage::Symbol = :intersection)
+    cams = collect(cameras)
+    isempty(cams) && throw(ArgumentError("at least one camera is required"))
+    coverage in (:intersection, :union) ||
+        throw(ArgumentError("coverage must be :intersection or :union, got :$coverage"))
+    sizes = image_size isa Tuple{Integer,Integer} ?
+            [(Int(image_size[1]), Int(image_size[2])) for _ in cams] :
+            [(Int(s[1]), Int(s[2])) for s in image_size]
+    length(sizes) == length(cams) ||
+        throw(ArgumentError("image_size must be one (rows, cols) or one per camera, " *
+                            "got $(length(sizes)) for $(length(cams)) cameras"))
+
+    boxes = [_camera_world_bbox(cam, sz, Float64(z)) for (cam, sz) in zip(cams, sizes)]
+    if coverage === :intersection
+        xlo = maximum(b[1][1] for b in boxes); xhi = minimum(b[1][2] for b in boxes)
+        ylo = maximum(b[2][1] for b in boxes); yhi = minimum(b[2][2] for b in boxes)
+    else
+        xlo = minimum(b[1][1] for b in boxes); xhi = maximum(b[1][2] for b in boxes)
+        ylo = minimum(b[2][1] for b in boxes); yhi = maximum(b[2][2] for b in boxes)
+    end
+    xlo += margin; xhi -= margin; ylo += margin; yhi -= margin
+    (xlo < xhi && ylo < yhi) ||
+        throw(ArgumentError("empty dewarp region (coverage = :$coverage, margin = $margin): " *
+                            "x = [$xlo, $xhi], y = [$ylo, $yhi]"))
+
+    st = spacing === :auto ? _auto_dewarp_spacing(cams, sizes, Float64(z)) :
+         spacing isa Real ? Float64(spacing) :
+         throw(ArgumentError("spacing must be :auto or a positive real, got :$spacing"))
+    st > 0 || throw(ArgumentError("spacing must be positive, got $st"))
+
+    nx = max(2, round(Int, (xhi - xlo) / st) + 1)
+    ny = max(2, round(Int, (yhi - ylo) / st) + 1)
+    # Descending y → world +Y up in the displayed dewarped image.
+    return DewarpGrid(x = range(xlo, xhi; length = nx),
+                      y = range(yhi, ylo; length = ny), z = z)
+end
+
+# Axis-aligned world bounding box of one camera's image border at plane z.
+function _camera_world_bbox(cam::CameraCalibration, image_size::Tuple{Int,Int}, z::Float64)
+    nr, nc = image_size
+    npts = 50
+    xs = Float64[]; ys = Float64[]
+    project!(pxl) = begin
+        w = pixel_to_world(cam, pxl, z)
+        (isfinite(w[1]) && isfinite(w[2])) && (push!(xs, w[1]); push!(ys, w[2]))
+    end
+    for c in range(1.0, Float64(nc); length = npts)
+        project!((c, 1.0)); project!((c, Float64(nr)))
+    end
+    for r in range(1.0, Float64(nr); length = npts)
+        project!((1.0, r)); project!((Float64(nc), r))
+    end
+    isempty(xs) &&
+        throw(ArgumentError("camera footprint at z = $z is empty (no finite border projections)"))
+    return (extrema(xs), extrema(ys))
+end
+
+# Median world-units-per-pixel over the coarsest camera's footprint (central
+# differences of the back-projection at a coarse interior sample grid).
+function _auto_dewarp_spacing(cams, sizes, z::Float64)
+    scales = Float64[]
+    for (cam, (nr, nc)) in zip(cams, sizes)
+        per_cam = Float64[]
+        for c in range(2.0, Float64(nc - 1); length = 5), r in range(2.0, Float64(nr - 1); length = 5)
+            dc = pixel_to_world(cam, (c + 1.0, r), z) .- pixel_to_world(cam, (c - 1.0, r), z)
+            dr = pixel_to_world(cam, (c, r + 1.0), z) .- pixel_to_world(cam, (c, r - 1.0), z)
+            sx = hypot(dc[1], dc[2]) / 2
+            sy = hypot(dr[1], dr[2]) / 2
+            (isfinite(sx) && isfinite(sy)) && (push!(per_cam, sx); push!(per_cam, sy))
+        end
+        isempty(per_cam) || push!(scales, median(per_cam))
+    end
+    isempty(scales) &&
+        throw(ArgumentError("could not estimate an automatic spacing (no finite footprint samples)"))
+    return maximum(scales)
+end
+
+"""
     ImageDewarper(cam::CameraCalibration, grid::DewarpGrid, image_size)
 
 Precomputed dewarping map for one camera: for every node of `grid` the source
