@@ -1,8 +1,102 @@
 """
+    PIVWorkspace
+
+Reusable scratch for [`run_piv`](@ref): the padded cubic-B-spline coefficient
+buffers of the two image interpolants, the two image-deformation output
+buffers, and a pool of window correlators (cached FFTW plans) keyed by window
+configuration. Build one with [`piv_workspace`](@ref) and pass it as the
+`workspace` keyword to reuse this scratch across many `run_piv` calls on
+**equally sized** image pairs — [`run_piv_sequence`](@ref) and
+[`run_piv_ensemble`](@ref) do this internally so a whole batch pays the
+allocations once. The buffers resize automatically if a later call presents a
+different image size or precision.
+
+A workspace is stateful scratch: it must **not** be shared across `run_piv`
+calls running concurrently. The drivers hold one workspace on their serial
+pair loop, so `run_piv`'s own internal threading (which only reads the
+interpolant coefficients and writes disjoint buffer regions) stays race-free.
+"""
+mutable struct PIVWorkspace
+    imgsize::Union{Nothing,Dims{2}}
+    T::Union{Nothing,DataType}
+    itpA_coefs::Any                          # padded coefficient buffer, image A
+    itpB_coefs::Any                          # padded coefficient buffer, image B
+    warpA::Any                               # deformation output buffer, image A
+    warpB::Any                               # deformation output buffer, image B
+    correlators::Dict{Any,Vector{Correlator}}
+end
+
+"""
+    piv_workspace() -> PIVWorkspace
+
+Construct an empty [`PIVWorkspace`](@ref). Its buffers allocate lazily on the
+first [`run_piv`](@ref) call and are reused (and resized on demand) thereafter
+— pass one via the `workspace` keyword when running many equally sized pairs
+yourself, to amortize the per-pair interpolant/deformation/correlator
+allocations across the batch.
+"""
+piv_workspace() = PIVWorkspace(nothing, nothing, nothing, nothing, nothing, nothing,
+                               Dict{Any,Vector{Correlator}}())
+
+# Point the workspace at this call's image size/precision, discarding buffers
+# from a differently shaped prior run. Deformation output buffers are ensured
+# here; interpolant coefficient buffers fill in on first use (image_interpolant!)
+# and the correlator pool grows on demand (piv_correlators).
+function ws_prepare!(ws::PIVWorkspace, imgsize::Dims{2}, ::Type{T}) where {T}
+    if ws.imgsize != imgsize || ws.T !== T
+        ws.imgsize = imgsize
+        ws.T = T
+        ws.itpA_coefs = nothing
+        ws.itpB_coefs = nothing
+        ws.warpA = nothing
+        ws.warpB = nothing
+        empty!(ws.correlators)
+    end
+    return ws
+end
+
+# Cubic B-spline interpolant reusing a preallocated padded coefficient buffer.
+# `coefs === nothing` allocates one (via `interpolate`, whose `copy_with_padding`
+# yields the correctly offset-axed array) and returns it for the caller to
+# stash; otherwise the buffer is refilled exactly as `copy_with_padding` would
+# (zero, then copy the image into the interior) and prefiltered in place with
+# `interpolate!`. The in-place prefilter runs the identical tridiagonal system
+# on the identical padded array, so the coefficients — and every value the
+# resulting interpolant produces — are bitwise identical to `image_interpolant`.
+function image_interpolant!(coefs, img::AbstractMatrix, ::Type{T}) where {T}
+    it = BSpline(Cubic(Line(OnGrid())))
+    if coefs === nothing
+        itp = interpolate(eltype(img) === T ? img : T.(img), it)
+        return extrapolate(itp, zero(T)), itp.coefs
+    end
+    fill!(coefs, zero(T))
+    ci = CartesianIndices(axes(img))
+    copyto!(coefs, ci, img, ci)
+    return extrapolate(interpolate!(coefs, it), zero(T)), coefs
+end
+
+# One correlator per chunk for this pass. With a workspace, correlators are
+# drawn from (and lazily added to) a pool keyed by window configuration, so
+# their FFTW plans are built once per configuration for the whole batch; the
+# pool is grown only serially here, before any fan-out, and each chunk uses a
+# distinct entry, so concurrent tasks never share a correlator. Without a
+# workspace, fresh correlators are made per pass (the prior behavior).
+function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::Int) where {T}
+    workspace === nothing && return Correlator[make_correlator(params, T) for _ in 1:nchunks]
+    key = (T, params.correlation_method, params.window_size, params.padding, params.apodization)
+    pool = get!(() -> Correlator[], workspace.correlators, key)
+    while length(pool) < nchunks
+        push!(pool, make_correlator(params, T))
+    end
+    return pool
+end
+
+"""
     run_piv(imgA, imgB, passes::AbstractVector{PIVParameters};
             threaded = Threads.nthreads() > 1,
             predictor_smoothing = true,
-            mask = nothing, mask_threshold = 0.5) -> PIVResult
+            mask = nothing, mask_threshold = 0.5,
+            workspace = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
 
 Run a (multi-pass) PIV analysis on an in-memory image pair. `imgA` and `imgB`
@@ -44,6 +138,13 @@ Windows below the threshold are correlated over their valid pixels only.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
+`workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
+[`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch
+is reused across calls — pass the same one to every `run_piv` in a hand-written
+loop over equally sized pairs to amortize those allocations. Results are
+bitwise identical to `workspace = nothing`. [`run_piv_sequence`](@ref) and
+[`run_piv_ensemble`](@ref) manage a workspace for you.
+
 The numeric precision of the analysis follows the images:
 `T = float(promote_type(eltype(imgA), eltype(imgB)))` is used for the
 correlators, deformation, and every field of the returned
@@ -57,7 +158,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  threaded::Bool = Threads.nthreads() > 1,
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                 mask_threshold::Real = 0.5)
+                 mask_threshold::Real = 0.5,
+                 workspace::Union{Nothing,PIVWorkspace} = nothing)
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
@@ -66,15 +168,41 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     0 < mask_threshold <= 1 ||
         throw(ArgumentError("mask_threshold must be in (0, 1], got $mask_threshold"))
 
+    # The cubic B-spline image interpolants used for predictor deformation
+    # depend only on the (unchanging) source images, so their expensive
+    # prefilter is paid once here and reused by every deforming pass. A
+    # single-pass schedule never deforms, so it skips the prefilter entirely.
+    T = float(promote_type(eltype(imgA), eltype(imgB)))
+    multipass = length(passes) > 1
+    workspace === nothing || ws_prepare!(workspace, size(imgA), T)
+    if !multipass
+        itpA = itpB = nothing
+        warp_buffers = nothing
+    elseif workspace === nothing
+        itpA = image_interpolant(imgA, T)
+        itpB = image_interpolant(imgB, T)
+        # The deformed image pair is the same size every pass, and each pass
+        # fully overwrites it before use, so allocate the buffers once here.
+        warp_buffers = (Matrix{T}(undef, size(imgA)), Matrix{T}(undef, size(imgB)))
+    else
+        # Reuse the workspace's padded coefficient buffers across pairs (each is
+        # refilled and prefiltered in place), stashing any freshly allocated one.
+        itpA, workspace.itpA_coefs = image_interpolant!(workspace.itpA_coefs, imgA, T)
+        itpB, workspace.itpB_coefs = image_interpolant!(workspace.itpB_coefs, imgB, T)
+        workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, size(imgA)))
+        workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, size(imgB)))
+        warp_buffers = (workspace.warpA, workspace.warpB)
+    end
+
     result = nothing
     for (k, params) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
         # Intermediate passes always replace invalid vectors: the predictor
         # field must stay well behaved for the deformation to converge.
-        result = piv_pass(imgA, imgB, params, predictor;
+        result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
                           threaded, force_replace = k < length(passes),
-                          mask, mask_threshold)
+                          mask, mask_threshold, warp_buffers, workspace)
     end
     return result
 end
@@ -170,16 +298,22 @@ function pass_grid(::Type{T}, imgsize::Dims{2}, params::PIVParameters,
 end
 
 # Deform the image pair symmetrically by the predictor and evaluate the
-# predictor displacement on the pass grid.
-function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, predictor,
-                         x::AbstractVector, y::AbstractVector, ::Type{T}) where {T}
+# predictor displacement on the pass grid. `itpA`/`itpB` are the prebuilt cubic
+# B-spline image interpolants (unused, hence permitted `nothing`, when there is
+# no predictor to deform by).
+function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
+                         predictor, x::AbstractVector, y::AbstractVector, ::Type{T};
+                         threaded::Bool = false,
+                         warpA::Union{Nothing,Matrix{T}} = nothing,
+                         warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
     ny, nx = length(y), length(x)
     predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
     itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
                                     Gridded(Linear())), Flat())
     itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
                                     Gridded(Linear())), Flat())
-    warpA, warpB = deform_images(imgA, imgB, itp_u, itp_v)
+    warpA, warpB = deform_images(itpA, itpB, itp_u, itp_v, size(imgA), T;
+                                 threaded, warpA, warpB)
     u = T[itp_u(yi, xj) for yi in y, xj in x]
     v = T[itp_v(yi, xj) for yi in y, xj in x]
     return warpA, warpB, u, v
@@ -222,14 +356,23 @@ end
 # One interrogation pass: deform by the predictor, correlate the residual on
 # the pass grid, add the predictor back, then validate and (maybe) replace.
 function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                  predictor; threaded::Bool, force_replace::Bool,
+                  predictor, itpA = nothing, itpB = nothing; threaded::Bool,
+                  force_replace::Bool,
                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                  mask_threshold::Real = 0.5)
+                  mask_threshold::Real = 0.5,
+                  warp_buffers = nothing,
+                  workspace::Union{Nothing,PIVWorkspace} = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
     ny, nx = length(grid.y), length(grid.x)
-    warpA, warpB, u, v = apply_predictor(imgA, imgB, predictor, grid.x, grid.y, T)
+    # Reuse the deformation output buffers across passes when supplied (each
+    # pass overwrites them fully before use); allocate fresh otherwise.
+    bufA = warp_buffers === nothing ? nothing : warp_buffers[1]
+    bufB = warp_buffers === nothing ? nothing : warp_buffers[2]
+    warpA, warpB, u, v = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+                                         grid.x, grid.y, T; threaded,
+                                         warpA = bufA, warpB = bufB)
 
     residual_u = zeros(T, ny, nx)
     residual_v = zeros(T, ny, nx)
@@ -251,19 +394,23 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
              fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
 
     nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
+    # One correlator per chunk (pooled and reused across pairs when a workspace
+    # is supplied); each chunk uses a distinct entry, so the fan-out is safe.
+    correlators = piv_correlators(workspace, params, T, nchunks)
     if nchunks == 1
         process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
                          alt_u, alt_v, unc ? uncertainty_u : nothing,
                          unc ? uncertainty_v : nothing, grid.jobs, warpA, warpB,
-                         params, mask, planes)
+                         params, correlators[1], mask, planes)
     elseif nchunks > 1
         chunk_size = cld(length(grid.jobs), nchunks)
-        @sync for chunk in Iterators.partition(grid.jobs, chunk_size)
+        @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
             Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
                                             correlation_moment, alt_u, alt_v,
                                             unc ? uncertainty_u : nothing,
                                             unc ? uncertainty_v : nothing,
-                                            chunk, warpA, warpB, params, mask, planes)
+                                            chunk, warpA, warpB, params,
+                                            correlators[ci], mask, planes)
         end
     end
     if alt_u !== nothing
@@ -288,29 +435,67 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
 end
 
 """
-    deform_images(imgA, imgB, itp_u, itp_v) -> (warpedA, warpedB)
+    image_interpolant(img, ::Type{T}) -> extrapolation
 
-Symmetric (central-difference) image deformation: each image is resampled with
-cubic B-spline interpolation, `imgA` shifted by −d/2 and `imgB` by +d/2, where
-`d = (itp_u, itp_v)` is the displacement field evaluated at each pixel. After
-deformation, content displaced by exactly `d` is aligned in both outputs, so
-correlating them measures the residual displacement. Out-of-image samples are
-zero-filled.
+Build the cubic B-spline resampler (`T`-typed, zero-extrapolated) that
+[`deform_images`](@ref) samples. The prefilter is the expensive part, and it
+depends only on the source image, so multipass [`run_piv`](@ref) builds this
+once per image and reuses it across every deforming pass.
 """
-function deform_images(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
-                       itp_u, itp_v)
-    T = float(promote_type(eltype(imgA), eltype(imgB)))
-    itpA = extrapolate(interpolate(T.(imgA), BSpline(Cubic(Line(OnGrid())))), zero(T))
-    itpB = extrapolate(interpolate(T.(imgB), BSpline(Cubic(Line(OnGrid())))), zero(T))
-    warpA = Matrix{T}(undef, size(imgA))
-    warpB = Matrix{T}(undef, size(imgB))
-    @inbounds for c in axes(imgA, 2), r in axes(imgA, 1)
+# `interpolate` copies its input into the (padded) coefficient array during
+# prefiltering, so it never mutates the source — pass `img` straight through
+# when it is already `T`, skipping a full-image copy per pass.
+image_interpolant(img::AbstractMatrix, ::Type{T}) where {T} =
+    extrapolate(interpolate(eltype(img) === T ? img : T.(img),
+                            BSpline(Cubic(Line(OnGrid())))), zero(T))
+"""
+    deform_images(itpA, itpB, itp_u, itp_v, imgsize, ::Type{T}; threaded = false) -> (warpedA, warpedB)
+
+Symmetric (central-difference) image deformation: each `imgsize` output is
+resampled from its prebuilt cubic B-spline image interpolant
+([`image_interpolant`](@ref)) — `itpA` shifted by −d/2 and `itpB` by +d/2,
+where `d = (itp_u, itp_v)` is the displacement field evaluated at each pixel.
+After deformation, content displaced by exactly `d` is aligned in both
+outputs, so correlating them measures the residual displacement. Out-of-image
+samples are zero-filled (a property of the passed interpolants).
+
+Interpolant evaluation is a pure read, so with `threaded = true` the output
+columns are filled concurrently.
+
+`warpA`/`warpB` optionally supply the output buffers (each `imgsize`,
+element type `T`); when `nothing` they are freshly allocated. Multipass
+[`run_piv`](@ref) allocates them once and reuses them across every deforming
+pass, since each pass fully overwrites them before use.
+"""
+function deform_images(itpA, itpB, itp_u, itp_v, imgsize::Dims{2}, ::Type{T};
+                       threaded::Bool = false,
+                       warpA::Union{Nothing,Matrix{T}} = nothing,
+                       warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
+    nr, nc = imgsize
+    warpA = warpA === nothing ? Matrix{T}(undef, nr, nc) : warpA
+    warpB = warpB === nothing ? Matrix{T}(undef, nr, nc) : warpB
+    if threaded && Threads.nthreads() > 1 && nc > 1
+        nchunks = min(Threads.nthreads(), nc)
+        chunk_size = cld(nc, nchunks)
+        @sync for cols in Iterators.partition(1:nc, chunk_size)
+            Threads.@spawn deform_columns!(warpA, warpB, itpA, itpB, itp_u, itp_v, cols, nr)
+        end
+    else
+        deform_columns!(warpA, warpB, itpA, itpB, itp_u, itp_v, 1:nc, nr)
+    end
+    return warpA, warpB
+end
+
+# Fill a column range of the deformed pair. Each column is written by exactly
+# one task, so the threaded fan-out over disjoint column ranges is race-free.
+function deform_columns!(warpA, warpB, itpA, itpB, itp_u, itp_v, cols, nr)
+    @inbounds for c in cols, r in 1:nr
         du2 = itp_u(r, c) / 2
         dv2 = itp_v(r, c) / 2
         warpA[r, c] = itpA(r - dv2, c - du2)
         warpB[r, c] = itpB(r + dv2, c + du2)
     end
-    return warpA, warpB
+    return nothing
 end
 
 make_correlator(params::PIVParameters, ::Type{T}) where {T} =
@@ -318,18 +503,19 @@ make_correlator(params::PIVParameters, ::Type{T}) where {T} =
         CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
         PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
 
-# Each call gets its own correlator and peak scratch, so chunks can run on
-# concurrent tasks. Every (gi, gj) is written by exactly one job and the
-# per-window math doesn't depend on chunking, so threaded results match
-# serial results exactly.
+# The caller supplies this chunk's correlator (one per chunk), plus per-call
+# peak scratch, so chunks can run on concurrent tasks. Every (gi, gj) is written
+# by exactly one job and the per-window math doesn't depend on chunking or on
+# which correlator instance runs it, so threaded results match serial results
+# exactly.
 function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
+                          correlator::Correlator,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing)
     wr, wc = params.window_size
     T = float(promote_type(eltype(imgA), eltype(imgB)))
-    correlator = make_correlator(params, T)
     k = max(params.n_peaks, 2)
     vals = Vector{T}(undef, k)
     locs = Vector{NTuple{2,Int}}(undef, k)

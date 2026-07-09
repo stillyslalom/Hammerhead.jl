@@ -144,6 +144,43 @@ using Statistics
                                                     progress = false)
     end
 
+    @testset "PIVWorkspace reuse" begin
+        rng = MersenneTwister(31)
+        positions = [(rand(rng) * 148 - 10, rand(rng) * 148 - 10) for _ in 1:250]
+        imgA, imgB = particle_pair((128, 128), positions, 2.0, 3.0)
+        # A multipass schedule with deformation exercises the interpolant and
+        # deformation-buffer reuse (a single pass would only touch correlators).
+        passes = multipass_parameters([64, 32]; padding = true, apodization = :gauss)
+
+        ref = run_piv(imgA, imgB, passes)
+        ws = piv_workspace()
+        w1 = run_piv(imgA, imgB, passes; workspace = ws)
+        w2 = run_piv(imgA, imgB, passes; workspace = ws)   # reuse the same buffers
+        # Bitwise identity is the contract, not just approximate agreement.
+        @test w1.u == ref.u && w1.v == ref.v
+        @test w1.peak_ratio == ref.peak_ratio
+        @test w2.u == ref.u && w2.v == ref.v               # reuse changes nothing
+
+        # In-place prefilter reproduces `image_interpolant`'s coefficients exactly.
+        itp_ref = Hammerhead.image_interpolant(imgA, Float64)
+        itp_ws, coefs = Hammerhead.image_interpolant!(nothing, imgA, Float64)
+        itp_ws2, _ = Hammerhead.image_interpolant!(coefs, imgA, Float64)  # in-place path
+        @test itp_ref.itp.coefs == itp_ws.itp.coefs
+        @test itp_ref.itp.coefs == itp_ws2.itp.coefs
+
+        # A single-pass workspace call uses only the correlator pool.
+        sp = PIVParameters(window_size = 32, overlap = 16)
+        @test run_piv(imgA, imgB, sp; workspace = piv_workspace()).u == run_piv(imgA, imgB, sp).u
+
+        # The workspace resizes when a later call presents a different image size.
+        imgC, imgD = particle_pair((96, 96), positions, 2.0, 3.0)
+        @test run_piv(imgC, imgD, passes; workspace = ws).u == run_piv(imgC, imgD, passes).u
+
+        # The sequence driver's internal workspace yields the direct result.
+        seq = run_piv_sequence([(imgA, imgB), (imgA, imgB)], passes; progress = false)
+        @test seq[1].u == ref.u && seq[2].u == seq[1].u
+    end
+
     @testset "frame_index_strings" begin
         @test frame_index_strings("path/to/img_0001.tif", "path/to/img_0002.tif") ==
               ("0001", "0002")
