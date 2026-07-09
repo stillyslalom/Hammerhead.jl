@@ -442,12 +442,14 @@ Build the cubic B-spline resampler (`T`-typed, zero-extrapolated) that
 depends only on the source image, so multipass [`run_piv`](@ref) builds this
 once per image and reuses it across every deforming pass.
 """
-# `interpolate` copies its input into the (padded) coefficient array during
-# prefiltering, so it never mutates the source — pass `img` straight through
-# when it is already `T`, skipping a full-image copy per pass.
-image_interpolant(img::AbstractMatrix, ::Type{T}) where {T} =
+function image_interpolant(img::AbstractMatrix, ::Type{T}) where {T}
+    # `interpolate` copies its input into the (padded) coefficient array during
+    # prefiltering, so it never mutates the source — pass `img` straight through
+    # when it is already `T`, skipping a full-image copy per pass.
     extrapolate(interpolate(eltype(img) === T ? img : T.(img),
                             BSpline(Cubic(Line(OnGrid())))), zero(T))
+end
+
 """
     deform_images(itpA, itpB, itp_u, itp_v, imgsize, ::Type{T}; threaded = false) -> (warpedA, warpedB)
 
