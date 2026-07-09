@@ -13,7 +13,7 @@ using ImageFiltering: imfilter, KernelFactors
 using JLD2: jldopen
 using ProgressMeter: Progress, next!
 
-export PIVParameters, PIVResult, run_piv, multipass_parameters
+export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export polygon_mask, load_mask
 export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum

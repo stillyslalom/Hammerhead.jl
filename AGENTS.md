@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
 organized around the International PIV Challenge cases; see ROADMAP.md for

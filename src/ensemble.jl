@@ -50,13 +50,18 @@ function run_piv_ensemble(pairs::AbstractVector,
 
     meter = Progress(length(passes) * length(pairs);
                      desc = "Ensemble PIV: ", enabled = progress)
+    # Reuse the image-interpolant and deformation buffers across every pair and
+    # pass (the pairs share one image size). The ensemble path already reuses
+    # its correlators per pass, so only the interpolant/warp scratch is routed
+    # through the workspace here.
+    workspace = piv_workspace()
     result = nothing
     for (k, p) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
         result = ensemble_pass(pairs, p, predictor; threaded, mask, mask_threshold,
                                preprocess, image_type,
-                               force_replace = k < length(passes), meter)
+                               force_replace = k < length(passes), meter, workspace)
     end
     return result
 end
@@ -65,7 +70,7 @@ end
 # window's correlation planes across pairs, then peak-find and validate once.
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
-                       image_type, force_replace::Bool, meter)
+                       image_type, force_replace::Bool, meter, workspace = nothing)
     local T, grid, accum, chunks, correlators, u, v, imgsize, uacc, uscratch
     first_pair = true
     for pair in pairs
@@ -100,12 +105,33 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             uacc = unc ? new_uncertainty_stats(length(grid.jobs)) : nothing
             uscratch = unc ? [uncertainty_scratch(T, params.window_size) for _ in chunks] :
                        nothing
+            workspace === nothing || ws_prepare!(workspace, imgsize, T)
             first_pair = false
         else
             size(imgA) == imgsize ||
                 throw(DimensionMismatch("all pairs must share the image size $imgsize, got $(size(imgA))"))
         end
-        warpA, warpB, pu, pv = apply_predictor(imgA, imgB, predictor, grid.x, grid.y, T)
+        # Images differ per pair, so the deformation interpolants are rebuilt
+        # each pair — but only when there is a predictor to deform by. With a
+        # workspace, the padded coefficient and deformation buffers are reused
+        # across pairs (refilled in place); results are unchanged.
+        if predictor === nothing
+            itpA = itpB = nothing
+            warpbufs = (nothing, nothing)
+        elseif workspace === nothing
+            itpA = image_interpolant(imgA, T)
+            itpB = image_interpolant(imgB, T)
+            warpbufs = (nothing, nothing)
+        else
+            itpA, workspace.itpA_coefs = image_interpolant!(workspace.itpA_coefs, imgA, T)
+            itpB, workspace.itpB_coefs = image_interpolant!(workspace.itpB_coefs, imgB, T)
+            workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, imgsize))
+            workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, imgsize))
+            warpbufs = (workspace.warpA, workspace.warpB)
+        end
+        warpA, warpB, pu, pv = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+                                               grid.x, grid.y, T; threaded,
+                                               warpA = warpbufs[1], warpB = warpbufs[2])
         u, v = pu, pv  # identical for every pair (shared predictor)
         if length(chunks) == 1
             accumulate_planes!(accum, chunks[1], correlators[1], warpA, warpB,

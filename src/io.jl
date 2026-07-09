@@ -197,6 +197,13 @@ forwarded to [`run_piv`](@ref).
 - `image_type`: element type frames are loaded as (default `Float64`);
   `Float32` runs the pipeline in single precision. In-memory matrix pairs are
   used as-is, so convert those yourself.
+
+The interpolant, deformation, and correlator scratch is reused across pairs via
+a single [`PIVWorkspace`](@ref) (the pairs share an image size), so a batch pays
+those allocations once; results are bitwise identical to calling [`run_piv`](@ref)
+per pair. Because pairs are processed serially — while the *next* pair's frames
+are prefetched on a background task that never touches the workspace — this stays
+race-free.
 """
 function run_piv_sequence(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
@@ -205,7 +212,9 @@ function run_piv_sequence(pairs::AbstractVector,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
-    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; kwargs...), PIVResult, pairs;
+    workspace = piv_workspace()
+    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; workspace, kwargs...),
+                  PIVResult, pairs;
                   preprocess, output, progress, image_type, label = "PIV")
 end
 
@@ -239,6 +248,13 @@ end
 # analysis in progress/error messages. `output` is either a single JLD2 path
 # (all results in one file) or a function `(i, pair) -> outpath` (one
 # single-result file per pair); both write incrementally as pairs complete.
+#
+# The next pair's load+preprocess runs on a background task (`load_pair`) while
+# the current pair's `process` runs, so slow-source IO (network/disk) overlaps
+# compute. Results stay bitwise identical to a serial run: same `process` calls
+# in the same order on the same images. The overlap only materializes with ≥2
+# threads — `process` is CPU-bound with no yield points, so under `-t 1` the
+# prefetch task cannot run until `process` returns.
 function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        preprocess = nothing,
                        output::Union{Nothing,AbstractString,Function} = nothing,
@@ -248,18 +264,20 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     results = Vector{R}(undef, length(pairs))
     file = output isa AbstractString ? jldopen(output, "w") : nothing
+    load_pair(pair) = Threads.@spawn begin
+        imgA = load_frame(pair[1], image_type)
+        imgB = load_frame(pair[2], image_type)
+        preprocess === nothing ? (imgA, imgB) : (preprocess(imgA), preprocess(imgB))
+    end
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
+        pending = load_pair(pairs[1])
         for (i, pair) in enumerate(pairs)
             frameA, frameB = pair
             try
-                imgA = load_frame(frameA, image_type)
-                imgB = load_frame(frameB, image_type)
-                if preprocess !== nothing
-                    imgA = preprocess(imgA)
-                    imgB = preprocess(imgB)
-                end
+                imgA, imgB = fetch_frames(pending)
+                i < length(pairs) && (pending = load_pair(pairs[i + 1]))
                 results[i] = process(imgA, imgB)
             catch
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
@@ -295,6 +313,17 @@ function write_pair_file(path::AbstractString, result, frameA, frameB)
         end
     end
     return path
+end
+
+# Await a prefetch task, unwrapping a failed load so the original exception
+# (e.g. the `ArgumentError` from a missing file) propagates rather than the
+# `TaskFailedException` wrapper `fetch` would otherwise raise.
+function fetch_frames(task)
+    try
+        return fetch(task)
+    catch err
+        err isa TaskFailedException ? rethrow(err.task.exception) : rethrow()
+    end
 end
 
 frame_label(x::AbstractString) = x

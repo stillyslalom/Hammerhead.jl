@@ -3,5 +3,6 @@
 /cases/
 /docs/Manifest*.toml
 /docs/build/
+/bench/profile-output/
 *.log
 /docs/src/tutorials/

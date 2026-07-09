@@ -260,14 +260,18 @@ function universal_outlier_detection(u::AbstractMatrix{T}, v::AbstractMatrix{T},
         end
         n == 0 && continue
 
-        u_med = median(view(nbr_u, 1:n))
-        v_med = median(view(nbr_v, 1:n))
+        # Scratch buffers are ours; sort in place (median!) to avoid the copy
+        # `median` makes. Sorting nbr_u/nbr_v reorders them, but the residuals
+        # below are computed over all n entries — an order-independent multiset
+        # — so the result is unchanged.
+        u_med = median!(view(nbr_u, 1:n))
+        v_med = median!(view(nbr_v, 1:n))
         for i in 1:n
             res_u[i] = abs(nbr_u[i] - u_med)
             res_v[i] = abs(nbr_v[i] - v_med)
         end
-        u_norm = abs(u[r, c] - u_med) / (median(view(res_u, 1:n)) + epsilon)
-        v_norm = abs(v[r, c] - v_med) / (median(view(res_v, 1:n)) + epsilon)
+        u_norm = abs(u[r, c] - u_med) / (median!(view(res_u, 1:n)) + epsilon)
+        v_norm = abs(v[r, c] - v_med) / (median!(view(res_v, 1:n)) + epsilon)
         if u_norm > threshold || v_norm > threshold
             is_outlier[r, c] = true
         end
