@@ -66,8 +66,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## Architecture (src/, included in this order)
 
-- `types.jl` — `PIVParameters` (immutable, validated in inner constructor),
-  `PIVResult{T}`
+- `types.jl` — `PIVParameters` (immutable, validated in inner constructor;
+  `keep_correlation_planes` opts into per-window plane storage),
+  `PIVResult{T}` (trailing `correlation_planes` field, `nothing` unless
+  opted in; backward-compatible 11-arg constructors keep old call sites valid)
 - `synthetic_data.jl` — synthetic particle images with ground truth
 - `preprocessing.jl` — background subtraction, intensity cap, highpass, CLAHE
 - `correlators.jl` — `CrossCorrelator{T}`/`PhaseCorrelator{T}` cache FFTW
@@ -85,12 +87,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `render_calibration_target` (synthetic ground-truth fixture)
 - `dewarp.jl` — `DewarpGrid` (world-plane pixel grid spec, shared per rig) +
   `ImageDewarper` (per-camera precomputed source-coordinate map), `dewarp[!]`
-  cubic B-spline resampling onto the common plane
+  cubic B-spline resampling onto the common plane, `common_dewarp_grid`
+  (auto grid from camera footprints: intersection/union, `:auto` spacing,
+  descending `y`)
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
-  image deformation), `process_windows!`
+  image deformation), `process_windows!`, `multipass_parameters` (`final =
+  (;)` overrides the last pass only)
 - `particles.jl` — `Particles` (struct-of-arrays) + `detect_particles`
   (local-maxima + 3-point log-Gaussian fits) and the shared uniform-cell
   neighbor list (`build_cell_list`/`within_radius!`/`knn`) used by dedupe,
@@ -106,7 +111,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
   (JLD2: `format_version` 4 + `results/000001`… + optional `sources/…`;
   entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`),
-  `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`)
+  `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
+  `output` accepts a single path or an `(i, pair) -> path` function for
+  per-pair files), `frame_index_strings` (differing frame-index substrings
+  from a path pair)
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor)
 - `selfcal.jl` — `self_calibrate` (Wieneke 2005 disparity self-calibration:
@@ -114,7 +122,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   rigid world transform of both cameras) + `SelfCalibrationReport`
 - `statistics.jl` — `field_statistics`, `validate_temporal!`,
   `power_spectrum`
-- `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie)
+- `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
+  methods take `stride`, auto `lengthscale = :auto`, and
+  `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
+  helper, testable without Makie)
 
 ## HammerheadGUI (HammerheadGUI/)
 
