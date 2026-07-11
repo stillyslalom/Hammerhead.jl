@@ -109,6 +109,10 @@ images, like [`PIVResult`](@ref).
 - `particles_a`, `particles_b`: all detections in each frame (unmatched ones are
   seeding dropout or new entries), kept for diagnostics.
 - `parameters`: the `PTVParameters` used.
+- `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
+  [`run_ptv`](@ref) or [`with_scale`](@ref); `nothing` when none was
+  attached. Metadata only — the arrays above stay in pixels until
+  [`physical`](@ref) converts them.
 """
 struct PTVResult{T<:AbstractFloat}
     x::Vector{T}
@@ -122,7 +126,21 @@ struct PTVResult{T<:AbstractFloat}
     particles_a::Particles{T}
     particles_b::Particles{T}
     parameters::PTVParameters
+    scale::Union{Nothing,PhysicalScale}
 end
+
+# Backward-compatible constructors: no physical scale stored (keeps the
+# positional 11-argument call sites valid, in both forms).
+PTVResult(x, y, u, v, match_residual, outliers, index_a, index_b,
+          particles_a::Particles{T}, particles_b::Particles{T},
+          parameters::PTVParameters) where {T} =
+    PTVResult{T}(x, y, u, v, match_residual, outliers, index_a, index_b,
+                 particles_a, particles_b, parameters, nothing)
+
+PTVResult{T}(x, y, u, v, match_residual, outliers, index_a, index_b,
+             particles_a, particles_b, parameters) where {T} =
+    PTVResult{T}(x, y, u, v, match_residual, outliers, index_a, index_b,
+                 particles_a, particles_b, parameters, nothing)
 
 function Base.show(io::IO, r::PTVResult{T}) where {T}
     print(io, "PTVResult{$T}($(length(r.x)) matches of ",
@@ -255,7 +273,7 @@ end
 """
     run_ptv(imgA, imgB, params = PTVParameters();
             predictor = :piv, piv_passes = multipass_parameters([64, 32]),
-            mask = nothing) -> PTVResult
+            mask = nothing, scale = nothing) -> PTVResult
 
 Two-frame particle tracking velocimetry on an image pair. Particles are
 detected in both frames ([`detect_particles`](@ref)), each frame-A particle is
@@ -276,15 +294,19 @@ The `predictor` supplies the displacement field that centers each match search:
 
 `mask` is an optional image-sized `Bool` matrix marking excluded pixels
 (`true` = excluded); it is applied to detection in both frames and forwarded to
-the internal PIV run. Position attribution is frame-A: `x`/`y` are frame-A
-positions and `u`/`v` the displacement to frame B (see [`PTVResult`](@ref)).
-Empty frames or no matches yield a valid empty result rather than throwing.
+the internal PIV run. `scale` attaches a [`PhysicalScale`](@ref) to the result
+as metadata (the fields stay in pixels until [`physical`](@ref) converts them;
+the internal PIV predictor always runs in pixels). Position attribution is
+frame-A: `x`/`y` are frame-A positions and `u`/`v` the displacement to frame B
+(see [`PTVResult`](@ref)). Empty frames or no matches yield a valid empty
+result rather than throwing.
 """
 function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  params::PTVParameters = PTVParameters();
                  predictor = :piv,
                  piv_passes = multipass_parameters([64, 32]),
-                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                 scale::Union{Nothing,PhysicalScale} = nothing)
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
     mask === nothing || size(mask) == size(imgA) ||
@@ -296,7 +318,8 @@ function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     # No detections in a frame means no matches: skip the (image-size-sensitive)
     # predictor entirely and return a valid empty result.
     if isempty(pa.x) || isempty(pb.x)
-        return PTVResult{T}(T[], T[], T[], T[], T[], falses(0), Int[], Int[], pa, pb, params)
+        return PTVResult{T}(T[], T[], T[], T[], T[], falses(0), Int[], Int[], pa, pb,
+                            params, scale)
     end
     pred = resolve_predictor(predictor, imgA, imgB, piv_passes, mask, T)
     px, py = predicted_positions(pa, pred)
@@ -311,7 +334,8 @@ function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     v = T[pb.y[index_b[k]] - pa.y[index_a[k]] for k in 1:n]
 
     outliers = params.uod_enable ? scattered_uod(x, y, u, v, params) : falses(n)
-    return PTVResult{T}(x, y, u, v, residual, outliers, index_a, index_b, pa, pb, params)
+    return PTVResult{T}(x, y, u, v, residual, outliers, index_a, index_b, pa, pb,
+                        params, scale)
 end
 
 # ---------------------------------------------------------------------------
@@ -334,15 +358,18 @@ flagged vectors are excluded unless `include_outliers`.
 
 This is a **binned PTV field**, not a correlation measurement: `peak_ratio`,
 `correlation_moment`, and the uncertainty fields are `NaN`, and no vector is
-flagged an outlier in the returned grid.
+flagged an outlier in the returned grid. An attached [`PhysicalScale`](@ref)
+is carried over onto the grid; bin **raw** (pixel) results — the binning
+works in the frame-A image plane.
 """
 function ptv_to_grid(result::PTVResult{T}, image_size::Tuple{Int,Int};
                      window_size = (32, 32), overlap = (16, 16),
                      min_count::Int = 3, include_outliers::Bool = false) where {T}
     keep = include_outliers ? eachindex(result.x) :
            [k for k in eachindex(result.x) if !result.outliers[k]]
-    return bin_to_grid(T, result.x[keep], result.y[keep], result.u[keep], result.v[keep],
+    grid = bin_to_grid(T, result.x[keep], result.y[keep], result.u[keep], result.v[keep],
                        image_size, PIVParameters(; window_size, overlap), min_count)
+    return result.scale === nothing ? grid : with_scale(grid, result.scale)
 end
 
 # Bin scattered vectors `(mx, my, mu, mv)` onto the interrogation grid of

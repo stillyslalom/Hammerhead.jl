@@ -166,7 +166,7 @@ end
             threaded = Threads.nthreads() > 1,
             predictor_smoothing = true,
             mask = nothing, mask_threshold = 0.5,
-            workspace = nothing) -> PIVResult
+            workspace = nothing, scale = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
     run_piv(imgA, imgB; effort = :low/:medium/:high, kwargs...)
 
@@ -247,6 +247,11 @@ loop over equally sized pairs to amortize those allocations. Results are
 bitwise identical to `workspace = nothing`. [`run_piv_sequence`](@ref) and
 [`run_piv_ensemble`](@ref) manage a workspace for you.
 
+`scale` optionally attaches a [`PhysicalScale`](@ref) (pixel size, frame
+interval, unit labels) to the result as metadata — the measured fields stay
+in pixels, identical to an unscaled run, until [`physical`](@ref) converts
+them.
+
 The numeric precision of the analysis follows the images:
 `T = float(promote_type(eltype(imgA), eltype(imgB)))` is used for the
 correlators, deformation, and every field of the returned
@@ -262,7 +267,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                  mask_threshold::Real = 0.5,
-                 workspace::Union{Nothing,PIVWorkspace} = nothing)
+                 workspace::Union{Nothing,PIVWorkspace} = nothing,
+                 scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
@@ -311,7 +317,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           predictor_smoothing, mask, mask_threshold,
                           warp_buffers, workspace)
     end
-    return result
+    return scale === nothing ? result : with_scale(result, scale)
 end
 
 # Predictor for the next pass: masked cells (NaN) are filled from valid

@@ -30,6 +30,11 @@ input images, like [`PIVResult`](@ref).
 - `cam1`, `cam2`: the per-camera 2C [`PIVResult`](@ref)s on the dewarped
   images (displacements in dewarped pixels), retained for diagnostics.
 - `parameters`: the `PIVParameters` of the (final) pass.
+- `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
+  [`run_piv_stereo`](@ref) or [`with_scale`](@ref); `nothing` when none was
+  attached. For stereo, set `dt` (and the unit labels) only and leave
+  `pixel_size = 1` — the arrays are already in world units. Metadata only
+  until [`physical`](@ref) converts them; `cam1`/`cam2` always stay raw.
 """
 struct StereoPIVResult{T<:AbstractFloat}
     x::Vector{T}
@@ -46,7 +51,22 @@ struct StereoPIVResult{T<:AbstractFloat}
     cam1::PIVResult{T}
     cam2::PIVResult{T}
     parameters::PIVParameters
+    scale::Union{Nothing,PhysicalScale}
 end
+
+# Backward-compatible constructors: no physical scale stored. Keep the
+# positional 14-argument call sites (reconstruct_stereo history, GUI test
+# fixture) valid, in both the inferred and explicit `{T}` forms.
+StereoPIVResult(x, y, z, u, v, w, uncertainty_u, uncertainty_v, uncertainty_w,
+                outliers, mask, cam1::PIVResult{T}, cam2::PIVResult{T},
+                parameters::PIVParameters) where {T} =
+    StereoPIVResult{T}(x, y, z, u, v, w, uncertainty_u, uncertainty_v, uncertainty_w,
+                       outliers, mask, cam1, cam2, parameters, nothing)
+
+StereoPIVResult{T}(x, y, z, u, v, w, uncertainty_u, uncertainty_v, uncertainty_w,
+                   outliers, mask, cam1, cam2, parameters) where {T} =
+    StereoPIVResult{T}(x, y, z, u, v, w, uncertainty_u, uncertainty_v, uncertainty_w,
+                       outliers, mask, cam1, cam2, parameters, nothing)
 
 function Base.show(io::IO, r::StereoPIVResult{T}) where {T}
     ny, nx = size(r.u)
@@ -98,8 +118,12 @@ errors).
 `mask` is an optional grid-sized `Bool` matrix of world-plane pixels to
 exclude (`true` = excluded); it is combined with the dewarpers' out-of-view
 masks (`dw1.mask .| dw2.mask`), so only the stereo overlap region is
-analyzed. Remaining keyword arguments (`threaded`, `predictor_smoothing`,
-`mask_threshold`) are forwarded to [`run_piv`](@ref).
+analyzed. `scale` attaches a [`PhysicalScale`](@ref) to the stereo result
+(not to the per-camera results): set `dt` and the unit labels only, leaving
+`pixel_size = 1` — the stereo fields are already in world units, so
+[`physical`](@ref) only needs to divide by the frame interval. Remaining
+keyword arguments (`threaded`, `predictor_smoothing`, `mask_threshold`) are
+forwarded to [`run_piv`](@ref).
 
 Both cameras are analyzed with the same parameters and mask, so their vector
 grids, masks, and (via the union) outlier maps are directly compatible; the
@@ -111,6 +135,7 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         params::Union{PIVParameters,AbstractVector{PIVParameters}};
                         effort::Union{Nothing,Symbol} = nothing,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                        scale::Union{Nothing,PhysicalScale} = nothing,
                         kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
@@ -135,7 +160,8 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     dewarp!(a, dw2, A2)
     dewarp!(b, dw2, B2)
     r2 = run_piv(a, b, params; mask = node_mask, kwargs...)
-    return reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, grid)
+    result = reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, grid)
+    return scale === nothing ? result : with_scale(result, scale)
 end
 
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},

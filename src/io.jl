@@ -125,12 +125,13 @@ function frame_index_strings(pathA::AbstractString, pathB::AbstractString)
     return (midA, midB)
 end
 
-# Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult;
-# version 3 allows StereoPIVResult entries alongside PIVResult;
-# version 4 allows PTVResult entries;
-# version 5 added the max_iterations/convergence_tol fields to the embedded
-# PIVParameters.
-const RESULTS_FORMAT_VERSION = 5
+# Version 1 is the first public format: results/000001… (PIVResult,
+# StereoPIVResult, or PTVResult entries, each carrying its optional
+# PhysicalScale) plus optional sources/…. The pre-registration development
+# formats (old versions 1–5, whose result structs lacked the scale field)
+# were retired without a load shim when the scale field landed — no files
+# existed outside the test suite.
+const RESULTS_FORMAT_VERSION = 1
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
@@ -186,8 +187,9 @@ matrices — see [`image_pairs`](@ref) for building it from a frame list.
 `params` is a single `PIVParameters` or a multi-pass schedule; alternatively,
 omit it and pass `effort = :low`, `:medium`, or `:high` to use the built-in
 effort schedules from [`run_piv`](@ref). Remaining `kwargs` (e.g. `mask` for a
-static analysis mask shared by all pairs, or PIV-parameter overrides when
-`effort` is set) are forwarded to [`run_piv`](@ref).
+static analysis mask shared by all pairs, `scale` for a shared
+[`PhysicalScale`](@ref), or PIV-parameter overrides when `effort` is set) are
+forwarded to [`run_piv`](@ref).
 
 - `preprocess`: function applied to each frame after loading, e.g.
   `img -> clahe!(subtract_background!(img, bg))`. Frames loaded from file
@@ -257,8 +259,8 @@ Run PTV over a sequence of image pairs, mirroring [`run_piv_sequence`](@ref):
 `pairs` entries are file paths (loaded with [`load_image`](@ref)) and/or
 real-valued matrices, `params` is a [`PTVParameters`](@ref), and the same
 `preprocess`, `output` (incremental JLD2), `progress`, and `image_type`
-options apply. Remaining `kwargs` (e.g. `predictor` or `mask`) are forwarded to
-[`run_ptv`](@ref). Results are [`PTVResult`](@ref)s; when `output` is a path
+options apply. Remaining `kwargs` (e.g. `predictor`, `mask`, or `scale`) are
+forwarded to [`run_ptv`](@ref). Results are [`PTVResult`](@ref)s; when `output` is a path
 they are persisted incrementally as they complete (with source paths for
 file-path pairs), readable with [`load_results`](@ref).
 """

@@ -59,17 +59,20 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
   style); cite as `[Wieneke2005](@cite)` / `[Wieneke2015](@citet)`. PDFs
   for content-checking live in `reference/`.
-- Docs-only deps (Literate, DocumenterCitations, CairoMakie) live in
-  `docs/Project.toml`; the core package must not gain doc/GUI deps.
+- Docs-only deps (Literate, DocumenterCitations, CairoMakie, Unitful for the
+  scaling how-to) live in `docs/Project.toml`; the core package must not
+  gain doc/GUI deps.
 - Explanation pages are the user-facing rewrite of the conventions below —
   when a convention changes, update both.
 
 ## Architecture (src/, included in this order)
 
-- `types.jl` — `PIVParameters` (immutable, validated in inner constructor;
-  `keep_correlation_planes` opts into per-window plane storage),
-  `PIVResult{T}` (trailing `correlation_planes` field, `nothing` unless
-  opted in; backward-compatible 11-arg constructors keep old call sites valid)
+- `types.jl` — `PhysicalScale` (pixel size + dt + display-only unit labels;
+  Float64 factors, validated), `PIVParameters` (immutable, validated in inner
+  constructor; `keep_correlation_planes` opts into per-window plane storage),
+  `PIVResult{T}` (trailing `correlation_planes` and `scale` fields, `nothing`
+  unless supplied; backward-compatible 11-/12-arg constructors keep old call
+  sites valid — every result type uses the same trailing-`scale` trick)
 - `synthetic_data.jl` — synthetic particle images with ground truth
 - `preprocessing.jl` — background subtraction, intensity cap, highpass, CLAHE
 - `correlators.jl` — `CrossCorrelator{T}`/`PhaseCorrelator{T}` cache FFTW
@@ -125,9 +128,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation)
+- `scaling.jl` — `with_scale` (attach/strip `PhysicalScale` metadata,
+  arrays shared) + `physical` (same-type conversion to physical units) +
+  `plot_axis_labels` (Makie-free label helper) for all four result types
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
-  (JLD2: `format_version` 5 + `results/000001`… + optional `sources/…`;
-  entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`),
+  (JLD2: `format_version` 1 + `results/000001`… + optional `sources/…`;
+  entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`; the
+  pre-registration dev formats were retired without a load shim when the
+  `scale` field landed),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
   `output` accepts a single path or an `(i, pair) -> path` function for
   per-pair files; the next pair's load+preprocess is prefetched on a
@@ -148,7 +156,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
-  helper, testable without Makie)
+  helper, testable without Makie; result methods route through `physical`
+  and label axes from `plot_axis_labels`, so scaled results plot in
+  physical units)
+- `ext/HammerheadUnitfulExt.jl` — weakdep Unitful; its entire surface is the
+  `PhysicalScale(pixel_size::Length, dt::Time)` constructor (ustrip + unit
+  labels; no core stub needed — it's a constructor method, not a
+  stub-shadowing function)
 
 ## HammerheadGUI (HammerheadGUI/)
 
@@ -240,6 +254,26 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   noise. Estimates describe the random error only; near-outlier windows
   legitimately report huge σ, so validation comparisons use medians over
   non-outlier vectors.
+- **Physical units:** result arrays always stay in measured units (px/frame
+  for planar and PTV, world-per-frame for stereo); a `PhysicalScale`
+  (Float64 pixel_size + dt, display-only unit label strings) attached via
+  the drivers' `scale` kwarg or `with_scale` is pure metadata. `physical(r)`
+  is the single conversion point: positions × pixel_size, displacements + σ
+  (and PTV `match_residual` × pixel_size) × pixel_size/dt, factors converted
+  to `T` once (Float32 stays Float32); px-native diagnostics (peak_ratio,
+  correlation_moment, correlation_planes, particles, stereo cam1/cam2) are
+  shared untouched — convert *last*, after validation/peak-locking. The
+  converted result carries an identity scale with the labels kept, so
+  `physical` is idempotent and the Makie ext (which routes through it) always
+  labels what it plots. Two deliberate wrinkles: `physical(::TrackingResult)`
+  keeps `dt` in the returned scale (velocities are derived by differencing —
+  `trajectory_velocities(t, scale)` applies it), and stereo scales use
+  `pixel_size = 1` + dt (a non-1 value is a world-length unit conversion).
+  Plumbing gotchas: `run_piv_ensemble` needs the explicit `scale` kwarg in
+  BOTH methods (they hard-reject unknown kwargs) and `run_piv_stereo` must
+  capture `scale` so it is NOT forwarded to the per-camera `run_piv` calls.
+  Unitful is a weakdep (`PhysicalScale(20.0u"µm", 0.5u"ms")` — values
+  stripped in their own units, unit names become the labels).
 - **Calibration (Phase 5):** a deliberate Float64 island — offline
   once-per-experiment fits, not the image hot path. World axes are anchored
   to image orientation (+X = lattice direction nearest image-right, +Y
@@ -276,8 +310,8 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   points come out NaN. `StereoPIVResult` keeps mask/outliers as unions
   (masked ≠ outlier preserved; flagged vectors were reconstructed from
   replaced 2C data) plus both per-camera `PIVResult`s. Reconstruction is a
-  Float64 island (O(vector grid), converted on store); no dt/velocity
-  scaling (still deferred).
+  Float64 island (O(vector grid), converted on store); velocities come from
+  attaching a dt-only `PhysicalScale` (see the physical-units bullet).
 - **Self-calibration (Phase 5, slice 4):** `self_calibrate(frames1, frames2,
   dw1, dw2)` fixes sheet↔plate misregistration. Disparity = ensemble
   cam1-vs-cam2 correlation of same-instant dewarped images (single pass,
@@ -311,7 +345,8 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   the in-house uniform cell list in `particles.jl`, not NearestNeighbors.jl
   (the no-new-deps rule). `run_ptv` short-circuits to an empty result when
   either frame has no detections (skips the image-size-sensitive predictor).
-  Pixels only, no dt/velocity scaling. `particles.jl` is included before
+  Measured in pixels; physical units via the `scale` metadata (see the
+  physical-units bullet). `particles.jl` is included before
   `ptv.jl`, so `detect_particles`'s `params` argument is unannotated
   (`PTVParameters` is defined later — a default-value expression is evaluated
   only at call time, unlike a type annotation).
@@ -332,13 +367,18 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   accuracy checks against curved flows must evaluate the reference at
   `x − d/2` (see the first tutorial) — comparing against the grid-point
   velocity leaves an O(|d|²·∇V/2) floor that looks like measurement error.
-- Adding a `PIVResult` field breaks the direct constructor calls in
-  `test_validation.jl`, `test_ensemble.jl`, `test_accuracy.jl`,
-  `test_stereo.jl`, and `bench/run_benchmarks.jl` — update them all.
-  Adding a `StereoPIVResult` field likewise breaks the fixture in
-  `HammerheadGUI/test/runtests.jl`. Adding a `PTVResult` field breaks the
-  direct constructor call in `test_ptv.jl` (the `ptv_to_grid` sparse-corner
-  fixture).
+- Adding a result-type field: prefer a trailing field plus back-compat
+  positional constructors (the `correlation_planes`/`scale` pattern — every
+  result type now has them in both inferred and `{T}` forms), which keeps
+  the direct constructor calls in `test_validation.jl`, `test_ensemble.jl`,
+  `test_accuracy.jl`, `test_stereo.jl`, `bench/run_benchmarks.jl`, and the
+  `StereoPIVResult` fixture in `HammerheadGUI/test/runtests.jl` valid
+  without edits. A non-trailing change breaks them all.
+- `test_scaling.jl` covers the physical-units feature (PhysicalScale
+  validation, with_scale/physical semantics per result type, driver
+  plumbing incl. the effort kwarg-split path, JLD2 round-trip, the Unitful
+  ext — Unitful is a test-target dep, which is what activates the ext under
+  `Pkg.test`).
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
@@ -377,10 +417,10 @@ before comparing renders in tests; `word_wrap` labels need an explicit
 
 ## Deferred backlog
 
-Physical units/scaling (dt/velocity — still absent from `StereoPIVResult`
-too), target detection for rolled cameras, multi-frame TIFF in `load_image`,
+Target detection for rolled cameras, multi-frame TIFF in `load_image`,
 dynamic (per-frame) masks, temporal spectra beyond the per-point
-`power_spectrum` utility, uncertainty propagation into derived quantities
+`power_spectrum` utility (a results-vector method could default `dt` from
+the attached scale), uncertainty propagation into derived quantities
 (Wieneke 2015 §3.2: needs spatial error autocorrelation), light-sheet
 thickness/overlap estimation from disparity correlation peak widths
 (Wieneke 2005 §5), multi-frame real-data doc demos (`compute_background` /
@@ -392,6 +432,7 @@ e.g. DataDeps.jl in `docs/Project.toml`, within the docs CI budget).
 PTV (Phase 8) deferrals: gap bridging / track re-acquisition (no bridging in
 v1 — an unmatched head just terminates), relaxation-method matching, match
 costs beyond distance (intensity/diameter similarity), per-particle position
-uncertainty, world-unit PTV results (needs the units/scaling item above),
-stereo PTV, GUI explorer support for `PTVResult`/`TrackingResult`, and the
+uncertainty,
+stereo PTV, GUI explorer support for `PTVResult`/`TrackingResult` (incl.
+unit-labeled axes from an attached scale), and the
 Duncan et al. distance-weighted scattered-UOD variant (v1 is the plain test).

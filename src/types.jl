@@ -1,4 +1,64 @@
 """
+    PhysicalScale(; pixel_size = 1.0, dt = 1.0, length_unit = "px", time_unit = "frame")
+    PhysicalScale(pixel_size::Unitful.Length, dt::Unitful.Time)
+
+Physical calibration attached to a result: `pixel_size` is the physical
+length of one pixel (in `length_unit`s per pixel; for stereo results, whose
+arrays are already in world units, it acts as an output-length-per-stored-
+world-unit factor — leave it at 1) and `dt` is the time between the two
+frames of a pair (in `time_unit`s per frame interval). The unit names are
+display-only labels (plot axes, `show`); the numbers carry the actual
+conversion, so results come out in whatever units go in — millimeters and
+seconds in, mm/s out.
+
+Attach a scale with the `scale` keyword of the drivers ([`run_piv`](@ref),
+[`run_piv_sequence`](@ref), [`run_piv_ensemble`](@ref),
+[`run_piv_stereo`](@ref), [`run_ptv`](@ref), [`run_ptv_sequence`](@ref),
+[`track_particles`](@ref)) or after the fact with [`with_scale`](@ref).
+Attaching never changes the stored arrays — they stay in measured units
+(pixels, or world units for stereo) until [`physical`](@ref) converts them.
+
+The Unitful-quantity constructor is provided by a package extension: load
+Unitful first (`using Unitful`), e.g. `PhysicalScale(20.0u"µm", 0.5u"ms")`.
+"""
+struct PhysicalScale
+    pixel_size::Float64
+    dt::Float64
+    length_unit::String
+    time_unit::String
+
+    function PhysicalScale(pixel_size::Real, dt::Real,
+                           length_unit::AbstractString, time_unit::AbstractString)
+        isfinite(pixel_size) && pixel_size > 0 ||
+            throw(ArgumentError("pixel_size must be positive and finite, got $pixel_size"))
+        isfinite(dt) && dt > 0 ||
+            throw(ArgumentError("dt must be positive and finite, got $dt"))
+        new(Float64(pixel_size), Float64(dt), String(length_unit), String(time_unit))
+    end
+end
+
+PhysicalScale(; pixel_size::Real = 1.0, dt::Real = 1.0,
+              length_unit::AbstractString = "px", time_unit::AbstractString = "frame") =
+    PhysicalScale(pixel_size, dt, length_unit, time_unit)
+
+# Display label for velocities under scale `s`, e.g. "mm/s" ("px/frame" for
+# the default construction).
+velocity_unit(s::PhysicalScale) = string(s.length_unit, "/", s.time_unit)
+
+# `true` when applying `s` multiplies every field by 1 — data that is already
+# physical (the scale `physical` leaves behind) or unscaled defaults.
+is_identity(s::PhysicalScale) = s.pixel_size == 1.0 && s.dt == 1.0
+
+function Base.show(io::IO, s::PhysicalScale)
+    if is_identity(s)
+        print(io, "PhysicalScale(identity, ", velocity_unit(s), ")")
+    else
+        print(io, "PhysicalScale(pixel_size = ", s.pixel_size, " ", s.length_unit,
+              "/px, dt = ", s.dt, " ", s.time_unit, "/frame)")
+    end
+end
+
+"""
     PIVParameters(; kwargs...)
 
 Immutable, validated configuration for a PIV analysis.
@@ -223,6 +283,10 @@ single precision.
   `Matrix{Union{Nothing,Matrix{T}}}` indexed like the vector grid, holding a
   copy of each window's full correlation plane (`nothing` for masked/dropped
   windows). Opt-in and memory-heavy — see [`PIVParameters`](@ref).
+- `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
+  [`run_piv`](@ref) or [`with_scale`](@ref); `nothing` when none was
+  attached. Metadata only — the arrays above stay in pixels until
+  [`physical`](@ref) converts them.
 """
 struct PIVResult{T<:AbstractFloat}
     x::Vector{T}
@@ -237,22 +301,36 @@ struct PIVResult{T<:AbstractFloat}
     mask::BitMatrix
     parameters::PIVParameters
     correlation_planes::Union{Nothing,Matrix{Union{Nothing,Matrix{T}}}}
+    scale::Union{Nothing,PhysicalScale}
 end
 
-# Backward-compatible constructors: no correlation planes stored. Keep the
-# many 11-argument call sites (tests, benchmarks, ensemble/stereo/ptv) valid,
-# in both the inferred (`PIVResult(...)`) and explicit (`PIVResult{T}(...)`) forms.
+# Backward-compatible constructors: no correlation planes and/or no physical
+# scale stored. Keep the many 11- and 12-argument call sites (tests,
+# benchmarks, pipeline/ensemble/stereo/ptv) valid, in both the inferred
+# (`PIVResult(...)`) and explicit (`PIVResult{T}(...)`) forms.
 PIVResult(x::AbstractVector, y::AbstractVector, u::AbstractMatrix, v::AbstractMatrix,
           peak_ratio::AbstractMatrix, correlation_moment::AbstractMatrix,
           uncertainty_u::AbstractMatrix, uncertainty_v::AbstractMatrix,
           outliers, mask, parameters::PIVParameters) =
     PIVResult(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
-              uncertainty_v, outliers, mask, parameters, nothing)
+              uncertainty_v, outliers, mask, parameters, nothing, nothing)
+
+PIVResult(x::AbstractVector, y::AbstractVector, u::AbstractMatrix, v::AbstractMatrix,
+          peak_ratio::AbstractMatrix, correlation_moment::AbstractMatrix,
+          uncertainty_u::AbstractMatrix, uncertainty_v::AbstractMatrix,
+          outliers, mask, parameters::PIVParameters, correlation_planes) =
+    PIVResult(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+              uncertainty_v, outliers, mask, parameters, correlation_planes, nothing)
 
 PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
              uncertainty_v, outliers, mask, parameters) where {T} =
     PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
-                 uncertainty_v, outliers, mask, parameters, nothing)
+                 uncertainty_v, outliers, mask, parameters, nothing, nothing)
+
+PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+             uncertainty_v, outliers, mask, parameters, correlation_planes) where {T} =
+    PIVResult{T}(x, y, u, v, peak_ratio, correlation_moment, uncertainty_u,
+                 uncertainty_v, outliers, mask, parameters, correlation_planes, nothing)
 
 function Base.show(io::IO, r::PIVResult{T}) where {T}
     ny, nx = size(r.u)

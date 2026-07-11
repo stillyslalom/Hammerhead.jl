@@ -59,7 +59,10 @@ operator (see [uncertainty quantification](uncertainty.md)).
 
 The result is a [`StereoPIVResult`](@ref): world-coordinate grid,
 `(u, v, w)` in world units per frame interval, union outlier/mask flags,
-and both per-camera 2C results retained for diagnostics.
+and both per-camera 2C results retained for diagnostics. To turn the
+displacements into velocities, attach a [`PhysicalScale`](@ref) with `dt`
+only and call [`physical`](@ref) — see the
+[scaling how-to](../howto/scaling.md).
 
 ## Self-calibration
 

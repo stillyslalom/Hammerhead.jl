@@ -186,7 +186,9 @@ One-sided power spectral density of a uniformly sampled series (sampling
 interval `dt`): the mean is removed, the taper applied (`:hann` or `:none`,
 power-normalized), and `sum(psd) * Δf` recovers the signal variance.
 Frequencies are in cycles per unit of `dt`. Extract a per-point velocity
-time series from a sequence with e.g. `[r.u[i, j] for r in results]`.
+time series from a sequence with e.g. `[r.u[i, j] for r in results]`; with a
+[`PhysicalScale`](@ref) attached, pass `dt = first(results).scale.dt` for
+physical frequencies.
 """
 function power_spectrum(signal::AbstractVector{<:Real};
                         dt::Real = 1.0, window::Symbol = :hann)

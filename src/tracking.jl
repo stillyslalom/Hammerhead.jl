@@ -29,13 +29,24 @@ Base.show(io::IO, t::Trajectory{T}) where {T} =
     TrackingResult{T<:AbstractFloat}
 
 Result of [`track_particles`](@ref): the linked `trajectories`, the number of
-frames `n_frames`, and the `parameters` used.
+frames `n_frames`, the `parameters` used, and the optional [`PhysicalScale`](@ref)
+`scale` (`nothing` when none was attached — positions stay in pixels until
+[`physical`](@ref) converts them).
 """
 struct TrackingResult{T<:AbstractFloat}
     trajectories::Vector{Trajectory{T}}
     n_frames::Int
     parameters::PTVParameters
+    scale::Union{Nothing,PhysicalScale}
 end
+
+# Backward-compatible constructors: no physical scale stored.
+TrackingResult(trajectories::Vector{Trajectory{T}}, n_frames::Int,
+               parameters::PTVParameters) where {T} =
+    TrackingResult{T}(trajectories, n_frames, parameters, nothing)
+
+TrackingResult{T}(trajectories, n_frames, parameters) where {T} =
+    TrackingResult{T}(trajectories, n_frames, parameters, nothing)
 
 Base.show(io::IO, r::TrackingResult{T}) where {T} =
     print(io, "TrackingResult{$T}($(length(r.trajectories)) tracks over $(r.n_frames) frames)")
@@ -68,7 +79,7 @@ end
 """
     track_particles(frames, params = PTVParameters();
                     predictor = :piv, piv_passes = multipass_parameters([64, 32]),
-                    min_track_length = 3, mask = nothing,
+                    min_track_length = 3, mask = nothing, scale = nothing,
                     image_type = Float64, progress = true) -> TrackingResult
 
 Link particles across a sequence of `frames` (≥ 2 file paths or real-valued
@@ -82,9 +93,11 @@ poison the constant-velocity predictor). Unmatched heads terminate their track
 (no gap bridging in v1); unmatched frame-`(k+1)` particles seed new tracks.
 
 Only tracks with `length ≥ min_track_length` (which must be ≥ 2) are returned,
-sorted by `start_frame` then first position. `image_type` is the element type
-frames load as (`Float32` runs in single precision); `progress` is a
-`Bool` meter or an `(i, n)` callback ticked per transition, as in
+sorted by `start_frame` then first position. `scale` attaches a
+[`PhysicalScale`](@ref) to the result (positions stay in pixels; see
+[`physical`](@ref) and [`trajectory_velocities`](@ref)). `image_type` is the
+element type frames load as (`Float32` runs in single precision); `progress`
+is a `Bool` meter or an `(i, n)` callback ticked per transition, as in
 [`run_piv_sequence`](@ref).
 """
 function track_particles(frames::AbstractVector, params::PTVParameters = PTVParameters();
@@ -92,6 +105,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
                          piv_passes = multipass_parameters([64, 32]),
                          min_track_length::Int = 3,
                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                         scale::Union{Nothing,PhysicalScale} = nothing,
                          image_type::Type{<:AbstractFloat} = Float64,
                          progress::Union{Bool,Function} = true)
     n_frames = length(frames)
@@ -188,17 +202,24 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     kept = [tr for tr in all_tracks if length(tr.x) >= min_track_length]
     sort!(kept; by = tr -> (tr.start_frame, tr.x[1], tr.y[1]))
     trajectories = [Trajectory{T}(tr.start_frame, tr.x, tr.y) for tr in kept]
-    return TrackingResult{T}(trajectories, n_frames, params)
+    return TrackingResult{T}(trajectories, n_frames, params, scale)
 end
 
 """
-    trajectory_velocities(t::Trajectory) -> (u, v)
+    trajectory_velocities(t::Trajectory, scale = nothing) -> (u, v)
 
 Per-point displacement estimates along a trajectory (px per frame interval):
 central differences in the interior and one-sided differences at the ends.
 `u` is the column (x) component, `v` the row (y). Requires `length(t) ≥ 2`.
+
+With a [`PhysicalScale`](@ref) the differences are multiplied by
+`pixel_size / dt` into physical velocities. Pass the owning result's `scale`
+field — this yields the same velocities whether `t` comes from a raw or a
+[`physical`](@ref)-converted [`TrackingResult`](@ref), because the converted
+result's scale keeps `dt` (its positions are already lengths).
 """
-function trajectory_velocities(t::Trajectory{T}) where {T}
+function trajectory_velocities(t::Trajectory{T},
+                               scale::Union{Nothing,PhysicalScale} = nothing) where {T}
     n = length(t)
     n >= 2 || throw(ArgumentError("trajectory_velocities needs at least 2 points, got $n"))
     u = Vector{T}(undef, n)
@@ -210,6 +231,11 @@ function trajectory_velocities(t::Trajectory{T}) where {T}
     for i in 2:(n - 1)
         u[i] = (t.x[i + 1] - t.x[i - 1]) / 2
         v[i] = (t.y[i + 1] - t.y[i - 1]) / 2
+    end
+    if scale !== nothing && !(scale.pixel_size == 1.0 && scale.dt == 1.0)
+        f = T(scale.pixel_size / scale.dt)
+        u .*= f
+        v .*= f
     end
     return u, v
 end

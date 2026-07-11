@@ -51,6 +51,7 @@ function Hammerhead.plot_vector_field!(ax::Makie.Axis, result::PIVResult;
                                        replaced_color = :orangered,
                                        color = :black, kwargs...)
     stride >= 1 || throw(ArgumentError("stride must be at least 1, got $stride"))
+    result = physical(result)   # plot in physical units when a scale is attached
     u, v = result.u, result.v
     # Valid vectors (not masked, not flagged) set the auto length scale.
     valid = .!(result.mask .| result.outliers)
@@ -73,7 +74,9 @@ end
 
 function Hammerhead.plot_vector_field(result::PIVResult;
                                       figure = (;), axis = (;), kwargs...)
-    fig, ax = _vector_field_figure(; figure, axis)
+    result = physical(result)
+    xlabel, ylabel = Hammerhead.plot_axis_labels(result.scale)
+    fig, ax = _vector_field_figure(; figure, axis, xlabel, ylabel)
     Hammerhead.plot_vector_field!(ax, result; kwargs...)
     return fig
 end
@@ -81,6 +84,7 @@ end
 # Scattered PTV vectors: arrows at each frame-A match position (not a grid).
 function Hammerhead.plot_vector_field!(ax::Makie.Axis, result::PTVResult;
                                        highlight_outliers::Bool = true, kwargs...)
+    result = physical(result)   # plot in physical units when a scale is attached
     points = [Makie.Point2f(result.x[i], result.y[i]) for i in eachindex(result.x)]
     directions = [Makie.Vec2f(result.u[i], result.v[i]) for i in eachindex(result.u)]
     if highlight_outliers && any(result.outliers)
@@ -94,7 +98,9 @@ end
 
 function Hammerhead.plot_vector_field(result::PTVResult;
                                       figure = (;), axis = (;), kwargs...)
-    fig, ax = _vector_field_figure(; figure, axis)
+    result = physical(result)
+    xlabel, ylabel = Hammerhead.plot_axis_labels(result.scale)
+    fig, ax = _vector_field_figure(; figure, axis, xlabel, ylabel)
     Hammerhead.plot_vector_field!(ax, result; kwargs...)
     return fig
 end
@@ -107,11 +113,12 @@ function Hammerhead.plot_vector_field(x::AbstractVector{<:Real}, y::AbstractVect
     return fig
 end
 
-function _vector_field_figure(; figure, axis)
+function _vector_field_figure(; figure, axis, xlabel = "x (px)", ylabel = "y (px)")
     fig = Makie.Figure(; figure...)
-    # Image (row-down) coordinates: y axis reversed.
+    # Image (row-down) coordinates: y axis reversed. `axis...` splats last, so
+    # user-supplied labels still win.
     ax = Makie.Axis(fig[1, 1];
-                    xlabel = "x (px)", ylabel = "y (px)",
+                    xlabel, ylabel,
                     yreversed = true, aspect = Makie.DataAspect(), axis...)
     return fig, ax
 end

@@ -22,6 +22,20 @@ Pages = ["types.jl", "pipeline.jl"]
 Private = false
 ```
 
+## Physical units
+
+Results carry an optional [`PhysicalScale`](@ref) as metadata; the stored
+arrays stay in measured units (pixels, or world units for stereo) until
+[`physical`](@ref) converts them. See the
+[scaling how-to](../howto/scaling.md) and
+[the conventions page](../explanation/conventions.md).
+
+```@autodocs
+Modules = [Hammerhead]
+Pages = ["scaling.jl"]
+Private = false
+```
+
 ## Masks
 
 Analysis masks are image-sized `Bool` matrices, `true` marking excluded

@@ -32,10 +32,23 @@ This is the natural convention for image data, but note that +v points
 ([`plot_vector_field`](@ref)) reverses the y-axis so vector plots match the
 image orientation.
 
-Displacements are reported in **pixels per frame interval**. Hammerhead does
-not apply time or magnification scaling: converting to physical velocity
-(multiplying by pixel size and dividing by the inter-frame time) is left to
-the caller.
+Displacements are **measured in pixels per frame interval**, and the stored
+arrays of every result keep those measured units. Physical calibration is
+metadata: attach a [`PhysicalScale`](@ref) (pixel size, frame interval `dt`,
+and display unit labels) with the `scale` keyword of any driver or with
+[`with_scale`](@ref) — the arrays don't change — and convert explicitly with
+[`physical`](@ref), which returns a same-type result whose positions are
+lengths and whose displacements (and uncertainties) are velocities
+(`pixel_size / dt`). The units are whatever you put in: millimeters and
+seconds in, mm/s out. Load Unitful for quantity-based construction
+(`PhysicalScale(20.0u"µm", 0.5u"ms")`).
+
+Convert **last**: validators, [`peak_locking`](@ref), UOD's `epsilon` floor,
+and the correlation diagnostics (`peak_ratio`, `correlation_moment`) are
+pixel-native and are never converted — run them on the raw result. A
+converted result carries an identity scale with the same unit labels, so
+`physical` is idempotent and plots label their axes correctly either way.
+See the [scaling how-to](../howto/scaling.md).
 
 ## World coordinates (stereo)
 
@@ -57,7 +70,10 @@ that is exactly what [`run_piv_stereo`](@ref) does internally.
 
 A [`StereoPIVResult`](@ref) reports `x`/`y` in world units on the dewarp
 grid and `(u, v, w)` in world units per frame interval, with `w` along
-world +Z. As in 2D, no time scaling is applied.
+world +Z. Spatial scaling is therefore already done; to get velocities,
+attach a [`PhysicalScale`](@ref) with `dt` and the unit labels only
+(`pixel_size` stays 1) and call [`physical`](@ref) — the per-camera `cam1`/
+`cam2` results always stay in dewarped pixels.
 
 ## Particle tracking (PTV)
 
@@ -67,7 +83,11 @@ sparse or Lagrangian information matters: low-density flows, the near-wall
 region where large windows straddle a velocity gradient, or any case where you
 want individual particle paths rather than an Eulerian field. Everything on
 this page still holds — `u` along x, `v` along y, pixels per frame interval,
-no time scaling — with three PTV-specific conventions.
+physical units via an attached [`PhysicalScale`](@ref) and
+[`physical`](@ref) — with three PTV-specific conventions. (One tracking
+nuance: a [`TrackingResult`](@ref) stores only positions, velocities being
+derived by differencing, so its converted scale keeps `dt` — pass it to
+[`trajectory_velocities`](@ref) for physical velocities.)
 
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This

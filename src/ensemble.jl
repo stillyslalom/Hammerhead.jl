@@ -35,8 +35,9 @@ estimator's short-range pixel-covariance assumption); quantify it with
 [`field_statistics`](@ref) over single-pair results instead.
 
 Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
-`mask_threshold` as in [`run_piv`](@ref); `preprocess`, `image_type`,
-`progress` as in [`run_piv_sequence`](@ref).
+`mask_threshold`, and `scale` (attach a [`PhysicalScale`](@ref) to the
+result) as in [`run_piv`](@ref); `preprocess`, `image_type`, `progress` as
+in [`run_piv_sequence`](@ref).
 """
 function run_piv_ensemble(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};
@@ -47,7 +48,8 @@ function run_piv_ensemble(pairs::AbstractVector,
                           mask_threshold::Real = 0.5,
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
-                          progress::Bool = true)
+                          progress::Bool = true,
+                          scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     passes = params isa PIVParameters ? [params] : params
@@ -71,7 +73,7 @@ function run_piv_ensemble(pairs::AbstractVector,
                                preprocess, image_type,
                                force_replace = k < length(passes), meter, workspace)
     end
-    return result
+    return scale === nothing ? result : with_scale(result, scale)
 end
 
 function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -82,13 +84,15 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           progress::Bool = true,
+                          scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     if effort === nothing
         isempty(kwargs) ||
             throw(ArgumentError("unsupported run_piv_ensemble keyword(s): " *
                                 join(string.(keys(kwargs)), ", ")))
         return run_piv_ensemble(pairs, PIVParameters(); threaded, predictor_smoothing,
-                                mask, mask_threshold, preprocess, image_type, progress)
+                                mask, mask_threshold, preprocess, image_type, progress,
+                                scale)
     end
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     !isempty(driver_kwargs) &&
@@ -97,7 +101,7 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
     imgsize = first_pair_image_size(pairs; preprocess, image_type)
     passes = effort_schedule(effort; ensemble = true, image_size = imgsize, piv_kwargs...)
     return run_piv_ensemble(pairs, passes; threaded, predictor_smoothing, mask,
-                            mask_threshold, preprocess, image_type, progress)
+                            mask_threshold, preprocess, image_type, progress, scale)
 end
 
 function first_pair_image_size(pairs; preprocess, image_type)

@@ -41,6 +41,7 @@ makedocs(;
             "Mask reflections and geometry" => "howto/masking.md",
             "Build a preprocessing chain" => "howto/preprocessing.md",
             "Choose an effort level" => "howto/effort.md",
+            "Scale results to physical units" => "howto/scaling.md",
             "Tune validation" => "howto/validation.md",
             "Ensemble correlation for low SNR" => "howto/ensemble.md",
             "Batch processing and result files" => "howto/batch.md",

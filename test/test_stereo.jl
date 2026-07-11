@@ -230,6 +230,13 @@ end
     slow = run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2]; effort = :low)
     @test slow isa StereoPIVResult{Float64}
     @test slow.parameters.window_size == (32, 32)
+
+    # `scale` lands on the stereo result only, never on the per-camera runs.
+    sc = PhysicalScale(dt = 1e-3, length_unit = "mm", time_unit = "s")
+    scaled = run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2], params; scale = sc)
+    @test scaled.scale === sc
+    @test scaled.cam1.scale === nothing && scaled.cam2.scale === nothing
+    @test isequal(scaled.w, stereo.w)
     @test_throws ArgumentError run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2],
                                               params; effort = :low)
 

@@ -14,6 +14,7 @@ using JLD2: jldopen
 using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
+export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export polygon_mask, load_mask
 export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum
@@ -54,6 +55,7 @@ include("particles.jl")
 include("ptv.jl")
 include("tracking.jl")
 include("stereo.jl")
+include("scaling.jl")
 include("io.jl")
 include("ensemble.jl")
 include("selfcal.jl")
@@ -107,6 +109,12 @@ pass a `Real` for a manual multiplier. Flagged/replaced vectors
 true and omitted otherwise; masked (`NaN`) vectors are always skipped;
 remaining `kwargs` are passed to `arrows2d!`.
 
+A result with an attached [`PhysicalScale`](@ref) is plotted in physical
+units (positions and velocities converted via [`physical`](@ref), axis
+labels showing the length unit); to overlay arrows on the source image in
+pixel coordinates instead, plot `with_scale(result, nothing)`. The bare
+`x, y, u, v` method always plots the arrays as given with pixel labels.
+
 Provided by a package extension: load a Makie backend first (e.g.
 `using GLMakie` or `using CairoMakie`).
 """
@@ -118,6 +126,8 @@ function plot_vector_field end
     plot_vector_field!(ax, x, y, u, v; stride=1, lengthscale=:auto, kwargs...)
 
 Like [`plot_vector_field`](@ref), but draws into an existing `Makie.Axis`.
+Scaled results are converted the same way, but the labels of an existing
+axis are left alone.
 """
 function plot_vector_field! end
 
