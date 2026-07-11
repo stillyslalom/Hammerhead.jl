@@ -94,6 +94,9 @@ function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::I
     return pool
 end
 
+piv_correlation_engines(workspace, params::PIVParameters, ::Type{T}, nchunks::Int) where {T} =
+    [_make_correlation_engine(c) for c in piv_correlators(workspace, params, T, nchunks)]
+
 const EFFORT_LEVELS = (:low, :medium, :high)
 const EFFORT_FINAL_ONLY = (:uncertainty, :max_iterations, :keep_correlation_planes)
 const PIV_PARAMETER_KEYS = fieldnames(PIVParameters)
@@ -542,9 +545,10 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
              fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
 
     nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
-    # One correlator per chunk (pooled and reused across pairs when a workspace
-    # is supplied); each chunk uses a distinct entry, so the fan-out is safe.
-    correlators = piv_correlators(workspace, params, T, nchunks)
+    # One correlation engine per chunk (CPU engines wrap pooled FFTW
+    # correlators when a workspace is supplied); each chunk uses a distinct
+    # entry, so the fan-out is safe.
+    engines = piv_correlation_engines(workspace, params, T, nchunks)
     chunk_size = cld(length(grid.jobs), max(nchunks, 1))
 
     # Sweeps always replace flagged vectors (the next predictor must be well
@@ -572,7 +576,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
             process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
                              alt_u, alt_v, fused_unc ? uncertainty_u : nothing,
                              fused_unc ? uncertainty_v : nothing, grid.jobs, warpA,
-                             warpB, params, correlators[1], mask, planes)
+                             warpB, params, engines[1], mask, planes)
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
@@ -580,7 +584,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                                                 fused_unc ? uncertainty_u : nothing,
                                                 fused_unc ? uncertainty_v : nothing,
                                                 chunk, warpA, warpB, params,
-                                                correlators[ci], mask, planes)
+                                                engines[ci], mask, planes)
             end
         end
         if alt_u !== nothing
@@ -625,12 +629,12 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         # windows whose correlation produced the returned field.
         if nchunks == 1
             uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
-                               warpA, warpB, params, correlators[1].apod, mask)
+                               warpA, warpB, params, _correlation_apod(engines[1]), mask)
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
                                                   warpA, warpB, params,
-                                                  correlators[ci].apod, mask)
+                                                  _correlation_apod(engines[ci]), mask)
             end
         end
     end
@@ -769,20 +773,15 @@ function deform_columns!(warpA, warpB, itpA, itpB, itp_u, itp_v, cols, nr)
     return nothing
 end
 
-make_correlator(params::PIVParameters, ::Type{T}) where {T} =
-    params.correlation_method === :cross ?
-        CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
-        PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
-
-# The caller supplies this chunk's correlator (one per chunk), plus per-call
-# peak scratch, so chunks can run on concurrent tasks. Every (gi, gj) is written
-# by exactly one job and the per-window math doesn't depend on chunking or on
-# which correlator instance runs it, so threaded results match serial results
-# exactly.
+# The caller supplies this chunk's correlation engine (one per chunk), plus
+# per-call peak scratch, so chunks can run on concurrent tasks. Every (gi, gj)
+# is written by exactly one job and the per-window math doesn't depend on
+# chunking or on which CPU correlator instance runs it, so threaded results
+# match serial results exactly.
 function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                          correlator::Correlator,
+                          engine::_CPUCorrelationEngine,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing)
     wr, wc = params.window_size
@@ -799,7 +798,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
-        R = correlation_plane!(correlator, subA, subB, submask)
+        R = _correlation_plane!(engine, subA, subB, submask)
         # R is an aliased internal buffer, overwritten by the next window —
         # copy before retaining it.
         planes === nothing || (planes[gi, gj] = copy(R))
@@ -820,10 +819,20 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         if uncertainty_u !== nothing
             fill!(ustats, 0.0)
             accumulate_uncertainty!(ustats, uscratch, subA, subB, submask,
-                                    correlator.apod)
+                                    _correlation_apod(engine))
             uncertainty_u[gi, gj] = finalize_uncertainty(T, view(ustats, 1, :))
             uncertainty_v[gi, gj] = finalize_uncertainty(T, view(ustats, 2, :))
         end
     end
     return nothing
 end
+
+process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
+                 uncertainty_u, uncertainty_v, jobs,
+                 imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
+                 correlator::Correlator,
+                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                 planes = nothing) =
+    process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
+                     uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
+                     _make_correlation_engine(correlator), mask, planes)

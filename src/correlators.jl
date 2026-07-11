@@ -118,6 +118,27 @@ end
 
 window_size(c::Correlator) = c.wsize
 
+make_correlator(params::PIVParameters, ::Type{T}) where {T} =
+    params.correlation_method === :cross ?
+        CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
+        PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
+
+# Private correlation-engine hook. The CPU engine is deliberately just a thin
+# wrapper around the existing FFTW correlator so current results and workspace
+# reuse are unchanged, while future backends can dispatch at the chunk/window
+# processing level without changing the public correlator API.
+struct _CPUCorrelationEngine{C<:Correlator}
+    correlator::C
+end
+
+_make_correlation_engine(params::PIVParameters, ::Type{T}) where {T} =
+    _CPUCorrelationEngine(make_correlator(params, T))
+_make_correlation_engine(c::Correlator) = _CPUCorrelationEngine(c)
+_correlation_apod(engine::_CPUCorrelationEngine) = engine.correlator.apod
+_correlation_plane!(engine::_CPUCorrelationEngine, subA::AbstractMatrix, subB::AbstractMatrix,
+                    mask::Union{Nothing,AbstractMatrix{Bool}} = nothing) =
+    correlation_plane!(engine.correlator, subA, subB, mask)
+
 # Padded (linear) correlation weights each lag by the shrinking window overlap
 # — the autocorrelation of the apodization window (a triangle for :none) —
 # which biases the peak toward zero. Precompute the inverse as a gain plane in

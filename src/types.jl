@@ -80,6 +80,18 @@ _require_cpu_backend(backend::_AbstractHammerheadBackend) =
     throw(ArgumentError("unsupported Hammerhead backend $(typeof(backend)); " *
                         "the core package currently supports the internal CPU backend only"))
 
+# Private backend capability predicates. Keep the defaults conservative so
+# extension backends opt in explicitly as they gain implementations.
+_supports_fft(::_AbstractHammerheadBackend) = false
+_supports_batched_fft(::_AbstractHammerheadBackend) = false
+_supports_fp64(::_AbstractHammerheadBackend) = false
+_supports_unified_memory(::_AbstractHammerheadBackend) = false
+
+_supports_fft(::_CPUBackend) = true
+_supports_batched_fft(::_CPUBackend) = false
+_supports_fp64(::_CPUBackend) = true
+_supports_unified_memory(::_CPUBackend) = false
+
 """
     PIVParameters(; kwargs...)
 

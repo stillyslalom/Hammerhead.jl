@@ -35,6 +35,14 @@
     @test !(:AbstractHammerheadBackend in names(Hammerhead; all = true))
     @test !(:_CPUBackend in names(Hammerhead))
     backend = :cpu
+    cpu_backend = Hammerhead._resolve_backend(backend)
+    @test cpu_backend === Hammerhead._DEFAULT_BACKEND
+    @test Hammerhead._supports_fft(cpu_backend)
+    @test !Hammerhead._supports_batched_fft(cpu_backend)
+    @test Hammerhead._supports_fp64(cpu_backend)
+    @test !Hammerhead._supports_unified_memory(cpu_backend)
+    @test_throws ArgumentError Hammerhead._resolve_backend(:gpu)
+    @test_throws ArgumentError piv_workspace(; backend = :gpu)
 
     rng = MersenneTwister(20260711)
     imgA = zeros(128, 128)

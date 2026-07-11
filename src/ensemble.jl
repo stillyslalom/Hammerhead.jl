@@ -126,7 +126,7 @@ end
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
                        image_type, force_replace::Bool, meter, workspace = nothing)
-    local T, grid, accum, chunks, correlators, u, v, imgsize, uacc, uscratch
+    local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
     for pair in pairs
         frameA, frameB = pair
@@ -149,10 +149,11 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
             chunk_size = max(cld(length(grid.jobs), max(nchunks, 1)), 1)
             chunks = collect(Iterators.partition(1:length(grid.jobs), chunk_size))
-            # One correlator per chunk, reused across pairs: FFTW plans are
-            # paid once per pass, and each accumulator is written by exactly
-            # one task per pair, so threaded results match serial exactly.
-            correlators = [make_correlator(params, T) for _ in chunks]
+            # One correlation engine per chunk, reused across pairs: CPU
+            # engines wrap FFTW correlators whose plans are paid once per pass,
+            # and each accumulator is written by exactly one task per pair, so
+            # threaded results match serial exactly.
+            engines = [_make_correlation_engine(params, T) for _ in chunks]
             # Uncertainty statistics pool across pairs (per-window Float64
             # accumulators; each is written by exactly one task per pair).
             # As in the single-pair path, only the final pass estimates them.
@@ -189,12 +190,12 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                                                warpA = warpbufs[1], warpB = warpbufs[2])
         u, v = pu, pv  # identical for every pair (shared predictor)
         if length(chunks) == 1
-            accumulate_planes!(accum, chunks[1], correlators[1], warpA, warpB,
+            accumulate_planes!(accum, chunks[1], engines[1], warpA, warpB,
                                grid.jobs, params, mask, uacc,
                                uscratch === nothing ? nothing : uscratch[1])
         elseif !isempty(chunks)
             @sync for (ci, cr) in enumerate(chunks)
-                Threads.@spawn accumulate_planes!(accum, cr, correlators[ci],
+                Threads.@spawn accumulate_planes!(accum, cr, engines[ci],
                                                   warpA, warpB, grid.jobs, params, mask,
                                                   uacc,
                                                   uscratch === nothing ? nothing : uscratch[ci])
@@ -253,7 +254,7 @@ end
 
 # Add the correlation planes of the windows in jobrange to their accumulators,
 # and (when enabled) pool each window's uncertainty statistics across pairs.
-function accumulate_planes!(accum, jobrange, correlator, imgA, imgB, jobs,
+function accumulate_planes!(accum, jobrange, engine, imgA, imgB, jobs,
                             params::PIVParameters, mask,
                             uacc = nothing, uscratch = nothing)
     wr, wc = params.window_size
@@ -265,10 +266,10 @@ function accumulate_planes!(accum, jobrange, correlator, imgA, imgB, jobs,
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
-        accum[j] .+= correlation_plane!(correlator, subA, subB, submask)
+        accum[j] .+= _correlation_plane!(engine, subA, subB, submask)
         uacc === nothing ||
             accumulate_uncertainty!(uacc[j], uscratch, subA, subB, submask,
-                                    correlator.apod)
+                                    _correlation_apod(engine))
     end
     return nothing
 end
