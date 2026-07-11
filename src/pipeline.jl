@@ -91,6 +91,76 @@ function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::I
     return pool
 end
 
+const EFFORT_LEVELS = (:low, :medium, :high)
+const EFFORT_FINAL_ONLY = (:uncertainty, :max_iterations, :keep_correlation_planes)
+const PIV_PARAMETER_KEYS = fieldnames(PIVParameters)
+
+is_piv_parameter_kw(k::Symbol) = k === :final || k in PIV_PARAMETER_KEYS
+
+function split_effort_kwargs(kwargs)
+    piv = Pair{Symbol,Any}[]
+    driver = Pair{Symbol,Any}[]
+    for (k, v) in kwargs
+        push!(is_piv_parameter_kw(k) ? piv : driver, k => v)
+    end
+    return (; piv...), (; driver...)
+end
+
+window_tuple(w::Integer) = (Int(w), Int(w))
+window_tuple(w) = (Int(w[1]), Int(w[2]))
+
+function clamp_effort_windows(windows, image_size::Union{Nothing,Dims{2}})
+    image_size === nothing && return windows
+    return [(min(w[1], image_size[1]), min(w[2], image_size[2])) for w in windows]
+end
+
+"""
+    effort_schedule(level::Symbol; ensemble = false, image_size = nothing, kwargs...) -> Vector{PIVParameters}
+
+Build the schedule used by `effort = :low`, `:medium`, or `:high`. Keyword
+arguments whose names match [`PIVParameters`](@ref) fields override the preset;
+`window_size` rescales the pyramid so the final pass has that size,
+`uncertainty`, `max_iterations`, and `keep_correlation_planes` apply to the
+final pass only, and `final = (;)` is merged last.
+"""
+function effort_schedule(level::Symbol; ensemble::Bool = false,
+                         image_size::Union{Nothing,Dims{2}} = nothing,
+                         final::NamedTuple = (;), kwargs...)
+    level in EFFORT_LEVELS ||
+        throw(ArgumentError("unknown effort :$level; expected one of " *
+                            join((":" * String(s) for s in EFFORT_LEVELS), ", ")))
+    override_pairs = Pair{Symbol,Any}[k => v for (k, v) in kwargs]
+    overrides = (; override_pairs...)
+    base_windows, preset_shared, preset_final =
+        level === :low ? ([(32, 32)], (;), (;)) :
+        level === :medium ? ([(64, 64), (32, 32)], (;), (;)) :
+        (ensemble ? [(128, 128), (64, 64), (32, 32), (32, 32)] :
+                    [(128, 128), (64, 64), (32, 32)],
+         (padding = true, apodization = :gauss, max_iterations = 2),
+         (uncertainty = true,))
+
+    windows = if haskey(overrides, :window_size)
+        target = window_tuple(getproperty(overrides, :window_size))
+        base_final = last(base_windows)
+        [(max(4, round(Int, w[1] * target[1] / base_final[1])),
+          max(4, round(Int, w[2] * target[2] / base_final[2])))
+         for w in base_windows]
+    else
+        base_windows
+    end
+    windows = clamp_effort_windows(windows, image_size)
+
+    shared_override = (; (k => getproperty(overrides, k)
+                          for k in keys(overrides)
+                          if !(k === :window_size || k in EFFORT_FINAL_ONLY))...)
+    final_override = (; (k => getproperty(overrides, k)
+                         for k in keys(overrides)
+                         if k in EFFORT_FINAL_ONLY)...)
+    shared = merge(preset_shared, shared_override)
+    final_all = merge(preset_final, final_override, final)
+    return multipass_parameters(windows; shared..., final = final_all)
+end
+
 """
     run_piv(imgA, imgB, passes::AbstractVector{PIVParameters};
             threaded = Threads.nthreads() > 1,
@@ -98,6 +168,7 @@ end
             mask = nothing, mask_threshold = 0.5,
             workspace = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
+    run_piv(imgA, imgB; effort = :low/:medium/:high, kwargs...)
 
 Run a (multi-pass) PIV analysis on an in-memory image pair. `imgA` and `imgB`
 must be equally sized real-valued matrices (load and convert image files with
@@ -121,6 +192,25 @@ window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
 16])` — without violating the quarter-window displacement limit. Additional
 convergence sweeps are normally expressed with `max_iterations` on a pass; a
 schedule that repeats a window size is the equivalent explicit form.
+
+For common tradeoffs, pass `effort = :low`, `:medium`, or `:high` instead of
+an explicit schedule. Typical single-threaded synthetic benchmarks on 256×256
+pairs measure:
+
+| Effort | Schedule | Options | Typical result |
+|---|---|---|---|
+| `:low` | `[32]` | `PIVParameters()` defaults | 1× time; ≈0.10 px uniform-shift RMS, ≈0.43 px vortex RMS |
+| `:medium` | `[64, 32]` | defaults | ≈4× time; ≈0.02 px uniform-shift RMS, ≈0.22 px vortex RMS |
+| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | ≈32× time; ≈0.02 px uniform-shift RMS, ≈0.09 px vortex RMS |
+
+With an effort level, `PIVParameters` keyword overrides are applied on top of
+the preset: most fields apply to every pass, `window_size` rescales the
+pyramid's final window size, and `uncertainty`, `max_iterations`, and
+`keep_correlation_planes` apply to the final pass only. `final = (;)` merges
+last and wins over both the preset and field keywords. The final window size is
+a seeding-density and physics decision, so smaller is not automatically better.
+Passing `effort` together with an explicit `PIVParameters` or pass vector is
+an error.
 
 A pass whose parameters set `max_iterations > 1` additionally *iterates
 in place*: its own validated field is fed back as the deformation predictor
@@ -167,11 +257,14 @@ Returns the [`PIVResult`](@ref) of the final pass.
 """
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  passes::AbstractVector{PIVParameters};
+                 effort::Union{Nothing,Symbol} = nothing,
                  threaded::Bool = Threads.nthreads() > 1,
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                  mask_threshold::Real = 0.5,
                  workspace::Union{Nothing,PIVWorkspace} = nothing)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
@@ -236,9 +329,21 @@ function build_predictor(result::PIVResult, smoothing::Bool)
     return (x = result.x, y = result.y, u = pu, v = pv)
 end
 
-run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
-        params::PIVParameters = PIVParameters(); kwargs...) =
-    run_piv(imgA, imgB, [params]; kwargs...)
+function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
+                 params::PIVParameters; effort::Union{Nothing,Symbol} = nothing,
+                 kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    return run_piv(imgA, imgB, [params]; kwargs...)
+end
+
+function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real};
+                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    effort === nothing && return run_piv(imgA, imgB, PIVParameters(); kwargs...)
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    passes = effort_schedule(effort; image_size = size(imgA), piv_kwargs...)
+    return run_piv(imgA, imgB, passes; driver_kwargs...)
+end
 
 """
     multipass_parameters(window_sizes; overlap_fraction = 0.5, final = (;), kwargs...) -> Vector{PIVParameters}

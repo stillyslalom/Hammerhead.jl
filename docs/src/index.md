@@ -50,6 +50,7 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
   [Stereo PIV end to end](tutorials/stereo.md).
 - **How-to guides** — recipes for specific jobs:
   [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
+  [effort selection](howto/effort.md),
   [validation tuning](howto/validation.md),
   [ensemble correlation](howto/ensemble.md),
   [batch processing](howto/batch.md), and

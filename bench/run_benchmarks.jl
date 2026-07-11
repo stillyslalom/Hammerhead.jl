@@ -9,6 +9,7 @@
 using Hammerhead
 using Hammerhead.SyntheticData
 using Random
+using Statistics
 
 "Minimum elapsed time of `f()` over `samples` runs, after a warmup call."
 function time_min(f; samples::Int = 5)
@@ -63,6 +64,54 @@ for (label, passes) in (
         println("  $label serial $(format_time(serial)), threaded $(format_time(threaded)) ($(speedup)×)")
     else
         println("  $label serial $(format_time(serial))")
+    end
+end
+
+# --- Effort presets ---------------------------------------------------------
+
+function midpoint_truth(flow, x, y)
+    x0, y0 = Float64(x), Float64(y)
+    for _ in 1:8
+        u, v, _ = flow(x0, y0, 0.0, 0.0)
+        x0 = Float64(x) - 0.5u
+        y0 = Float64(y) - 0.5v
+    end
+    return flow(x0, y0, 0.0, 0.0)
+end
+
+function rms_error(result, flow; midpoint::Bool = false)
+    err2 = Float64[]
+    for j in eachindex(result.x), i in eachindex(result.y)
+        (result.mask[i, j] || result.outliers[i, j]) && continue
+        uref, vref, _ = midpoint ? midpoint_truth(flow, result.x[j], result.y[i]) :
+                                   flow(result.x[j], result.y[i], 0.0, 0.0)
+        push!(err2, abs2(Float64(result.u[i, j]) - uref) +
+                    abs2(Float64(result.v[i, j]) - vref))
+    end
+    return sqrt(mean(err2))
+end
+
+println("\nEffort presets (256×256 synthetic pairs, serial; high includes UQ):")
+for (scene, flow, midpoint) in (
+    ("uniform shift", linear_flow(2.4, -1.7, 0.0, 0.0, 0.0, 0.0, 0.0), false),
+    ("vortex       ", vortex_flow(128.0, 128.0, 4.0), true),
+)
+    rng_scene = MersenneTwister(20260710)
+    effort_imgA, effort_imgB, _, _ =
+        generate_synthetic_piv_pair(flow, (256, 256), 1.0;
+                                    particle_density = 0.045,
+                                    background_noise = 0.005,
+                                    rng = rng_scene)
+    println("  $scene")
+    base = nothing
+    for level in (:low, :medium, :high)
+        t = time_min(() -> run_piv(effort_imgA, effort_imgB; effort = level, threaded = false);
+                     samples = 2)
+        r = run_piv(effort_imgA, effort_imgB; effort = level, threaded = false)
+        base === nothing && (base = t)
+        multiple = round(t / base, digits = 2)
+        rms = round(rms_error(r, flow; midpoint), digits = 4)
+        println("    $(rpad(string(level), 7)) $(format_time(t)) ($(multiple)×), RMS $(rms) px")
     end
 end
 

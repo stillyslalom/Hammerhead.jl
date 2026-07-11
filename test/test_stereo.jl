@@ -225,6 +225,14 @@ end
     @test s32 isa StereoPIVResult{Float32}
     @test median(s32.w) ≈ truth[3] atol = 0.05
 
+    # Effort schedules work on the stereo driver too, using the dewarped grid
+    # size to clamp the pyramid when needed.
+    slow = run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2]; effort = :low)
+    @test slow isa StereoPIVResult{Float64}
+    @test slow.parameters.window_size == (32, 32)
+    @test_throws ArgumentError run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2],
+                                              params; effort = :low)
+
     # Argument validation.
     grid2 = DewarpGrid(x = -8.0:0.4:8.0, y = -8.0:0.4:7.6)
     dw_other = ImageDewarper(cams[2], grid2, (512, 512))

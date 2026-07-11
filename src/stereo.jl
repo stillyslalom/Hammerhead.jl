@@ -72,15 +72,17 @@ end
     run_piv_stereo(A1, B1, A2, B2, dw1, dw2,
                    params = PIVParameters(); mask = nothing, kwargs...)
         -> StereoPIVResult
+    run_piv_stereo(A1, B1, A2, B2, dw1, dw2;
+                   effort = :low/:medium/:high, mask = nothing, kwargs...)
 
 Stereoscopic (2D3C) PIV on one frame pair: `A1`/`B1` are camera 1's raw
 frames and `A2`/`B2` camera 2's, `dw1`/`dw2` the cameras'
 [`ImageDewarper`](@ref)s (which must share one [`DewarpGrid`](@ref)). Each
 camera's pair is dewarped onto the common world plane, analyzed with the 2D
-engine ([`run_piv`](@ref) with `params`, which may be a multi-pass schedule),
-and the two 2C fields are combined per vector into the three-component
-displacement `(u, v, w)` in world units per frame interval (no time scaling
-is applied).
+engine ([`run_piv`](@ref) with `params`, which may be a multi-pass schedule,
+or with `effort = :low`, `:medium`, or `:high`), and the two 2C fields are
+combined per vector into the three-component displacement `(u, v, w)` in world
+units per frame interval (no time scaling is applied).
 
 Reconstruction: at each grid point, camera `i`'s dewarped in-plane
 displacement measures `uᵢ = dx - dz·tXᵢ`, `vᵢ = dy - dz·tYᵢ`, where
@@ -106,9 +108,12 @@ per-camera results are retained in the returned [`StereoPIVResult`](@ref).
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
                         dw1::ImageDewarper, dw2::ImageDewarper,
-                        params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
+                        params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                        effort::Union{Nothing,Symbol} = nothing,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     dw1.grid == dw2.grid ||
         throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
                             "got $(dw1.grid) and $(dw2.grid)"))
@@ -131,6 +136,23 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     dewarp!(b, dw2, B2)
     r2 = run_piv(a, b, params; mask = node_mask, kwargs...)
     return reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, grid)
+end
+
+function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
+                        A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
+                        dw1::ImageDewarper, dw2::ImageDewarper;
+                        effort::Union{Nothing,Symbol} = nothing,
+                        mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                        kwargs...)
+    if effort === nothing
+        return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, PIVParameters(); mask, kwargs...)
+    end
+    dw1.grid == dw2.grid ||
+        throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
+                            "got $(dw1.grid) and $(dw2.grid)"))
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
+    return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes; mask, driver_kwargs...)
 end
 
 # Combine two per-camera 2C results (on the same dewarped grid) into the 3C

@@ -6,6 +6,7 @@
 
 """
     run_piv_ensemble(pairs, params = PIVParameters(); kwargs...) -> PIVResult
+    run_piv_ensemble(pairs; effort = :low/:medium/:high, kwargs...) -> PIVResult
 
 Ensemble PIV over a sequence of image pairs: each interrogation window's
 correlation planes are summed across all pairs and the displacement peak is
@@ -14,10 +15,14 @@ single pair emerges from the average. Assumes statistically stationary flow;
 the result is the ensemble-mean displacement field.
 
 `pairs` is as in [`run_piv_sequence`](@ref) (2-tuples of file paths and/or
-matrices; paths are reloaded once per pass). With a multi-pass schedule the
-previous pass's ensemble field acts as a shared deformation predictor for
-every pair. `peak_ratio` and `correlation_moment` describe the ensemble
-planes.
+matrices; paths are reloaded once per pass). `params` may be a single
+[`PIVParameters`](@ref), an explicit multi-pass schedule, or omitted in favor
+of `effort = :low`, `:medium`, or `:high`; effort keywords follow
+[`run_piv`](@ref), except that ensemble `:high` repeats the final window size
+because this driver ignores per-pass `max_iterations`. With a multi-pass
+schedule the previous pass's ensemble field acts as a shared deformation
+predictor for every pair. `peak_ratio` and `correlation_moment` describe the
+ensemble planes.
 
 With `uncertainty = true` the correlation-statistics estimator (Wieneke 2015,
 see [`PIVParameters`](@ref)) pools its per-window sums over all pairs — the
@@ -34,7 +39,8 @@ Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
 `progress` as in [`run_piv_sequence`](@ref).
 """
 function run_piv_ensemble(pairs::AbstractVector,
-                          params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
+                          params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                          effort::Union{Nothing,Symbol} = nothing,
                           threaded::Bool = Threads.nthreads() > 1,
                           predictor_smoothing::Bool = true,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
@@ -42,6 +48,8 @@ function run_piv_ensemble(pairs::AbstractVector,
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           progress::Bool = true)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     passes = params isa PIVParameters ? [params] : params
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
@@ -64,6 +72,46 @@ function run_piv_ensemble(pairs::AbstractVector,
                                force_replace = k < length(passes), meter, workspace)
     end
     return result
+end
+
+function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
+                          threaded::Bool = Threads.nthreads() > 1,
+                          predictor_smoothing::Bool = true,
+                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                          mask_threshold::Real = 0.5,
+                          preprocess = nothing,
+                          image_type::Type{<:AbstractFloat} = Float64,
+                          progress::Bool = true,
+                          kwargs...)
+    if effort === nothing
+        isempty(kwargs) ||
+            throw(ArgumentError("unsupported run_piv_ensemble keyword(s): " *
+                                join(string.(keys(kwargs)), ", ")))
+        return run_piv_ensemble(pairs, PIVParameters(); threaded, predictor_smoothing,
+                                mask, mask_threshold, preprocess, image_type, progress)
+    end
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    !isempty(driver_kwargs) &&
+        throw(ArgumentError("unsupported run_piv_ensemble keyword(s): " *
+                            join(string.(keys(driver_kwargs)), ", ")))
+    imgsize = first_pair_image_size(pairs; preprocess, image_type)
+    passes = effort_schedule(effort; ensemble = true, image_size = imgsize, piv_kwargs...)
+    return run_piv_ensemble(pairs, passes; threaded, predictor_smoothing, mask,
+                            mask_threshold, preprocess, image_type, progress)
+end
+
+function first_pair_image_size(pairs; preprocess, image_type)
+    isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
+    frameA, frameB = first(pairs)
+    imgA = load_frame(frameA, image_type)
+    imgB = load_frame(frameB, image_type)
+    if preprocess !== nothing
+        imgA = preprocess(imgA)
+        imgB = preprocess(imgB)
+    end
+    size(imgA) == size(imgB) ||
+        throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
+    return size(imgA)
 end
 
 # One ensemble pass: deform every pair by the shared predictor, sum each

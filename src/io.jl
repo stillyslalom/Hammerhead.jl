@@ -178,13 +178,16 @@ end
     run_piv_sequence(pairs, params = PIVParameters();
                      preprocess = nothing, output = nothing,
                      progress = true, kwargs...) -> Vector{PIVResult}
+    run_piv_sequence(pairs; effort = :low/:medium/:high, kwargs...) -> Vector{PIVResult}
 
 Run PIV over a sequence of image pairs. `pairs` is a vector of 2-tuples whose
 entries are file paths (loaded with [`load_image`](@ref)) and/or real-valued
 matrices — see [`image_pairs`](@ref) for building it from a frame list.
-`params` is a single `PIVParameters` or a multi-pass schedule; remaining
-`kwargs` (e.g. `mask` for a static analysis mask shared by all pairs) are
-forwarded to [`run_piv`](@ref).
+`params` is a single `PIVParameters` or a multi-pass schedule; alternatively,
+omit it and pass `effort = :low`, `:medium`, or `:high` to use the built-in
+effort schedules from [`run_piv`](@ref). Remaining `kwargs` (e.g. `mask` for a
+static analysis mask shared by all pairs, or PIV-parameter overrides when
+`effort` is set) are forwarded to [`run_piv`](@ref).
 
 - `preprocess`: function applied to each frame after loading, e.g.
   `img -> clahe!(subtract_background!(img, bg))`. Frames loaded from file
@@ -216,15 +219,32 @@ are prefetched on a background task that never touches the workspace — this st
 race-free.
 """
 function run_piv_sequence(pairs::AbstractVector,
-                          params::Union{PIVParameters,AbstractVector{PIVParameters}} = PIVParameters();
+                          params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                          effort::Union{Nothing,Symbol} = nothing,
+                          preprocess = nothing,
+                          output::Union{Nothing,AbstractString,Function} = nothing,
+                          progress::Union{Bool,Function} = true,
+                          image_type::Type{<:AbstractFloat} = Float64,
+                          kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    workspace = piv_workspace()
+    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; workspace, kwargs...),
+                  PIVResult, pairs;
+                  preprocess, output, progress, image_type, label = "PIV")
+end
+
+function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
                           preprocess = nothing,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           kwargs...)
     workspace = piv_workspace()
-    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; workspace, kwargs...),
-                  PIVResult, pairs;
+    process = effort === nothing ?
+        ((imgA, imgB) -> run_piv(imgA, imgB, PIVParameters(); workspace, kwargs...)) :
+        ((imgA, imgB) -> run_piv(imgA, imgB; effort, workspace, kwargs...))
+    _run_sequence(process, PIVResult, pairs;
                   preprocess, output, progress, image_type, label = "PIV")
 end
 

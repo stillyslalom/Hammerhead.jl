@@ -105,6 +105,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   exactly ≡ repeating the pass — tested; the ensemble path ignores
   `max_iterations`), `process_windows!` (receives its per-chunk correlator),
   `multipass_parameters` (`final = (;)` overrides the last pass only),
+  `effort_schedule` (internal builder for `effort = :low/:medium/:high` on
+  `run_piv`, `run_piv_sequence`, `run_piv_ensemble`, and `run_piv_stereo`;
+  high effort includes final-pass UQ, and ensemble high repeats the final
+  window because ensemble ignores `max_iterations`),
   `PIVWorkspace`/`piv_workspace()` (optional `workspace` kwarg reusing the
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
   the deform buffers, and a per-window-config correlator pool across `run_piv`
@@ -226,7 +230,8 @@ before comparing renders in tests; `word_wrap` labels need an explicit
 - **Uncertainty (Wieneke 2015):** computed in `process_windows!` /
   `accumulate_planes!` from the deformed windows, final pass only — the
   method assumes the peak sits at ~zero residual, so it needs a converged
-  multipass schedule (repeat the final window size). Statistics accumulate
+  multipass schedule (`max_iterations` on the final pass, or the equivalent
+  explicit repeated final window size). Statistics accumulate
   in Float64 (`2 × UQ_NSTATS` per window) and are additive across pairs
   (that's how the ensemble path pools them). The covariance sums S_δ are
   summed ring by ring until a ring's max drops below `0.05·S00`; inner rings

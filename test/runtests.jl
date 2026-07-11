@@ -81,6 +81,37 @@ end
     @test multipass_parameters([32]; final = (n_peaks = 1,))[1].n_peaks == 1
 end
 
+@testset "effort schedules" begin
+    low = Hammerhead.effort_schedule(:low)
+    medium = Hammerhead.effort_schedule(:medium)
+    high = Hammerhead.effort_schedule(:high)
+    @test [p.window_size[1] for p in low] == [32]
+    @test [p.window_size[1] for p in medium] == [64, 32]
+    @test [p.window_size[1] for p in high] == [128, 64, 32]
+    @test all(p.max_iterations >= 2 for p in high)
+    @test all(p.padding && p.apodization === :gauss for p in high)
+    @test high[end].uncertainty
+    @test !any(p.uncertainty for p in high[1:end-1])
+
+    ensemble_high = Hammerhead.effort_schedule(:high; ensemble = true)
+    @test [p.window_size[1] for p in ensemble_high] == [128, 64, 32, 32]
+    @test ensemble_high[end].uncertainty
+
+    unpadded = Hammerhead.effort_schedule(:high; padding = false)
+    @test !any(p.padding for p in unpadded)
+    small_final = Hammerhead.effort_schedule(:high; window_size = 16)
+    @test [p.window_size[1] for p in small_final] == [64, 32, 16]
+    final_wins = Hammerhead.effort_schedule(:high; uncertainty = false,
+                                            final = (uncertainty = true,
+                                                     max_iterations = 4))
+    @test final_wins[end].uncertainty
+    @test final_wins[end].max_iterations == 4
+    @test all(p.max_iterations == 2 for p in final_wins[1:end-1])
+    clamped = Hammerhead.effort_schedule(:high; image_size = (64, 48))
+    @test [p.window_size for p in clamped] == [(64, 48), (64, 48), (32, 32)]
+    @test_throws ArgumentError Hammerhead.effort_schedule(:extreme)
+end
+
 @testset "Correlators: known displacement" begin
     image_size = (64, 64)
     center = image_size .÷ 2
@@ -186,6 +217,30 @@ end
     @test_throws DimensionMismatch run_piv(imgA, imgB[1:64, 1:64])
     @test_throws ArgumentError run_piv(imgA[1:16, 1:16], imgB[1:16, 1:16],
                                        PIVParameters(window_size = 32))
+
+    # Effort schedules are exactly the corresponding explicit pass vectors.
+    effort = run_piv(imgA, imgB; effort = :medium, threaded = false)
+    manual = run_piv(imgA, imgB,
+                     Hammerhead.effort_schedule(:medium; image_size = size(imgA));
+                     threaded = false)
+    @test isequal(effort.u, manual.u)
+    @test isequal(effort.v, manual.v)
+    @test effort.parameters.window_size == manual.parameters.window_size
+    @test_throws ArgumentError run_piv(imgA, imgB, params_pa; effort = :low)
+
+    seq = run_piv_sequence([(imgA, imgB), (imgA, imgB)]; effort = :low,
+                           progress = false)
+    @test length(seq) == 2
+    @test seq[1] isa PIVResult{Float64}
+    @test_throws ArgumentError run_piv_sequence([(imgA, imgB)], params_pa;
+                                                effort = :low, progress = false)
+
+    ens = run_piv_ensemble([(imgA, imgB), (imgA, imgB)]; effort = :low,
+                           progress = false)
+    @test ens isa PIVResult{Float64}
+    @test ens.parameters.window_size == (32, 32)
+    @test_throws ArgumentError run_piv_ensemble([(imgA, imgB)], params_pa;
+                                                effort = :low, progress = false)
 end
 
 @testset "Float32 pipeline" begin
