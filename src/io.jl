@@ -19,10 +19,18 @@ is installed (`using ImageMagick`).
 """
 function load_image(::Type{T}, path::AbstractString) where {T<:AbstractFloat}
     isfile(path) || throw(ArgumentError("no such image file: $path"))
-    return image_to_matrix(T, FileIO.load(path), path)
+    return image_to_matrix(T, _load_raw(FileIO.query(path)), path)
 end
 
 load_image(path::AbstractString) = load_image(Float64, path)
+
+# TIFFs are loaded through a Stream: TiffImages' path-based entry point runs a
+# full GC.gc() before every open on Windows (to release handles of previously
+# mmapped TIFFs — we never mmap), costing a full-heap pause per frame.
+_load_raw(f::FileIO.File{FileIO.DataFormat{:TIFF}}) = open(FileIO.filename(f)) do io
+    FileIO.load(FileIO.Stream{FileIO.DataFormat{:TIFF}}(io, FileIO.filename(f)))
+end
+_load_raw(f::FileIO.File) = FileIO.load(f)
 
 image_to_matrix(::Type{T}, img::AbstractMatrix{<:Real}, path) where {T} = T.(img)
 image_to_matrix(::Type{T}, img::AbstractMatrix{<:Colorant}, path) where {T} = T.(Gray.(img))
