@@ -26,6 +26,14 @@ julia --project=. bench/run_benchmarks.jl > new.log
 Treat >20 % changes in the minima as signal; smaller differences are usually
 noise.
 
+## GPU backends
+
+`bench/gpu_benchmarks.jl` checks a device backend against the CPU reference
+and times both (see the header for the required environment). On the dev
+box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the `:amdgpu` backend matches
+`:cpu` to ~7e-15 (Float64) and runs a padded+apodized 32/16 single pass at
+1.3–2.4× the threaded CPU speed (1024²–2048², Float64/Float32).
+
 ## Allocation/GC profiling
 
 For batch memory work, profile the real Case E sequence workload with:

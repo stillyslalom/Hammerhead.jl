@@ -209,8 +209,8 @@ forwarded to [`run_piv`](@ref).
   `(i, n) -> nothing` called after each completed pair (for driving an
   external progress display). Throwing from the callback aborts the batch;
   pairs finished before the abort stay in `output`.
-- `backend`: execution backend selector. The core package currently supports
-  only `:cpu`.
+- `backend`: execution backend selector. The core package provides `:cpu`;
+  package extensions add device selectors (see [`run_piv`](@ref)).
 - `image_type`: element type frames are loaded as (default `Float64`);
   `Float32` runs the pipeline in single precision. In-memory matrix pairs are
   used as-is, so convert those yourself.

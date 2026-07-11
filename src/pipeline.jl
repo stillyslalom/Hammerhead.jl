@@ -35,7 +35,8 @@ first [`run_piv`](@ref) call and are reused (and resized on demand) thereafter
 — pass one via the `workspace` keyword when running many equally sized pairs
 yourself, to amortize the per-pair interpolant/deformation/correlator
 allocations across the batch. `backend = :cpu` selects the execution backend;
-the core package currently supports only the CPU backend.
+the core package provides the CPU backend, and package extensions add device
+selectors (see the internals reference).
 """
 piv_workspace(; backend::Symbol = :cpu) =
     PIVWorkspace(_resolve_backend(backend), nothing, nothing, nothing, nothing,
@@ -260,8 +261,11 @@ Windows below the threshold are correlated over their valid pixels only.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
-`backend = :cpu` selects the execution backend. The core package currently
-supports only the CPU backend; backend implementation types are internal.
+`backend = :cpu` selects the execution backend. The core package provides the
+CPU backend; package extensions add device selectors — `:ka` (portable
+KernelAbstractions kernels on the CPU, loaded with KernelAbstractions +
+AbstractFFTs) and `:amdgpu` (ROCm, loaded with AMDGPU) — see the internals
+reference for scope. Backend implementation types are internal.
 
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch

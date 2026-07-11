@@ -2,16 +2,20 @@ module HammerheadAMDGPUExt
 
 # AMD ROCm/HIP device backend (`backend = :amdgpu`) for interrogation-window
 # correlation, built on AMDGPU.jl + KernelAbstractions. It reuses the portable
-# correlation kernels shared with the KA-CPU extension (`_ka_correlation_kernels.jl`)
-# and the CPU peak/subpixel/moment routines; the only device-specific work here
-# is host<->device staging and the rocFFT batched transform.
+# correlation and plane-analysis kernels shared with the KA-CPU extension
+# (`_ka_correlation_kernels.jl`); the only device-specific work here is
+# host<->device staging and the rocFFT batched transform. The whole pipeline —
+# gather, FFTs, cross-power, shift/gain, peak finding + subpixel + moment —
+# runs on the device; only the packed per-window scalars come back to the host.
 #
-# STATUS: written against the AMDGPU/KernelAbstractions APIs but NOT yet
-# validated on hardware — needs an RX 6800 XT (gfx1030) with the ROCm/HIP SDK
-# and a working rocFFT for batched region transforms (the central portability
-# risk). Numerics mirror the CPU FFTW path (shared apod/gain planes), so results
-# should match `backend = :cpu` within FFT round-off; confirm with test_ka-style
-# comparisons once the device is available.
+# STATUS: validated on an RX 6800 XT (gfx1030) against `backend = :cpu`
+# (max deviation ~1e-14 in Float64, single-pass/multipass/masked), and 1.3-2.4x
+# faster than the 4-thread CPU path on 1024²-2048² single-pass benches
+# (`bench/gpu_benchmarks.jl`). Requires
+# ROCm 6.4 — ROCm/HIP 7.1 dropped RDNA2 support on Windows, so point
+# HIP_PATH/ROCM_PATH/PATH at the 6.4 install. rocFFT in-place plans apply via
+# `p * x` (they lack FFTW's 3-arg `mul!`), and masks must be materialized as
+# dense `Array{Bool}` before `copyto!` to the device.
 
 using Hammerhead
 using AMDGPU
@@ -20,7 +24,7 @@ using AbstractFFTs: plan_fft!
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
     _engine_nchunks, piv_correlation_engines, process_windows!,
-    make_correlator, analyze_plane!, subpixel_gauss3, PIVParameters
+    make_correlator, PIVParameters
 
 # Portable correlation kernels + scope guard, shared with HammerheadKAExt.
 include("_ka_correlation_kernels.jl")
@@ -34,13 +38,16 @@ _engine_nchunks(::_AMDGPUBackend, ::Int) = 1
 
 _check_backend_params(::_AMDGPUBackend, passes) = _ka_scope_check(passes, :amdgpu)
 
-# Windows per device sub-batch (bounds device-memory footprint).
-const _AMDGPU_BATCH = 512
+# Windows per device sub-batch (bounds device-memory footprint; at 2048 the
+# Float64 complex buffers total ~340 MB, and the analysis kernel — one
+# work-item per window — gets enough parallelism to hide memory latency).
+const _AMDGPU_BATCH = 2048
 
 mutable struct _AMDGPUCorrelationEngine{T}
     wsize::NTuple{2,Int}
     fft_size::NTuple{2,Int}
     padded::Bool
+    kpk::Int                              # peaks located per window, max(n_peaks, 2)
     apod_d::ROCArray{T,2}                 # window-sized (device)
     gain_d::ROCArray{T,2}                 # fftshifted gain (device); empty if unpadded
     empty_mask::ROCArray{Bool,2}          # 0×0 dummy passed when there is no mask
@@ -53,8 +60,13 @@ mutable struct _AMDGPUCorrelationEngine{T}
     bs::Int
     CA::ROCArray{Complex{T},3}
     CB::ROCArray{Complex{T},3}
-    R3::ROCArray{T,3}
-    R3_host::Array{T,3}
+    Rt::ROCArray{T,3}                     # (bs+1, nr, nc) batch-major plane batch
+    meanA_d::ROCArray{T,1}                # per-window means (device reduction)
+    meanB_d::ROCArray{T,1}
+    vals_d::ROCArray{T,2}                 # (kpk, bs) peak-finder scratch
+    locs_d::ROCArray{Int32,3}             # (2, kpk, bs) peak-finder scratch
+    out_d::ROCArray{T,2}                  # (5 + 2*(kpk-1), bs) packed analysis output
+    out_host::Matrix{T}
     origins_host::Matrix{Int}
     origins_d::ROCArray{Int,2}
     fwd::Any
@@ -70,10 +82,13 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
     padded = !isempty(cpu.gain)
     gain_d = padded ? ROCArray{T}(Matrix{T}(cpu.gain)) : AMDGPU.zeros(T, 0, 0)
     return _AMDGPUCorrelationEngine{T}(
-        params.window_size, fft_size, padded, apod_d, gain_d, AMDGPU.zeros(Bool, 0, 0),
+        params.window_size, fft_size, padded, max(params.n_peaks, 2),
+        apod_d, gain_d, AMDGPU.zeros(Bool, 0, 0),
         (0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Bool, 0, 0),
         0, AMDGPU.zeros(Complex{T}, 0, 0, 0), AMDGPU.zeros(Complex{T}, 0, 0, 0),
-        AMDGPU.zeros(T, 0, 0, 0), Array{T,3}(undef, 0, 0, 0),
+        AMDGPU.zeros(T, 0, 0, 0), AMDGPU.zeros(T, 0), AMDGPU.zeros(T, 0),
+        AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Int32, 2, 0, 0), AMDGPU.zeros(T, 0, 0),
+        Matrix{T}(undef, 0, 0),
         Matrix{Int}(undef, 0, 2), AMDGPU.zeros(Int, 0, 0), nothing, nothing)
 end
 
@@ -86,8 +101,17 @@ function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
         nr, nc = engine.fft_size
         engine.CA = AMDGPU.zeros(Complex{T}, nr, nc, bs)
         engine.CB = AMDGPU.zeros(Complex{T}, nr, nc, bs)
-        engine.R3 = AMDGPU.zeros(T, nr, nc, bs)
-        engine.R3_host = Array{T,3}(undef, nr, nc, bs)
+        # Leading dimension padded by one row: the shift/gain kernel's writes
+        # stride by the leading dimension, and at a power-of-two batch size an
+        # exact power-of-two byte stride funnels a whole wavefront into one
+        # memory channel (measured ~20x slowdown). Row bs+1 is never touched.
+        engine.Rt = AMDGPU.zeros(T, bs + 1, nr, nc)
+        engine.meanA_d = AMDGPU.zeros(T, bs)
+        engine.meanB_d = AMDGPU.zeros(T, bs)
+        engine.vals_d = AMDGPU.zeros(T, engine.kpk, bs)
+        engine.locs_d = AMDGPU.zeros(Int32, 2, engine.kpk, bs)
+        engine.out_d = AMDGPU.zeros(T, 5 + 2 * (engine.kpk - 1), bs)
+        engine.out_host = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
         engine.origins_host = Matrix{Int}(undef, bs, 2)
         engine.origins_d = AMDGPU.zeros(Int, bs, 2)
         engine.fwd = plan_fft!(engine.CA, (1, 2))
@@ -143,10 +167,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         maskarg = engine.mask_d
     end
     gainarg = engine.padded ? engine.gain_d : engine.apod_d   # dummy when unpadded (unread)
-
-    kpk = max(params.n_peaks, 2)
-    vals = Vector{T}(undef, kpk)
-    locs = Vector{NTuple{2,Int}}(undef, kpk)
+    use_regionalmax = params.peak_finder === :regionalmax
+    use_gauss9 = params.subpixel_method === :gauss9
+    nalt = engine.kpk - 1
 
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
@@ -158,9 +181,12 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         copyto!(engine.origins_d, engine.origins_host)
         fill!(engine.CA, 0)
         fill!(engine.CB, 0)
+        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, engine.imgA_d,
+                              engine.imgB_d, engine.origins_d, maskarg, hasmask,
+                              wr, wc; ndrange = nreal)
         _ka_gather!(ka)(engine.CA, engine.CB, engine.imgA_d, engine.imgB_d,
-                        engine.origins_d, engine.apod_d, maskarg, hasmask, wr, wc;
-                        ndrange = nreal)
+                        engine.origins_d, engine.apod_d, engine.meanA_d,
+                        engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         KernelAbstractions.synchronize(ka)
         # In-place plan application: `p * x` mutates x and returns it, the
         # idiom shared by FFTW and rocFFT in-place plans (rocFFT does not
@@ -170,25 +196,30 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
-        _ka_shiftgain!(ka)(engine.R3, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
+        _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
+        # Same queue as the shift/gain kernel, so no synchronize between them.
+        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
+                         ndrange = nreal)
         KernelAbstractions.synchronize(ka)
-        copyto!(engine.R3_host, engine.R3)   # device -> host for CPU peak finding
+        # Device -> host: only the packed per-window scalars, never the planes.
+        copyto!(engine.out_host, engine.out_d)
 
+        # Scatter the packed outputs into the vector grids (see the
+        # `_ka_analyze!` row layout).
         for m in 1:nreal
             job = jobvec[start + m - 1]
             gi, gj = job[1], job[2]
-            Rk = view(engine.R3_host, :, :, m)
-            res = analyze_plane!(vals, locs, Rk, params)
-            u[gi, gj] = res.du
-            v[gi, gj] = res.dv
-            peak_ratio[gi, gj] = res.ratio
-            correlation_moment[gi, gj] = res.moment
+            u[gi, gj] = engine.out_host[1, m]
+            v[gi, gj] = engine.out_host[2, m]
+            peak_ratio[gi, gj] = engine.out_host[3, m]
+            correlation_moment[gi, gj] = engine.out_host[4, m]
             if alt_u !== nothing
-                for mm in 2:min(res.found, params.n_peaks)
-                    aref = subpixel_gauss3(Rk, locs[mm])
-                    alt_u[gi, gj, mm - 1] = aref[2] - res.center[2]
-                    alt_v[gi, gj, mm - 1] = aref[1] - res.center[1]
+                found = Int(engine.out_host[5, m])   # small integer, exact in T
+                for mm in 2:min(found, params.n_peaks)
+                    alt_u[gi, gj, mm - 1] = engine.out_host[5 + (mm - 1), m]
+                    alt_v[gi, gj, mm - 1] = engine.out_host[5 + nalt + (mm - 1), m]
                 end
             end
         end

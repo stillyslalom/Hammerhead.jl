@@ -163,6 +163,25 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `PhysicalScale(pixel_size::Length, dt::Time)` constructor (ustrip + unit
   labels; no core stub needed — it's a constructor method, not a
   stub-shadowing function)
+- `ext/HammerheadKAExt.jl` (`backend = :ka`, trigger KernelAbstractions +
+  AbstractFFTs) + `ext/HammerheadAMDGPUExt.jl` (`backend = :amdgpu`, adds
+  AMDGPU/rocFFT) — batched device correlation engines sharing the portable
+  kernels in `ext/_ka_correlation_kernels.jl` (gather, cross-power,
+  shift/gain, and the full `analyze_plane!` port: peak finding, gauss3/gauss9
+  subpixel, ratio, moment, alt peaks — only packed per-window scalars return
+  to the host). `:ka` runs those kernels on the CPU as the hardware-free
+  proving tier — `test/test_ka.jl` guards them, and on this box it is
+  bitwise-identical to `:cpu`. Scope: `:cross` + `:gauss3`/`:gauss9` only;
+  phase/gauss2d/UQ/keep_planes are rejected with a clear error
+  (`_ka_scope_check`); ensemble/stereo drivers stay CPU-gated. GPU kernel
+  conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
+  no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
+  compile to malloc hostcalls (use `% Int32` wrapping stores and
+  `unsafe_trunc` after guards); per-window plane scans need the batch-major
+  `Rt[k, i, j]` layout so wavefront reads coalesce; the `Rt` leading dimension
+  is padded +1 because a power-of-two byte stride funnels writes into one
+  memory channel. Validated + benched via `bench/gpu_benchmarks.jl` (ROCm 6.4
+  required for RDNA2 on Windows — 7.1 dropped it)
 
 ## HammerheadGUI (HammerheadGUI/)
 

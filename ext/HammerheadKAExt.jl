@@ -10,9 +10,11 @@ module HammerheadKAExt
 # The plane-level numerics are matched to the CPU FFTW path exactly (the same
 # apodization window and overlap-gain plane are reused), so results differ from
 # `backend = :cpu` only by FFT/reduction round-off. Peak finding, subpixel
-# refinement, the correlation moment, and the peak ratio are the shared CPU
-# routines (`analyze_plane!`) run on the host-side plane batch — identical given
-# the same plane — so only the FFT + elementwise stages are new device kernels.
+# refinement, the correlation moment, and the peak ratio run in the shared
+# `_ka_analyze!` kernel — a faithful port of `analyze_plane!` — so on a GPU
+# device only a handful of scalars per window return to the host, never whole
+# correlation planes; here on the CPU backend the same kernel guards that
+# shared code in CI.
 
 using Hammerhead
 using KernelAbstractions
@@ -21,7 +23,7 @@ using LinearAlgebra: mul!
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
     _engine_nchunks, piv_correlation_engines, process_windows!, _correlation_apod,
-    make_correlator, analyze_plane!, subpixel_gauss3, PIVParameters
+    make_correlator, PIVParameters
 
 # Portable correlation kernels shared with the GPU device extensions.
 include("_ka_correlation_kernels.jl")
@@ -50,13 +52,19 @@ mutable struct _KACorrelationEngine{T,KB}
     wsize::NTuple{2,Int}
     fft_size::NTuple{2,Int}
     padded::Bool
+    kpk::Int                        # peaks located per window, max(n_peaks, 2)
     apod::Matrix{T}
     gain::Matrix{T}                 # fftshifted overlap gain; empty if unpadded
     bs::Int
     CA::Array{Complex{T},3}
     CB::Array{Complex{T},3}
-    R3::Array{T,3}
+    Rt::Array{T,3}                  # (bs+1, nr, nc) batch-major plane batch
+    meanA::Vector{T}                # per-window means (device reduction)
+    meanB::Vector{T}
     origins::Matrix{Int}
+    vals::Matrix{T}                 # (kpk, bs) peak-finder scratch
+    locs::Array{Int32,3}            # (2, kpk, bs) peak-finder scratch
+    out::Matrix{T}                  # (5 + 2*(kpk-1), bs) packed analysis output
     fwd::Any
     bwd::Any
 end
@@ -72,9 +80,13 @@ function _make_ka_engine(params::PIVParameters, ::Type{T}) where {T}
     padded = !isempty(cpu.gain)
     gain = padded ? Matrix{T}(cpu.gain) : Matrix{T}(undef, 0, 0)
     return _KACorrelationEngine{T,typeof(CPU())}(
-        CPU(), params.window_size, fft_size, padded, apod, gain, 0,
+        CPU(), params.window_size, fft_size, padded, max(params.n_peaks, 2),
+        apod, gain, 0,
         Array{Complex{T},3}(undef, 0, 0, 0), Array{Complex{T},3}(undef, 0, 0, 0),
-        Array{T,3}(undef, 0, 0, 0), Matrix{Int}(undef, 0, 2), nothing, nothing)
+        Array{T,3}(undef, 0, 0, 0), Vector{T}(undef, 0), Vector{T}(undef, 0),
+        Matrix{Int}(undef, 0, 2),
+        Matrix{T}(undef, 0, 0), Array{Int32,3}(undef, 2, 0, 0),
+        Matrix{T}(undef, 0, 0), nothing, nothing)
 end
 
 piv_correlation_engines(::_KABackend, workspace, params::PIVParameters,
@@ -86,8 +98,13 @@ function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
         nr, nc = engine.fft_size
         engine.CA = zeros(Complex{T}, nr, nc, bs)
         engine.CB = zeros(Complex{T}, nr, nc, bs)
-        engine.R3 = zeros(T, nr, nc, bs)
+        engine.Rt = zeros(T, bs + 1, nr, nc)   # +1: GPU channel-conflict pad, see AMDGPU ext
+        engine.meanA = Vector{T}(undef, bs)
+        engine.meanB = Vector{T}(undef, bs)
         engine.origins = Matrix{Int}(undef, bs, 2)
+        engine.vals = Matrix{T}(undef, engine.kpk, bs)
+        engine.locs = Array{Int32,3}(undef, 2, engine.kpk, bs)
+        engine.out = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
         engine.fwd = plan_fft!(engine.CA, (1, 2))
         engine.bwd = inv(engine.fwd)
         engine.bs = bs
@@ -117,10 +134,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     hasmask = mask !== nothing
     themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
     gainarg = engine.padded ? engine.gain : engine.apod   # dummy when unpadded (unread)
-
-    kpk = max(params.n_peaks, 2)
-    vals = Vector{T}(undef, kpk)
-    locs = Vector{NTuple{2,Int}}(undef, kpk)
+    use_regionalmax = params.peak_finder === :regionalmax
+    use_gauss9 = params.subpixel_method === :gauss9
+    nalt = engine.kpk - 1
 
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
@@ -131,32 +147,39 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         end
         fill!(engine.CA, 0)
         fill!(engine.CB, 0)
+        _ka_window_means!(ka)(engine.meanA, engine.meanB, imgA, imgB, engine.origins,
+                              themask, hasmask, wr, wc; ndrange = nreal)
+        KernelAbstractions.synchronize(ka)
         _ka_gather!(ka)(engine.CA, engine.CB, imgA, imgB, engine.origins, engine.apod,
-                        themask, hasmask, wr, wc; ndrange = nreal)
+                        engine.meanA, engine.meanB, themask, hasmask;
+                        ndrange = (wr, wc, nreal))
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.fwd, engine.CA)
         mul!(engine.CB, engine.fwd, engine.CB)
         _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.bwd, engine.CA)
-        _ka_shiftgain!(ka)(engine.R3, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
+        _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
+        _ka_analyze!(ka)(engine.out, engine.vals, engine.locs, engine.Rt,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
+                         ndrange = nreal)
         KernelAbstractions.synchronize(ka)
 
+        # Scatter the packed per-window outputs into the vector grids (see the
+        # `_ka_analyze!` row layout).
         for m in 1:nreal
             job = jobvec[start + m - 1]
             gi, gj = job[1], job[2]
-            Rk = view(engine.R3, :, :, m)
-            res = analyze_plane!(vals, locs, Rk, params)
-            u[gi, gj] = res.du
-            v[gi, gj] = res.dv
-            peak_ratio[gi, gj] = res.ratio
-            correlation_moment[gi, gj] = res.moment
+            u[gi, gj] = engine.out[1, m]
+            v[gi, gj] = engine.out[2, m]
+            peak_ratio[gi, gj] = engine.out[3, m]
+            correlation_moment[gi, gj] = engine.out[4, m]
             if alt_u !== nothing
-                for mm in 2:min(res.found, params.n_peaks)
-                    aref = subpixel_gauss3(Rk, locs[mm])
-                    alt_u[gi, gj, mm - 1] = aref[2] - res.center[2]
-                    alt_v[gi, gj, mm - 1] = aref[1] - res.center[1]
+                found = Int(engine.out[5, m])   # small integer, exact in T
+                for mm in 2:min(found, params.n_peaks)
+                    alt_u[gi, gj, mm - 1] = engine.out[5 + (mm - 1), m]
+                    alt_v[gi, gj, mm - 1] = engine.out[5 + nalt + (mm - 1), m]
                 end
             end
         end

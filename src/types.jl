@@ -80,9 +80,10 @@ _resolve_backend(backend::Symbol) = _resolve_backend(Val(backend))
 _resolve_backend(::Val{:cpu}) = _DEFAULT_BACKEND
 _resolve_backend(::Val{B}) where {B} =
     throw(ArgumentError("unsupported Hammerhead backend :$B; the core package " *
-                        "provides only backend = :cpu. GPU backends live in " *
-                        "extension packages — load the corresponding device " *
-                        "package (e.g. `using CUDA`) to register them."))
+                        "provides only backend = :cpu. Device backends live in " *
+                        "extension packages — load the corresponding trigger " *
+                        "packages (e.g. `using KernelAbstractions, AbstractFFTs` " *
+                        "for :ka, plus `using AMDGPU` for :amdgpu) to register them."))
 
 _require_cpu_backend(backend::_CPUBackend) = backend
 _require_cpu_backend(backend::_AbstractHammerheadBackend) =
