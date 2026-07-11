@@ -127,8 +127,10 @@ end
 
 # Version 2 added the uncertainty_u/uncertainty_v fields to PIVResult;
 # version 3 allows StereoPIVResult entries alongside PIVResult;
-# version 4 allows PTVResult entries.
-const RESULTS_FORMAT_VERSION = 4
+# version 4 allows PTVResult entries;
+# version 5 added the max_iterations/convergence_tol fields to the embedded
+# PIVParameters.
+const RESULTS_FORMAT_VERSION = 5
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')

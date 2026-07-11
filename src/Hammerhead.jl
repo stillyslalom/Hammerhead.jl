@@ -4,7 +4,7 @@ using FFTW
 using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
-using Statistics: median, median!, std, quantile
+using Statistics: median, median!, std, quantile, quantile!
 using StaticArrays
 using CoordinateTransformations: AffineMap
 import FileIO

@@ -35,7 +35,8 @@ Immutable, validated configuration for a PIV analysis.
   assumes the peak sits at ~zero residual displacement, so it runs on the
   final pass only and is meaningful only after multi-pass deformation has
   converged — use a schedule that repeats the final window size (e.g.
-  `multipass_parameters([32, 16, 16])`). It estimates the random error only
+  `multipass_parameters([32, 16, 16])`) or iterate the final pass to
+  convergence (`max_iterations`). It estimates the random error only
   (systematic bias such as peak locking is invisible to it) and is accurate
   for uncertainties up to ~0.3 px.
 - `uod_enable = true`: validate vectors with universal outlier detection.
@@ -55,6 +56,25 @@ Immutable, validated configuration for a PIV analysis.
 - `replace_outliers = true`: replace flagged vectors with the local median of
   valid neighbors. Intermediate passes of a multi-pass run always replace,
   regardless of this setting, to keep the predictor field well behaved.
+- `max_iterations = 1`: iteration budget for this pass. With the default 1
+  the pass correlates once (classic WIDIM). With more, the pass *iterates*:
+  its own validated field becomes the deformation predictor, the images are
+  re-deformed, and the windows re-correlated, until the field converges (see
+  `convergence_tol`) or the budget is spent. Replacement artifacts then relax
+  toward measured data within the pass instead of cascading into later
+  (smaller-window) passes, and the final pass can be iterated to
+  convergence — the predictor state the Wieneke (2015) `uncertainty`
+  estimator assumes. Sweeps beyond the first always replace flagged vectors
+  internally (the next predictor must be well behaved), but the returned
+  field still honors `replace_outliers`.
+- `convergence_tol = 0.05`: convergence threshold (pixels) for the
+  `max_iterations` loop — the pass stops early once 95% of the unmasked
+  vectors change by less than this between successive sweeps (the 95th
+  percentile rather than the maximum, because a few bistable low-signal
+  windows flicker between correlation peaks indefinitely — they are
+  validation's problem and would keep a max-norm from ever converging).
+  `0` disables the early exit (the pass always runs `max_iterations`
+  sweeps). Unused when `max_iterations == 1`.
 - `keep_correlation_planes = false`: retain each window's full correlation
   plane in the result's `correlation_planes` field for inspection. **Opt-in
   and memory-heavy** — a 32² window on a 100×100 grid in `Float64` is
@@ -81,6 +101,8 @@ struct PIVParameters
     min_peak_ratio::Float64
     validation::Tuple
     replace_outliers::Bool
+    max_iterations::Int
+    convergence_tol::Float64
     keep_correlation_planes::Bool
 
     function PIVParameters(;
@@ -98,6 +120,8 @@ struct PIVParameters
         min_peak_ratio::Real = 1.0,
         validation::Tuple = (),
         replace_outliers::Bool = true,
+        max_iterations::Int = 1,
+        convergence_tol::Real = 0.05,
         keep_correlation_planes::Bool = false,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
@@ -120,10 +144,14 @@ struct PIVParameters
             throw(ArgumentError("uod_neighborhood must be at least 1, got $uod_neighborhood"))
         min_peak_ratio >= 0 ||
             throw(ArgumentError("min_peak_ratio must be non-negative, got $min_peak_ratio"))
+        max_iterations >= 1 ||
+            throw(ArgumentError("max_iterations must be at least 1, got $max_iterations"))
+        convergence_tol >= 0 ||
+            throw(ArgumentError("convergence_tol must be non-negative, got $convergence_tol"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
             n_peaks, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers,
-            keep_correlation_planes)
+            max_iterations, Float64(convergence_tol), keep_correlation_planes)
     end
 end
 
@@ -136,6 +164,8 @@ function Base.show(io::IO, p::PIVParameters)
         ", min_peak_ratio=$(p.min_peak_ratio)",
         isempty(p.validation) ? "" : ", validation=$(p.validation)",
         ", replace_outliers=$(p.replace_outliers)",
+        p.max_iterations > 1 ?
+            ", max_iterations=$(p.max_iterations), convergence_tol=$(p.convergence_tol)" : "",
         p.keep_correlation_planes ? ", keep_correlation_planes=true" : "", ")")
 end
 

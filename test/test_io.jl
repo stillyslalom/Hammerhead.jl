@@ -230,7 +230,7 @@ using Statistics
             @test isfile(p1) && isfile(p2)
             @test load_results(p1)[1].u == res[1].u
             jldopen(p1, "r") do f
-                @test f["format_version"] == 4
+                @test f["format_version"] == Hammerhead.RESULTS_FORMAT_VERSION
                 @test f["sources/000001"] == [files[1], files[2]]
             end
         end

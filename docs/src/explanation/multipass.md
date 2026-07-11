@@ -36,12 +36,46 @@ symmetric scheme is second-order accurate: the measurement is centered at
 the midpoint of the particle trajectory, which cancels the leading-order
 bias in curved or sheared flow.
 
-## Convergence sweeps
+## Convergence sweeps and iterative passes
 
 Repeating the final window size — `multipass_parameters([64, 32, 16, 16])`
 — adds convergence sweeps: extra passes at constant resolution that let the
 predictor–corrector iteration settle. Residual displacements shrink toward
 zero and the measurement approaches the deformation-limited accuracy.
+
+The adaptive version is the `max_iterations` parameter: a pass with
+`max_iterations > 1` feeds its own validated field back as the deformation
+predictor and re-correlates, sweep after sweep, until the field converges or
+the budget is spent —
+
+```julia
+multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))
+```
+
+iterates the 16-px stage like extra repeated passes would, but stops as soon
+as continuing would not change the answer. Convergence means the 95th
+percentile of the per-vector displacement change between successive sweeps
+drops below `convergence_tol` (0.05 px by default). The criterion is a
+percentile rather than a maximum deliberately: a few bistable low-signal
+windows flicker between correlation peaks for arbitrarily many sweeps (on
+synthetic test scenes the maximum change stays near a pixel while the median
+falls below 10⁻³ px), and those windows are validation's problem — a
+max-norm would never converge and the early exit would be dead. Setting
+`convergence_tol = 0` disables the early exit, making the pass run exactly
+`max_iterations` sweeps — exactly equivalent to repeating the pass that many
+times in the schedule.
+
+Iteration also stops validation failures from cascading: within an
+iterating pass a flagged vector's local-median replacement seeds the next
+sweep's deformation, and the window is then *re-measured* — so replacement
+artifacts relax toward measured data within the stage instead of leaking
+into the next (smaller-window) pass's predictor, where a corrupted
+predictor would spoil every window it touches.
+
+Each extra sweep costs one full-image re-deformation plus one re-correlation
+of every window (roughly the cost of an extra pass; the deformation is
+O(image) no matter how few windows still change, which is why Hammerhead
+re-correlates the whole field rather than tracking per-vector convergence).
 
 Two features **require** a converged schedule:
 
@@ -57,6 +91,9 @@ Two features **require** a converged schedule:
 Every pass validates its field (see [`PIVParameters`](@ref)) and
 intermediate passes *always* replace invalid vectors regardless of the
 `replace_outliers` setting — a spike in the predictor would otherwise
-corrupt the deformation for every window it touches. Masked regions are
-filled from valid neighbors before smoothing for the same reason (see
-[the masking model](masking.md)).
+corrupt the deformation for every window it touches. The sweeps of an
+iterating pass replace internally for the same reason, but the *returned*
+field still honors `replace_outliers`: with replacement off, cells that are
+still flagged after the last sweep hold their measured displacement. Masked
+regions are filled from valid neighbors before smoothing for the same reason
+(see [the masking model](masking.md)).

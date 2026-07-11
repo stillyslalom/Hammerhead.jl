@@ -272,7 +272,7 @@ end
             @test loaded[1] isa PTVResult
             @test loaded[1].index_a == res[1].index_a
             jldopen(out, "r") do f
-                @test f["format_version"] == 4
+                @test f["format_version"] == Hammerhead.RESULTS_FORMAT_VERSION
                 @test f["sources/000001"] == [files[1], files[2]]
             end
 

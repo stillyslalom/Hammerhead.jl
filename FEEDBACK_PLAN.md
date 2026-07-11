@@ -8,7 +8,7 @@ benchmarking/design iteration.
 
 ---
 
-## B1. Iterative per-stage multipass (feedback item 1)
+## B1. Iterative per-stage multipass (feedback item 1) — DONE (branch `feedback-b1`)
 
 Convergence-looped validate → replace → smooth → re-deform → re-correlate
 within each stage, optional per-vector convergence tracking. Reserved
@@ -18,6 +18,43 @@ may gut the value of per-vector tracking), a convergence-criterion design
 (px-change threshold vs. correlation-statistics stationarity), and care
 around the Wieneke-2015 UQ contract (final-pass-only, assumes converged
 predictor) and the `force_replace` semantics in `run_piv`.
+
+**Landed:** `PIVParameters` gains `max_iterations` (default 1 = classic WIDIM,
+exact prior code path) and `convergence_tol` (default 0.05 px; `0` disables
+the early exit). The loop lives in `piv_pass`: each sweep re-deforms by the
+stage's own validated field (always force-replaced internally for predictor
+hygiene) and re-correlates; when the pass semantics don't want replacement,
+the measured field is stashed per sweep and restored at still-flagged cells
+after the loop (exact — peak-substituted cells are unflagged measured data).
+Wieneke UQ is estimated in a post-loop sweep over the last sweep's deformed
+windows (`uncertainty_sweep!`; the estimator never reads the correlation
+plane, so values are bitwise-identical to the fused path, which non-iterating
+passes still use). Key property (tested): an iterated final stage with
+`convergence_tol = 0` is *exactly* equal to repeating that pass in the
+schedule, UQ included.
+
+**Benchmark verdict — no per-vector convergence tracking.** 1024² pair,
+serial: `deform_images` 77 ms/iteration fixed vs. all-window correlation
+63–75 ms plain (padded+gauss 225 ms, +UQ 347 ms — but UQ left the loop via
+the post-sweep). Skipping even every window saves ≤ 50% of a plain-config
+iteration, a converged window's measurement still depends on the predictor
+through interpolation + smoothing (skipping is approximate, not exact), and
+the O(image) re-warp is unavoidable — so whole-field re-correlation it is.
+
+**Convergence-criterion design — 95th-percentile px change.** Measured on
+synthetic scenes (clean vortex, noisy shear, garbage sparse): a max-norm
+never converges — a few bistable low-signal windows flicker between
+correlation peaks for arbitrarily many sweeps (max change ~1 px while the
+median falls below 1e-3 px), and excluding flagged cells doesn't fix it
+(cells can pass validation on both sides of a flip). q95 decays cleanly and
+with tol 0.05 px stops the clean scene at sweep 2 (where RMS accuracy
+peaks), noisy shear at sweep 3, and never falsely converges on garbage
+(budget caps it). RMS-vs-truth confirmed sweeps beyond 2–3 don't improve
+accuracy, so the early exit matters. Constant `CONVERGENCE_QUANTILE = 0.95`
+in `pipeline.jl`.
+
+Not extended to `run_piv_ensemble` (an ensemble sweep would re-correlate
+every pair — deferred; its passes ignore `max_iterations`).
 
 ## B2. Robust peak finding (feedback item 3)
 
@@ -88,9 +125,8 @@ semantics differ) and actually pays off against its added complexity.
 
 ## Handoff notes
 
-- Fable: read this file + `feedback.md`; start B1 with the
-  deformation-vs-correlation cost benchmark. **B3 is done** (branch
-  `feedback-b3`, see above) — only B1 and B2 remain.
+- Fable: read this file + `feedback.md`. **B1 and B3 are done** (branches
+  `feedback-b1` / `feedback-b3`, see above) — only B2 remains.
 - Reference for what Part A already shipped (final-pass overrides,
   correlation-plane storage, per-pair batch output, `frame_index_strings`,
   `common_dewarp_grid`, the `plot_vector_field` arrow improvements): the

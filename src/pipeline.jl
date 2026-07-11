@@ -121,6 +121,17 @@ window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
 16])` — without violating the quarter-window displacement limit. Repeating the
 final window size adds convergence sweeps.
 
+A pass whose parameters set `max_iterations > 1` additionally *iterates
+in place*: its own validated field is fed back as the deformation predictor
+and the windows are re-correlated until the bulk field stops changing
+(`convergence_tol`) or the budget runs out, so a bad vector caught by
+validation is re-measured within the stage instead of leaking its local-median
+replacement into the next pass's predictor. Iterating the final pass to
+convergence is also the predictor state the `uncertainty` estimator assumes —
+`multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))` is
+equivalent to repeating 16-px passes until converged, but stops as soon as
+the field settles.
+
 With `uncertainty = true` in the final pass's parameters, a per-vector
 measurement uncertainty is estimated from correlation statistics (Wieneke
 2015) into `uncertainty_u`/`uncertainty_v` of the result — see
@@ -171,11 +182,12 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     # The cubic B-spline image interpolants used for predictor deformation
     # depend only on the (unchanging) source images, so their expensive
     # prefilter is paid once here and reused by every deforming pass. A
-    # single-pass schedule never deforms, so it skips the prefilter entirely.
+    # single-pass, non-iterating schedule never deforms, so it skips the
+    # prefilter entirely.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
-    multipass = length(passes) > 1
+    deforms = length(passes) > 1 || any(p -> p.max_iterations > 1, passes)
     workspace === nothing || ws_prepare!(workspace, size(imgA), T)
-    if !multipass
+    if !deforms
         itpA = itpB = nothing
         warp_buffers = nothing
     elseif workspace === nothing
@@ -202,7 +214,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
         # field must stay well behaved for the deformation to converge.
         result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
                           threaded, force_replace = k < length(passes),
-                          mask, mask_threshold, warp_buffers, workspace)
+                          predictor_smoothing, mask, mask_threshold,
+                          warp_buffers, workspace)
     end
     return result
 end
@@ -353,11 +366,18 @@ function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
     return result
 end
 
-# One interrogation pass: deform by the predictor, correlate the residual on
+# One interrogation stage: deform by the predictor, correlate the residual on
 # the pass grid, add the predictor back, then validate and (maybe) replace.
+# With `max_iterations > 1` the stage iterates: its validated (and always
+# replaced) field becomes the next deformation predictor, the images are
+# re-deformed, and the windows re-correlated, until the bulk field converges
+# (field_change < convergence_tol between sweeps) or the budget is spent — so
+# replacement artifacts relax toward measured data within the stage instead of
+# cascading into later passes.
 function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                   predictor, itpA = nothing, itpB = nothing; threaded::Bool,
                   force_replace::Bool,
+                  predictor_smoothing::Bool = true,
                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                   mask_threshold::Real = 0.5,
                   warp_buffers = nothing,
@@ -367,13 +387,14 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
     ny, nx = length(grid.y), length(grid.x)
     # Reuse the deformation output buffers across passes when supplied (each
-    # pass overwrites them fully before use); allocate fresh otherwise.
+    # sweep overwrites them fully before use); allocate fresh otherwise.
     bufA = warp_buffers === nothing ? nothing : warp_buffers[1]
     bufB = warp_buffers === nothing ? nothing : warp_buffers[2]
-    warpA, warpB, u, v = apply_predictor(imgA, imgB, itpA, itpB, predictor,
-                                         grid.x, grid.y, T; threaded,
-                                         warpA = bufA, warpB = bufB)
 
+    maxiter = params.max_iterations
+    # Per-sweep output arrays, allocated once and reused: process_windows!
+    # rewrites every job cell each sweep and the masked cells are reset below,
+    # so no stale values survive an iteration.
     residual_u = zeros(T, ny, nx)
     residual_v = zeros(T, ny, nx)
     peak_ratio = zeros(T, ny, nx)
@@ -383,10 +404,15 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     # Wieneke (2015) uncertainty assumes the correlation peak of the deformed
     # windows sits at ~zero residual, so it is only estimated on the final
-    # pass (force_replace marks intermediate passes). NaN when disabled.
+    # pass (force_replace marks intermediate passes). NaN when disabled. An
+    # iterating stage estimates it once after the loop settles instead of
+    # every sweep — the estimator reads only the deformed windows, never the
+    # correlation plane, so the post-loop sweep yields the exact values the
+    # fused path would.
     unc = params.uncertainty && !force_replace
     uncertainty_u = fill(T(NaN), ny, nx)
     uncertainty_v = fill(T(NaN), ny, nx)
+    fused_unc = unc && maxiter == 1
     # Opt-in full-plane storage: one cell per window (masked/skipped windows,
     # which are absent from grid.jobs, stay `nothing`). Each job writes only
     # its own cell, so the threaded path needs no locking.
@@ -397,41 +423,162 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     # One correlator per chunk (pooled and reused across pairs when a workspace
     # is supplied); each chunk uses a distinct entry, so the fan-out is safe.
     correlators = piv_correlators(workspace, params, T, nchunks)
-    if nchunks == 1
-        process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
-                         alt_u, alt_v, unc ? uncertainty_u : nothing,
-                         unc ? uncertainty_v : nothing, grid.jobs, warpA, warpB,
-                         params, correlators[1], mask, planes)
-    elseif nchunks > 1
-        chunk_size = cld(length(grid.jobs), nchunks)
-        @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
-            Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
-                                            correlation_moment, alt_u, alt_v,
-                                            unc ? uncertainty_u : nothing,
-                                            unc ? uncertainty_v : nothing,
-                                            chunk, warpA, warpB, params,
-                                            correlators[ci], mask, planes)
+    chunk_size = cld(length(grid.jobs), max(nchunks, 1))
+
+    # Sweeps always replace flagged vectors (the next predictor must be well
+    # behaved). When the pass semantics don't want replacement, the measured
+    # field is stashed each sweep and restored at still-flagged cells after
+    # the loop — exactly the unreplaced output, since peak-substituted cells
+    # hold measured data and are unflagged.
+    keep_measured = maxiter > 1 && !(force_replace || params.replace_outliers)
+    meas_u = meas_v = nothing
+    prev_u = prev_v = nothing
+    change_buf = Vector{T}()
+    maxiter > 2 && params.convergence_tol > 0 && sizehint!(change_buf, ny * nx)
+    local result, warpA, warpB
+    for it in 1:maxiter
+        warpA, warpB, u, v = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+                                             grid.x, grid.y, T; threaded,
+                                             warpA = bufA, warpB = bufB)
+        if it > 1
+            fill!(residual_u, zero(T))
+            fill!(residual_v, zero(T))
+            alt_u === nothing || fill!(alt_u, T(NaN))
+            alt_v === nothing || fill!(alt_v, T(NaN))
         end
-    end
-    if alt_u !== nothing
-        # Alternatives are residuals in the deformed frame; add the shared
-        # predictor (u/v still hold it here) to make them total displacements.
-        alt_u .+= u
-        alt_v .+= v
-    end
-    u .+= residual_u
-    v .+= residual_v
-    if any(grid.grid_mask)
-        for f in (u, v, peak_ratio, correlation_moment)
-            f[grid.grid_mask] .= T(NaN)
+        if nchunks == 1
+            process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
+                             alt_u, alt_v, fused_unc ? uncertainty_u : nothing,
+                             fused_unc ? uncertainty_v : nothing, grid.jobs, warpA,
+                             warpB, params, correlators[1], mask, planes)
+        elseif nchunks > 1
+            @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
+                Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
+                                                correlation_moment, alt_u, alt_v,
+                                                fused_unc ? uncertainty_u : nothing,
+                                                fused_unc ? uncertainty_v : nothing,
+                                                chunk, warpA, warpB, params,
+                                                correlators[ci], mask, planes)
+            end
         end
+        if alt_u !== nothing
+            # Alternatives are residuals in the deformed frame; add the shared
+            # predictor (u/v still hold it here) to make them total displacements.
+            alt_u .+= u
+            alt_v .+= v
+        end
+        u .+= residual_u
+        v .+= residual_v
+        if any(grid.grid_mask)
+            for f in (u, v, peak_ratio, correlation_moment)
+                f[grid.grid_mask] .= T(NaN)
+            end
+        end
+        if keep_measured
+            meas_u, meas_v = copy(u), copy(v)
+        end
+        result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
+                           uncertainty_u, uncertainty_v,
+                           falses(ny, nx), grid.grid_mask, params, planes)
+        validate_and_replace!(result, params, force_replace || maxiter > 1;
+                              alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
+        it == maxiter && break
+        # convergence_tol = 0 disables the early exit; skip the change
+        # tracking entirely then.
+        if params.convergence_tol > 0
+            if prev_u === nothing
+                prev_u, prev_v = copy(u), copy(v)
+            else
+                change = field_change(change_buf, u, v, prev_u, prev_v, grid.grid_mask)
+                change < params.convergence_tol && break
+                copyto!(prev_u, u)
+                copyto!(prev_v, v)
+            end
+        end
+        predictor = build_predictor(result, predictor_smoothing)
     end
 
-    result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
-                       uncertainty_u, uncertainty_v,
-                       falses(ny, nx), grid.grid_mask, params, planes)
-    return validate_and_replace!(result, params, force_replace;
-                                 alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
+    if unc && !fused_unc
+        # warpA/warpB still hold the deformation of the last sweep — the
+        # windows whose correlation produced the returned field.
+        if nchunks == 1
+            uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
+                               warpA, warpB, params, correlators[1].apod, mask)
+        elseif nchunks > 1
+            @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
+                Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
+                                                  warpA, warpB, params,
+                                                  correlators[ci].apod, mask)
+            end
+        end
+    end
+    if keep_measured && any(result.outliers)
+        result.u[result.outliers] = meas_u[result.outliers]
+        result.v[result.outliers] = meas_v[result.outliers]
+    end
+    return result
+end
+
+# The convergence norm quantile: an iterating stage is converged once this
+# fraction of its unmasked vectors changed by less than `convergence_tol`
+# since the previous sweep. A max-norm never converges in practice: a small
+# minority of bistable low-signal windows flickers between correlation peaks
+# indefinitely (measured on synthetic scenes: the max change stays ~1 px for
+# arbitrarily many sweeps while the median falls below 1e-3 px), and those
+# windows are validation's problem, not the iteration's. The 95th percentile
+# tracks the bulk field and ignores that persistent minority.
+const CONVERGENCE_QUANTILE = 0.95
+
+# 95th-percentile displacement-component change of the unmasked vectors
+# between two successive sweeps of an iterating stage. NaN-safe: cells that
+# are NaN in both sweeps (e.g. unreplaceable) contribute nothing, while a
+# cell flipping between NaN and finite counts as an infinite change. `buf` is
+# reusable scratch (emptied here; consumed by the quantile's partial sort).
+function field_change(buf::Vector{T}, u, v, prev_u, prev_v, mask) where {T}
+    empty!(buf)
+    @inbounds for i in eachindex(u, v, prev_u, prev_v)
+        mask[i] && continue
+        du = abs(u[i] - prev_u[i])
+        dv = abs(v[i] - prev_v[i])
+        if isnan(du) || isnan(dv)
+            if isnan(u[i]) == isnan(prev_u[i]) && isnan(v[i]) == isnan(prev_v[i])
+                continue
+            end
+            push!(buf, T(Inf))
+            continue
+        end
+        push!(buf, max(du, dv))
+    end
+    isempty(buf) && return zero(T)
+    return T(quantile!(buf, CONVERGENCE_QUANTILE))
+end
+
+# Estimate the Wieneke (2015) per-window uncertainty for `jobs` from the
+# deformed image pair, exactly as the fused path inside process_windows!
+# would (the estimator reads only the deformed windows, never the correlation
+# plane). Iterating stages call this once after the loop settles, so the
+# estimate is paid once instead of every sweep.
+function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs,
+                            imgA::AbstractMatrix, imgB::AbstractMatrix,
+                            params::PIVParameters, apod::AbstractMatrix,
+                            mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+    wr, wc = params.window_size
+    T = float(promote_type(eltype(imgA), eltype(imgB)))
+    uscratch = uncertainty_scratch(T, params.window_size)
+    ustats = zeros(2, UQ_NSTATS)
+    for (gi, gj, rs, cs) in jobs
+        subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
+        subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
+        submask = mask === nothing ? nothing :
+                  view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
+        # Fully clean windows take the unmasked fast path.
+        submask !== nothing && !any(submask) && (submask = nothing)
+        fill!(ustats, 0.0)
+        accumulate_uncertainty!(ustats, uscratch, subA, subB, submask, apod)
+        uncertainty_u[gi, gj] = finalize_uncertainty(T, view(ustats, 1, :))
+        uncertainty_v[gi, gj] = finalize_uncertainty(T, view(ustats, 2, :))
+    end
+    return nothing
 end
 
 """

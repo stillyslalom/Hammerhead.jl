@@ -94,7 +94,16 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
-  image deformation), `process_windows!` (receives its per-chunk correlator),
+  image deformation; a pass with `max_iterations > 1` iterates against its
+  own validated field until the *q95* per-vector change drops below
+  `convergence_tol` — a max-norm never converges, bistable low-signal
+  windows flicker between peaks forever; sweeps always force-replace
+  internally, with measured values restored at still-flagged cells when
+  `replace_outliers = false`; final-pass UQ then runs as a post-loop
+  `uncertainty_sweep!` over the last sweep's deformed windows, bitwise equal
+  to the fused single-sweep path; an iterated stage with `tol = 0` is
+  exactly ≡ repeating the pass — tested; the ensemble path ignores
+  `max_iterations`), `process_windows!` (receives its per-chunk correlator),
   `multipass_parameters` (`final = (;)` overrides the last pass only),
   `PIVWorkspace`/`piv_workspace()` (optional `workspace` kwarg reusing the
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
@@ -113,7 +122,7 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation)
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
-  (JLD2: `format_version` 4 + `results/000001`… + optional `sources/…`;
+  (JLD2: `format_version` 5 + `results/000001`… + optional `sources/…`;
   entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
   `output` accepts a single path or an `(i, pair) -> path` function for

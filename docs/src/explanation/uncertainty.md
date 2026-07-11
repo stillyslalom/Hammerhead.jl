@@ -23,7 +23,11 @@ deviation for `u` and `v` separately.
   estimate is computed on the *final pass only* and is meaningful only
   after the predictor–corrector iteration has settled. Repeat the final
   window size, e.g. `multipass_parameters([32, 16, 16]; uncertainty = true,
-  ...)`.
+  ...)`, or iterate the final pass to convergence with
+  `final = (max_iterations = 3,)` (see
+  [iterative passes](multipass.md#Convergence-sweeps-and-iterative-passes)) —
+  an iterating final pass estimates the uncertainty once, from the deformed
+  windows of its last sweep.
 - **Moderate noise.** The method is accurate for uncertainties up to about
   0.3 px; beyond that (or when the window has no usable correlation
   signal) the fields hold `NaN`.

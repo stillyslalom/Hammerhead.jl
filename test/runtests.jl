@@ -253,6 +253,105 @@ end
     @test sum(multi.outliers) <= 3     # no false-positive validation on smooth shear
 end
 
+@testset "iterative multipass (max_iterations)" begin
+    @test PIVParameters().max_iterations == 1
+    @test PIVParameters().convergence_tol == 0.05
+    @test_throws ArgumentError PIVParameters(max_iterations = 0)
+    @test_throws ArgumentError PIVParameters(convergence_tol = -0.1)
+    @test occursin("max_iterations=3", string(PIVParameters(max_iterations = 3)))
+    @test !occursin("max_iterations", string(PIVParameters()))
+
+    # Linear shear u(y) = a*(y - 64) with particles crossing the edges — the
+    # deformation-sensitive scene of the multi-pass testset above.
+    rng = MersenneTwister(17)
+    n = 128
+    a = 1 / 16
+    imgA = zeros(n, n)
+    imgB = zeros(n, n)
+    for _ in 1:900
+        p = (rand(rng) * (n + 20) - 10, rand(rng) * (n + 20) - 10)
+        add_particle!(imgA, p, 3.0)
+        add_particle!(imgB, (p[1], p[2] + a * (p[1] - 64)), 3.0)
+    end
+    # isequal: masked cells hold NaN, where array `==` is always false.
+    same(r1, r2) = isequal(r1.u, r2.u) && isequal(r1.v, r2.v) &&
+                   isequal(r1.peak_ratio, r2.peak_ratio) &&
+                   isequal(r1.correlation_moment, r2.correlation_moment) &&
+                   isequal(r1.uncertainty_u, r2.uncertainty_u) &&
+                   isequal(r1.uncertainty_v, r2.uncertainty_v) &&
+                   r1.outliers == r2.outliers && r1.mask == r2.mask
+
+    # An iterated final stage with the early exit disabled (`convergence_tol
+    # = 0`) is exactly a schedule that repeats the final pass — including the
+    # Wieneke uncertainty, which iterating stages estimate in a post-loop
+    # sweep instead of fused into the correlation sweep.
+    r_rep = run_piv(imgA, imgB,
+                    multipass_parameters([32, 16, 16, 16]; uncertainty = true))
+    r_it = run_piv(imgA, imgB,
+                   multipass_parameters([32, 16]; uncertainty = true,
+                       final = (max_iterations = 3, convergence_tol = 0.0)))
+    @test same(r_rep, r_it)
+    @test any(isfinite, r_it.uncertainty_u)   # the post-loop UQ sweep ran
+
+    # A single-pass schedule iterates too (re-deforming by its own field),
+    # which requires run_piv to build the image interpolants it would
+    # otherwise skip.
+    s_rep = run_piv(imgA, imgB, multipass_parameters([32, 32]))
+    s_it = run_piv(imgA, imgB, PIVParameters(window_size = 32, overlap = 16,
+                                             max_iterations = 2,
+                                             convergence_tol = 0.0))
+    @test same(s_rep, s_it)
+
+    # Convergence early exit: an absurdly large tolerance stops after the
+    # second sweep (the first sweep with a previous field to compare to).
+    e2 = run_piv(imgA, imgB, multipass_parameters([32, 16];
+                 final = (max_iterations = 2, convergence_tol = 0.0)))
+    eb = run_piv(imgA, imgB, multipass_parameters([32, 16];
+                 final = (max_iterations = 5, convergence_tol = 1e6)))
+    @test same(e2, eb)
+
+    # replace_outliers = false on an iterating final pass: sweeps replace
+    # internally (the next predictor must be well behaved), but flagged cells
+    # of the returned field still hold the measured data — identical to
+    # repeating the final pass with replacement off.
+    f_it = run_piv(imgA, imgB, multipass_parameters([32, 16];
+                   min_peak_ratio = 1.3,
+                   final = (max_iterations = 3, convergence_tol = 0.0,
+                            replace_outliers = false, min_peak_ratio = 1.3)))
+    f_rep = run_piv(imgA, imgB, multipass_parameters([32, 16, 16, 16];
+                    min_peak_ratio = 1.3,
+                    final = (replace_outliers = false, min_peak_ratio = 1.3)))
+    @test sum(f_it.outliers) > 0          # non-vacuous
+    @test same(f_it, f_rep)
+
+    # Iterating with the default tolerance stays accurate on the shear, and
+    # the threaded/workspace paths are bitwise identical to plain serial.
+    passes = multipass_parameters([64, 32, 16]; padding = true,
+                                  apodization = :gauss,
+                                  final = (max_iterations = 3,))
+    r_ser = run_piv(imgA, imgB, passes; threaded = false)
+    @test sqrt(mean((r_ser.u .- [a * (yi - 64) for yi in r_ser.y, _ in r_ser.x]) .^ 2)) < 0.08
+    r_thr = run_piv(imgA, imgB, passes; threaded = true)
+    @test same(r_ser, r_thr)
+    r_ws = run_piv(imgA, imgB, passes; threaded = false, workspace = piv_workspace())
+    @test same(r_ser, r_ws)
+
+    # Masked windows stay NaN/dropped through the iteration loop, and the
+    # iterated≡repeated equivalence holds with a mask in play.
+    mask = falses(n, n)
+    mask[1:48, 1:48] .= true
+    m_it = run_piv(imgA, imgB, multipass_parameters([32, 16];
+                   final = (max_iterations = 3, convergence_tol = 0.0)); mask)
+    m_rep = run_piv(imgA, imgB, multipass_parameters([32, 16, 16, 16]); mask)
+    @test same(m_it, m_rep)
+    @test any(m_it.mask) && all(isnan, m_it.u[m_it.mask])
+
+    # Float32 pipeline: the convergence norm follows the image precision.
+    r32 = run_piv(Float32.(imgA), Float32.(imgB),
+                  multipass_parameters([32, 16]; final = (max_iterations = 2,)))
+    @test r32 isa PIVResult{Float32}
+end
+
 @testset "keep_correlation_planes" begin
     rng = MersenneTwister(3)
     n = 96

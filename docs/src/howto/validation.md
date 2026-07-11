@@ -18,7 +18,10 @@ Every [`run_piv`](@ref) pass applies, in order:
    consistent alternative is accepted as measured data and unflagged.
 4. **Local-median replacement** — remaining flagged vectors are replaced
    (`replace_outliers = true`; intermediate multi-pass passes always
-   replace).
+   replace). A pass with `max_iterations > 1` then *re-measures* replaced
+   vectors, re-deforming by the corrected field and re-correlating until it
+   converges — see
+   [iterative passes](../explanation/multipass.md#Convergence-sweeps-and-iterative-passes).
 
 ## If too many good vectors are flagged
 

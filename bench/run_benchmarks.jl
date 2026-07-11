@@ -53,6 +53,8 @@ for (label, passes) in (
     "single pass 32/16 +pad" => [PIVParameters(window_size = 32, overlap = 16,
                                                padding = true, apodization = :gauss)],
     "multipass 64→32→16    " => multipass_parameters([64, 32, 16]),
+    "  + final iterated ≤3 " => multipass_parameters([64, 32, 16];
+                                                     final = (max_iterations = 3,)),
 )
     serial = time_min(() -> run_piv(imgA, imgB, passes; threaded = false); samples = 3)
     if Threads.nthreads() > 1
