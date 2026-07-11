@@ -1,3 +1,9 @@
+# A GPU extension registers its backend by adding a `_resolve_backend`
+# Val-method; this simulates one to prove the seam (structs/methods must be
+# top level, not inside the testset's local scope).
+struct _FakeTestBackend <: Hammerhead._AbstractHammerheadBackend end
+Hammerhead._resolve_backend(::Val{:faketest}) = _FakeTestBackend()
+
 @testset "CPU backend plumbing" begin
     same_piv(a, b) =
         isequal(a.x, b.x) &&
@@ -43,6 +49,20 @@
     @test !Hammerhead._supports_unified_memory(cpu_backend)
     @test_throws ArgumentError Hammerhead._resolve_backend(:gpu)
     @test_throws ArgumentError piv_workspace(; backend = :gpu)
+
+    # The simulated extension backend (registered above) proves the seam:
+    # resolution must reach the registered backend, its capability predicates
+    # default conservatively, and the CPU-only execution gate must still reject
+    # it (the two-stage resolve-then-require design).
+    fake = Hammerhead._resolve_backend(:faketest)
+    @test fake isa _FakeTestBackend
+    @test !Hammerhead._supports_fft(fake)
+    @test !Hammerhead._supports_fp64(fake)
+    @test Hammerhead._require_cpu_backend(Hammerhead._DEFAULT_BACKEND) ===
+          Hammerhead._DEFAULT_BACKEND
+    @test_throws ArgumentError Hammerhead._require_cpu_backend(fake)
+    @test_throws ArgumentError run_piv(zeros(64, 64), zeros(64, 64);
+                                       backend = :faketest, threaded = false)
 
     rng = MersenneTwister(20260711)
     imgA = zeros(128, 128)

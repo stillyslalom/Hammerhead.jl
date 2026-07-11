@@ -70,10 +70,19 @@ struct _CPUBackend <: _AbstractHammerheadBackend end
 
 const _DEFAULT_BACKEND = _CPUBackend()
 
-_resolve_backend(backend::Symbol) =
-    backend === :cpu ? _DEFAULT_BACKEND :
-    throw(ArgumentError("unsupported Hammerhead backend :$backend; " *
-                        "the core package currently supports only backend = :cpu"))
+# Backends are selected by a public Symbol (`backend = :cpu`, `:cuda`, …) and
+# resolved to a private backend object through `Val`-dispatch. The core package
+# registers only `:cpu`; a GPU extension (loaded via its device package, e.g.
+# `using CUDA`) adds a method like `_resolve_backend(::Val{:cuda}) =
+# _CUDABackend()`. Resolution is a once-per-call driver-level step, not hot
+# path, so the runtime `Val(::Symbol)` construction is cheap.
+_resolve_backend(backend::Symbol) = _resolve_backend(Val(backend))
+_resolve_backend(::Val{:cpu}) = _DEFAULT_BACKEND
+_resolve_backend(::Val{B}) where {B} =
+    throw(ArgumentError("unsupported Hammerhead backend :$B; the core package " *
+                        "provides only backend = :cpu. GPU backends live in " *
+                        "extension packages — load the corresponding device " *
+                        "package (e.g. `using CUDA`) to register them."))
 
 _require_cpu_backend(backend::_CPUBackend) = backend
 _require_cpu_backend(backend::_AbstractHammerheadBackend) =
@@ -91,6 +100,14 @@ _supports_fft(::_CPUBackend) = true
 _supports_batched_fft(::_CPUBackend) = false
 _supports_fp64(::_CPUBackend) = true
 _supports_unified_memory(::_CPUBackend) = false
+
+# Backend hooks overridable by extensions. The default backend is fully capable
+# and keeps the host-thread chunk count it is given; a device backend overrides
+# `_check_backend_params` to reject options its engine does not implement yet,
+# and `_engine_nchunks` to run the whole grid as one logical batch (device
+# engines tile it internally) instead of fanning out across host threads.
+_check_backend_params(::_AbstractHammerheadBackend, passes) = nothing
+_engine_nchunks(::_AbstractHammerheadBackend, requested::Int) = requested
 
 """
     PIVParameters(; kwargs...)

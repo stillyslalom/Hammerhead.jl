@@ -38,7 +38,7 @@ allocations across the batch. `backend = :cpu` selects the execution backend;
 the core package currently supports only the CPU backend.
 """
 piv_workspace(; backend::Symbol = :cpu) =
-    PIVWorkspace(_require_cpu_backend(_resolve_backend(backend)), nothing, nothing, nothing, nothing,
+    PIVWorkspace(_resolve_backend(backend), nothing, nothing, nothing, nothing,
                  nothing, nothing, Dict{Any,Vector{Correlator}}())
 
 # Point the workspace at this call's image size/precision, discarding buffers
@@ -94,8 +94,21 @@ function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::I
     return pool
 end
 
-piv_correlation_engines(workspace, params::PIVParameters, ::Type{T}, nchunks::Int) where {T} =
+# Build this pass's per-chunk correlation engines for the selected backend. The
+# CPU backend wraps pooled FFTW correlators (plans reused across pairs via the
+# workspace); other backends (loaded from an extension) add their own method
+# and own their device engine/buffer lifecycle.
+piv_correlation_engines(::_CPUBackend, workspace, params::PIVParameters,
+                        ::Type{T}, nchunks::Int) where {T} =
     [_make_correlation_engine(c) for c in piv_correlators(workspace, params, T, nchunks)]
+
+# A backend that resolves but supplies no correlation engine (e.g. its
+# extension is not loaded) fails here with a clear message rather than a raw
+# MethodError deeper in the pass.
+piv_correlation_engines(backend::_AbstractHammerheadBackend, workspace,
+                        params::PIVParameters, ::Type{T}, nchunks::Int) where {T} =
+    throw(ArgumentError("backend $(typeof(backend)) does not implement PIV " *
+                        "correlation; load the extension package that provides it"))
 
 const EFFORT_LEVELS = (:low, :medium, :high)
 const EFFORT_FINAL_ONLY = (:uncertainty, :max_iterations, :keep_correlation_planes)
@@ -282,8 +295,12 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
-    _require_cpu_backend(_resolve_backend(backend))
-    workspace === nothing || _require_cpu_backend(workspace._backend)
+    be = _resolve_backend(backend)
+    workspace === nothing || typeof(workspace._backend) === typeof(be) ||
+        throw(ArgumentError("workspace backend $(typeof(workspace._backend)) does not " *
+                            "match run backend $(typeof(be)); build the workspace with " *
+                            "the same `backend`"))
+    _check_backend_params(be, passes)
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
@@ -328,7 +345,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
         result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
                           threaded, force_replace = k < length(passes),
                           predictor_smoothing, mask, mask_threshold,
-                          warp_buffers, workspace)
+                          warp_buffers, backend = be, workspace)
     end
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -506,6 +523,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                   mask_threshold::Real = 0.5,
                   warp_buffers = nothing,
+                  backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
                   workspace::Union{Nothing,PIVWorkspace} = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
@@ -544,11 +562,15 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     planes = params.keep_correlation_planes ?
              fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
 
-    nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
+    # Host-thread chunk count, subject to the backend's own policy: the CPU
+    # backend fans the window grid out across tasks, while a device backend
+    # collapses this to one logical batch (nchunks == 1) that its engine tiles
+    # internally.
+    nchunks = _engine_nchunks(backend, threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1)
     # One correlation engine per chunk (CPU engines wrap pooled FFTW
     # correlators when a workspace is supplied); each chunk uses a distinct
     # entry, so the fan-out is safe.
-    engines = piv_correlation_engines(workspace, params, T, nchunks)
+    engines = piv_correlation_engines(backend, workspace, params, T, nchunks)
     chunk_size = cld(length(grid.jobs), max(nchunks, 1))
 
     # Sweeps always replace flagged vectors (the next predictor must be well
