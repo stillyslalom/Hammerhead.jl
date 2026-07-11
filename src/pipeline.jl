@@ -118,8 +118,9 @@ resolution, and both images are symmetrically deformed by ±half the predictor
 displacement (central-difference image deformation, cubic B-spline
 resampling). The pass then measures only the small residual displacement, so
 window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
-16])` — without violating the quarter-window displacement limit. Repeating the
-final window size adds convergence sweeps.
+16])` — without violating the quarter-window displacement limit. Additional
+convergence sweeps are normally expressed with `max_iterations` on a pass; a
+schedule that repeats a window size is the equivalent explicit form.
 
 A pass whose parameters set `max_iterations > 1` additionally *iterates
 in place*: its own validated field is fed back as the deformation predictor

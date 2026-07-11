@@ -38,24 +38,22 @@ bias in curved or sheared flow.
 
 ## Convergence sweeps and iterative passes
 
-Repeating the final window size — `multipass_parameters([64, 32, 16, 16])`
-— adds convergence sweeps: extra passes at constant resolution that let the
-predictor–corrector iteration settle. Residual displacements shrink toward
-zero and the measurement approaches the deformation-limited accuracy.
-
-The adaptive version is the `max_iterations` parameter: a pass with
-`max_iterations > 1` feeds its own validated field back as the deformation
-predictor and re-correlates, sweep after sweep, until the field converges or
-the budget is spent —
+A pass with `max_iterations > 1` adds convergence sweeps at that window size:
+it feeds its own validated field back as the deformation predictor and
+re-correlates, sweep after sweep, until the field converges or the budget is
+spent. Residual displacements shrink toward zero and the measurement
+approaches the deformation-limited accuracy —
 
 ```julia
 multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))
 ```
 
-iterates the 16-px stage like extra repeated passes would, but stops as soon
-as continuing would not change the answer. Convergence means the 95th
-percentile of the per-vector displacement change between successive sweeps
-drops below `convergence_tol` (0.05 px by default). The criterion is a
+This iterates the 16-px stage and stops as soon as continuing would not change
+the answer. Repeating the final window size explicitly —
+`multipass_parameters([64, 32, 16, 16, 16])` — is the older equivalent form
+when the early exit is disabled. Convergence means the 95th percentile of the
+per-vector displacement change between successive sweeps drops below
+`convergence_tol` (0.05 px by default). The criterion is a
 percentile rather than a maximum deliberately: a few bistable low-signal
 windows flicker between correlation peaks for arbitrarily many sweeps (on
 synthetic test scenes the maximum change stays near a pixel while the median

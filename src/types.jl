@@ -40,9 +40,9 @@ Immutable, validated configuration for a PIV analysis.
   asymmetry of the correlation peak between the two deformed windows and
   assumes the peak sits at ~zero residual displacement, so it runs on the
   final pass only and is meaningful only after multi-pass deformation has
-  converged — use a schedule that repeats the final window size (e.g.
-  `multipass_parameters([32, 16, 16])`) or iterate the final pass to
-  convergence (`max_iterations`). It estimates the random error only
+  converged — iterate the final pass to convergence (`max_iterations`), or
+  use the equivalent explicit schedule that repeats the final window size
+  (e.g. `multipass_parameters([32, 16, 16])`). It estimates the random error only
   (systematic bias such as peak locking is invisible to it) and is accurate
   for uncertainties up to ~0.3 px.
 - `uod_enable = true`: validate vectors with universal outlier detection.
