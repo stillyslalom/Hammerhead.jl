@@ -17,6 +17,7 @@ pair loop, so `run_piv`'s own internal threading (which only reads the
 interpolant coefficients and writes disjoint buffer regions) stays race-free.
 """
 mutable struct PIVWorkspace
+    _backend::_AbstractHammerheadBackend
     imgsize::Union{Nothing,Dims{2}}
     T::Union{Nothing,DataType}
     itpA_coefs::Any                          # padded coefficient buffer, image A
@@ -27,16 +28,18 @@ mutable struct PIVWorkspace
 end
 
 """
-    piv_workspace() -> PIVWorkspace
+    piv_workspace(; backend = :cpu) -> PIVWorkspace
 
 Construct an empty [`PIVWorkspace`](@ref). Its buffers allocate lazily on the
 first [`run_piv`](@ref) call and are reused (and resized on demand) thereafter
 — pass one via the `workspace` keyword when running many equally sized pairs
 yourself, to amortize the per-pair interpolant/deformation/correlator
-allocations across the batch.
+allocations across the batch. `backend = :cpu` selects the execution backend;
+the core package currently supports only the CPU backend.
 """
-piv_workspace() = PIVWorkspace(nothing, nothing, nothing, nothing, nothing, nothing,
-                               Dict{Any,Vector{Correlator}}())
+piv_workspace(; backend::Symbol = :cpu) =
+    PIVWorkspace(_require_cpu_backend(_resolve_backend(backend)), nothing, nothing, nothing, nothing,
+                 nothing, nothing, Dict{Any,Vector{Correlator}}())
 
 # Point the workspace at this call's image size/precision, discarding buffers
 # from a differently shaped prior run. Deformation output buffers are ensured
@@ -165,6 +168,7 @@ end
     run_piv(imgA, imgB, passes::AbstractVector{PIVParameters};
             threaded = Threads.nthreads() > 1,
             predictor_smoothing = true,
+            backend = :cpu,
             mask = nothing, mask_threshold = 0.5,
             workspace = nothing, scale = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
@@ -240,6 +244,9 @@ Windows below the threshold are correlated over their valid pixels only.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
+`backend = :cpu` selects the execution backend. The core package currently
+supports only the CPU backend; backend implementation types are internal.
+
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch
 is reused across calls — pass the same one to every `run_piv` in a hand-written
@@ -263,6 +270,7 @@ Returns the [`PIVResult`](@ref) of the final pass.
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  passes::AbstractVector{PIVParameters};
                  effort::Union{Nothing,Symbol} = nothing,
+                 backend::Symbol = :cpu,
                  threaded::Bool = Threads.nthreads() > 1,
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
@@ -271,6 +279,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    _require_cpu_backend(_resolve_backend(backend))
+    workspace === nothing || _require_cpu_backend(workspace._backend)
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))

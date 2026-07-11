@@ -58,6 +58,28 @@ function Base.show(io::IO, s::PhysicalScale)
     end
 end
 
+# Internal execution-backend hook. Backend selection belongs at the
+# driver/workspace layer, not in PIVParameters or result semantics. Keep the
+# names private: generic backend type names are likely to collide with other
+# offloading packages.
+abstract type _AbstractHammerheadBackend end
+
+# Internal default backend. GPU implementations should live in extensions or
+# sibling packages so the core package stays CPU-only by default.
+struct _CPUBackend <: _AbstractHammerheadBackend end
+
+const _DEFAULT_BACKEND = _CPUBackend()
+
+_resolve_backend(backend::Symbol) =
+    backend === :cpu ? _DEFAULT_BACKEND :
+    throw(ArgumentError("unsupported Hammerhead backend :$backend; " *
+                        "the core package currently supports only backend = :cpu"))
+
+_require_cpu_backend(backend::_CPUBackend) = backend
+_require_cpu_backend(backend::_AbstractHammerheadBackend) =
+    throw(ArgumentError("unsupported Hammerhead backend $(typeof(backend)); " *
+                        "the core package currently supports the internal CPU backend only"))
+
 """
     PIVParameters(; kwargs...)
 
