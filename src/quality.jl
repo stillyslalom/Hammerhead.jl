@@ -1,22 +1,36 @@
 """
-    calculate_peak_ratio(R, peakloc::Tuple{Int,Int}; exclusion_radius=2)
+    calculate_peak_ratio(R, peakloc::Tuple{Int,Int}; exclusion_radius=2,
+                         peak_finder=:exclusion)
 
 Ratio of the primary correlation peak at `peakloc` to the largest value outside
-a square exclusion zone of `±exclusion_radius` pixels around it. Returns `Inf`
-when no positive secondary peak exists. Higher values indicate a more reliable
-displacement estimate.
+a square exclusion zone of `±exclusion_radius` pixels around it
+(`peak_finder = :exclusion`, the default), or to the largest other regional
+maximum (`peak_finder = :regionalmax`). Returns `Inf` when no positive
+secondary peak exists. Higher values indicate a more reliable displacement
+estimate.
 """
 function calculate_peak_ratio(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int};
-                              exclusion_radius::Int = 2) where {T<:AbstractFloat}
+                              exclusion_radius::Int = 2,
+                              peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
     nr, nc = size(R)
     pr, pc = peakloc
     (1 <= pr <= nr && 1 <= pc <= nc) ||
         throw(ArgumentError("peak location $peakloc is outside the $nr×$nc matrix"))
     P1 = R[pr, pc]
     P2 = T(-Inf)
-    @inbounds for j in 1:nc, i in 1:nr
-        (abs(i - pr) <= exclusion_radius && abs(j - pc) <= exclusion_radius) && continue
-        R[i, j] > P2 && (P2 = R[i, j])
+    if peak_finder === :exclusion
+        @inbounds for j in 1:nc, i in 1:nr
+            (abs(i - pr) <= exclusion_radius && abs(j - pc) <= exclusion_radius) && continue
+            R[i, j] > P2 && (P2 = R[i, j])
+        end
+    elseif peak_finder === :regionalmax
+        @inbounds for j in 1:nc, i in 1:nr
+            (i == pr && j == pc) && continue
+            is_local_maximum(R, i, j) || continue
+            R[i, j] > P2 && (P2 = R[i, j])
+        end
+    else
+        throw(ArgumentError("peak_finder must be :exclusion or :regionalmax, got :$peak_finder"))
     end
     P2 > 0 || return P1 > 0 ? T(Inf) : T(NaN)
     return P1 / P2

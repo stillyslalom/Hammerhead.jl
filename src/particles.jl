@@ -182,23 +182,12 @@ function detect_particles(img::AbstractMatrix{<:Real}, params = PTVParameters();
 
     # 2. Local maxima (interior, above threshold). Plateau ties broken by
     # column-major linear order: `≥` earlier neighbors, `>` later ones.
-    lin(r, c) = r + (c - 1) * nr
     cx = Float64[]; cy = Float64[]; cint = Float64[]; cdia = Float64[]
     for c in 2:(nc - 1), r in 2:(nr - 1)
         (mask !== nothing && mask[r, c]) && continue
         I0 = Float64(img[r, c])
         I0 > thr || continue
-        ismax = true
-        for dc in -1:1, dr in -1:1
-            (dr == 0 && dc == 0) && continue
-            In = Float64(img[r + dr, c + dc])
-            if lin(r + dr, c + dc) < lin(r, c)
-                In > I0 && (ismax = false; break)     # need I0 ≥ earlier neighbor
-            else
-                In >= I0 && (ismax = false; break)    # need I0 > later neighbor
-            end
-        end
-        ismax || continue
+        is_local_maximum(img, r, c) || continue
 
         # 3. Subpixel refinement on J = I − bg, per axis.
         δx, σx, okx = fit_axis(Float64(img[r, c - 1]) - bg, I0 - bg, Float64(img[r, c + 1]) - bg)

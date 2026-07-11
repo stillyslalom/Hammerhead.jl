@@ -261,28 +261,39 @@ function correlation_plane!(c::Correlator, subA::AbstractMatrix, subB::AbstractM
 end
 
 """
-    find_peaks(R, k; exclusion_radius = 2) -> Vector of (value, location)
+    find_peaks(R, k; exclusion_radius = 2, peak_finder = :exclusion) -> Vector of (value, location)
 
-Locate up to `k` correlation peaks in descending order: the global maximum,
-then repeatedly the largest value outside square exclusion zones of
-`±exclusion_radius` pixels around every peak already found. Peaks after the
-first must be positive. Each peak costs one scan of `R`; with `k = 2` the
-peak ratio `P1/P2` follows directly (same exclusion semantics as
-[`calculate_peak_ratio`](@ref)).
+Locate up to `k` correlation peaks in descending order. With
+`peak_finder = :exclusion`, this returns the global maximum, then repeatedly
+the largest value outside square exclusion zones of `±exclusion_radius` pixels
+around every peak already found. With `peak_finder = :regionalmax`, candidates
+are 8-connected local maxima, so nearby but distinct secondary peaks are not
+hidden by the fixed exclusion box. Peaks after the first must be positive.
 """
-function find_peaks(R::AbstractMatrix{T}, k::Int; exclusion_radius::Int = 2) where {T<:AbstractFloat}
+function find_peaks(R::AbstractMatrix{T}, k::Int; exclusion_radius::Int = 2,
+                    peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
     k >= 1 || throw(ArgumentError("k must be at least 1, got $k"))
     vals = Vector{T}(undef, k)
     locs = Vector{NTuple{2,Int}}(undef, k)
-    found = find_peaks!(vals, locs, R, k; exclusion_radius)
+    found = find_peaks!(vals, locs, R, k; exclusion_radius, peak_finder)
     return [(value = vals[m], location = locs[m]) for m in 1:found]
 end
 
 # Allocation-free core: fills the scratch vectors `vals`/`locs` (length ≥ k)
-# and returns how many peaks were found. Hot path of every window analysis —
-# k plane scans, no branches beyond the exclusion test.
+# and returns how many peaks were found.
 function find_peaks!(vals, locs, R::AbstractMatrix{T}, k::Int;
-                     exclusion_radius::Int = 2) where {T<:AbstractFloat}
+                     exclusion_radius::Int = 2,
+                     peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
+    peak_finder === :exclusion &&
+        return find_peaks_exclusion!(vals, locs, R, k; exclusion_radius)
+    peak_finder === :regionalmax &&
+        return find_peaks_regionalmax!(vals, locs, R, k)
+    throw(ArgumentError("peak_finder must be :exclusion or :regionalmax, got :$peak_finder"))
+end
+
+# Classic path: k plane scans, no branches beyond the exclusion test.
+function find_peaks_exclusion!(vals, locs, R::AbstractMatrix{T}, k::Int;
+                               exclusion_radius::Int = 2) where {T<:AbstractFloat}
     nr, nc = size(R)
     found = 0
     for _ in 1:k
@@ -314,11 +325,45 @@ function find_peaks!(vals, locs, R::AbstractMatrix{T}, k::Int;
     return found
 end
 
+# Regional-max path: one plane scan, retaining the strongest k local maxima in
+# caller-owned scratch. The primary may be non-positive on a degenerate plane;
+# secondary peaks must be positive, matching the exclusion finder.
+function find_peaks_regionalmax!(vals, locs, R::AbstractMatrix{T}, k::Int) where {T<:AbstractFloat}
+    nr, nc = size(R)
+    nfound = 0
+    @inbounds for j in 1:nc, i in 1:nr
+        is_local_maximum(R, i, j) || continue
+        val = R[i, j]
+        (nfound < k || val > vals[nfound]) || continue
+
+        pos = nfound
+        while pos >= 1 && val > vals[pos]
+            pos -= 1
+        end
+        ins = pos + 1
+        ins <= k || continue
+        nfound < k && (nfound += 1)
+        for m in nfound:-1:(ins + 1)
+            vals[m] = vals[m - 1]
+            locs[m] = locs[m - 1]
+        end
+        vals[ins] = val
+        locs[ins] = (i, j)
+    end
+    nfound == 0 && return 0
+    found = 1
+    while found < nfound && vals[found + 1] > 0
+        found += 1
+    end
+    return found
+end
+
 # Analyze one correlation plane using scratch vals/locs (length ≥
 # max(params.n_peaks, 2)): subpixel primary displacement, peak ratio from the
 # top two peaks, correlation moment, and the peak list for alternatives.
 function analyze_plane!(vals, locs, R::AbstractMatrix{T}, params::PIVParameters) where {T}
-    found = find_peaks!(vals, locs, R, max(params.n_peaks, 2))
+    found = find_peaks!(vals, locs, R, max(params.n_peaks, 2);
+                        peak_finder = params.peak_finder)
     refined = refine_peak(R, locs[1], params.subpixel_method)
     center = size(R) .÷ 2 .+ 1
     ratio = found >= 2 ? vals[1] / vals[2] : (vals[1] > 0 ? T(Inf) : T(NaN))

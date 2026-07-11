@@ -25,6 +25,19 @@ using Statistics
         @test length(find_peaks(only2, 3; exclusion_radius = 0)) == 3 ||
               length(find_peaks(only2, 3; exclusion_radius = 0)) == 2
 
+        nearby = zeros(16, 16)
+        nearby[8, 8] = 1.0
+        nearby[8, 9] = 0.1
+        nearby[8, 10] = 0.8   # distinct local maximum inside the exclusion box
+        @test length(find_peaks(nearby, 2)) == 1
+        rmax = find_peaks(nearby, 2; peak_finder = :regionalmax)
+        @test length(rmax) == 2
+        @test rmax[1].location == (8, 8)
+        @test rmax[2].location == (8, 10)
+        @test calculate_peak_ratio(nearby, (8, 8); peak_finder = :regionalmax) ≈ 1 / 0.8
+        @test_throws ArgumentError find_peaks(nearby, 2; peak_finder = :watershed)
+        @test_throws ArgumentError calculate_peak_ratio(nearby, (8, 8); peak_finder = :watershed)
+
         # Consistency with the documented peak-ratio semantics.
         p2 = find_peaks(R, 2)
         @test peaks[1].value / p2[2].value ≈ calculate_peak_ratio(R, p2[1].location)
@@ -36,6 +49,7 @@ using Statistics
         @test PIVParameters().n_peaks == 3
         @test PIVParameters(n_peaks = 1).n_peaks == 1
         @test_throws ArgumentError PIVParameters(n_peaks = 0)
+        @test PIVParameters(peak_finder = :regionalmax).peak_finder === :regionalmax
     end
 
     @testset "peak substitution end-to-end" begin

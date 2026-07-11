@@ -40,6 +40,7 @@ export subtract_background!, intensity_cap!, highpass_filter!, clahe!
 include("types.jl")
 include("synthetic_data.jl")
 include("preprocessing.jl")
+include("localmax.jl")
 include("correlators.jl")
 include("uncertainty.jl")
 include("transforms.jl")

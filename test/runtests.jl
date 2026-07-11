@@ -47,6 +47,9 @@ end
     @test_throws ArgumentError PIVParameters(correlation_method = :fancy)
     @test_throws ArgumentError PIVParameters(apodization = :hann)
     @test_throws ArgumentError PIVParameters(subpixel_method = :spline)
+    @test PIVParameters().peak_finder === :exclusion
+    @test PIVParameters(peak_finder = :regionalmax).peak_finder === :regionalmax
+    @test_throws ArgumentError PIVParameters(peak_finder = :watershed)
     @test_throws ArgumentError PIVParameters(uod_threshold = 0)
     @test_throws ArgumentError PIVParameters(uod_neighborhood = 0)
     @test_throws ArgumentError PIVParameters(min_peak_ratio = -1)

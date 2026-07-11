@@ -56,7 +56,7 @@ in `pipeline.jl`.
 Not extended to `run_piv_ensemble` (an ensemble sweep would re-correlate
 every pair — deferred; its passes ignore `max_iterations`).
 
-## B2. Robust peak finding (feedback item 3)
+## B2. Robust peak finding (feedback item 3) -- DONE
 
 Regional-max peak candidates (reusing the in-house local-maxima machinery in
 `src/particles.jl`, *not* a new dep) as a `PIVParameters` option, plus the
@@ -65,6 +65,28 @@ researchy dynamic per-peak exclusion radius. Reserved because it changes
 validation and the knife-edge StableRNGs testsets in `test_peaks.jl` (fixed
 geometry, tight acceptance bands, exclusion-radius-dependent construction),
 and the accuracy-tolerance conventions forbid "make the test pass" fixes.
+
+**Landed:** `PIVParameters` gains `peak_finder` (`:exclusion` default,
+bitwise-prior semantics; `:regionalmax` opt-in). The regional path uses a
+shared `is_local_maximum` helper loaded before both `correlators.jl` and
+`particles.jl`, scans the correlation plane once, and retains the strongest
+`k` regional maxima in the caller's scratch vectors (no per-window
+allocation). `find_peaks` and `calculate_peak_ratio` accept the same
+`peak_finder` keyword, and `analyze_plane!` routes single-pair and ensemble
+PIV through the selected finder, so peak-ratio validation and peak
+substitution see the same semantics. Dynamic per-peak exclusion radius was
+left deferred: it is a separate modeling choice, not needed for the regional
+max blind spot.
+
+**Benchmark verdict -- top-k regional scan, opt-in.** A collect+sort regional
+prototype was rejected because it allocates and grows badly with plane size.
+Microbenchmarks (Julia 1.11.4, `k = 3`, Gaussian-like peak on random
+background) were:
+16^2: exclusion 0.98 us, collect+sort regional 1.12 us, top-k regional
+0.89 us; 32^2: 4.20 / 5.68 / 3.69 us; 64^2: 13.44 / 33.42 / 19.56 us;
+128^2: 46.79 / 190.82 / 121.26 us. The selected implementation avoids the
+allocation cliff, but it is slower than fixed exclusion on larger planes, so
+the default remains `:exclusion`.
 
 ## B3. Cross-pair buffer reuse in the sequence driver — DONE (branch `feedback-b3`)
 
@@ -125,8 +147,8 @@ semantics differ) and actually pays off against its added complexity.
 
 ## Handoff notes
 
-- Fable: read this file + `feedback.md`. **B1 and B3 are done** (branches
-  `feedback-b1` / `feedback-b3`, see above) — only B2 remains.
+- Fable: read this file + `feedback.md`. **B1, B2, and B3 are done** (branches
+  `feedback-b1` / `feedback-b3`, plus the B2 implementation above).
 - Reference for what Part A already shipped (final-pass overrides,
   correlation-plane storage, per-pair batch output, `frame_index_strings`,
   `common_dewarp_grid`, the `plot_vector_field` arrow improvements): the

@@ -28,6 +28,12 @@ Immutable, validated configuration for a PIV analysis.
   so values up to 2 are free; each additional peak costs about one extra
   scan of the correlation plane, and alternatives are always refined with
   the cheap 3-point fit.
+- `peak_finder = :exclusion`: how integer correlation peaks are selected.
+  `:exclusion` is the classic path: repeatedly take the largest remaining
+  value outside a fixed exclusion box around stronger peaks. `:regionalmax`
+  first restricts candidates to 8-connected local maxima, so a real nearby
+  secondary peak can still contribute to peak-ratio validation and peak
+  substitution even when it lies inside the fixed exclusion box.
 - `uncertainty = false`: estimate a per-vector measurement uncertainty from
   correlation statistics (Wieneke 2015) into the `uncertainty_u` /
   `uncertainty_v` fields of the result. The estimator analyzes the residual
@@ -94,6 +100,7 @@ struct PIVParameters
     apodization::Symbol
     subpixel_method::Symbol
     n_peaks::Int
+    peak_finder::Symbol
     uncertainty::Bool
     uod_enable::Bool
     uod_threshold::Float64
@@ -113,6 +120,7 @@ struct PIVParameters
         apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
         n_peaks::Int = 3,
+        peak_finder::Symbol = :exclusion,
         uncertainty::Bool = false,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
@@ -138,6 +146,8 @@ struct PIVParameters
             throw(ArgumentError("subpixel_method must be :gauss3, :gauss9, :gauss2d, or :none, got :$subpixel_method"))
         n_peaks >= 1 ||
             throw(ArgumentError("n_peaks must be at least 1, got $n_peaks"))
+        peak_finder in (:exclusion, :regionalmax) ||
+            throw(ArgumentError("peak_finder must be :exclusion or :regionalmax, got :$peak_finder"))
         uod_threshold > 0 ||
             throw(ArgumentError("uod_threshold must be positive, got $uod_threshold"))
         uod_neighborhood >= 1 ||
@@ -149,7 +159,7 @@ struct PIVParameters
         convergence_tol >= 0 ||
             throw(ArgumentError("convergence_tol must be non-negative, got $convergence_tol"))
         new(ws, ov, correlation_method, padding, apodization, subpixel_method,
-            n_peaks, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
+            n_peaks, peak_finder, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers,
             max_iterations, Float64(convergence_tol), keep_correlation_planes)
     end
@@ -159,7 +169,9 @@ function Base.show(io::IO, p::PIVParameters)
     print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
         "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
-        "n_peaks=$(p.n_peaks), ", p.uncertainty ? "uncertainty=true, " : "", "uod=",
+        "n_peaks=$(p.n_peaks), ",
+        p.peak_finder === :exclusion ? "" : "peak_finder=:$(p.peak_finder), ",
+        p.uncertainty ? "uncertainty=true, " : "", "uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ", min_peak_ratio=$(p.min_peak_ratio)",
         isempty(p.validation) ? "" : ", validation=$(p.validation)",
