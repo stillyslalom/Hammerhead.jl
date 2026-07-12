@@ -28,11 +28,14 @@ noise.
 
 ## GPU backends
 
-`bench/gpu_benchmarks.jl` checks a device backend against the CPU reference
-and times both (see the header for the required environment). On the dev
-box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the `:amdgpu` backend matches
-`:cpu` to ~7e-15 (Float64) and runs a padded+apodized 32/16 single pass at
-1.3–2.4× the threaded CPU speed (1024²–2048², Float64/Float32).
+`bench/gpu_validate.jl` checks a device backend against the CPU reference
+(single-pass/multipass/masked) and `bench/gpu_benchmarks.jl` times it (see
+the headers for the required environment; both take the backend selector as
+ARGS[1]). On the dev box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the
+`:amdgpu` backend matches `:cpu` to ~7e-15 (Float64) and runs a
+padded+apodized 32/16 single pass at 1.3–2.4× the threaded CPU speed
+(1024²–2048², Float64/Float32). The `:cuda` backend shares the same kernels
+but has not yet been validated on hardware.
 
 ## Allocation/GC profiling
 

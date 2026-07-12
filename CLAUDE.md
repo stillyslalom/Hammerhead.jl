@@ -165,7 +165,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   stub-shadowing function)
 - `ext/HammerheadKAExt.jl` (`backend = :ka`, trigger KernelAbstractions +
   AbstractFFTs) + `ext/HammerheadAMDGPUExt.jl` (`backend = :amdgpu`, adds
-  AMDGPU/rocFFT) — batched device correlation engines sharing the portable
+  AMDGPU/rocFFT) + `ext/HammerheadCUDAExt.jl` (`backend = :cuda`, adds
+  CUDA/cuFFT; compat "5, 6" — the 6.0 subpackage split keeps the `using CUDA`
+  surface) — batched device correlation engines sharing the portable
   kernels in `ext/_ka_correlation_kernels.jl` (gather, cross-power,
   shift/gain, and the full `analyze_plane!` port: peak finding, gauss3/gauss9
   subpixel, ratio, moment, alt peaks — only packed per-window scalars return
@@ -180,8 +182,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `unsafe_trunc` after guards); per-window plane scans need the batch-major
   `Rt[k, i, j]` layout so wavefront reads coalesce; the `Rt` leading dimension
   is padded +1 because a power-of-two byte stride funnels writes into one
-  memory channel. Validated + benched via `bench/gpu_benchmarks.jl` (ROCm 6.4
-  required for RDNA2 on Windows — 7.1 dropped it)
+  memory channel; GPU FFT in-place plans apply via `p * x` (neither rocFFT nor
+  cuFFT implements FFTW's 3-arg `mul!`). `:amdgpu` is hardware-validated +
+  benched (`bench/gpu_validate.jl` / `bench/gpu_benchmarks.jl`; ROCm 6.4
+  required for RDNA2 on Windows — 7.1 dropped it); `:cuda` mirrors it but is
+  not yet hardware-validated
 
 ## HammerheadGUI (HammerheadGUI/)
 

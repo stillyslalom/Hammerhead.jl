@@ -264,8 +264,9 @@ of each pass is split across tasks; results are identical to the serial path.
 `backend = :cpu` selects the execution backend. The core package provides the
 CPU backend; package extensions add device selectors — `:ka` (portable
 KernelAbstractions kernels on the CPU, loaded with KernelAbstractions +
-AbstractFFTs) and `:amdgpu` (ROCm, loaded with AMDGPU) — see the internals
-reference for scope. Backend implementation types are internal.
+AbstractFFTs), `:amdgpu` (ROCm, loaded with AMDGPU), and `:cuda` (NVIDIA,
+loaded with CUDA) — see the internals reference for scope. Backend
+implementation types are internal.
 
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch

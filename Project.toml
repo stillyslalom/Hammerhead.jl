@@ -22,12 +22,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [weakdeps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [extensions]
 HammerheadAMDGPUExt = ["AMDGPU", "KernelAbstractions", "AbstractFFTs"]
+HammerheadCUDAExt = ["CUDA", "KernelAbstractions", "AbstractFFTs"]
 HammerheadKAExt = ["KernelAbstractions", "AbstractFFTs"]
 HammerheadMakieExt = "Makie"
 HammerheadUnitfulExt = "Unitful"
@@ -35,6 +37,7 @@ HammerheadUnitfulExt = "Unitful"
 [compat]
 AMDGPU = "2"
 AbstractFFTs = "1"
+CUDA = "5, 6"
 CoordinateTransformations = "0.6.4"
 FFTW = "1.8"
 FileIO = "1.16"

@@ -14,7 +14,8 @@ Device backends are provided by package extensions that activate when their
 trigger packages are loaded: `using KernelAbstractions, AbstractFFTs` enables
 the portable `backend = :ka` (the device kernels run on the CPU — a
 hardware-free proving tier), and additionally `using AMDGPU` enables
-`backend = :amdgpu` (ROCm). An extension registers its selector by adding a
+`backend = :amdgpu` (ROCm) or `using CUDA` enables `backend = :cuda`
+(NVIDIA). An extension registers its selector by adding a
 `_resolve_backend(::Val{:amdgpu})`-style method, so unknown selectors report
 which package to load rather than silently failing. Device backends currently
 cover cross-correlation with `:gauss3`/`:gauss9` subpixel refinement;

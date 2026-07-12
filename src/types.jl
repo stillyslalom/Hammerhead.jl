@@ -83,7 +83,8 @@ _resolve_backend(::Val{B}) where {B} =
                         "provides only backend = :cpu. Device backends live in " *
                         "extension packages — load the corresponding trigger " *
                         "packages (e.g. `using KernelAbstractions, AbstractFFTs` " *
-                        "for :ka, plus `using AMDGPU` for :amdgpu) to register them."))
+                        "for :ka, plus `using AMDGPU` for :amdgpu or `using CUDA` " *
+                        "for :cuda) to register them."))
 
 _require_cpu_backend(backend::_CPUBackend) = backend
 _require_cpu_backend(backend::_AbstractHammerheadBackend) =

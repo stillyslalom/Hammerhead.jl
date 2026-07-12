@@ -5,9 +5,9 @@
 #
 #     julia --project=<gpuenv> -t 4 bench/gpu_benchmarks.jl amdgpu
 #
-# where <gpuenv> has AMDGPU, KernelAbstractions, and AbstractFFTs installed.
-# The backend selector defaults to :amdgpu; pass another registered selector
-# (e.g. `ka` for the hardware-free KernelAbstractions CPU tier) as ARGS[1].
+# where <gpuenv> has AMDGPU (or CUDA), KernelAbstractions, and AbstractFFTs
+# installed. The backend selector defaults to :amdgpu; pass `cuda`, or `ka`
+# for the hardware-free KernelAbstractions CPU tier, as ARGS[1].
 #
 # AMD note: on Windows, RDNA2 cards (e.g. RX 6800 XT / gfx1030) need ROCm 6.4 —
 # ROCm/HIP 7.1 dropped RDNA2 — so point HIP_PATH/ROCM_PATH/PATH at the 6.4
@@ -21,6 +21,9 @@ backend = Symbol(get(ARGS, 1, "amdgpu"))
 if backend === :amdgpu
     using AMDGPU
     AMDGPU.functional() || error("AMDGPU is not functional — check the ROCm install")
+elseif backend === :cuda
+    using CUDA
+    CUDA.functional() || error("CUDA is not functional — check the NVIDIA driver install")
 end
 using KernelAbstractions, AbstractFFTs
 
