@@ -183,7 +183,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   guards the kernels, and on this box `:ka` is
   bitwise-identical to `:cpu`. Scope: `:cross` + `:gauss3`/`:gauss9` only;
   phase/gauss2d/UQ/keep_planes are rejected with a clear error
-  (`_ka_scope_check`); the stereo driver stays CPU-gated, but
+  (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its
+  per-camera `run_piv` calls (dewarp + 3C reconstruction stay CPU), and
   `run_piv_ensemble` runs on all KA-family backends: the summed planes live in
   a device-resident batch-major accumulator (`_KAPlaneAccumulator`, odd
   leading dim against channel conflicts; `_ka_shiftgain_accum!` adds each

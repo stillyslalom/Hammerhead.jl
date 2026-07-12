@@ -140,7 +140,10 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
-    _require_cpu_backend(_resolve_backend(backend))
+    # Check the backend's option scope before the (relatively expensive)
+    # dewarps; the per-camera run_piv calls would reject it later anyway.
+    _check_backend_params(_resolve_backend(backend),
+                          params isa PIVParameters ? [params] : params)
     dw1.grid == dw2.grid ||
         throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
                             "got $(dw1.grid) and $(dw2.grid)"))

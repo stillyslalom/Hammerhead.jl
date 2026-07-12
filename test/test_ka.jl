@@ -116,4 +116,28 @@
             PIVParameters(keep_correlation_planes = true); backend = :ka,
             progress = false)
     end
+
+    @testset "stereo on :ka" begin
+        # The stereo driver forwards the backend to its per-camera run_piv
+        # calls (dewarping and 3C reconstruction stay on the CPU).
+        cams = (make_test_camera(yaw_deg = -20.0), make_test_camera(yaw_deg = 20.0))
+        dgrid = DewarpGrid(x = -20.0:0.25:20.0, y = -20.0:0.25:20.0)
+        dws = map(cam -> ImageDewarper(cam, dgrid, (512, 512)), cams)
+        pts = [(44 * rand(rng) - 22, 44 * rand(rng) - 22) for _ in 1:220]
+        A1, B1, A2, B2 = stereo_frames(cams, pts, (0.35, -0.2, 0.25))
+        s_cpu = run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2], params;
+                               threaded = false)
+        s_ka = run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2], params;
+                              backend = :ka, threaded = false)
+        svalid = .!s_cpu.outliers .& .!s_cpu.mask .&
+                 isfinite.(s_cpu.u) .& isfinite.(s_ka.u)
+        @test any(svalid)
+        @test maximum(abs.(s_ka.u[svalid] .- s_cpu.u[svalid])) < 1e-3
+        @test maximum(abs.(s_ka.v[svalid] .- s_cpu.v[svalid])) < 1e-3
+        @test maximum(abs.(s_ka.w[svalid] .- s_cpu.w[svalid])) < 1e-3
+
+        # The scope guard fires before any dewarping happens.
+        @test_throws ArgumentError run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2],
+            PIVParameters(uncertainty = true); backend = :ka)
+    end
 end

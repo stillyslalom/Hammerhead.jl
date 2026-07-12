@@ -22,8 +22,9 @@ cover cross-correlation with `:gauss3`/`:gauss9` subpixel refinement, for
 both [`run_piv`](@ref) and [`run_piv_ensemble`](@ref) (ensemble planes
 accumulate on the device; only the final vector grid returns to the host);
 phase correlation, `:gauss2d`, uncertainty quantification, and
-correlation-plane storage stay on `:cpu` and error with a clear message, and
-[`run_piv_stereo`](@ref) is CPU-only for now.
+correlation-plane storage stay on `:cpu` and error with a clear message.
+[`run_piv_stereo`](@ref) forwards the backend to its per-camera analyses
+(dewarping itself stays on the CPU).
 
 ```@index
 Pages = ["internals.md"]
