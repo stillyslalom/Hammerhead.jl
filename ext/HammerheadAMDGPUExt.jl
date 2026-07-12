@@ -2,9 +2,10 @@ module HammerheadAMDGPUExt
 
 # AMD ROCm/HIP device backend (`backend = :amdgpu`) for interrogation-window
 # correlation, built on AMDGPU.jl + KernelAbstractions. It reuses the portable
-# correlation and plane-analysis kernels shared with the KA-CPU extension
-# (`_ka_correlation_kernels.jl`); the only device-specific work here is
-# host<->device staging and the rocFFT batched transform. The whole pipeline —
+# correlation and plane-analysis kernels defined in the core package
+# (`src/ka_backend.jl`, the `backend = :ka` proving tier); the only
+# device-specific work here is host<->device staging and the rocFFT batched
+# transform. The whole pipeline —
 # gather, FFTs, cross-power, shift/gain, peak finding + subpixel + moment —
 # runs on the device; only the packed per-window scalars come back to the host.
 #
@@ -19,6 +20,7 @@ module HammerheadAMDGPUExt
 
 using Hammerhead
 using AMDGPU
+# Strong deps of the core package, usable here without being ext triggers.
 using KernelAbstractions
 using AbstractFFTs: plan_fft!
 
@@ -26,8 +28,9 @@ import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_
     _engine_nchunks, piv_correlation_engines, process_windows!,
     make_correlator, PIVParameters
 
-# Portable correlation kernels + scope guard, shared with HammerheadKAExt.
-include("_ka_correlation_kernels.jl")
+# Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
+import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
+    _ka_crosspower!, _ka_shiftgain!, _ka_analyze!
 
 struct _AMDGPUBackend <: _AbstractHammerheadBackend end
 

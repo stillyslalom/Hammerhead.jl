@@ -261,11 +261,11 @@ Windows below the threshold are correlated over their valid pixels only.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
-`backend = :cpu` selects the execution backend. The core package provides the
-CPU backend; package extensions add device selectors — `:ka` (portable
-KernelAbstractions kernels on the CPU, loaded with KernelAbstractions +
-AbstractFFTs), `:amdgpu` (ROCm, loaded with AMDGPU), and `:cuda` (NVIDIA,
-loaded with CUDA) — see the internals reference for scope. Backend
+`backend = :cpu` selects the execution backend. The core package provides
+`:cpu` (FFTW) and `:ka` (the same portable KernelAbstractions kernels the GPU
+backends run, on the CPU); package extensions add the device selectors
+`:amdgpu` (ROCm, loaded with `using AMDGPU`) and `:cuda` (NVIDIA, loaded with
+`using CUDA`) — see the internals reference for scope. Backend
 implementation types are internal.
 
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from

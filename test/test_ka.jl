@@ -1,7 +1,5 @@
-using KernelAbstractions   # loading the trigger package activates HammerheadKAExt
-
 @testset "KA backend (KernelAbstractions CPU)" begin
-    @test Base.get_extension(Hammerhead, :HammerheadKAExt) !== nothing
+    # :ka is built into the core package — no trigger packages needed.
     kab = Hammerhead._resolve_backend(:ka)
     @test kab isa Hammerhead._AbstractHammerheadBackend
     # Device backends run the whole grid as one logical batch, not host-thread

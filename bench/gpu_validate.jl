@@ -17,7 +17,6 @@ elseif backend === :cuda
     using CUDA
     CUDA.functional() || error("CUDA is not functional — check the NVIDIA driver install")
 end
-using KernelAbstractions, AbstractFFTs
 
 println("backend: :", backend, "   resolves to ", Hammerhead._resolve_backend(backend))
 

@@ -65,26 +65,25 @@ end
 abstract type _AbstractHammerheadBackend end
 
 # Internal default backend. GPU implementations should live in extensions or
-# sibling packages so the core package stays CPU-only by default.
+# sibling packages so the core package needs no device packages.
 struct _CPUBackend <: _AbstractHammerheadBackend end
 
 const _DEFAULT_BACKEND = _CPUBackend()
 
 # Backends are selected by a public Symbol (`backend = :cpu`, `:cuda`, …) and
 # resolved to a private backend object through `Val`-dispatch. The core package
-# registers only `:cpu`; a GPU extension (loaded via its device package, e.g.
-# `using CUDA`) adds a method like `_resolve_backend(::Val{:cuda}) =
+# registers `:cpu` and `:ka`; a GPU extension (loaded via its device package,
+# e.g. `using CUDA`) adds a method like `_resolve_backend(::Val{:cuda}) =
 # _CUDABackend()`. Resolution is a once-per-call driver-level step, not hot
 # path, so the runtime `Val(::Symbol)` construction is cheap.
 _resolve_backend(backend::Symbol) = _resolve_backend(Val(backend))
 _resolve_backend(::Val{:cpu}) = _DEFAULT_BACKEND
 _resolve_backend(::Val{B}) where {B} =
     throw(ArgumentError("unsupported Hammerhead backend :$B; the core package " *
-                        "provides only backend = :cpu. Device backends live in " *
-                        "extension packages — load the corresponding trigger " *
-                        "packages (e.g. `using KernelAbstractions, AbstractFFTs` " *
-                        "for :ka, plus `using AMDGPU` for :amdgpu or `using CUDA` " *
-                        "for :cuda) to register them."))
+                        "provides backend = :cpu and :ka. GPU backends live in " *
+                        "extension packages — load the device package " *
+                        "(`using AMDGPU` for :amdgpu, `using CUDA` for :cuda) " *
+                        "to register them."))
 
 _require_cpu_backend(backend::_CPUBackend) = backend
 _require_cpu_backend(backend::_AbstractHammerheadBackend) =

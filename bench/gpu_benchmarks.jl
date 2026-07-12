@@ -1,13 +1,13 @@
 # GPU-backend correctness check + benchmark vs. the CPU path.
 #
-# Needs an environment with Hammerhead (dev'd) plus the backend's trigger
-# packages, e.g. for `:amdgpu`:
+# Needs an environment with Hammerhead (dev'd) plus the backend's device
+# package, e.g. for `:amdgpu`:
 #
 #     julia --project=<gpuenv> -t 4 bench/gpu_benchmarks.jl amdgpu
 #
-# where <gpuenv> has AMDGPU (or CUDA), KernelAbstractions, and AbstractFFTs
-# installed. The backend selector defaults to :amdgpu; pass `cuda`, or `ka`
-# for the hardware-free KernelAbstractions CPU tier, as ARGS[1].
+# where <gpuenv> has AMDGPU (or CUDA) installed. The backend selector defaults
+# to :amdgpu; pass `cuda`, or `ka` for the hardware-free KernelAbstractions
+# CPU tier (built into the core — needs no extra packages), as ARGS[1].
 #
 # AMD note: on Windows, RDNA2 cards (e.g. RX 6800 XT / gfx1030) need ROCm 6.4 —
 # ROCm/HIP 7.1 dropped RDNA2 — so point HIP_PATH/ROCM_PATH/PATH at the 6.4
@@ -25,7 +25,6 @@ elseif backend === :cuda
     using CUDA
     CUDA.functional() || error("CUDA is not functional — check the NVIDIA driver install")
 end
-using KernelAbstractions, AbstractFFTs
 
 println("backend: :", backend, "   threads: ", Threads.nthreads())
 Hammerhead._resolve_backend(backend)   # fails fast if the extension didn't load

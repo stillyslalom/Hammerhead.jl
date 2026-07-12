@@ -116,6 +116,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
   the deform buffers, and a per-window-config correlator pool across `run_piv`
   calls — bitwise-identical; the sequence/ensemble drivers hold one)
+- `ka_backend.jl` — portable KernelAbstractions correlation/analysis kernels
+  + the built-in `backend = :ka` engine that runs them on the KA CPU backend
+  (details and GPU kernel conventions under the GPU-extension bullet below)
 - `particles.jl` — `Particles` (struct-of-arrays) + `detect_particles`
   (local-maxima + 3-point log-Gaussian fits) and the shared uniform-cell
   neighbor list (`build_cell_list`/`within_radius!`/`knn`) used by dedupe,
@@ -163,16 +166,21 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `PhysicalScale(pixel_size::Length, dt::Time)` constructor (ustrip + unit
   labels; no core stub needed — it's a constructor method, not a
   stub-shadowing function)
-- `ext/HammerheadKAExt.jl` (`backend = :ka`, trigger KernelAbstractions +
-  AbstractFFTs) + `ext/HammerheadAMDGPUExt.jl` (`backend = :amdgpu`, adds
-  AMDGPU/rocFFT) + `ext/HammerheadCUDAExt.jl` (`backend = :cuda`, adds
-  CUDA/cuFFT; compat "5, 6" — the 6.0 subpackage split keeps the `using CUDA`
+- `ext/HammerheadAMDGPUExt.jl` (`backend = :amdgpu`, trigger AMDGPU, adds
+  rocFFT) + `ext/HammerheadCUDAExt.jl` (`backend = :cuda`, trigger CUDA, adds
+  cuFFT; compat "5, 6" — the 6.0 subpackage split keeps the `using CUDA`
   surface) — batched device correlation engines sharing the portable
-  kernels in `ext/_ka_correlation_kernels.jl` (gather, cross-power,
+  kernels in `src/ka_backend.jl` (gather, cross-power,
   shift/gain, and the full `analyze_plane!` port: peak finding, gauss3/gauss9
   subpixel, ratio, moment, alt peaks — only packed per-window scalars return
-  to the host). `:ka` runs those kernels on the CPU as the hardware-free
-  proving tier — `test/test_ka.jl` guards them, and on this box it is
+  to the host). KernelAbstractions and AbstractFFTs are core hard deps
+  (AbstractFFTs was already in the graph via FFTW), so a GPU backend needs
+  only its device package loaded, and `backend = :ka` — those kernels on the
+  KA CPU backend, the hardware-free proving tier — is built into the core
+  (`_KABackend`/`_KACorrelationEngine` live in `src/ka_backend.jl` too; no
+  ext needed). The exts import the kernels from Hammerhead and `using` the
+  core's strong deps directly (works on 1.10 — verified). `test/test_ka.jl`
+  guards the kernels, and on this box `:ka` is
   bitwise-identical to `:cpu`. Scope: `:cross` + `:gauss3`/`:gauss9` only;
   phase/gauss2d/UQ/keep_planes are rejected with a clear error
   (`_ka_scope_check`); ensemble/stereo drivers stay CPU-gated. GPU kernel
