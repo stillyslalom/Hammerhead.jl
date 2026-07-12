@@ -18,9 +18,12 @@ loaded: `using AMDGPU` enables `backend = :amdgpu` (ROCm) and `using CUDA`
 enables `backend = :cuda` (NVIDIA). An extension registers its selector by
 adding a `_resolve_backend(::Val{:amdgpu})`-style method, so unknown
 selectors report which package to load rather than silently failing. Device backends currently
-cover cross-correlation with `:gauss3`/`:gauss9` subpixel refinement;
+cover cross-correlation with `:gauss3`/`:gauss9` subpixel refinement, for
+both [`run_piv`](@ref) and [`run_piv_ensemble`](@ref) (ensemble planes
+accumulate on the device; only the final vector grid returns to the host);
 phase correlation, `:gauss2d`, uncertainty quantification, and
-correlation-plane storage stay on `:cpu` and error with a clear message.
+correlation-plane storage stay on `:cpu` and error with a clear message, and
+[`run_piv_stereo`](@ref) is CPU-only for now.
 
 ```@index
 Pages = ["internals.md"]

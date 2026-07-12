@@ -99,6 +99,22 @@ end
     end
 end
 
+# Ensemble variant of `_ka_shiftgain!`: add this pair's planes into the
+# batch-major cross-pair accumulator at row offset `k0` instead of overwriting
+# a scratch batch. Each work-item owns one (window, pixel) address, so the
+# unsynchronized `+=` is race-free.
+@kernel function _ka_shiftgain_accum!(Racc, @Const(CA), @Const(gain), padded, sr, sc,
+                                      nr, nc, k0)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ip = mod1(i + sr, nr)
+        jp = mod1(j + sc, nc)
+        val = abs(CA[i, j, k])
+        padded && (val *= gain[ip, jp])
+        Racc[k0 + k, ip, jp] += val
+    end
+end
+
 # ---------------------------------------------------------------------------
 # Device-side plane analysis: peak finding, subpixel refinement, peak ratio,
 # correlation moment, and alternative-peak refinement — the batched analogue
@@ -490,6 +506,133 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                     alt_v[gi, gj, mm - 1] = engine.out[5 + nalt + (mm - 1), m]
                 end
             end
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Ensemble (sum-of-correlation) support: the whole window grid's summed planes
+# stay resident where the engine computes — for a device backend that means
+# planes never return to the host, matching the plan's ensemble dataflow
+# (image pair in, device-side accumulate, final vector grid out).
+
+# Batch-major cross-pair plane accumulator, `Racc[j, i, j']` = window j's
+# summed plane. Rows beyond `njobs` are stride padding (the leading dimension
+# avoids a power-of-two byte stride, which funnels a GPU wave's writes into a
+# single memory channel — see the `Rt` pad in `_ensure_buffers!`).
+struct _KAPlaneAccumulator{A<:AbstractArray}
+    Racc::A
+    njobs::Int
+end
+
+function _plane_accumulator(engine::_KACorrelationEngine{T}, params::PIVParameters,
+                            ::Type{T}, njobs::Int) where {T}
+    nr, nc = engine.fft_size
+    # An odd leading dimension keeps the plane-to-plane byte stride off
+    # power-of-two multiples (the memory-channel conflict the Rt pad avoids).
+    ld = njobs + (iseven(njobs) ? 1 : 0)
+    return _KAPlaneAccumulator(zeros(T, ld, nr, nc), njobs)
+end
+
+# Ensemble accumulation for one pair: identical staging to `process_windows!`
+# up to the inverse FFT, then `_ka_shiftgain_accum!` adds the shifted planes
+# straight into the cross-pair accumulator. Requires a contiguous job range
+# (device engines always run the grid as a single chunk).
+function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRange,
+                            engine::_KACorrelationEngine{T},
+                            imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
+                            params::PIVParameters, mask,
+                            uacc = nothing, uscratch = nothing) where {T}
+    uacc === nothing ||
+        throw(ArgumentError("KA-family backends do not support uncertainty " *
+                            "quantification yet; use backend = :cpu"))
+    njobs = length(jobrange)
+    njobs == 0 && return nothing
+
+    wr, wc = engine.wsize
+    nr, nc = engine.fft_size
+    sr, sc = nr ÷ 2, nc ÷ 2
+    bs = min(_KA_BATCH, njobs)
+    _ensure_buffers!(engine, bs)
+    ka = engine.ka
+    hasmask = mask !== nothing
+    themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
+    gainarg = engine.padded ? engine.gain : engine.apod   # dummy when unpadded (unread)
+
+    for start in 1:bs:njobs
+        nreal = min(bs, njobs - start + 1)
+        @inbounds for m in 1:nreal
+            job = jobs[jobrange[start + m - 1]]
+            engine.origins[m, 1] = job[3]   # rs
+            engine.origins[m, 2] = job[4]   # cs
+        end
+        fill!(engine.CA, 0)
+        fill!(engine.CB, 0)
+        _ka_window_means!(ka)(engine.meanA, engine.meanB, imgA, imgB, engine.origins,
+                              themask, hasmask, wr, wc; ndrange = nreal)
+        KernelAbstractions.synchronize(ka)
+        _ka_gather!(ka)(engine.CA, engine.CB, imgA, imgB, engine.origins, engine.apod,
+                        engine.meanA, engine.meanB, themask, hasmask;
+                        ndrange = (wr, wc, nreal))
+        KernelAbstractions.synchronize(ka)
+        mul!(engine.CA, engine.fwd, engine.CA)
+        mul!(engine.CB, engine.fwd, engine.CB)
+        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        KernelAbstractions.synchronize(ka)
+        mul!(engine.CA, engine.bwd, engine.CA)
+        # Only the nreal live slices accumulate — the tail of the last tile
+        # holds stale spectra that must not pollute the sums.
+        _ka_shiftgain_accum!(ka)(acc.Racc, engine.CA, gainarg, engine.padded, sr, sc,
+                                 nr, nc, first(jobrange) + start - 2;
+                                 ndrange = (nr, nc, nreal))
+        KernelAbstractions.synchronize(ka)
+    end
+    return nothing
+end
+
+# Ensemble finalize: run the device analysis kernel over the summed planes in
+# tiles and scatter the packed scalars into the vector grids — the ensemble
+# analogue of the `process_windows!` scatter, except residuals *add to* the
+# shared predictor held in `u`/`v` and alternatives are predictor-relative,
+# exactly like the host `ensemble_analyze!` loop.
+function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngine{T},
+                           u, v, peak_ratio, correlation_moment,
+                           uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
+                           jobs, params::PIVParameters, uacc) where {T}
+    (planes === nothing && uacc === nothing) ||
+        throw(ArgumentError("KA-family backends do not support uncertainty or " *
+                            "correlation-plane storage yet; use backend = :cpu"))
+    njobs = acc.njobs
+    njobs == 0 && return nothing
+    nr, nc = engine.fft_size
+    bs = min(_KA_BATCH, njobs)
+    _ensure_buffers!(engine, bs)
+    ka = engine.ka
+    use_regionalmax = params.peak_finder === :regionalmax
+    use_gauss9 = params.subpixel_method === :gauss9
+    nalt = engine.kpk - 1
+    for start in 1:bs:njobs
+        nreal = min(bs, njobs - start + 1)
+        Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
+        _ka_analyze!(ka)(engine.out, engine.vals, engine.locs, Rv,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
+                         ndrange = nreal)
+        KernelAbstractions.synchronize(ka)
+        for m in 1:nreal
+            gi, gj, _, _ = jobs[start + m - 1]
+            if alt_u !== nothing
+                found = Int(engine.out[5, m])   # small integer, exact in T
+                for mm in 2:min(found, params.n_peaks)
+                    # Total alternative displacement = shared predictor + residual.
+                    alt_u[gi, gj, mm - 1] = u[gi, gj] + engine.out[5 + (mm - 1), m]
+                    alt_v[gi, gj, mm - 1] = v[gi, gj] + engine.out[5 + nalt + (mm - 1), m]
+                end
+            end
+            u[gi, gj] += engine.out[1, m]
+            v[gi, gj] += engine.out[2, m]
+            peak_ratio[gi, gj] = engine.out[3, m]
+            correlation_moment[gi, gj] = engine.out[4, m]
         end
     end
     return nothing

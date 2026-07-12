@@ -238,4 +238,134 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# Ensemble (sum-of-correlation): the cross-pair plane accumulator is a single
+# batch-major device array resident for the whole ensemble pass — each pair's
+# planes are added in place by `_ka_shiftgain_accum!` and only the packed
+# per-window scalars of the final analysis return to the host (the plan's
+# ensemble dataflow: image pair in, device-side accumulate, vector grid out).
+# Device memory holds all `njobs` summed planes: ~njobs*nr*nc*sizeof(T).
+
+import Hammerhead: _KAPlaneAccumulator, _plane_accumulator, accumulate_planes!,
+    ensemble_analyze!, _ka_shiftgain_accum!
+
+function _plane_accumulator(engine::_CUDACorrelationEngine{T}, params::PIVParameters,
+                            ::Type{T}, njobs::Int) where {T}
+    nr, nc = engine.fft_size
+    # Odd leading dimension: keeps the plane-to-plane byte stride off
+    # power-of-two multiples (the memory-channel conflict the Rt pad avoids).
+    ld = njobs + (iseven(njobs) ? 1 : 0)
+    return _KAPlaneAccumulator(CUDA.zeros(T, ld, nr, nc), njobs)
+end
+
+# One pair's contribution: identical staging to `process_windows!` up to the
+# inverse FFT, then the shifted planes add straight into the accumulator.
+function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRange,
+                            engine::_CUDACorrelationEngine{T},
+                            imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
+                            params::PIVParameters, mask,
+                            uacc = nothing, uscratch = nothing) where {T}
+    uacc === nothing ||
+        throw(ArgumentError("backend :cuda does not support uncertainty " *
+                            "quantification yet; use backend = :cpu"))
+    njobs = length(jobrange)
+    njobs == 0 && return nothing
+
+    wr, wc = engine.wsize
+    nr, nc = engine.fft_size
+    sr, sc = nr ÷ 2, nc ÷ 2
+    bs = min(_CUDA_BATCH, njobs)
+    _ensure_batch!(engine, bs)
+    hasmask = mask !== nothing
+    _ensure_image!(engine, size(imgA), hasmask)
+    ka = CUDABackend()
+
+    copyto!(engine.imgA_d, imgA)
+    copyto!(engine.imgB_d, imgB)
+    maskarg = engine.empty_mask
+    if hasmask
+        copyto!(engine.mask_d, convert(Array{Bool}, mask))
+        maskarg = engine.mask_d
+    end
+    gainarg = engine.padded ? engine.gain_d : engine.apod_d   # dummy when unpadded (unread)
+
+    for start in 1:bs:njobs
+        nreal = min(bs, njobs - start + 1)
+        @inbounds for m in 1:nreal
+            job = jobs[jobrange[start + m - 1]]
+            engine.origins_host[m, 1] = job[3]   # rs
+            engine.origins_host[m, 2] = job[4]   # cs
+        end
+        copyto!(engine.origins_d, engine.origins_host)
+        fill!(engine.CA, 0)
+        fill!(engine.CB, 0)
+        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, engine.imgA_d,
+                              engine.imgB_d, engine.origins_d, maskarg, hasmask,
+                              wr, wc; ndrange = nreal)
+        _ka_gather!(ka)(engine.CA, engine.CB, engine.imgA_d, engine.imgB_d,
+                        engine.origins_d, engine.apod_d, engine.meanA_d,
+                        engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
+        KernelAbstractions.synchronize(ka)
+        engine.fwd * engine.CA
+        engine.fwd * engine.CB
+        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        KernelAbstractions.synchronize(ka)
+        engine.bwd * engine.CA
+        # Only the nreal live slices accumulate — the last tile's tail holds
+        # stale spectra that must not pollute the sums.
+        _ka_shiftgain_accum!(ka)(acc.Racc, engine.CA, gainarg, engine.padded, sr, sc,
+                                 nr, nc, first(jobrange) + start - 2;
+                                 ndrange = (nr, nc, nreal))
+        KernelAbstractions.synchronize(ka)
+    end
+    return nothing
+end
+
+# Ensemble finalize: analyze the summed planes in tiles on the device and
+# scatter the packed scalars — residuals *add to* the shared predictor in
+# `u`/`v` and alternatives are predictor-relative, exactly like the host loop.
+function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_CUDACorrelationEngine{T},
+                           u, v, peak_ratio, correlation_moment,
+                           uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
+                           jobs, params::PIVParameters, uacc) where {T}
+    (planes === nothing && uacc === nothing) ||
+        throw(ArgumentError("backend :cuda does not support uncertainty or " *
+                            "correlation-plane storage yet; use backend = :cpu"))
+    njobs = acc.njobs
+    njobs == 0 && return nothing
+    nr, nc = engine.fft_size
+    bs = min(_CUDA_BATCH, njobs)
+    _ensure_batch!(engine, bs)
+    ka = CUDABackend()
+    use_regionalmax = params.peak_finder === :regionalmax
+    use_gauss9 = params.subpixel_method === :gauss9
+    nalt = engine.kpk - 1
+    for start in 1:bs:njobs
+        nreal = min(bs, njobs - start + 1)
+        Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
+        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
+                         ndrange = nreal)
+        KernelAbstractions.synchronize(ka)
+        copyto!(engine.out_host, engine.out_d)
+        for m in 1:nreal
+            job = jobs[start + m - 1]
+            gi, gj = job[1], job[2]
+            if alt_u !== nothing
+                found = Int(engine.out_host[5, m])   # small integer, exact in T
+                for mm in 2:min(found, params.n_peaks)
+                    # Total alternative displacement = shared predictor + residual.
+                    alt_u[gi, gj, mm - 1] = u[gi, gj] + engine.out_host[5 + (mm - 1), m]
+                    alt_v[gi, gj, mm - 1] = v[gi, gj] + engine.out_host[5 + nalt + (mm - 1), m]
+                end
+            end
+            u[gi, gj] += engine.out_host[1, m]
+            v[gi, gj] += engine.out_host[2, m]
+            peak_ratio[gi, gj] = engine.out_host[3, m]
+            correlation_moment[gi, gj] = engine.out_host[4, m]
+        end
+    end
+    return nothing
+end
+
 end # module

@@ -37,7 +37,10 @@ estimator's short-range pixel-covariance assumption); quantify it with
 Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
 `mask_threshold`, `backend`, and `scale` (attach a [`PhysicalScale`](@ref) to
 the result) as in [`run_piv`](@ref); `preprocess`, `image_type`, `progress`
-as in [`run_piv_sequence`](@ref).
+as in [`run_piv_sequence`](@ref). On the KA-family backends (`:ka` and the
+device selectors) the summed correlation planes stay resident on the device —
+only the final vector grid returns to the host — but their option scope
+applies, so `uncertainty = true` requires `backend = :cpu`.
 """
 function run_piv_ensemble(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};
@@ -53,8 +56,9 @@ function run_piv_ensemble(pairs::AbstractVector,
                           scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
-    _require_cpu_backend(_resolve_backend(backend))
+    be = _resolve_backend(backend)
     passes = params isa PIVParameters ? [params] : params
+    _check_backend_params(be, passes)
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     0 < mask_threshold <= 1 ||
@@ -73,7 +77,8 @@ function run_piv_ensemble(pairs::AbstractVector,
                     build_predictor(result, predictor_smoothing)
         result = ensemble_pass(pairs, p, predictor; threaded, mask, mask_threshold,
                                preprocess, image_type,
-                               force_replace = k < length(passes), meter, workspace)
+                               force_replace = k < length(passes), meter, workspace,
+                               backend = be)
     end
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -125,7 +130,8 @@ end
 # window's correlation planes across pairs, then peak-find and validate once.
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
-                       image_type, force_replace::Bool, meter, workspace = nothing)
+                       image_type, force_replace::Bool, meter, workspace = nothing,
+                       backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND)
     local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
     for pair in pairs
@@ -144,16 +150,23 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                 throw(DimensionMismatch("mask must have the same size as the images, got $(size(mask))"))
             T = float(promote_type(eltype(imgA), eltype(imgB)))
             grid = pass_grid(T, imgsize, params, mask, mask_threshold)
-            plane = params.padding ? 2 .* params.window_size : params.window_size
-            accum = [zeros(T, plane) for _ in grid.jobs]
-            nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
+            nchunks = _engine_nchunks(backend,
+                                      threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1)
             chunk_size = max(cld(length(grid.jobs), max(nchunks, 1)), 1)
             chunks = collect(Iterators.partition(1:length(grid.jobs), chunk_size))
             # One correlation engine per chunk, reused across pairs: CPU
-            # engines wrap FFTW correlators whose plans are paid once per pass,
-            # and each accumulator is written by exactly one task per pair, so
-            # threaded results match serial exactly.
-            engines = [_make_correlation_engine(params, T) for _ in chunks]
+            # engines wrap FFTW correlators whose plans are paid once per
+            # configuration (pooled in the workspace), and each accumulator is
+            # written by exactly one task per pair, so threaded results match
+            # serial exactly. Device engines collapse to a single chunk and
+            # tile the window grid internally.
+            engines = piv_correlation_engines(backend, workspace, params, T, length(chunks))
+            # Plane accumulators live where the engine computes: per-window
+            # host matrices for the CPU path, one batch-major device array for
+            # KA-family engines — so device backends accumulate in place
+            # instead of copying planes back every pair.
+            accum = isempty(engines) ? Matrix{T}[] :
+                    _plane_accumulator(engines[1], params, T, length(grid.jobs))
             # Uncertainty statistics pool across pairs (per-window Float64
             # accumulators; each is written by exactly one task per pair).
             # As in the single-pair path, only the final pass estimates them.
@@ -215,10 +228,43 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     n_alt = params.n_peaks - 1
     alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
+    isempty(grid.jobs) ||
+        ensemble_analyze!(accum, engines[1], u, v, peak_ratio, correlation_moment,
+                          uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
+                          grid.jobs, params, uacc)
+    if any(grid.grid_mask)
+        for f in (u, v, peak_ratio, correlation_moment)
+            f[grid.grid_mask] .= T(NaN)
+        end
+    end
+
+    result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
+                       uncertainty_u, uncertainty_v,
+                       falses(ny, nx), grid.grid_mask, params, planes)
+    return validate_and_replace!(result, params, force_replace;
+                                 alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
+end
+
+# Per-window ensemble plane accumulators for the CPU engine: plain host
+# matrices, one per window. KA-family engines supply their own batch-major
+# accumulator (see `_KAPlaneAccumulator` in ka_backend.jl).
+_plane_accumulator(::_CPUCorrelationEngine, params::PIVParameters,
+                   ::Type{T}, njobs::Int) where {T} =
+    [zeros(T, params.padding ? 2 .* params.window_size : params.window_size)
+     for _ in 1:njobs]
+
+# Peak-find and post-process every summed ensemble plane on the host: subpixel
+# refinement, alternative-peak refinement, quality metrics, and (final pass)
+# pooled-uncertainty finalization. `u`/`v` hold the shared predictor on entry
+# and the total displacement on exit.
+function ensemble_analyze!(accum::AbstractVector, engine, u, v, peak_ratio,
+                           correlation_moment, uncertainty_u, uncertainty_v,
+                           planes, alt_u, alt_v, jobs, params::PIVParameters, uacc)
+    T = eltype(u)
     k = max(params.n_peaks, 2)
     vals = Vector{T}(undef, k)
     locs = Vector{NTuple{2,Int}}(undef, k)
-    for (j, (gi, gj, _, _)) in enumerate(grid.jobs)
+    for (j, (gi, gj, _, _)) in enumerate(jobs)
         R = accum[j]
         planes === nothing || (planes[gi, gj] = copy(R))
         res = analyze_plane!(vals, locs, R, params)
@@ -239,17 +285,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             uncertainty_v[gi, gj] = finalize_uncertainty(T, view(uacc[j], 2, :))
         end
     end
-    if any(grid.grid_mask)
-        for f in (u, v, peak_ratio, correlation_moment)
-            f[grid.grid_mask] .= T(NaN)
-        end
-    end
-
-    result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
-                       uncertainty_u, uncertainty_v,
-                       falses(ny, nx), grid.grid_mask, params, planes)
-    return validate_and_replace!(result, params, force_replace;
-                                 alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
+    return nothing
 end
 
 # Add the correlation planes of the windows in jobrange to their accumulators,

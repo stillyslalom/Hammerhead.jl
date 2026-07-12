@@ -65,4 +65,55 @@
     ws = piv_workspace(; backend = :ka)
     r_ka_ws = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws.u, m_ka.u) && isequal(r_ka_ws.v, m_ka.v)
+
+    @testset "ensemble on :ka" begin
+        # Same flow in every pair (the ensemble assumption); different particle
+        # sets so the summed planes actually pool information across pairs.
+        pos2 = [(rand(rng) * 276 - 10, rand(rng) * 276 - 10) for _ in 1:1500]
+        imgA2, imgB2 = particle_pair(image_size, pos2, dv, du)
+        pairs = [(imgA, imgB), (imgA2, imgB2)]
+
+        e_cpu = run_piv_ensemble(pairs, params; progress = false, threaded = false)
+        e_ka = run_piv_ensemble(pairs, params; backend = :ka, progress = false,
+                                threaded = false)
+        evalid = .!e_cpu.outliers .& .!e_cpu.mask
+        @test maximum(abs.(e_ka.u[evalid] .- e_cpu.u[evalid])) < 1e-3
+        @test maximum(abs.(e_ka.v[evalid] .- e_cpu.v[evalid])) < 1e-3
+        @test maximum(abs.(e_ka.peak_ratio[evalid] .- e_cpu.peak_ratio[evalid])) < 1e-3
+        @test maximum(abs.(e_ka.correlation_moment[evalid] .-
+                           e_cpu.correlation_moment[evalid])) < 1e-3
+        @test isapprox(median(e_ka.u[evalid]), du; atol = 0.05)
+        @test isapprox(median(e_ka.v[evalid]), dv; atol = 0.05)
+
+        # Multi-pass ensemble: the shared-predictor deformation path plus the
+        # predictor-relative alternative peaks in the device analyze/scatter.
+        me_cpu = run_piv_ensemble(pairs, schedule; progress = false, threaded = false)
+        me_ka = run_piv_ensemble(pairs, schedule; backend = :ka, progress = false,
+                                 threaded = false)
+        mevalid = .!me_cpu.outliers .& .!me_cpu.mask
+        @test maximum(abs.(me_ka.u[mevalid] .- me_cpu.u[mevalid])) < 1e-3
+        @test maximum(abs.(me_ka.v[mevalid] .- me_cpu.v[mevalid])) < 1e-3
+
+        # Masked windows accumulate identically to the CPU path.
+        ke_cpu = run_piv_ensemble(pairs, params; mask, progress = false,
+                                  threaded = false)
+        ke_ka = run_piv_ensemble(pairs, params; backend = :ka, mask,
+                                 progress = false, threaded = false)
+        @test ke_ka.mask == ke_cpu.mask
+        kevalid = .!ke_cpu.outliers .& .!ke_cpu.mask
+        @test maximum(abs.(ke_ka.u[kevalid] .- ke_cpu.u[kevalid])) < 1e-3
+        @test all(isnan, ke_ka.u[ke_ka.mask])
+
+        # The engine collapses to one batch regardless of `threaded`.
+        e_ka_t = run_piv_ensemble(pairs, params; backend = :ka, progress = false,
+                                  threaded = true)
+        @test isequal(e_ka_t.u, e_ka.u) && isequal(e_ka_t.v, e_ka.v)
+
+        # Out-of-scope options are rejected up front.
+        @test_throws ArgumentError run_piv_ensemble(pairs,
+            PIVParameters(uncertainty = true); backend = :ka, progress = false)
+        @test_throws ArgumentError run_piv_ensemble(pairs,
+            PIVParameters(keep_correlation_planes = true); backend = :ka,
+            progress = false)
+    end
 end

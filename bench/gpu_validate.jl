@@ -1,6 +1,7 @@
 # GPU-backend correctness validation against `backend = :cpu`: single-pass,
-# multipass (alt-peaks path), and masked windows on a synthetic uniform-shift
-# scene. Expect max deviations at FFT round-off level (~1e-14 for Float64).
+# multipass (alt-peaks path), masked windows, and ensemble correlation
+# (device-resident plane accumulator) on a synthetic uniform-shift scene.
+# Expect max deviations at FFT round-off level (~1e-14 for Float64).
 #
 # Same environment requirements as gpu_benchmarks.jl (see its header):
 #
@@ -61,4 +62,24 @@ k_gpu = run_piv(imgA, imgB, params; backend, mask, threaded = false)
 kvalid = .!k_cpu.outliers .& .!k_cpu.mask
 println("masked max |Δu| = ", maximum(abs.(k_gpu.u[kvalid] .- k_cpu.u[kvalid])),
         "  masked cells NaN: ", all(isnan, k_gpu.u[k_gpu.mask]))
+
+# Ensemble: same flow, second pair with an independent particle set.
+imgA2 = zeros(256, 256); imgB2 = zeros(256, 256)
+for _ in 1:1500
+    p = (rand(rng) * 276 - 10, rand(rng) * 276 - 10)
+    add_particle!(imgA2, p, 3.0)
+    add_particle!(imgB2, (p[1] + dv, p[2] + du), 3.0)
+end
+pairs = [(imgA, imgB), (imgA2, imgB2)]
+e_cpu = run_piv_ensemble(pairs, params; progress = false, threaded = false)
+e_gpu = run_piv_ensemble(pairs, params; backend, progress = false, threaded = false)
+evalid = .!e_cpu.outliers .& .!e_cpu.mask
+println("ensemble max |Δu| = ", maximum(abs.(e_gpu.u[evalid] .- e_cpu.u[evalid])),
+        "  max |Δv| = ", maximum(abs.(e_gpu.v[evalid] .- e_cpu.v[evalid])))
+me_cpu = run_piv_ensemble(pairs, sched; progress = false, threaded = false)
+me_gpu = run_piv_ensemble(pairs, sched; backend, progress = false, threaded = false)
+mevalid = .!me_cpu.outliers .& .!me_cpu.mask
+println("ensemble multipass max |Δu| = ",
+        maximum(abs.(me_gpu.u[mevalid] .- me_cpu.u[mevalid])),
+        "  max |Δv| = ", maximum(abs.(me_gpu.v[mevalid] .- me_cpu.v[mevalid])))
 println("DONE")
