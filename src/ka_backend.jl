@@ -413,9 +413,15 @@ function _make_ka_engine(params::PIVParameters, ::Type{T}) where {T}
         Matrix{T}(undef, 0, 0), nothing, nothing)
 end
 
+# Engines are pooled per window configuration (everything baked in at
+# construction: sizes, padding/apodization planes, and the kpk-dependent
+# scratch shapes; peak finder and subpixel method are per-call kernel
+# arguments, not engine state).
 piv_correlation_engines(::_KABackend, workspace, params::PIVParameters,
                         ::Type{T}, nchunks::Int) where {T} =
-    [_make_ka_engine(params, T) for _ in 1:nchunks]
+    pooled_engines(() -> _make_ka_engine(params, T), workspace,
+                   (:ka, T, params.window_size, params.padding,
+                    params.apodization, max(params.n_peaks, 2)), nchunks)
 
 function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
     if engine.bs != bs

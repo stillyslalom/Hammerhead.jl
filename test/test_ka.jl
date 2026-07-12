@@ -65,6 +65,15 @@
     ws = piv_workspace(; backend = :ka)
     r_ka_ws = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws.u, m_ka.u) && isequal(r_ka_ws.v, m_ka.v)
+    # The workspace pools engines per window configuration (one per pass of
+    # the 64/32 schedule); a second run reuses the identical engine objects —
+    # and with them the batch buffers and FFT plans — with identical results.
+    @test length(ws.engines) == 2
+    engine_ids = Dict(k => map(objectid, v) for (k, v) in ws.engines)
+    r_ka_ws2 = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
+    @test isequal(r_ka_ws2.u, m_ka.u) && isequal(r_ka_ws2.v, m_ka.v)
+    @test length(ws.engines) == 2
+    @test all(map(objectid, ws.engines[k]) == engine_ids[k] for k in keys(engine_ids))
 
     @testset "ensemble on :ka" begin
         # Same flow in every pair (the ensemble assumption); different particle

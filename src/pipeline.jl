@@ -3,8 +3,10 @@
 
 Reusable scratch for [`run_piv`](@ref): the padded cubic-B-spline coefficient
 buffers of the two image interpolants, the two image-deformation output
-buffers, and a pool of window correlators (cached FFTW plans) keyed by window
-configuration. Build one with [`piv_workspace`](@ref) and pass it as the
+buffers, and a pool of window correlators (cached FFTW plans) — or, on the
+KA-family backends, of correlation engines with their batch buffers and FFT
+plans — keyed by window configuration. Build one with [`piv_workspace`](@ref)
+and pass it as the
 `workspace` keyword to reuse this scratch across many `run_piv` calls on
 **equally sized** image pairs — [`run_piv_sequence`](@ref) and
 [`run_piv_ensemble`](@ref) do this internally so a whole batch pays the
@@ -25,6 +27,7 @@ mutable struct PIVWorkspace
     warpA::Any                               # deformation output buffer, image A
     warpB::Any                               # deformation output buffer, image B
     correlators::Dict{Any,Vector{Correlator}}
+    engines::Dict{Any,Vector{Any}}           # non-CPU engine pool (buffers + FFT plans)
 end
 
 """
@@ -40,7 +43,8 @@ selectors (see the internals reference).
 """
 piv_workspace(; backend::Symbol = :cpu) =
     PIVWorkspace(_resolve_backend(backend), nothing, nothing, nothing, nothing,
-                 nothing, nothing, Dict{Any,Vector{Correlator}}())
+                 nothing, nothing, Dict{Any,Vector{Correlator}}(),
+                 Dict{Any,Vector{Any}}())
 
 # Point the workspace at this call's image size/precision, discarding buffers
 # from a differently shaped prior run. Deformation output buffers are ensured
@@ -55,6 +59,7 @@ function ws_prepare!(ws::PIVWorkspace, imgsize::Dims{2}, ::Type{T}) where {T}
         ws.warpA = nothing
         ws.warpB = nothing
         empty!(ws.correlators)
+        empty!(ws.engines)
     end
     return ws
 end
@@ -93,6 +98,21 @@ function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::I
         push!(pool, make_correlator(params, T))
     end
     return pool
+end
+
+# Engine pool for the non-CPU backends, mirroring `piv_correlators`: engines
+# own their (device) buffers and FFT plans, so drawing them from a
+# per-window-configuration pool amortizes those allocations across a batch.
+# The pool grows only serially, before any fan-out, and each chunk uses a
+# distinct entry. Engines are pure scratch — every buffer is rewritten before
+# it is read on each call — so reuse leaves results identical.
+function pooled_engines(make, workspace, key, nchunks::Int)
+    workspace === nothing && return [make() for _ in 1:nchunks]
+    pool = get!(() -> Any[], workspace.engines, key)
+    while length(pool) < nchunks
+        push!(pool, make())
+    end
+    return pool[1:nchunks]
 end
 
 # Build this pass's per-chunk correlation engines for the selected backend. The

@@ -32,7 +32,7 @@ using KernelAbstractions
 using AbstractFFTs: plan_fft!
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
-    _engine_nchunks, piv_correlation_engines, process_windows!,
+    _engine_nchunks, piv_correlation_engines, pooled_engines, process_windows!,
     make_correlator, PIVParameters
 
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
@@ -102,9 +102,14 @@ function _make_cuda_engine(params::PIVParameters, ::Type{T}) where {T}
         Matrix{Int}(undef, 0, 2), CUDA.zeros(Int, 0, 0), nothing, nothing)
 end
 
+# Engines are pooled per window configuration via the workspace (see the core
+# `pooled_engines`), so device buffers and cuFFT plans are paid once per
+# configuration for a whole sequence/ensemble batch.
 piv_correlation_engines(::_CUDABackend, workspace, params::PIVParameters,
                         ::Type{T}, nchunks::Int) where {T} =
-    [_make_cuda_engine(params, T) for _ in 1:nchunks]
+    pooled_engines(() -> _make_cuda_engine(params, T), workspace,
+                   (:cuda, T, params.window_size, params.padding,
+                    params.apodization, max(params.n_peaks, 2)), nchunks)
 
 function _ensure_batch!(engine::_CUDACorrelationEngine{T}, bs::Int) where {T}
     if engine.bs != bs

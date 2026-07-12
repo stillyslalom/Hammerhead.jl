@@ -25,7 +25,7 @@ using KernelAbstractions
 using AbstractFFTs: plan_fft!
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
-    _engine_nchunks, piv_correlation_engines, process_windows!,
+    _engine_nchunks, piv_correlation_engines, pooled_engines, process_windows!,
     make_correlator, PIVParameters
 
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
@@ -95,9 +95,14 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
         Matrix{Int}(undef, 0, 2), AMDGPU.zeros(Int, 0, 0), nothing, nothing)
 end
 
+# Engines are pooled per window configuration via the workspace (see the core
+# `pooled_engines`), so device buffers and rocFFT plans are paid once per
+# configuration for a whole sequence/ensemble batch.
 piv_correlation_engines(::_AMDGPUBackend, workspace, params::PIVParameters,
                         ::Type{T}, nchunks::Int) where {T} =
-    [_make_amdgpu_engine(params, T) for _ in 1:nchunks]
+    pooled_engines(() -> _make_amdgpu_engine(params, T), workspace,
+                   (:amdgpu, T, params.window_size, params.padding,
+                    params.apodization, max(params.n_peaks, 2)), nchunks)
 
 function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
     if engine.bs != bs
