@@ -32,6 +32,26 @@ Multi-pass works as in the single-pair engine, with one difference: each
 pass's ensemble field acts as a *shared* deformation predictor for every
 pair of the next pass.
 
+## Keep large ensembles on a GPU
+
+Pass `backend = :amdgpu` or `:cuda` to accumulate the summed planes on the
+device across every pair:
+
+```julia
+using AMDGPU
+result = run_piv_ensemble(pairs, passes;
+    backend = :amdgpu,
+    preprocess = img -> highpass_filter!(img, sigma = 6),
+)
+```
+
+Loading and `preprocess` remain CPU work. The correlation accumulator and,
+when enabled, Float64 uncertainty statistics remain device-resident until
+the final field is built. Accumulator memory scales with vector-grid density
+and correlation-plane area, not pair count; padding quadruples the plane
+footprint. Use the sizing formula and validation workflow in
+[Run PIV on a GPU](gpu.md) before a large production ensemble.
+
 ## Practical notes
 
 - **More pairs beat bigger windows.** The whole point is that window size

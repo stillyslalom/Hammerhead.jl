@@ -39,8 +39,10 @@ Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
 the result) as in [`run_piv`](@ref); `preprocess`, `image_type`, `progress`
 as in [`run_piv_sequence`](@ref). On the KA-family backends (`:ka` and the
 device selectors) the summed correlation planes stay resident on the device —
-only the final vector grid returns to the host — but their option scope
-applies, so `uncertainty = true` requires `backend = :cpu`.
+only the final vector grid returns to the host. With `uncertainty = true`,
+the additive Float64 statistics also remain device-resident until finalization.
+Phase correlation, `subpixel_method = :gauss2d`, and retained correlation
+planes still require `backend = :cpu`.
 """
 function run_piv_ensemble(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};

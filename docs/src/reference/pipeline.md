@@ -10,6 +10,10 @@ the [`PIVResult`](@ref) container, analysis masks, correlators, and
 plotting. See the [first tutorial](../tutorials/first_vector_field.md) for a
 guided walkthrough.
 
+All public PIV drivers accept an execution-backend selector. See
+[Run PIV on a GPU](../howto/gpu.md) for optional package setup, the supported
+feature matrix, device-memory behavior, and validation commands.
+
 ```@index
 Pages = ["pipeline.md"]
 ```

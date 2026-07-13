@@ -197,7 +197,11 @@ engine, and loading a device package enables the matching GPU backend —
 `using AMDGPU` for `backend = :amdgpu`, `using CUDA` for `backend = :cuda`.
 The GPU backends batch whole passes on the device, including subpixel peak
 analysis, and currently cover cross-correlation with `:gauss3`/`:gauss9`
-subpixel fits.
+subpixel fits, multi-pass deformation, ensemble accumulation, and Float64
+uncertainty statistics. Phase correlation, `:gauss2d`, and retained
+correlation planes remain CPU-only. See the
+[GPU how-to](docs/src/howto/gpu.md) for installation, feature coverage,
+device-memory sizing, validation, and performance guidance.
 
 ## Visualization
 

@@ -23,6 +23,12 @@ plenty for image data quantized to 8–16 bits, and choosing precision at the
 input keeps the choice in the caller's hands with zero configuration
 surface — there is no `precision` parameter to document or misuse.
 
+On GPU backends, image deformation, FFTs, and correlation planes still follow
+the image type. Float32 therefore reduces the dominant device buffers. The
+uncertainty exception below remains Float64 on the GPU as well; see
+[Run PIV on a GPU](../howto/gpu.md) for the resulting memory and performance
+tradeoffs.
+
 ## Deliberate Float64 islands
 
 A few computations always run in double precision regardless of the image

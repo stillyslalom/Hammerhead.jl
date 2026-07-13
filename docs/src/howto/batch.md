@@ -48,6 +48,25 @@ To halve memory traffic on large recordings, load frames in single
 precision with `image_type = Float32` (see the
 [precision policy](../explanation/precision.md)).
 
+## Run the sequence on a GPU
+
+Load the device package and pass its selector:
+
+```julia
+using AMDGPU
+results = run_piv_sequence(pairs, passes;
+    backend = :amdgpu,
+    image_type = Float32,
+    output = "run_042_piv.jld2",
+)
+```
+
+The sequence driver reuses one device workspace across pairs while the next
+pair's load and preprocessing are prefetched on the CPU. Output remains
+incremental and results remain ordinary host-side `PIVResult` objects. See
+[Run PIV on a GPU](gpu.md) for installation, supported options, and when
+offload pays for itself.
+
 ## One file per pair
 
 To write each pair to its **own** JLD2 file instead of one combined file,

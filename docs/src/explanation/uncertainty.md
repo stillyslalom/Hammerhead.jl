@@ -60,6 +60,16 @@ displacement in every pair; genuine pair-to-pair flow fluctuation is not
 captured. Quantify fluctuation with [`field_statistics`](@ref) over
 single-pair results instead.
 
+## Execution precision on GPU backends
+
+The KA-family backends compute the same additive statistics on their execution
+device and always accumulate them in Float64, including for Float32 images.
+An iterative pass runs one UQ sweep over the final device-resident warped
+windows; an ensemble keeps the pooled statistics on the device until final
+analysis. The CPU finalizer remains the correctness reference. Consumer GPUs
+with weak Float64 throughput may spend more time on UQ than on correlation;
+see [Run PIV on a GPU](../howto/gpu.md) for benchmarking guidance.
+
 ## Stereo propagation
 
 [`run_piv_stereo`](@ref) propagates the two cameras' per-window estimates

@@ -10,6 +10,8 @@ change between releases.
 Execution backend plumbing is internal. Public driver/workspace keywords use
 selectors such as `backend = :cpu`; concrete backend implementation types are
 not exported and ordinary user code should rely on the default CPU behavior.
+The user-facing installation, feature, memory, and validation guide is
+[Run PIV on a GPU](../howto/gpu.md).
 The core package provides `backend = :cpu` (FFTW) and the portable
 `backend = :ka` (the same KernelAbstractions kernels the GPU backends run,
 executed on the CPU — a hardware-free proving tier). GPU backends are

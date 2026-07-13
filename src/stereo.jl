@@ -123,7 +123,9 @@ analyzed. `scale` attaches a [`PhysicalScale`](@ref) to the stereo result
 `pixel_size = 1` — the stereo fields are already in world units, so
 [`physical`](@ref) only needs to divide by the frame interval. Remaining
 keyword arguments (`threaded`, `predictor_smoothing`, `backend`,
-`mask_threshold`) are forwarded to [`run_piv`](@ref).
+`mask_threshold`) are forwarded to [`run_piv`](@ref). A GPU backend accelerates
+the two per-camera PIV analyses; dewarping and reconstruction remain on the
+CPU (see [Run PIV on a GPU](@ref)).
 
 Both cameras are analyzed with the same parameters and mask, so their vector
 grids, masks, and (via the union) outlier maps are directly compatible; the

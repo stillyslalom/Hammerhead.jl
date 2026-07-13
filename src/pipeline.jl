@@ -285,7 +285,8 @@ of each pass is split across tasks; results are identical to the serial path.
 `:cpu` (FFTW) and `:ka` (the same portable KernelAbstractions kernels the GPU
 backends run, on the CPU); package extensions add the device selectors
 `:amdgpu` (ROCm, loaded with `using AMDGPU`) and `:cuda` (NVIDIA, loaded with
-`using CUDA`) — see the internals reference for scope. Backend
+`using CUDA`) — see [Run PIV on a GPU](@ref) for installation, supported
+features, memory sizing, and validation. Backend
 implementation types are internal.
 
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
