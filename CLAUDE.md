@@ -203,8 +203,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   leading dim against channel conflicts; `_ka_shiftgain_accum!` adds each
   pair's planes in place, `ensemble_analyze!` returns only packed per-window
   scalars), via the engine-dispatched hooks `_plane_accumulator` /
-  `accumulate_planes!` / `ensemble_analyze!` — ensemble UQ still requires
-  `:cpu`. GPU kernel
+  `accumulate_planes!` / `ensemble_analyze!`. Phase 4b runs the Wieneke UQ
+  statistics kernel in Float64 on all KA-family backends: fused single-pair
+  and final post-iteration sweeps return packed scalars only, while ensemble
+  statistics remain device-resident and additive across pairs. GPU kernel
   conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
   no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
   compile to malloc hostcalls (use `% Int32` wrapping stores and

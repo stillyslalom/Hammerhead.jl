@@ -82,4 +82,29 @@ mevalid = .!me_cpu.outliers .& .!me_cpu.mask
 println("ensemble multipass max |Δu| = ",
         maximum(abs.(me_gpu.u[mevalid] .- me_cpu.u[mevalid])),
         "  max |Δv| = ", maximum(abs.(me_gpu.v[mevalid] .- me_cpu.v[mevalid])))
+# Phase 4b: Float64 UQ statistics on the device, including the post-iteration
+# sweep and the device-resident ensemble accumulator.
+uqparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                         apodization = :gauss, uncertainty = true,
+                         max_iterations = 2)
+uq_cpu = run_piv(imgA, imgB, uqparams; threaded = false)
+uq_gpu = run_piv(imgA, imgB, uqparams; backend, threaded = false)
+uvalid = isfinite.(uq_cpu.uncertainty_u) .& isfinite.(uq_gpu.uncertainty_u)
+vvalid = isfinite.(uq_cpu.uncertainty_v) .& isfinite.(uq_gpu.uncertainty_v)
+duq = maximum(abs.(uq_gpu.uncertainty_u[uvalid] .- uq_cpu.uncertainty_u[uvalid]))
+dvq = maximum(abs.(uq_gpu.uncertainty_v[vvalid] .- uq_cpu.uncertainty_v[vvalid]))
+println("UQ max abs error u = ", duq, "  v = ", dvq)
+@assert any(uvalid) && any(vvalid) && duq < 1e-8 && dvq < 1e-8
+
+euq_cpu = run_piv_ensemble(pairs, uqparams; progress = false, threaded = false)
+euq_gpu = run_piv_ensemble(pairs, uqparams; backend, progress = false,
+                           threaded = false)
+euvalid = isfinite.(euq_cpu.uncertainty_u) .& isfinite.(euq_gpu.uncertainty_u)
+evvalid = isfinite.(euq_cpu.uncertainty_v) .& isfinite.(euq_gpu.uncertainty_v)
+deuq = maximum(abs.(euq_gpu.uncertainty_u[euvalid] .-
+                    euq_cpu.uncertainty_u[euvalid]))
+devq = maximum(abs.(euq_gpu.uncertainty_v[evvalid] .-
+                    euq_cpu.uncertainty_v[evvalid]))
+println("ensemble UQ max abs error u = ", deuq, "  v = ", devq)
+@assert any(euvalid) && any(evvalid) && deuq < 1e-8 && devq < 1e-8
 println("DONE")

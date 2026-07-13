@@ -29,11 +29,14 @@ using AbstractFFTs: plan_fft!
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
     _engine_nchunks, piv_correlation_engines, pooled_engines, process_windows!,
-    make_correlator, PIVParameters
+    make_correlator, PIVParameters, _supports_fft, _supports_batched_fft,
+    _supports_fp64, finalize_uncertainty, UQ_NSTATS, uncertainty_sweep!,
+    _correlation_apod
 
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
 import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
     _ka_crosspower!, _ka_shiftgain!, _ka_analyze!
+import Hammerhead: _ka_uq_means!, _ka_uq_stats!
 
 # Device-resident deformation (Phase 3b): the staged-context machinery is
 # portable core code (proven on `:ka`); this extension only points it at the
@@ -47,8 +50,12 @@ _resolve_backend(::Val{:amdgpu}) = _AMDGPUBackend()
 
 # Run the whole window grid as one logical batch, tiled internally.
 _engine_nchunks(::_AMDGPUBackend, ::Int) = 1
+_supports_fft(::_AMDGPUBackend) = true
+_supports_batched_fft(::_AMDGPUBackend) = true
+_supports_fp64(::_AMDGPUBackend) = true
 
-_check_backend_params(::_AMDGPUBackend, passes) = _ka_scope_check(passes, :amdgpu)
+_check_backend_params(b::_AMDGPUBackend, passes) =
+    _ka_scope_check(passes, :amdgpu, _supports_fp64(b))
 
 # Windows per device sub-batch (bounds device-memory footprint; at 2048 the
 # Float64 complex buffers total ~340 MB, and the analysis kernel — one
@@ -79,11 +86,16 @@ mutable struct _AMDGPUCorrelationEngine{T}
     locs_d::ROCArray{Int32,3}             # (2, kpk, bs) peak-finder scratch
     out_d::ROCArray{T,2}                  # (5 + 2*(kpk-1), bs) packed analysis output
     out_host::Matrix{T}
+    uqstats_d::ROCArray{Float64,3}
+    uqmeans_d::ROCArray{Float64,2}
+    uqstats_host::Array{Float64,3}
     origins_host::Matrix{Int}
     origins_d::ROCArray{Int,2}
     fwd::Any
     bwd::Any
 end
+
+_correlation_apod(engine::_AMDGPUCorrelationEngine) = engine.apod_d
 
 function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
     # Reuse the CPU correlator's apodization window and overlap-gain plane so
@@ -100,7 +112,9 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
         0, AMDGPU.zeros(Complex{T}, 0, 0, 0), AMDGPU.zeros(Complex{T}, 0, 0, 0),
         AMDGPU.zeros(T, 0, 0, 0), AMDGPU.zeros(T, 0), AMDGPU.zeros(T, 0),
         AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Int32, 2, 0, 0), AMDGPU.zeros(T, 0, 0),
-        Matrix{T}(undef, 0, 0),
+        Matrix{T}(undef, 0, 0), AMDGPU.zeros(Float64, 0, 0, 0),
+        AMDGPU.zeros(Float64, 0, 0),
+        Array{Float64,3}(undef, 0, 0, 0),
         Matrix{Int}(undef, 0, 2), AMDGPU.zeros(Int, 0, 0), nothing, nothing)
 end
 
@@ -129,6 +143,9 @@ function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
         engine.locs_d = AMDGPU.zeros(Int32, 2, engine.kpk, bs)
         engine.out_d = AMDGPU.zeros(T, 5 + 2 * (engine.kpk - 1), bs)
         engine.out_host = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
+        engine.uqstats_d = AMDGPU.zeros(Float64, 2, UQ_NSTATS, bs)
+        engine.uqmeans_d = AMDGPU.zeros(Float64, 2, bs)
+        engine.uqstats_host = Array{Float64,3}(undef, 2, UQ_NSTATS, bs)
         engine.origins_host = Matrix{Int}(undef, bs, 2)
         engine.origins_d = AMDGPU.zeros(Int, bs, 2)
         engine.fwd = plan_fft!(engine.CA, (1, 2))
@@ -207,9 +224,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           engine::_AMDGPUCorrelationEngine{T},
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing) where {T}
-    (uncertainty_u === nothing && planes === nothing) ||
-        throw(ArgumentError("backend :amdgpu does not support uncertainty or " *
-                            "correlation-plane storage yet; use backend = :cpu"))
+    planes === nothing ||
+        throw(ArgumentError("backend :amdgpu does not support correlation-plane storage yet; " *
+                            "use backend = :cpu"))
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     njobs = length(jobvec)
     njobs == 0 && return nothing
@@ -243,6 +260,13 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
+        if uncertainty_u !== nothing
+            _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
+                              ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d,
+                              engine.CA, engine.CB, wr, wc, nreal, 0, false;
+                              ndrange = (2, UQ_NSTATS, nreal))
+        end
         KernelAbstractions.synchronize(ka)
         # In-place plan application: `p * x` mutates x and returns it, the
         # idiom shared by FFTW and rocFFT in-place plans (rocFFT does not
@@ -261,6 +285,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         KernelAbstractions.synchronize(ka)
         # Device -> host: only the packed per-window scalars, never the planes.
         copyto!(engine.out_host, engine.out_d)
+        uncertainty_u === nothing || copyto!(engine.uqstats_host, engine.uqstats_d)
 
         # Scatter the packed outputs into the vector grids (see the
         # `_ka_analyze!` row layout).
@@ -271,6 +296,12 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
             v[gi, gj] = engine.out_host[2, m]
             peak_ratio[gi, gj] = engine.out_host[3, m]
             correlation_moment[gi, gj] = engine.out_host[4, m]
+            if uncertainty_u !== nothing
+                uncertainty_u[gi, gj] = finalize_uncertainty(T,
+                    view(engine.uqstats_host, 1, :, m))
+                uncertainty_v[gi, gj] = finalize_uncertainty(T,
+                    view(engine.uqstats_host, 2, :, m))
+            end
             if alt_u !== nothing
                 found = Int(engine.out_host[5, m])   # small integer, exact in T
                 for mm in 2:min(found, params.n_peaks)
@@ -278,6 +309,45 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                     alt_v[gi, gj, mm - 1] = engine.out_host[5 + nalt + (mm - 1), m]
                 end
             end
+        end
+    end
+    return nothing
+end
+
+function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
+                            params::PIVParameters, apod, mask,
+                            engine::_AMDGPUCorrelationEngine{T}) where {T}
+    jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
+    isempty(jobvec) && return nothing
+    wr, wc = engine.wsize
+    bs = min(_AMDGPU_BATCH, length(jobvec))
+    _ensure_batch!(engine, bs)
+    A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
+    ka = ROCBackend()
+    for start in 1:bs:length(jobvec)
+        nreal = min(bs, length(jobvec) - start + 1)
+        for m in 1:nreal
+            job = jobvec[start + m - 1]
+            engine.origins_host[m, 1] = job[3]
+            engine.origins_host[m, 2] = job[4]
+        end
+        copyto!(engine.origins_d, engine.origins_host)
+        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, A_d, B_d,
+            engine.origins_d, maskarg, hasmask, wr, wc; ndrange = nreal)
+        _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d, engine.origins_d,
+            engine.apod_d, engine.meanA_d, engine.meanB_d, maskarg, hasmask;
+            ndrange = (wr, wc, nreal))
+        _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
+                          ndrange = (2, nreal))
+        _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d,
+                          engine.CA, engine.CB, wr, wc, nreal, 0, false;
+                          ndrange = (2, UQ_NSTATS, nreal))
+        KernelAbstractions.synchronize(ka)
+        copyto!(engine.uqstats_host, engine.uqstats_d)
+        for m in 1:nreal
+            gi, gj = jobvec[start + m - 1][1:2]
+            uncertainty_u[gi, gj] = finalize_uncertainty(T, view(engine.uqstats_host, 1, :, m))
+            uncertainty_v[gi, gj] = finalize_uncertainty(T, view(engine.uqstats_host, 2, :, m))
         end
     end
     return nothing
@@ -292,7 +362,12 @@ end
 # Device memory holds all `njobs` summed planes: ~njobs*nr*nc*sizeof(T).
 
 import Hammerhead: _KAPlaneAccumulator, _plane_accumulator, accumulate_planes!,
-    ensemble_analyze!, _ka_shiftgain_accum!
+    ensemble_analyze!, _ka_shiftgain_accum!, _KAUQAccumulator,
+    _uncertainty_accumulator, _uncertainty_scratch
+
+_uncertainty_accumulator(::_AMDGPUCorrelationEngine, ::Type, njobs::Int) =
+    _KAUQAccumulator(AMDGPU.zeros(Float64, 2, UQ_NSTATS, njobs))
+_uncertainty_scratch(::_AMDGPUCorrelationEngine, ::Type) = nothing
 
 function _plane_accumulator(engine::_AMDGPUCorrelationEngine{T}, params::PIVParameters,
                             ::Type{T}, njobs::Int) where {T}
@@ -310,9 +385,6 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                             imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
                             params::PIVParameters, mask,
                             uacc = nothing, uscratch = nothing) where {T}
-    uacc === nothing ||
-        throw(ArgumentError("backend :amdgpu does not support uncertainty " *
-                            "quantification yet; use backend = :cpu"))
     njobs = length(jobrange)
     njobs == 0 && return nothing
 
@@ -342,6 +414,13 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
+        if uacc !== nothing
+            _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
+                              ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans_d, engine.CA, engine.CB,
+                              wr, wc, nreal, first(jobrange) + start - 2, true;
+                              ndrange = (2, UQ_NSTATS, nreal))
+        end
         KernelAbstractions.synchronize(ka)
         engine.fwd * engine.CA
         engine.fwd * engine.CB
@@ -365,9 +444,9 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_AMDGPUCorrelationE
                            u, v, peak_ratio, correlation_moment,
                            uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
                            jobs, params::PIVParameters, uacc) where {T}
-    (planes === nothing && uacc === nothing) ||
-        throw(ArgumentError("backend :amdgpu does not support uncertainty or " *
-                            "correlation-plane storage yet; use backend = :cpu"))
+    planes === nothing ||
+        throw(ArgumentError("backend :amdgpu does not support correlation-plane storage yet; " *
+                            "use backend = :cpu"))
     njobs = acc.njobs
     njobs == 0 && return nothing
     nr, nc = engine.fft_size
@@ -377,6 +456,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_AMDGPUCorrelationE
     use_regionalmax = params.peak_finder === :regionalmax
     use_gauss9 = params.subpixel_method === :gauss9
     nalt = engine.kpk - 1
+    uqhost = uacc === nothing ? nothing : Array(uacc.stats)
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
         Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
@@ -400,6 +480,11 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_AMDGPUCorrelationE
             v[gi, gj] += engine.out_host[2, m]
             peak_ratio[gi, gj] = engine.out_host[3, m]
             correlation_moment[gi, gj] = engine.out_host[4, m]
+            if uqhost !== nothing
+                j = start + m - 1
+                uncertainty_u[gi, gj] = finalize_uncertainty(T, view(uqhost, 1, :, j))
+                uncertainty_v[gi, gj] = finalize_uncertainty(T, view(uqhost, 2, :, j))
+            end
         end
     end
     return nothing

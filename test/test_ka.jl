@@ -53,8 +53,20 @@
         PIVParameters(correlation_method = :phase); backend = :ka)
     @test_throws ArgumentError run_piv(imgA, imgB,
         PIVParameters(subpixel_method = :gauss2d); backend = :ka)
-    @test_throws ArgumentError run_piv(imgA, imgB,
-        PIVParameters(uncertainty = true, max_iterations = 2); backend = :ka)
+    @test Hammerhead._supports_fp64(kab)
+    uqparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                             apodization = :gauss, uncertainty = true,
+                             max_iterations = 2)
+    uqA, uqB = imgA[1:96, 1:96], imgB[1:96, 1:96]
+    uq_cpu = run_piv(uqA, uqB, uqparams; threaded = false)
+    uq_ka = run_piv(uqA, uqB, uqparams; backend = :ka, threaded = false)
+    uqvalid = isfinite.(uq_cpu.uncertainty_u) .& isfinite.(uq_ka.uncertainty_u)
+    vqvalid = isfinite.(uq_cpu.uncertainty_v) .& isfinite.(uq_ka.uncertainty_v)
+    @test any(uqvalid) && any(vqvalid)
+    @test maximum(abs.(uq_ka.uncertainty_u[uqvalid] .-
+                       uq_cpu.uncertainty_u[uqvalid])) < 1e-10
+    @test maximum(abs.(uq_ka.uncertainty_v[vqvalid] .-
+                       uq_cpu.uncertainty_v[vqvalid])) < 1e-10
     @test_throws ArgumentError run_piv(imgA, imgB,
         PIVParameters(keep_correlation_planes = true); backend = :ka)
 
@@ -120,9 +132,25 @@
                                   threaded = true)
         @test isequal(e_ka_t.u, e_ka.u) && isequal(e_ka_t.v, e_ka.v)
 
-        # Out-of-scope options are rejected up front.
-        @test_throws ArgumentError run_piv_ensemble(pairs,
-            PIVParameters(uncertainty = true); backend = :ka, progress = false)
+        # Correlation-statistics UQ stays in Float64 on the backend and pools
+        # per-window statistics across pairs before returning final scalars.
+        uqparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                                 apodization = :gauss, uncertainty = true)
+        smallpairs = [(imgA[1:96, 1:96], imgB[1:96, 1:96]),
+                      (imgA2[1:96, 1:96], imgB2[1:96, 1:96])]
+        uq_cpu = run_piv_ensemble(smallpairs, uqparams; progress = false,
+                                  threaded = false)
+        uq_ka = run_piv_ensemble(smallpairs, uqparams; backend = :ka,
+                                 progress = false, threaded = false)
+        uqvalid = isfinite.(uq_cpu.uncertainty_u) .& isfinite.(uq_ka.uncertainty_u)
+        vqvalid = isfinite.(uq_cpu.uncertainty_v) .& isfinite.(uq_ka.uncertainty_v)
+        @test any(uqvalid) && any(vqvalid)
+        @test maximum(abs.(uq_ka.uncertainty_u[uqvalid] .-
+                           uq_cpu.uncertainty_u[uqvalid])) < 1e-10
+        @test maximum(abs.(uq_ka.uncertainty_v[vqvalid] .-
+                           uq_cpu.uncertainty_v[vqvalid])) < 1e-10
+
+        # Remaining out-of-scope option is still rejected up front.
         @test_throws ArgumentError run_piv_ensemble(pairs,
             PIVParameters(keep_correlation_planes = true); backend = :ka,
             progress = false)
@@ -187,9 +215,5 @@
         @test maximum(abs.(s_ka.u[svalid] .- s_cpu.u[svalid])) < 1e-3
         @test maximum(abs.(s_ka.v[svalid] .- s_cpu.v[svalid])) < 1e-3
         @test maximum(abs.(s_ka.w[svalid] .- s_cpu.w[svalid])) < 1e-3
-
-        # The scope guard fires before any dewarping happens.
-        @test_throws ArgumentError run_piv_stereo(A1, B1, A2, B2, dws[1], dws[2],
-            PIVParameters(uncertainty = true); backend = :ka)
     end
 end

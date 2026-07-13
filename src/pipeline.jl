@@ -723,12 +723,14 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         # windows whose correlation produced the returned field.
         if nchunks == 1
             uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
-                               warpA, warpB, params, _correlation_apod(engines[1]), mask)
+                               warpA, warpB, params, _correlation_apod(engines[1]), mask,
+                               engines[1])
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
                                                   warpA, warpB, params,
-                                                  _correlation_apod(engines[ci]), mask)
+                                                  _correlation_apod(engines[ci]), mask,
+                                                  engines[ci])
             end
         end
     end
@@ -800,6 +802,11 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs,
     end
     return nothing
 end
+
+uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
+                   apod, mask, engine) =
+    uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
+                       params, apod, mask)
 
 """
     image_interpolant(img, ::Type{T}) -> extrapolation

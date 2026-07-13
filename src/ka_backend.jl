@@ -10,7 +10,7 @@
 # Shared option-scope guard for the KA-derived backends (:ka, :amdgpu, :cuda).
 # The initial device scope is the plan's Phase 2 slice; the excluded options
 # stay CPU-first (or land in a later phase).
-function _ka_scope_check(passes, name::Symbol)
+function _ka_scope_check(passes, name::Symbol, fp64::Bool = true)
     for p in passes
         p.correlation_method === :cross ||
             throw(ArgumentError("backend :$name supports correlation_method = :cross only " *
@@ -18,14 +18,107 @@ function _ka_scope_check(passes, name::Symbol)
         p.subpixel_method in (:gauss3, :gauss9) ||
             throw(ArgumentError("backend :$name supports subpixel_method :gauss3 or :gauss9 " *
                                 "only (got :$(p.subpixel_method)); use backend = :cpu"))
-        p.uncertainty &&
-            throw(ArgumentError("backend :$name does not support uncertainty quantification " *
-                                "yet; run UQ on backend = :cpu"))
+        p.uncertainty && !fp64 &&
+            throw(ArgumentError("backend :$name cannot preserve Float64 uncertainty " *
+                                "accumulation; use backend = :cpu"))
         p.keep_correlation_planes &&
             throw(ArgumentError("backend :$name does not support keep_correlation_planes yet; " *
                                 "use backend = :cpu"))
     end
     return nothing
+end
+
+# Device UQ (Phase 4b). Each work-item owns one (component, statistic, window)
+# scalar, exposing enough parallelism even on modest vector grids. Recomputing
+# the small smoothed dC stencil avoids window-sized device scratch, while the
+# Float64 statistics remain resident and additive across ensemble pairs.
+@inline function _ka_uq_dc(A, B, r, c, k, transposed)
+    if transposed
+        a0 = real(A[c, r, k]); a1 = real(A[c + 1, r, k])
+        b0 = real(B[c, r, k]); b1 = real(B[c + 1, r, k])
+    else
+        a0 = real(A[r, c, k]); a1 = real(A[r, c + 1, k])
+        b0 = real(B[r, c, k]); b1 = real(B[r, c + 1, k])
+    end
+    return a0 * b1 - a1 * b0
+end
+
+@inline function _ka_uq_dcs(A, B, r, c, k, nr, m, transposed)
+    T = typeof(real(A[1, 1, k]))
+    cl = max(c - 1, 1)
+    cr = min(c + 1, m)
+    return (T(1) / 4) * (_ka_uq_dc(A, B, r, cl, k, transposed) +
+                         2 * _ka_uq_dc(A, B, r, c, k, transposed) +
+                         _ka_uq_dc(A, B, r, cr, k, transposed))
+end
+
+@kernel function _ka_uq_means!(means, @Const(A), @Const(B), wr, wc)
+    comp, k = @index(Global, NTuple)
+    transposed = comp == 2
+    nr = transposed ? wc : wr
+    m = (transposed ? wr : wc) - 1
+    mu = 0.0
+    @inbounds for c in 1:m, r in 1:nr
+        mu += Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed))
+    end
+    @inbounds means[comp, k] = mu / (nr * m)
+end
+
+@kernel function _ka_uq_stats!(stats, @Const(means), @Const(A), @Const(B),
+                               wr, wc, nreal, job0, add)
+    comp, si, k = @index(Global, NTuple)
+    @inbounds begin
+        transposed = comp == 2
+        nr = transposed ? wc : wr
+        nc = transposed ? wr : wc
+        m = nc - 1
+        value = 0.0
+        if si <= 3
+            for c in 1:m, r in 1:nr
+                if transposed
+                    a0 = real(A[c, r, k]); a1 = real(A[c + 1, r, k])
+                    b0 = real(B[c, r, k]); b1 = real(B[c + 1, r, k])
+                else
+                    a0 = real(A[r, c, k]); a1 = real(A[r, c + 1, k])
+                    b0 = real(B[r, c, k]); b1 = real(B[r, c + 1, k])
+                end
+                value += si == 1 ? Float64(a0 * b0) :
+                         (si == 2 ? Float64(a0 * b1) : Float64(a1 * b0))
+            end
+        else
+            mu = means[comp, k]
+            if si == 4
+                for c in 1:m, r in 1:nr
+                    d = Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed)) - mu
+                    value += d * d
+                end
+            else
+                odr = 0
+                odc = 0
+                oi = 4
+                for ring in 1:UQ_MAX_OFFSET, dc in 0:UQ_MAX_OFFSET,
+                    dr in -UQ_MAX_OFFSET:UQ_MAX_OFFSET
+                    (dc == 0 && dr <= 0) && continue
+                    max(abs(dr), abs(dc)) == ring || continue
+                    oi += 1
+                    if oi == si
+                        odr = dr
+                        odc = dc
+                    end
+                end
+                dr, dc = odr, odc
+            for c in max(1, 1 - dc):min(m, m - dc),
+                r in max(1, 1 - dr):min(nr, nr - dr)
+                d1 = Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed)) - mu
+                d2 = Float64(_ka_uq_dcs(A, B, r + dr, c + dc, k, nr, m,
+                                        transposed)) - mu
+                        value += d1 * d2
+                    end
+                end
+            end
+        q = job0 + k
+        stats[comp, si, q] = (add ? stats[comp, si, q] : 0.0) + value
+    end
 end
 
 # Per-window means over the valid pixels — the reduction half of the CPU
@@ -492,6 +585,9 @@ end
 struct _KABackend <: _AbstractHammerheadBackend end
 
 _resolve_backend(::Val{:ka}) = _KABackend()
+_supports_fft(::_KABackend) = true
+_supports_batched_fft(::_KABackend) = true
+_supports_fp64(::_KABackend) = true
 
 # Device engines run the whole window grid as one logical batch (tiled
 # internally into memory-bounded sub-batches) rather than fanning out across
@@ -503,7 +599,8 @@ _engine_nchunks(::_KABackend, ::Int) = 1
 # device memory.
 const _KA_BATCH = 512
 
-_check_backend_params(::_KABackend, passes) = _ka_scope_check(passes, :ka)
+_check_backend_params(b::_KABackend, passes) =
+    _ka_scope_check(passes, :ka, _supports_fp64(b))
 
 # Per-chunk (here: single) correlation engine. Buffers and FFT plans are cached
 # and reused across a pass's deformation sweeps; they are rebuilt only when the
@@ -526,6 +623,8 @@ mutable struct _KACorrelationEngine{T,KB}
     vals::Matrix{T}                 # (kpk, bs) peak-finder scratch
     locs::Array{Int32,3}            # (2, kpk, bs) peak-finder scratch
     out::Matrix{T}                  # (5 + 2*(kpk-1), bs) packed analysis output
+    uqstats::Array{Float64,3}       # (2, UQ_NSTATS, bs), device-UQ scalars
+    uqmeans::Matrix{Float64}        # (2, bs), smoothed dC means
     fwd::Any
     bwd::Any
 end
@@ -547,7 +646,8 @@ function _make_ka_engine(params::PIVParameters, ::Type{T}) where {T}
         Array{T,3}(undef, 0, 0, 0), Vector{T}(undef, 0), Vector{T}(undef, 0),
         Matrix{Int}(undef, 0, 2),
         Matrix{T}(undef, 0, 0), Array{Int32,3}(undef, 2, 0, 0),
-        Matrix{T}(undef, 0, 0), nothing, nothing)
+        Matrix{T}(undef, 0, 0), Array{Float64,3}(undef, 0, 0, 0),
+        Matrix{Float64}(undef, 0, 0), nothing, nothing)
 end
 
 # Engines are pooled per window configuration (everything baked in at
@@ -572,6 +672,8 @@ function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
         engine.vals = Matrix{T}(undef, engine.kpk, bs)
         engine.locs = Array{Int32,3}(undef, 2, engine.kpk, bs)
         engine.out = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
+        engine.uqstats = zeros(Float64, 2, UQ_NSTATS, bs)
+        engine.uqmeans = zeros(Float64, 2, bs)
         engine.fwd = plan_fft!(engine.CA, (1, 2))
         engine.bwd = inv(engine.fwd)
         engine.bs = bs
@@ -585,9 +687,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           engine::_KACorrelationEngine{T},
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing) where {T}
-    (uncertainty_u === nothing && planes === nothing) ||
-        throw(ArgumentError("backend :ka does not support uncertainty or correlation-plane " *
-                            "storage yet; use backend = :cpu"))
+    planes === nothing ||
+        throw(ArgumentError("backend :ka does not support correlation-plane storage yet; " *
+                            "use backend = :cpu"))
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     njobs = length(jobvec)
     njobs == 0 && return nothing
@@ -620,6 +722,13 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         _ka_gather!(ka)(engine.CA, engine.CB, imgA, imgB, engine.origins, engine.apod,
                         engine.meanA, engine.meanB, themask, hasmask;
                         ndrange = (wr, wc, nreal))
+        if uncertainty_u !== nothing
+            _ka_uq_means!(ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
+                              ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(engine.uqstats, engine.uqmeans, engine.CA, engine.CB,
+                              wr, wc, nreal, 0, false;
+                              ndrange = (2, UQ_NSTATS, nreal))
+        end
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.fwd, engine.CA)
         mul!(engine.CB, engine.fwd, engine.CB)
@@ -642,6 +751,10 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
             v[gi, gj] = engine.out[2, m]
             peak_ratio[gi, gj] = engine.out[3, m]
             correlation_moment[gi, gj] = engine.out[4, m]
+            if uncertainty_u !== nothing
+                uncertainty_u[gi, gj] = finalize_uncertainty(T, view(engine.uqstats, 1, :, m))
+                uncertainty_v[gi, gj] = finalize_uncertainty(T, view(engine.uqstats, 2, :, m))
+            end
             if alt_u !== nothing
                 found = Int(engine.out[5, m])   # small integer, exact in T
                 for mm in 2:min(found, params.n_peaks)
@@ -649,6 +762,44 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                     alt_v[gi, gj, mm - 1] = engine.out[5 + nalt + (mm - 1), m]
                 end
             end
+        end
+    end
+    return nothing
+end
+
+function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
+                            params::PIVParameters, apod, mask,
+                            engine::_KACorrelationEngine{T}) where {T}
+    jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
+    njobs = length(jobvec)
+    njobs == 0 && return nothing
+    wr, wc = engine.wsize
+    bs = min(_KA_BATCH, njobs)
+    _ensure_buffers!(engine, bs)
+    hasmask = mask !== nothing
+    themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
+    for start in 1:bs:njobs
+        nreal = min(bs, njobs - start + 1)
+        for m in 1:nreal
+            job = jobvec[start + m - 1]
+            engine.origins[m, 1] = job[3]
+            engine.origins[m, 2] = job[4]
+        end
+        _ka_window_means!(engine.ka)(engine.meanA, engine.meanB, imgA, imgB,
+            engine.origins, themask, hasmask, wr, wc; ndrange = nreal)
+        _ka_gather!(engine.ka)(engine.CA, engine.CB, imgA, imgB, engine.origins,
+            engine.apod, engine.meanA, engine.meanB, themask, hasmask;
+            ndrange = (wr, wc, nreal))
+        _ka_uq_means!(engine.ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
+                                 ndrange = (2, nreal))
+        _ka_uq_stats!(engine.ka)(engine.uqstats, engine.uqmeans,
+                                 engine.CA, engine.CB, wr, wc, nreal, 0, false;
+                                 ndrange = (2, UQ_NSTATS, nreal))
+        KernelAbstractions.synchronize(engine.ka)
+        for m in 1:nreal
+            gi, gj = jobvec[start + m - 1][1:2]
+            uncertainty_u[gi, gj] = finalize_uncertainty(T, view(engine.uqstats, 1, :, m))
+            uncertainty_v[gi, gj] = finalize_uncertainty(T, view(engine.uqstats, 2, :, m))
         end
     end
     return nothing
@@ -713,6 +864,14 @@ struct _KAPlaneAccumulator{A<:AbstractArray}
     njobs::Int
 end
 
+struct _KAUQAccumulator{A<:AbstractArray}
+    stats::A
+end
+
+_uncertainty_accumulator(engine::_KACorrelationEngine, ::Type, njobs::Int) =
+    _KAUQAccumulator(zeros(Float64, 2, UQ_NSTATS, njobs))
+_uncertainty_scratch(::_KACorrelationEngine, ::Type) = nothing
+
 function _plane_accumulator(engine::_KACorrelationEngine{T}, params::PIVParameters,
                             ::Type{T}, njobs::Int) where {T}
     nr, nc = engine.fft_size
@@ -731,9 +890,6 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                             imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
                             params::PIVParameters, mask,
                             uacc = nothing, uscratch = nothing) where {T}
-    uacc === nothing ||
-        throw(ArgumentError("KA-family backends do not support uncertainty " *
-                            "quantification yet; use backend = :cpu"))
     njobs = length(jobrange)
     njobs == 0 && return nothing
 
@@ -762,6 +918,13 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         _ka_gather!(ka)(engine.CA, engine.CB, imgA, imgB, engine.origins, engine.apod,
                         engine.meanA, engine.meanB, themask, hasmask;
                         ndrange = (wr, wc, nreal))
+        if uacc !== nothing
+            _ka_uq_means!(ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
+                              ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans, engine.CA, engine.CB,
+                              wr, wc, nreal, first(jobrange) + start - 2, true;
+                              ndrange = (2, UQ_NSTATS, nreal))
+        end
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.fwd, engine.CA)
         mul!(engine.CB, engine.fwd, engine.CB)
@@ -787,9 +950,9 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngin
                            u, v, peak_ratio, correlation_moment,
                            uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
                            jobs, params::PIVParameters, uacc) where {T}
-    (planes === nothing && uacc === nothing) ||
-        throw(ArgumentError("KA-family backends do not support uncertainty or " *
-                            "correlation-plane storage yet; use backend = :cpu"))
+    planes === nothing ||
+        throw(ArgumentError("KA-family backends do not support correlation-plane " *
+                            "storage yet; use backend = :cpu"))
     njobs = acc.njobs
     njobs == 0 && return nothing
     nr, nc = engine.fft_size
@@ -820,6 +983,11 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngin
             v[gi, gj] += engine.out[2, m]
             peak_ratio[gi, gj] = engine.out[3, m]
             correlation_moment[gi, gj] = engine.out[4, m]
+            if uacc !== nothing
+                j = start + m - 1
+                uncertainty_u[gi, gj] = finalize_uncertainty(T, view(uacc.stats, 1, :, j))
+                uncertainty_v[gi, gj] = finalize_uncertainty(T, view(uacc.stats, 2, :, j))
+            end
         end
     end
     return nothing

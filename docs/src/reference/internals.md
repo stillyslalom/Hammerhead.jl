@@ -21,8 +21,12 @@ selectors report which package to load rather than silently failing. Device back
 cover cross-correlation with `:gauss3`/`:gauss9` subpixel refinement, for
 both [`run_piv`](@ref) and [`run_piv_ensemble`](@ref) (ensemble planes
 accumulate on the device; only the final vector grid returns to the host);
-phase correlation, `:gauss2d`, uncertainty quantification, and
-correlation-plane storage stay on `:cpu` and error with a clear message.
+phase correlation, `:gauss2d`, and correlation-plane storage stay on `:cpu`
+and error with a clear message. Correlation-statistics uncertainty runs on
+all KA-family backends with Float64 device accumulation; single-pair runs
+return only the per-window statistics needed for finalization, while ensemble
+runs keep those additive statistics resident until the final vector grid is
+constructed.
 [`run_piv_stereo`](@ref) forwards the backend to its per-camera analyses
 (dewarping itself stays on the CPU).
 

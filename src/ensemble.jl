@@ -171,9 +171,8 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             # accumulators; each is written by exactly one task per pair).
             # As in the single-pair path, only the final pass estimates them.
             unc = params.uncertainty && !force_replace
-            uacc = unc ? new_uncertainty_stats(length(grid.jobs)) : nothing
-            uscratch = unc ? [uncertainty_scratch(T, params.window_size) for _ in chunks] :
-                       nothing
+            uacc = unc ? _uncertainty_accumulator(engines[1], T, length(grid.jobs)) : nothing
+            uscratch = unc ? [_uncertainty_scratch(e, T) for e in engines] : nothing
             workspace === nothing || ws_prepare!(workspace, imgsize, T)
             first_pair = false
         else
@@ -255,6 +254,11 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
+
+_uncertainty_accumulator(::_CPUCorrelationEngine, ::Type, njobs::Int) =
+    new_uncertainty_stats(njobs)
+_uncertainty_scratch(engine::_CPUCorrelationEngine, ::Type{T}) where {T} =
+    uncertainty_scratch(T, size(engine.correlator.apod))
 
 # Per-window ensemble plane accumulators for the CPU engine: plain host
 # matrices, one per window. KA-family engines supply their own batch-major

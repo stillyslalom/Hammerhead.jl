@@ -263,6 +263,16 @@ UQ should be capability gated:
 - on weak-Float64 backends, especially many Apple/consumer GPUs, keep UQ on CPU
   unless an explicit approximate mode is introduced later.
 
+### Phase 4b: Device UQ
+
+Implemented for the KernelAbstractions CPU proving backend, CUDA, and AMDGPU.
+The portable kernel computes the Wieneke (2015) per-window statistics in
+Float64 from the already gathered, mean-subtracted, apodized windows. Fused
+single-sweep UQ returns only these packed scalars; iterative passes perform one
+device sweep over the final warped images. Ensemble statistics remain on the
+device and add across pairs before a single final transfer. The existing CPU
+finalizer remains the correctness reference and preserves result semantics.
+
 Acceptance:
 
 - ensemble GPU path reduces time for large pair counts;
