@@ -216,8 +216,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   memory channel; GPU FFT in-place plans apply via `p * x` (neither rocFFT nor
   cuFFT implements FFTW's 3-arg `mul!`). `:amdgpu` is hardware-validated +
   benched (`bench/gpu_validate.jl` / `bench/gpu_benchmarks.jl`; ROCm 6.4
-  required for RDNA2 on Windows — 7.1 dropped it); `:cuda` mirrors it but is
-  not yet hardware-validated
+  required for RDNA2 on Windows — 7.1 dropped it); `:cuda` is also
+  hardware-validated (RTX 2000 Ada, CUDA.jl 6.2, driver CUDA 12.8: all paths
+  match `:cpu` to ~1e-15 (Float64), 1.7–2.8× threaded-CPU speed)
 
 ## HammerheadGUI (HammerheadGUI/)
 

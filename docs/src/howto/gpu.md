@@ -49,8 +49,8 @@ runtime compatibility is controlled by the device package. Follow the
 [AMDGPU.jl setup guide](https://amdgpu.juliagpu.org/stable/) or
 [CUDA.jl installation guide](https://cuda.juliagpu.org/stable/installation/overview/)
 when `functional()` is false. The AMD path is hardware-validated
-on an RX 6800 XT with ROCm 6.4; the CUDA path mirrors the same kernels but has
-not yet been validated on NVIDIA hardware.
+on an RX 6800 XT with ROCm 6.4; the CUDA path is hardware-validated on an
+RTX 2000 Ada with CUDA.jl 6.2.
 
 ## Use the backend across drivers
 

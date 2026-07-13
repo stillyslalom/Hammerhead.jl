@@ -20,6 +20,12 @@ module HammerheadAMDGPUExt
 # HIP_PATH/ROCM_PATH/PATH at the 6.4 install. rocFFT in-place plans apply via
 # `p * x` (they lack FFTW's 3-arg `mul!`), and masks must be materialized as
 # dense `Array{Bool}` before `copyto!` to the device.
+#
+# The explicit workgroup sizes and the 8192 sub-batch (below) were tuned on
+# NVIDIA (RTX 2000 Ada) after the RX 6800 XT validation above; they change no
+# results (pure launch tuning) but the perf figures in this STATUS predate them
+# — re-run bench/gpu_benchmarks.jl on the RX 6800 XT to refresh the numbers and
+# confirm the sizes are still optimal on RDNA2.
 
 using Hammerhead
 using AMDGPU
@@ -57,10 +63,25 @@ _supports_fp64(::_AMDGPUBackend) = true
 _check_backend_params(b::_AMDGPUBackend, passes) =
     _ka_scope_check(passes, :amdgpu, _supports_fp64(b))
 
-# Windows per device sub-batch (bounds device-memory footprint; at 2048 the
-# Float64 complex buffers total ~340 MB, and the analysis kernel — one
-# work-item per window — gets enough parallelism to hide memory latency).
-const _AMDGPU_BATCH = 2048
+# Windows per device sub-batch (bounds device-memory footprint). The analysis
+# kernel launches one work-item per window, so the sub-batch size *is* that
+# kernel's launch parallelism: too small a tile starves the device with many
+# short sequential launches instead of one well-occupied launch. 8192 gives
+# near-peak occupancy while keeping the Float64 complex buffers bounded
+# (~1.3 GB). NOTE: 8192 and the workgroup sizes below were tuned on an NVIDIA
+# RTX 2000 Ada (see the CUDA extension); the direction is portable and the
+# per-window analysis kernel was already known to be occupancy-sensitive here,
+# but re-confirm these values on the RX 6800 XT with bench/gpu_benchmarks.jl.
+const _AMDGPU_BATCH = 8192
+
+# KernelAbstractions' occupancy-based default workgroup size underperforms on
+# these kernels (a large block spills registers in the per-window analysis
+# kernel and leaves the elementwise cross-power off peak bandwidth). Explicit
+# wavefront-multiple blocks recover large factors on NVIDIA; workgroup size
+# never affects results — every work-item is independent — so this is pure
+# tuning. Re-tune on AMD hardware if a sweep shows a better size.
+const _WG_ANALYZE = 64        # register-heavy, one work-item per window
+const _WG_ELEMENTWISE = 256   # cross-power over the whole complex batch
 
 mutable struct _AMDGPUCorrelationEngine{T}
     wsize::NTuple{2,Int}
@@ -273,13 +294,13 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         # implement the 3-arg `mul!(x, p, x)` that FFTW does).
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
         # Same queue as the shift/gain kernel, so no synchronize between them.
-        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
+        _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
                          use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
                          ndrange = nreal)
         KernelAbstractions.synchronize(ka)
@@ -424,7 +445,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         KernelAbstractions.synchronize(ka)
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         # Only the nreal live slices accumulate — the last tile's tail holds
@@ -460,7 +481,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_AMDGPUCorrelationE
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
         Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
-        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
+        _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
                          use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
                          ndrange = nreal)
         KernelAbstractions.synchronize(ka)

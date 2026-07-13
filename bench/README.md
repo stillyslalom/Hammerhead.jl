@@ -35,8 +35,10 @@ the headers for the required environment; both take the backend selector as
 ARGS[1]). On the dev box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the
 `:amdgpu` backend matches `:cpu` to ~7e-15 (Float64) and runs a
 padded+apodized 32/16 single pass at 1.3–2.4× the threaded CPU speed
-(1024²–2048², Float64/Float32). The `:cuda` backend shares the same kernels
-but has not yet been validated on hardware.
+(1024²–2048², Float64/Float32). The `:cuda` backend is likewise validated on
+an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): every path matches `:cpu` to
+~1e-15 (Float64) and runs 1.7–2.8× the threaded CPU speed (1024²–2048²,
+Float64/Float32; multipass-deformation included).
 
 The user-facing setup, support matrix, memory sizing, and troubleshooting
 guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).

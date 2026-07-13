@@ -14,10 +14,10 @@ module HammerheadCUDAExt
 #
 # STATUS: a line-for-line mirror of the hardware-validated AMDGPU extension,
 # written against the CUDA.jl API (v5/v6 — the 6.0 subpackage split keeps the
-# `using CUDA` surface, incl. the exported KernelAbstractions `CUDABackend`)
-# but NOT yet validated on an NVIDIA device. Expected to match `backend = :cpu`
-# within FFT round-off like the other device backends; confirm with
-# `bench/gpu_validate.jl`/`bench/gpu_benchmarks.jl` on hardware first.
+# `using CUDA` surface, incl. the exported KernelAbstractions `CUDABackend`).
+# Hardware-validated on an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): all
+# paths match `backend = :cpu` to ~1e-15 (Float64) via `bench/gpu_validate.jl`,
+# 1.7–2.8× threaded-CPU speed via `bench/gpu_benchmarks.jl`.
 #
 # CUDA-specific notes mirrored from the AMDGPU bring-up:
 # - in-place plans apply via `p * x`: like rocFFT, cuFFT does not implement
@@ -64,10 +64,25 @@ _supports_fp64(::_CUDABackend) = true
 _check_backend_params(b::_CUDABackend, passes) =
     _ka_scope_check(passes, :cuda, _supports_fp64(b))
 
-# Windows per device sub-batch (bounds device-memory footprint; at 2048 the
-# Float64 complex buffers total ~340 MB, and the analysis kernel — one
-# work-item per window — gets enough parallelism to hide memory latency).
-const _CUDA_BATCH = 2048
+# Windows per device sub-batch (bounds device-memory footprint). The analysis
+# kernel launches one work-item per window, so the sub-batch size *is* that
+# kernel's launch parallelism: at 2048 windows an 8-tile 2048² grid starves the
+# device (8 sequential launches, ~4.7 ms each), while a single well-occupied
+# launch of the whole grid runs the same work in ~6 ms. 8192 gives near-peak
+# occupancy on this class of GPU while keeping the Float64 complex buffers
+# bounded (~1.3 GB at 8192; the RTX 2000 Ada has 16 GB). Measured: 2048²
+# Float32 single-pass 104 ms → 76 ms versus a 2048 sub-batch.
+const _CUDA_BATCH = 8192
+
+# KernelAbstractions' occupancy-based default workgroup size is pathological for
+# these kernels on NVIDIA: it picks a large block that spills registers in the
+# per-window analysis kernel (one work-item scans a whole plane) and leaves the
+# elementwise cross-power far off peak bandwidth. Explicit warp-multiple blocks
+# recover ~3x on `_ka_analyze!` and ~8x on `_ka_crosspower!` (RTX 2000 Ada,
+# 2048² windows). Workgroup size never affects results — every work-item is
+# independent — so this is pure tuning.
+const _WG_ANALYZE = 64        # register-heavy, one work-item per window
+const _WG_ELEMENTWISE = 256   # cross-power over the whole complex batch
 
 mutable struct _CUDACorrelationEngine{T}
     wsize::NTuple{2,Int}
@@ -281,13 +296,13 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         # does (JuliaGPU/CUDA.jl#1311).
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
         # Same stream as the shift/gain kernel, so no synchronize between them.
-        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
+        _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
                          use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
                          ndrange = nreal)
         KernelAbstractions.synchronize(ka)
@@ -432,7 +447,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         KernelAbstractions.synchronize(ka)
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         # Only the nreal live slices accumulate — the last tile's tail holds
@@ -468,7 +483,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_CUDACorrelationEng
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
         Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
-        _ka_analyze!(ka)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
+        _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
                          use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
                          ndrange = nreal)
         KernelAbstractions.synchronize(ka)
