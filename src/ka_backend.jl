@@ -193,11 +193,11 @@ end
 end
 
 # fftshift + magnitude (+ overlap gain when padded) into the real plane batch.
-# The output is *batch-major* (`Rt[k, ip, jp]`): the analysis kernel below runs
-# one work-item per window, so putting the window index first makes its plane
-# scans coalesce across the wavefront (for a fixed (i, j) the wave reads
-# consecutive addresses). Writing the permuted layout here costs nothing extra
-# — one side of the shift is strided either way.
+# The output is *plane-major* (`Rt[ip, jp, k]`): the cooperative analysis kernel
+# below runs one workgroup per window with its threads striding across that
+# window's plane, so keeping a plane's pixels contiguous (window index last)
+# makes those strided reads coalesce across the wavefront. Writing the permuted
+# layout here costs nothing extra — one side of the shift is strided either way.
 @kernel function _ka_shiftgain!(Rt, @Const(CA), @Const(gain), padded, sr, sc, nr, nc)
     i, j, k = @index(Global, NTuple)
     @inbounds begin
@@ -205,14 +205,14 @@ end
         jp = mod1(j + sc, nc)
         val = abs(CA[i, j, k])
         padded && (val *= gain[ip, jp])
-        Rt[k, ip, jp] = val
+        Rt[ip, jp, k] = val
     end
 end
 
 # Ensemble variant of `_ka_shiftgain!`: add this pair's planes into the
-# batch-major cross-pair accumulator at row offset `k0` instead of overwriting
-# a scratch batch. Each work-item owns one (window, pixel) address, so the
-# unsynchronized `+=` is race-free.
+# plane-major cross-pair accumulator at window offset `k0` instead of
+# overwriting a scratch batch. Each work-item owns one (window, pixel) address,
+# so the unsynchronized `+=` is race-free.
 @kernel function _ka_shiftgain_accum!(Racc, @Const(CA), @Const(gain), padded, sr, sc,
                                       nr, nc, k0)
     i, j, k = @index(Global, NTuple)
@@ -221,7 +221,7 @@ end
         jp = mod1(j + sc, nc)
         val = abs(CA[i, j, k])
         padded && (val *= gain[ip, jp])
-        Racc[k0 + k, ip, jp] += val
+        Racc[ip, jp, k0 + k] += val
     end
 end
 
@@ -367,58 +367,26 @@ end
 # correlation moment, and alternative-peak refinement — the batched analogue
 # of `analyze_plane!`. These are line-for-line ports of the CPU routines in
 # `correlators.jl`/`quality.jl` (same scan order, same T/Float64 arithmetic),
-# operating on window `k` of the batch-major plane batch `Rt[k, i, j]`, so
+# operating on window `k` of the plane-major plane batch `Rt[i, j, k]`, so
 # on-device analysis matches the host within `log`-intrinsic round-off
 # (identical on the KA-CPU backend). Keeping analysis on the device means only
 # a handful of scalars per window cross back to the host, not whole planes.
-
-# `find_peaks_exclusion!` port. The exclusion radius is fixed at 2, the
-# `find_peaks!` default `analyze_plane!` relies on.
-@inline function _pk_find_exclusion!(vals, locs, Rt, k, K, nr, nc)
-    T = eltype(Rt)
-    found = 0
-    @inbounds for _ in 1:K
-        best = T(-Inf)
-        bi = 0
-        bj = 0
-        for j in 1:nc, i in 1:nr
-            excluded = false
-            for p in 1:found
-                if abs(i - locs[1, p, k]) <= 2 && abs(j - locs[2, p, k]) <= 2
-                    excluded = true
-                    break
-                end
-            end
-            excluded && continue
-            if Rt[k, i, j] > best
-                best = Rt[k, i, j]
-                bi = i
-                bj = j
-            end
-        end
-        bi == 0 && break                  # everything excluded (degenerate plane)
-        found > 0 && best <= 0 && break   # secondary peaks must be positive
-        found += 1
-        vals[found, k] = best
-        # `% Int32` wraps instead of convert-checking: plane indices always
-        # fit, and the checked conversion's throw path would force a GPU
-        # malloc hostcall that serializes the whole kernel.
-        locs[1, found, k] = bi % Int32
-        locs[2, found, k] = bj % Int32
-    end
-    return found
-end
+#
+# `_ka_analyze!` (below) is *cooperative*: one workgroup per window, TPW threads
+# splitting the plane scan. The subpixel/ratio/moment/alt-peak helpers here run
+# only on thread 1 after the peaks are located, so they stay serial per-window
+# ports; the parallel work is the exclusion peak search, inlined in the kernel.
 
 # `is_local_maximum` port (strict/non-strict split by the *plane's*
 # column-major order, `r + (c - 1) * nr`, independent of the batch layout).
 @inline function _pk_localmax(Rt, k, r, c, nr, nc)
     @inbounds begin
-        I0 = Rt[k, r, c]
+        I0 = Rt[r, c, k]
         isnan(I0) && return false
         lin0 = r + (c - 1) * nr
         for jj in max(1, c - 1):min(nc, c + 1), ii in max(1, r - 1):min(nr, r + 1)
             (ii == r && jj == c) && continue
-            In = Rt[k, ii, jj]
+            In = Rt[ii, jj, k]
             if ii + (jj - 1) * nr < lin0
                 In > I0 && return false
             else
@@ -429,12 +397,12 @@ end
     return true
 end
 
-# `find_peaks_regionalmax!` port.
+# `find_peaks_regionalmax!` port. Serial per-window (runs on thread 1).
 @inline function _pk_find_regionalmax!(vals, locs, Rt, k, K, nr, nc)
     nfound = 0
     @inbounds for j in 1:nc, i in 1:nr
         _pk_localmax(Rt, k, i, j, nr, nc) || continue
-        val = Rt[k, i, j]
+        val = Rt[i, j, k]
         (nfound < K || val > vals[nfound, k]) || continue
 
         pos = nfound
@@ -467,16 +435,16 @@ end
     di = zero(T)
     dj = zero(T)
     @inbounds begin
-        I0 = Rt[k, i, j]
+        I0 = Rt[i, j, k]
         if 1 < i < nr
-            Im, Ip = Rt[k, i - 1, j], Rt[k, i + 1, j]
+            Im, Ip = Rt[i - 1, j, k], Rt[i + 1, j, k]
             if Im > 0 && I0 > 0 && Ip > 0
                 denom = log(Im) - 2log(I0) + log(Ip)
                 di = denom != 0 ? (log(Im) - log(Ip)) / (2denom) : zero(T)
             end
         end
         if 1 < j < nc
-            Im, Ip = Rt[k, i, j - 1], Rt[k, i, j + 1]
+            Im, Ip = Rt[i, j - 1, k], Rt[i, j + 1, k]
             if Im > 0 && I0 > 0 && Ip > 0
                 denom = log(Im) - 2log(I0) + log(Ip)
                 dj = denom != 0 ? (log(Im) - log(Ip)) / (2denom) : zero(T)
@@ -493,7 +461,7 @@ end
     sL = zero(T); sxL = zero(T); syL = zero(T)
     sxxL = zero(T); syyL = zero(T); sxyL = zero(T)
     @inbounds for dj in -1:1, di in -1:1
-        val = Rt[k, pr + di, pc + dj]
+        val = Rt[pr + di, pc + dj, k]
         val > 0 || return _pk_gauss3(Rt, k, pr, pc, nr, nc)
         L = log(val)
         sL += L
@@ -534,7 +502,7 @@ end
     sum_dx2 = 0.0
     sum_dy2 = 0.0
     @inbounds for c in clo:chi, r in rlo:rhi
-        w = max(Float64(Rt[k, r, c]), 0.0)
+        w = max(Float64(Rt[r, c, k]), 0.0)
         sumC += w
         sum_dx2 += (c - pc)^2 * w
         sum_dy2 += (r - pr)^2 * w
@@ -543,22 +511,114 @@ end
     return T(sqrt((sum_dx2 + sum_dy2) / sumC))
 end
 
-# Analyze every plane of the batch, one work-item per window. Results are
-# packed per window into `out` (a `(5 + 2*(K-1), batch)` matrix, K =
-# max(n_peaks, 2)) so one small copy returns everything to the host:
+# Analyze every plane of the batch, one *workgroup* per window with `TPW`
+# cooperating threads. Results are packed per window into `out` (a
+# `(5 + 2*(K-1), batch)` matrix, K = max(n_peaks, 2)) so one small copy returns
+# everything to the host:
 #   row 1..4  du, dv, peak ratio, correlation moment
 #   row 5     number of peaks found (integral, stored in T)
 #   rows 6..5+(K-1)      alt-peak du for peaks 2..K (gauss3-refined)
 #   rows 6+(K-1)..5+2(K-1) alt-peak dv for peaks 2..K
-# `vals` (K, batch) and `locs` (2, K, batch) are per-window device scratch.
+# `vals` (K, batch) and `locs` (2, K, batch) are per-window device scratch,
+# indexed by the group's window `k`, so only thread 1 writes each slice.
+#
+# The default exclusion peak search is the cost — K sequential full-plane
+# argmax scans (11% of a UQ-multipass run's device time; higher without UQ).
+# It is parallelized here: each thread strided-scans a share of the plane and
+# writes its (best value, column-major order) partial to `@localmem`; ONE
+# `@synchronize`; thread 1 reduces the TPW partials, applies the CPU exclusion/
+# positivity break, and records the peak into the shared `vals`/`locs` slice so
+# the next peak's scan can exclude it. This single-barrier structure is the only
+# cooperative shape the KA CPU backend runs (ordinary locals do not survive a
+# barrier — see bench/analyze_ka_coop.jl), so `:ka` still proves the exact code
+# path the device backends execute. Tie-break `>` OR (`==` AND smaller order)
+# reproduces the CPU scan's first-wins. Subpixel/ratio/moment/alt-peaks then run
+# serially on thread 1 (they already read only a 3×3 via the cached peak
+# location — no rescan to parallelize). The non-default `:regionalmax` finder
+# stays serial on thread 1; `use_regionalmax` is a uniform kernel argument, so
+# every thread of every group takes the same branch and executes the same
+# barrier count.
 @kernel function _ka_analyze!(out, vals, locs, @Const(Rt), use_regionalmax,
-                              use_gauss9, npeaks, nr, nc)
-    k = @index(Global)
-    T = eltype(Rt)
-    K = size(vals, 1)
-    @inbounds begin
-        found = use_regionalmax ? _pk_find_regionalmax!(vals, locs, Rt, k, K, nr, nc) :
-                                  _pk_find_exclusion!(vals, locs, Rt, k, K, nr, nc)
+                              use_gauss9, npeaks, nr, nc, ::Val{TPW}) where {TPW}
+    @uniform T = eltype(Rt)
+    @uniform K = size(vals, 1)
+    @uniform P = nr * nc
+    tid = @index(Local, Linear)
+    k = @index(Group, Linear)
+    sval = @localmem T (TPW,)
+    sord = @localmem Int (TPW,)
+    nf = @localmem Int (1,)
+    if use_regionalmax
+        @inbounds if tid == 1
+            nfound = _pk_find_regionalmax!(vals, locs, Rt, k, K, nr, nc)
+            nf[1] = nfound
+        end
+    else
+        @inbounds if tid == 1
+            nf[1] = 0
+        end
+        @synchronize
+        # One peak per outer iteration; the exclusion set is the peaks recorded
+        # so far in `locs[:, 1:nf, k]` (visible to all threads after the barrier).
+        for _ in 1:K
+            @inbounds begin
+                best = T(-Inf)
+                bord = 0
+                fsf = nf[1]
+                p = tid
+                while p <= P
+                    i = (p - 1) % nr + 1
+                    j = (p - 1) ÷ nr + 1
+                    ex = false
+                    for q in 1:fsf
+                        if abs(i - locs[1, q, k]) <= 2 && abs(j - locs[2, q, k]) <= 2
+                            ex = true
+                            break
+                        end
+                    end
+                    if !ex
+                        v = Rt[i, j, k]
+                        if v > best || (v == best && p < bord)
+                            best = v
+                            bord = p          # column-major order == linear index p
+                        end
+                    end
+                    p += TPW
+                end
+                sval[tid] = best
+                sord[tid] = bord
+            end
+            @synchronize
+            @inbounds if tid == 1
+                bv = sval[1]
+                bo = sord[1]
+                for t in 2:TPW
+                    if sval[t] > bv || (sval[t] == bv && sord[t] < bo)
+                        bv = sval[t]
+                        bo = sord[t]
+                    end
+                end
+                fsf = nf[1]
+                # CPU breaks: `bi == 0` (everything excluded) or a secondary
+                # peak that is non-positive. Leaving `nf` unchanged and letting
+                # the remaining iterations no-op reproduces the early break.
+                if bo != 0 && !(fsf > 0 && bv <= 0)
+                    ii = (bo - 1) % nr + 1
+                    jj = (bo - 1) ÷ nr + 1
+                    vals[fsf + 1, k] = bv
+                    # `% Int32` wraps instead of convert-checking: plane indices
+                    # always fit, and the checked conversion's throw path would
+                    # force a GPU malloc hostcall that serializes the kernel.
+                    locs[1, fsf + 1, k] = ii % Int32
+                    locs[2, fsf + 1, k] = jj % Int32
+                    nf[1] = fsf + 1
+                end
+            end
+            @synchronize
+        end
+    end
+    @inbounds if tid == 1
+        found = nf[1]
         out[5, k] = T(found)
         if found == 0
             # Degenerate all-NaN plane; the CPU path reads uninitialized
@@ -616,6 +676,11 @@ _engine_nchunks(::_KABackend, ::Int) = 1
 # device memory.
 const _KA_BATCH = 512
 
+# Threads per window for the cooperative `_ka_analyze!` (one workgroup per
+# window). 128 was the fastest across all sizes on hardware (bench/analyze_ka_coop.jl);
+# it also sets the launch groupsize, which must equal the kernel's `Val{TPW}`.
+const _KA_TPW = 128
+
 _check_backend_params(b::_KABackend, passes) =
     _ka_scope_check(passes, :ka, _supports_fp64(b))
 
@@ -633,7 +698,7 @@ mutable struct _KACorrelationEngine{T,KB}
     bs::Int
     CA::Array{Complex{T},3}
     CB::Array{Complex{T},3}
-    Rt::Array{T,3}                  # (bs+1, nr, nc) batch-major plane batch
+    Rt::Array{T,3}                  # (nr, nc, bs+1) plane-major plane batch
     meanA::Vector{T}                # per-window means (device reduction)
     meanB::Vector{T}
     origins::Matrix{Int}
@@ -684,7 +749,7 @@ function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
         nr, nc = engine.fft_size
         engine.CA = zeros(Complex{T}, nr, nc, bs)
         engine.CB = zeros(Complex{T}, nr, nc, bs)
-        engine.Rt = zeros(T, bs + 1, nr, nc)   # +1: GPU channel-conflict pad, see AMDGPU ext
+        engine.Rt = zeros(T, nr, nc, bs + 1)   # trailing +1: GPU channel-conflict pad, see AMDGPU ext
         engine.meanA = Vector{T}(undef, bs)
         engine.meanB = Vector{T}(undef, bs)
         engine.origins = Matrix{Int}(undef, bs, 2)
@@ -758,9 +823,10 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         mul!(engine.CA, engine.bwd, engine.CA)
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
-        _ka_analyze!(ka)(engine.out, engine.vals, engine.locs, engine.Rt,
-                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
-                         ndrange = nreal)
+        # Cooperative analysis: one workgroup (of _KA_TPW threads) per window.
+        _ka_analyze!(ka, _KA_TPW)(engine.out, engine.vals, engine.locs, engine.Rt,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc, Val(_KA_TPW);
+                         ndrange = _KA_TPW * nreal)
         KernelAbstractions.synchronize(ka)
 
         # Scatter the packed per-window outputs into the vector grids (see the
@@ -876,10 +942,10 @@ _deform_context(::_KABackend, workspace, itpA, itpB,
 # planes never return to the host, matching the plan's ensemble dataflow
 # (image pair in, device-side accumulate, final vector grid out).
 
-# Batch-major cross-pair plane accumulator, `Racc[j, i, j']` = window j's
-# summed plane. Rows beyond `njobs` are stride padding (the leading dimension
-# avoids a power-of-two byte stride, which funnels a GPU wave's writes into a
-# single memory channel — see the `Rt` pad in `_ensure_buffers!`).
+# Plane-major cross-pair plane accumulator, `Racc[i, j, k]` = window k's summed
+# plane. Slices beyond `njobs` are stride padding (the odd trailing dimension
+# avoids a power-of-two plane-to-plane byte stride, which funnels a GPU wave's
+# writes into a single memory channel — see the `Rt` pad in `_ensure_buffers!`).
 struct _KAPlaneAccumulator{A<:AbstractArray}
     Racc::A
     njobs::Int
@@ -896,10 +962,10 @@ _uncertainty_scratch(::_KACorrelationEngine, ::Type) = nothing
 function _plane_accumulator(engine::_KACorrelationEngine{T}, params::PIVParameters,
                             ::Type{T}, njobs::Int) where {T}
     nr, nc = engine.fft_size
-    # An odd leading dimension keeps the plane-to-plane byte stride off
+    # An odd trailing dimension keeps the plane-to-plane byte stride off
     # power-of-two multiples (the memory-channel conflict the Rt pad avoids).
     ld = njobs + (iseven(njobs) ? 1 : 0)
-    return _KAPlaneAccumulator(zeros(T, ld, nr, nc), njobs)
+    return _KAPlaneAccumulator(zeros(T, nr, nc, ld), njobs)
 end
 
 # Ensemble accumulation for one pair: identical staging to `process_windows!`
@@ -986,10 +1052,10 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngin
     nalt = engine.kpk - 1
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
-        Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
-        _ka_analyze!(ka)(engine.out, engine.vals, engine.locs, Rv,
-                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
-                         ndrange = nreal)
+        Rv = view(acc.Racc, :, :, start:(start + nreal - 1))
+        _ka_analyze!(ka, _KA_TPW)(engine.out, engine.vals, engine.locs, Rv,
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc, Val(_KA_TPW);
+                         ndrange = _KA_TPW * nreal)
         KernelAbstractions.synchronize(ka)
         for m in 1:nreal
             gi, gj, _, _ = jobs[start + m - 1]

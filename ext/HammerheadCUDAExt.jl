@@ -65,24 +65,27 @@ _check_backend_params(b::_CUDABackend, passes) =
     _ka_scope_check(passes, :cuda, _supports_fp64(b))
 
 # Windows per device sub-batch (bounds device-memory footprint). The analysis
-# kernel launches one work-item per window, so the sub-batch size *is* that
-# kernel's launch parallelism: at 2048 windows an 8-tile 2048² grid starves the
-# device (8 sequential launches, ~4.7 ms each), while a single well-occupied
-# launch of the whole grid runs the same work in ~6 ms. 8192 gives near-peak
-# occupancy on this class of GPU while keeping the Float64 complex buffers
-# bounded (~1.3 GB at 8192; the RTX 2000 Ada has 16 GB). Measured: 2048²
+# kernel launches one *workgroup* per window, so the sub-batch size *is* that
+# kernel's launch parallelism (in workgroups): at 2048 windows an 8-tile 2048²
+# grid starves the device (8 sequential launches, ~4.7 ms each), while a single
+# well-occupied launch of the whole grid runs the same work in ~6 ms. 8192 gives
+# near-peak occupancy on this class of GPU while keeping the Float64 complex
+# buffers bounded (~1.3 GB at 8192; the RTX 2000 Ada has 16 GB). Measured: 2048²
 # Float32 single-pass 104 ms → 76 ms versus a 2048 sub-batch.
 const _CUDA_BATCH = 8192
 
-# KernelAbstractions' occupancy-based default workgroup size is pathological for
-# these kernels on NVIDIA: it picks a large block that spills registers in the
-# per-window analysis kernel (one work-item scans a whole plane) and leaves the
-# elementwise cross-power far off peak bandwidth. Explicit warp-multiple blocks
-# recover ~3x on `_ka_analyze!` and ~8x on `_ka_crosspower!` (RTX 2000 Ada,
-# 2048² windows). Workgroup size never affects results — every work-item is
-# independent — so this is pure tuning.
-const _WG_ANALYZE = 64        # register-heavy, one work-item per window
+# KernelAbstractions' occupancy-based default workgroup size leaves the
+# elementwise cross-power far off peak bandwidth on NVIDIA; an explicit
+# warp-multiple block recovers ~8x on `_ka_crosspower!` (RTX 2000 Ada, 2048²
+# windows). Workgroup size never affects results — every work-item is
+# independent — so this is pure tuning. (The analysis kernel is cooperative:
+# its groupsize is fixed by `Val{TPW}`, not tuned here.)
 const _WG_ELEMENTWISE = 256   # cross-power over the whole complex batch
+
+# Threads per window for the cooperative `_ka_analyze!` (one workgroup per
+# window; see the core kernel). The launch groupsize must equal the kernel's
+# compile-time `Val{TPW}`; the core sets `_KA_TPW = 128`, fastest across sizes.
+const _WG_ANALYZE = Hammerhead._KA_TPW
 
 mutable struct _CUDACorrelationEngine{T}
     wsize::NTuple{2,Int}
@@ -101,7 +104,7 @@ mutable struct _CUDACorrelationEngine{T}
     bs::Int
     CA::CuArray{Complex{T},3}
     CB::CuArray{Complex{T},3}
-    Rt::CuArray{T,3}                      # (bs+1, nr, nc) batch-major plane batch
+    Rt::CuArray{T,3}                      # (nr, nc, bs+1) plane-major plane batch
     meanA_d::CuArray{T,1}                 # per-window means (device reduction)
     meanB_d::CuArray{T,1}
     vals_d::CuArray{T,2}                  # (kpk, bs) peak-finder scratch
@@ -155,12 +158,11 @@ function _ensure_batch!(engine::_CUDACorrelationEngine{T}, bs::Int) where {T}
         nr, nc = engine.fft_size
         engine.CA = CUDA.zeros(Complex{T}, nr, nc, bs)
         engine.CB = CUDA.zeros(Complex{T}, nr, nc, bs)
-        # Leading dimension padded by one row: the shift/gain kernel's writes
-        # stride by the leading dimension, and at a power-of-two batch size an
-        # exact power-of-two byte stride funnels a whole warp into one memory
-        # channel (measured ~20x slowdown on the AMDGPU backend). Row bs+1 is
-        # never touched.
-        engine.Rt = CUDA.zeros(T, bs + 1, nr, nc)
+        # Trailing dimension padded by one plane: at a power-of-two batch size
+        # an exact power-of-two plane-to-plane byte stride funnels a whole warp
+        # into one memory channel (measured ~20x slowdown on the AMDGPU
+        # backend). Plane bs+1 is never touched.
+        engine.Rt = CUDA.zeros(T, nr, nc, bs + 1)
         engine.meanA_d = CUDA.zeros(T, bs)
         engine.meanB_d = CUDA.zeros(T, bs)
         engine.vals_d = CUDA.zeros(T, engine.kpk, bs)
@@ -305,9 +307,10 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
                            ndrange = (nr, nc, bs))
         # Same stream as the shift/gain kernel, so no synchronize between them.
+        # Cooperative analysis: one workgroup (_WG_ANALYZE threads) per window.
         _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, engine.Rt,
-                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
-                         ndrange = nreal)
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc, Val(_WG_ANALYZE);
+                         ndrange = _WG_ANALYZE * nreal)
         KernelAbstractions.synchronize(ka)
         # Device -> host: only the packed per-window scalars, never the planes.
         copyto!(engine.out_host, engine.out_d)
@@ -381,7 +384,7 @@ end
 
 # ---------------------------------------------------------------------------
 # Ensemble (sum-of-correlation): the cross-pair plane accumulator is a single
-# batch-major device array resident for the whole ensemble pass — each pair's
+# plane-major device array resident for the whole ensemble pass — each pair's
 # planes are added in place by `_ka_shiftgain_accum!` and only the packed
 # per-window scalars of the final analysis return to the host (the plan's
 # ensemble dataflow: image pair in, device-side accumulate, vector grid out).
@@ -398,10 +401,10 @@ _uncertainty_scratch(::_CUDACorrelationEngine, ::Type) = nothing
 function _plane_accumulator(engine::_CUDACorrelationEngine{T}, params::PIVParameters,
                             ::Type{T}, njobs::Int) where {T}
     nr, nc = engine.fft_size
-    # Odd leading dimension: keeps the plane-to-plane byte stride off
+    # Odd trailing dimension: keeps the plane-to-plane byte stride off
     # power-of-two multiples (the memory-channel conflict the Rt pad avoids).
     ld = njobs + (iseven(njobs) ? 1 : 0)
-    return _KAPlaneAccumulator(CUDA.zeros(T, ld, nr, nc), njobs)
+    return _KAPlaneAccumulator(CUDA.zeros(T, nr, nc, ld), njobs)
 end
 
 # One pair's contribution: identical staging to `process_windows!` up to the
@@ -486,10 +489,10 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_CUDACorrelationEng
     uqhost = uacc === nothing ? nothing : Array(uacc.stats)
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
-        Rv = view(acc.Racc, start:(start + nreal - 1), :, :)
+        Rv = view(acc.Racc, :, :, start:(start + nreal - 1))
         _ka_analyze!(ka, _WG_ANALYZE)(engine.out_d, engine.vals_d, engine.locs_d, Rv,
-                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc;
-                         ndrange = nreal)
+                         use_regionalmax, use_gauss9, params.n_peaks, nr, nc, Val(_WG_ANALYZE);
+                         ndrange = _WG_ANALYZE * nreal)
         KernelAbstractions.synchronize(ka)
         copyto!(engine.out_host, engine.out_d)
         for m in 1:nreal

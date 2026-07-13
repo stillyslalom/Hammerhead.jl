@@ -199,8 +199,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its
   per-camera `run_piv` calls (dewarp + 3C reconstruction stay CPU), and
   `run_piv_ensemble` runs on all KA-family backends: the summed planes live in
-  a device-resident batch-major accumulator (`_KAPlaneAccumulator`, odd
-  leading dim against channel conflicts; `_ka_shiftgain_accum!` adds each
+  a device-resident plane-major accumulator (`_KAPlaneAccumulator`, odd
+  trailing dim against channel conflicts; `_ka_shiftgain_accum!` adds each
   pair's planes in place, `ensemble_analyze!` returns only packed per-window
   scalars), via the engine-dispatched hooks `_plane_accumulator` /
   `accumulate_planes!` / `ensemble_analyze!`. Phase 4b runs the Wieneke UQ
@@ -220,19 +220,36 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   mean; the stats kernel reads the cache. Result: the stats kernel dropped
   ~5–8×, the whole UQ-multipass pipeline ~2× (e.g. Float64 2048² 1.50 s →
   0.74 s device time), `:ka`↔`:cpu` still ~3e-15 and ensemble bitwise, all on
-  hardware. GPU kernel
+  hardware. Phase 5 flipped the plane batch to *plane-major* `Rt[i, j, k]`
+  (window index trailing, +1 trailing pad) and made `_ka_analyze!`
+  *cooperative*: one workgroup of `_KA_TPW` (=128) threads per window, the
+  threads splitting the K sequential exclusion argmax scans (the kernel's whole
+  cost — subpixel/ratio/moment already read only a 3×3 via the cached peak).
+  Only portable cooperative shape the KA CPU backend runs: each thread writes
+  its (best, column-major-order) partial to `@localmem`, ONE `@synchronize`,
+  thread 1 reduces + applies the exclusion/positivity break + records the peak,
+  then does the serial subpixel/moment/alt-peaks (`bench/analyze_ka_coop.jl` is
+  the proving prototype — ordinary locals don't survive a barrier on the CPU
+  backend, so all cross-barrier state must be `@localmem`). Plane-major (not
+  batch-major) because a block's threads now stride *within* one plane, so
+  contiguous plane pixels coalesce; batch-major regressed at high window counts.
+  Launch is `ndrange = _KA_TPW * nreal`, groupsize `_KA_TPW`, kernel takes
+  `Val{TPW}`. On the RTX 2000 Ada `_ka_analyze!` dropped from ~26% → ~8% of a
+  Float32 2048² non-UQ multipass trace, and it's no longer the top kernel; all
+  paths still match `:cpu` to ~1e-15 / ensemble bitwise. GPU kernel
   conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
   no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
   compile to malloc hostcalls (use `% Int32` wrapping stores and
-  `unsafe_trunc` after guards); per-window plane scans need the batch-major
-  `Rt[k, i, j]` layout so wavefront reads coalesce; the `Rt` leading dimension
-  is padded +1 because a power-of-two byte stride funnels writes into one
-  memory channel; GPU FFT in-place plans apply via `p * x` (neither rocFFT nor
+  `unsafe_trunc` after guards); the cooperative analyze needs the plane-major
+  `Rt[i, j, k]` layout so a block's within-plane strided reads coalesce; the
+  `Rt` trailing (window) dimension is padded +1 because a power-of-two
+  plane-to-plane byte stride funnels writes into one memory channel; GPU FFT
+  in-place plans apply via `p * x` (neither rocFFT nor
   cuFFT implements FFTW's 3-arg `mul!`). `:amdgpu` is hardware-validated +
   benched (`bench/gpu_validate.jl` / `bench/gpu_benchmarks.jl`; ROCm 6.4
   required for RDNA2 on Windows — 7.1 dropped it); `:cuda` is also
   hardware-validated (RTX 2000 Ada, CUDA.jl 6.2, driver CUDA 12.8: all paths
-  match `:cpu` to ~1e-15 (Float64), 1.7–2.8× threaded-CPU speed)
+  match `:cpu` to ~1e-15 (Float64), 1.4–2.3× threaded-CPU speed)
 
 ## HammerheadGUI (HammerheadGUI/)
 
