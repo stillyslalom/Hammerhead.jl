@@ -173,7 +173,14 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             # accumulators; each is written by exactly one task per pair).
             # As in the single-pair path, only the final pass estimates them.
             unc = params.uncertainty && !force_replace
-            uacc = unc ? _uncertainty_accumulator(engines[1], T, length(grid.jobs)) : nothing
+            # `engines` (and `grid.jobs`) are empty only when every window is
+            # masked out; guard the accumulator the same way as `accum` above so
+            # that degenerate case returns an all-NaN grid instead of a
+            # BoundsError. `uacc === nothing` then short-circuits
+            # `accumulate_planes!`, and `ensemble_analyze!` is skipped on the
+            # empty grid, so no window ever indexes it.
+            uacc = unc && !isempty(engines) ?
+                   _uncertainty_accumulator(engines[1], T, length(grid.jobs)) : nothing
             uscratch = unc ? [_uncertainty_scratch(e, T) for e in engines] : nothing
             workspace === nothing || ws_prepare!(workspace, imgsize, T)
             first_pair = false
