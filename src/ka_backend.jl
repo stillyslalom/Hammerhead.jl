@@ -29,9 +29,20 @@ function _ka_scope_check(passes, name::Symbol, fp64::Bool = true)
 end
 
 # Device UQ (Phase 4b). Each work-item owns one (component, statistic, window)
-# scalar, exposing enough parallelism even on modest vector grids. Recomputing
-# the small smoothed dC stencil avoids window-sized device scratch, while the
-# Float64 statistics remain resident and additive across ensemble pairs.
+# scalar, exposing enough parallelism even on modest vector grids. The Float64
+# statistics remain resident and additive across ensemble pairs.
+#
+# Phase 4c: the smoothed ΔC stencil (`_ka_uq_dcs`, 3 × `_ka_uq_dc` = 12 array
+# reads per pixel) was originally re-derived scratch-free — twice per pixel for
+# each of the 40 covariance offsets, ~81× per window per component. Profiling
+# (`bench/gpu_profile_uq.jl`, RTX 2000 Ada) put `_ka_uq_stats!` at 44–62% of a
+# UQ multipass run's device time — half the wall-clock — so that recompute now
+# runs *once*: `_ka_uq_fill!` materializes the smoothed field into a batch-major
+# device scratch buffer `dcs[k, comp, r, c]` (window index leading so a
+# wavefront's reads over adjacent windows coalesce, like the `Rt` plane batch)
+# and fuses in the window mean; the covariance-sum kernel then reads the cache.
+# Stored in plane precision T (the value `_ka_uq_dcs` returned), so `Float64`
+# widening on read is bitwise-identical to the recompute path.
 @inline function _ka_uq_dc(A, B, r, c, k, transposed)
     if transposed
         a0 = real(A[c, r, k]); a1 = real(A[c + 1, r, k])
@@ -52,20 +63,27 @@ end
                          _ka_uq_dc(A, B, r, cr, k, transposed))
 end
 
-@kernel function _ka_uq_means!(means, @Const(A), @Const(B), wr, wc)
+# One work-item per (component, window): fill the smoothed ΔC cache over the
+# valid (nr × m) block and accumulate its mean in the same pass (same `c`-outer
+# `r`-inner order as the CPU `uq_component!`, so the mean is bit-identical). The
+# unused tail of each `dcs` slice is left untouched — the stats kernel only
+# reads the block filled here.
+@kernel function _ka_uq_fill!(dcs, means, @Const(A), @Const(B), wr, wc)
     comp, k = @index(Global, NTuple)
     transposed = comp == 2
     nr = transposed ? wc : wr
     m = (transposed ? wr : wc) - 1
     mu = 0.0
     @inbounds for c in 1:m, r in 1:nr
-        mu += Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed))
+        val = _ka_uq_dcs(A, B, r, c, k, nr, m, transposed)
+        dcs[k, comp, r, c] = val
+        mu += Float64(val)
     end
     @inbounds means[comp, k] = mu / (nr * m)
 end
 
-@kernel function _ka_uq_stats!(stats, @Const(means), @Const(A), @Const(B),
-                               wr, wc, nreal, job0, add)
+@kernel function _ka_uq_stats!(stats, @Const(means), @Const(dcs), @Const(A),
+                               @Const(B), wr, wc, nreal, job0, add)
     comp, si, k = @index(Global, NTuple)
     @inbounds begin
         transposed = comp == 2
@@ -89,7 +107,7 @@ end
             mu = means[comp, k]
             if si == 4
                 for c in 1:m, r in 1:nr
-                    d = Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed)) - mu
+                    d = Float64(dcs[k, comp, r, c]) - mu
                     value += d * d
                 end
             else
@@ -109,9 +127,8 @@ end
                 dr, dc = odr, odc
             for c in max(1, 1 - dc):min(m, m - dc),
                 r in max(1, 1 - dr):min(nr, nr - dr)
-                d1 = Float64(_ka_uq_dcs(A, B, r, c, k, nr, m, transposed)) - mu
-                d2 = Float64(_ka_uq_dcs(A, B, r + dr, c + dc, k, nr, m,
-                                        transposed)) - mu
+                d1 = Float64(dcs[k, comp, r, c]) - mu
+                d2 = Float64(dcs[k, comp, r + dr, c + dc]) - mu
                         value += d1 * d2
                     end
                 end
@@ -625,6 +642,7 @@ mutable struct _KACorrelationEngine{T,KB}
     out::Matrix{T}                  # (5 + 2*(kpk-1), bs) packed analysis output
     uqstats::Array{Float64,3}       # (2, UQ_NSTATS, bs), device-UQ scalars
     uqmeans::Matrix{Float64}        # (2, bs), smoothed dC means
+    uqdcs::Array{T,4}               # (bs+1, 2, mm, mm) cached smoothed ΔC field
     fwd::Any
     bwd::Any
 end
@@ -647,7 +665,8 @@ function _make_ka_engine(params::PIVParameters, ::Type{T}) where {T}
         Matrix{Int}(undef, 0, 2),
         Matrix{T}(undef, 0, 0), Array{Int32,3}(undef, 2, 0, 0),
         Matrix{T}(undef, 0, 0), Array{Float64,3}(undef, 0, 0, 0),
-        Matrix{Float64}(undef, 0, 0), nothing, nothing)
+        Matrix{Float64}(undef, 0, 0), Array{T,4}(undef, 0, 0, 0, 0),
+        nothing, nothing)
 end
 
 # Engines are pooled per window configuration (everything baked in at
@@ -674,6 +693,8 @@ function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
         engine.out = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
         engine.uqstats = zeros(Float64, 2, UQ_NSTATS, bs)
         engine.uqmeans = zeros(Float64, 2, bs)
+        mm = max(engine.wsize...)
+        engine.uqdcs = Array{T,4}(undef, bs + 1, 2, mm, mm)  # +1: channel-conflict pad
         engine.fwd = plan_fft!(engine.CA, (1, 2))
         engine.bwd = inv(engine.fwd)
         engine.bs = bs
@@ -723,10 +744,10 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                         engine.meanA, engine.meanB, themask, hasmask;
                         ndrange = (wr, wc, nreal))
         if uncertainty_u !== nothing
-            _ka_uq_means!(ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
-                              ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(engine.uqstats, engine.uqmeans, engine.CA, engine.CB,
-                              wr, wc, nreal, 0, false;
+            _ka_uq_fill!(ka)(engine.uqdcs, engine.uqmeans, engine.CA, engine.CB, wr, wc;
+                             ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(engine.uqstats, engine.uqmeans, engine.uqdcs,
+                              engine.CA, engine.CB, wr, wc, nreal, 0, false;
                               ndrange = (2, UQ_NSTATS, nreal))
         end
         KernelAbstractions.synchronize(ka)
@@ -790,9 +811,9 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
         _ka_gather!(engine.ka)(engine.CA, engine.CB, imgA, imgB, engine.origins,
             engine.apod, engine.meanA, engine.meanB, themask, hasmask;
             ndrange = (wr, wc, nreal))
-        _ka_uq_means!(engine.ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
-                                 ndrange = (2, nreal))
-        _ka_uq_stats!(engine.ka)(engine.uqstats, engine.uqmeans,
+        _ka_uq_fill!(engine.ka)(engine.uqdcs, engine.uqmeans, engine.CA, engine.CB,
+                                wr, wc; ndrange = (2, nreal))
+        _ka_uq_stats!(engine.ka)(engine.uqstats, engine.uqmeans, engine.uqdcs,
                                  engine.CA, engine.CB, wr, wc, nreal, 0, false;
                                  ndrange = (2, UQ_NSTATS, nreal))
         KernelAbstractions.synchronize(engine.ka)
@@ -919,10 +940,11 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                         engine.meanA, engine.meanB, themask, hasmask;
                         ndrange = (wr, wc, nreal))
         if uacc !== nothing
-            _ka_uq_means!(ka)(engine.uqmeans, engine.CA, engine.CB, wr, wc;
-                              ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans, engine.CA, engine.CB,
-                              wr, wc, nreal, first(jobrange) + start - 2, true;
+            _ka_uq_fill!(ka)(engine.uqdcs, engine.uqmeans, engine.CA, engine.CB,
+                             wr, wc; ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans, engine.uqdcs,
+                              engine.CA, engine.CB, wr, wc, nreal,
+                              first(jobrange) + start - 2, true;
                               ndrange = (2, UQ_NSTATS, nreal))
         end
         KernelAbstractions.synchronize(ka)

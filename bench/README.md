@@ -40,6 +40,13 @@ an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): every path matches `:cpu` to
 ~1e-15 (Float64) and runs 1.7–2.8× the threaded CPU speed (1024²–2048²,
 Float64/Float32; multipass-deformation included).
 
+`bench/gpu_profile_uq.jl <backend>` (CUDA only — it uses `CUDA.@profile`)
+prints the per-kernel device-time breakdown of a UQ-enabled multipass run.
+This is how the Phase 4c UQ optimization was scoped and verified: on the RTX
+2000 Ada the smoothed-ΔC recompute (`_ka_uq_stats!`) was 44–62% of device
+time; caching the field in `_ka_uq_fill!` cut that kernel ~5–8× and halved the
+whole UQ pipeline's device time, with `:ka`↔`:cpu` UQ still matching to ~3e-15.
+
 The user-facing setup, support matrix, memory sizing, and troubleshooting
 guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
 

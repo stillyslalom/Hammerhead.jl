@@ -43,7 +43,7 @@ import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
 import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
     _ka_crosspower!, _ka_shiftgain!, _ka_analyze!
-import Hammerhead: _ka_uq_means!, _ka_uq_stats!
+import Hammerhead: _ka_uq_fill!, _ka_uq_stats!
 
 # Device-resident deformation (Phase 3b): the staged-context machinery is
 # portable core code (proven on `:ka`); this extension only points it at the
@@ -110,6 +110,7 @@ mutable struct _CUDACorrelationEngine{T}
     out_host::Matrix{T}
     uqstats_d::CuArray{Float64,3}
     uqmeans_d::CuArray{Float64,2}
+    uqdcs_d::CuArray{T,4}                 # (bs+1, 2, mm, mm) cached smoothed ΔC
     uqstats_host::Array{Float64,3}
     origins_host::Matrix{Int}
     origins_d::CuArray{Int,2}
@@ -135,7 +136,7 @@ function _make_cuda_engine(params::PIVParameters, ::Type{T}) where {T}
         CUDA.zeros(T, 0, 0, 0), CUDA.zeros(T, 0), CUDA.zeros(T, 0),
         CUDA.zeros(T, 0, 0), CUDA.zeros(Int32, 2, 0, 0), CUDA.zeros(T, 0, 0),
         Matrix{T}(undef, 0, 0), CUDA.zeros(Float64, 0, 0, 0),
-        CUDA.zeros(Float64, 0, 0),
+        CUDA.zeros(Float64, 0, 0), CUDA.zeros(T, 0, 0, 0, 0),
         Array{Float64,3}(undef, 0, 0, 0),
         Matrix{Int}(undef, 0, 2), CUDA.zeros(Int, 0, 0), nothing, nothing)
 end
@@ -168,6 +169,8 @@ function _ensure_batch!(engine::_CUDACorrelationEngine{T}, bs::Int) where {T}
         engine.out_host = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
         engine.uqstats_d = CUDA.zeros(Float64, 2, UQ_NSTATS, bs)
         engine.uqmeans_d = CUDA.zeros(Float64, 2, bs)
+        mm = max(engine.wsize...)
+        engine.uqdcs_d = CUDA.zeros(T, bs + 1, 2, mm, mm)  # +1: channel-conflict pad
         engine.uqstats_host = Array{Float64,3}(undef, 2, UQ_NSTATS, bs)
         engine.origins_host = Matrix{Int}(undef, bs, 2)
         engine.origins_d = CUDA.zeros(Int, bs, 2)
@@ -284,9 +287,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         if uncertainty_u !== nothing
-            _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
-                              ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d,
+            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+                             wr, wc; ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d, engine.uqdcs_d,
                               engine.CA, engine.CB, wr, wc, nreal, 0, false;
                               ndrange = (2, UQ_NSTATS, nreal))
         end
@@ -360,9 +363,9 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
         _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d, engine.origins_d,
             engine.apod_d, engine.meanA_d, engine.meanB_d, maskarg, hasmask;
             ndrange = (wr, wc, nreal))
-        _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
-                          ndrange = (2, nreal))
-        _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d,
+        _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+                         wr, wc; ndrange = (2, nreal))
+        _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d, engine.uqdcs_d,
                           engine.CA, engine.CB, wr, wc, nreal, 0, false;
                           ndrange = (2, UQ_NSTATS, nreal))
         KernelAbstractions.synchronize(ka)
@@ -438,10 +441,11 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         if uacc !== nothing
-            _ka_uq_means!(ka)(engine.uqmeans_d, engine.CA, engine.CB, wr, wc;
-                              ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans_d, engine.CA, engine.CB,
-                              wr, wc, nreal, first(jobrange) + start - 2, true;
+            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+                             wr, wc; ndrange = (2, nreal))
+            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans_d, engine.uqdcs_d,
+                              engine.CA, engine.CB, wr, wc, nreal,
+                              first(jobrange) + start - 2, true;
                               ndrange = (2, UQ_NSTATS, nreal))
         end
         KernelAbstractions.synchronize(ka)

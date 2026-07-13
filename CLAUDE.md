@@ -206,7 +206,21 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `accumulate_planes!` / `ensemble_analyze!`. Phase 4b runs the Wieneke UQ
   statistics kernel in Float64 on all KA-family backends: fused single-pair
   and final post-iteration sweeps return packed scalars only, while ensemble
-  statistics remain device-resident and additive across pairs. GPU kernel
+  statistics remain device-resident and additive across pairs. Phase 4c cut
+  the UQ recompute: `_ka_uq_stats!` originally re-derived the smoothed ΔC
+  stencil (12 array reads/pixel) scratch-free, twice per pixel for each of the
+  40 covariance offsets — profiling (`bench/gpu_profile_uq.jl`, RTX 2000 Ada)
+  put it at 44–62% of a UQ multipass run's device time (half the wall-clock),
+  the top opportunity by far (correlation FFTs run every pass but are only
+  ~4–8% each; UQ is final-pass-only). `_ka_uq_fill!` now materializes the
+  smoothed field once per (component, window) into a batch-major device scratch
+  buffer `uqdcs[k, comp, r, c]` (window index leading for coalesced wavefront
+  reads, like `Rt`; +1 leading-dim pad) in plane precision T — so the Float64
+  read-back is bitwise-identical to the recompute — and fuses in the window
+  mean; the stats kernel reads the cache. Result: the stats kernel dropped
+  ~5–8×, the whole UQ-multipass pipeline ~2× (e.g. Float64 2048² 1.50 s →
+  0.74 s device time), `:ka`↔`:cpu` still ~3e-15 and ensemble bitwise, all on
+  hardware. GPU kernel
   conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
   no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
   compile to malloc hostcalls (use `% Int32` wrapping stores and
