@@ -198,7 +198,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, imgsize))
             warpbufs = (workspace.warpA, workspace.warpB)
         end
-        warpA, warpB, pu, pv = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+        warpA, warpB, pu, pv = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                                grid.x, grid.y, T; threaded,
                                                warpA = warpbufs[1], warpB = warpbufs[2])
         u, v = pu, pv  # identical for every pair (shared predictor)

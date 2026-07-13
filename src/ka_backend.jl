@@ -116,6 +116,77 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# Device-side symmetric image deformation (Phase 3): one work-item per output
+# pixel evaluates the predictor displacement — bilinear over the coarse vector
+# grid with flat extrapolation, the Gridded(Linear())/Flat() semantics of the
+# CPU path — and resamples both images with cubic B-splines at ∓ half the
+# displacement. The expensive prefilter stays on the host; only the padded
+# coefficient arrays come to the device. Matches `deform_images` to
+# floating-point round-off (not bitwise: evaluation order differs from
+# Interpolations.jl).
+
+# Flat-extrapolated linear index/weight split along one axis of the coarse
+# predictor grid. Knots are the uniformly spaced window centers `q0 +
+# (i-1)*qstep`; clamping the fractional index reproduces Flat() outside the
+# knot span.
+@inline function _pk_lin_axis(q0::T, qstep::T, n::Int, q::T) where {T}
+    n == 1 && return 1, zero(T)
+    t = clamp((q - q0) / qstep, zero(T), T(n - 1))
+    i = unsafe_trunc(Int, floor(t)) + 1   # guarded: t ∈ [0, n-1]
+    i > n - 1 && (i = n - 1)
+    return i, t - T(i - 1)
+end
+
+# Uniform cubic B-spline basis weights at fractional offset δ ∈ [0, 1].
+@inline _pk_cubw(δ::T) where {T} =
+    ((1 - δ)^3 / 6, (4 - 6δ^2 + 3δ^3) / 6, (1 + 3δ + 3δ^2 - 3δ^3) / 6, δ^3 / 6)
+
+# Cubic B-spline sample from the padded prefiltered coefficients. `C` is the
+# `parent` of the interpolant's offset-axed (0:n+1) coefficient array, so
+# logical index k lives at parent index k+1; zero outside the image domain,
+# exactly like the CPU path's `extrapolate(…, 0)`. The support of a sample at
+# `yy ∈ [1, nr]` is logical `iy-1:iy+2` with `iy ≤ nr-1`, i.e. parent
+# `iy:iy+3 ⊆ 1:nr+2` — always in bounds. Verified against Interpolations.jl
+# to ~9e-16.
+@inline function _pk_cubic(C, yy::T, xx::T, nr, nc) where {T}
+    (yy < 1 || yy > nr || xx < 1 || xx > nc) && return zero(T)
+    iy = unsafe_trunc(Int, floor(yy))     # guarded: yy ∈ [1, nr]
+    iy > nr - 1 && (iy = nr - 1)          # boundary: weights at δ = 1 are exact
+    ix = unsafe_trunc(Int, floor(xx))
+    ix > nc - 1 && (ix = nc - 1)
+    wy = _pk_cubw(yy - T(iy))
+    wx = _pk_cubw(xx - T(ix))
+    s = zero(T)
+    @inbounds for n in 0:3
+        col = ix + n                      # parent index of logical ix-1+n
+        s += wx[n + 1] * (wy[1] * C[iy, col] + wy[2] * C[iy + 1, col] +
+                          wy[3] * C[iy + 2, col] + wy[4] * C[iy + 3, col])
+    end
+    return s
+end
+
+@kernel function _ka_deform!(warpA, warpB, @Const(CA), @Const(CB),
+                             @Const(pu), @Const(pv), y0, ysp, x0, xsp,
+                             gny, gnx, nr, nc)
+    r, c = @index(Global, NTuple)
+    T = eltype(warpA)
+    @inbounds begin
+        iy, ly = _pk_lin_axis(y0, ysp, gny, T(r))
+        ix, lx = _pk_lin_axis(x0, xsp, gnx, T(c))
+        iy2 = gny == 1 ? iy : iy + 1
+        ix2 = gnx == 1 ? ix : ix + 1
+        a = pu[iy, ix] + lx * (pu[iy, ix2] - pu[iy, ix])
+        b = pu[iy2, ix] + lx * (pu[iy2, ix2] - pu[iy2, ix])
+        du2 = (a + ly * (b - a)) / 2
+        a = pv[iy, ix] + lx * (pv[iy, ix2] - pv[iy, ix])
+        b = pv[iy2, ix] + lx * (pv[iy2, ix2] - pv[iy2, ix])
+        dv2 = (a + ly * (b - a)) / 2
+        warpA[r, c] = _pk_cubic(CA, T(r) - dv2, T(c) - du2, nr, nc)
+        warpB[r, c] = _pk_cubic(CB, T(r) + dv2, T(c) + du2, nr, nc)
+    end
+end
+
+# ---------------------------------------------------------------------------
 # Device-side plane analysis: peak finding, subpixel refinement, peak ratio,
 # correlation moment, and alternative-peak refinement — the batched analogue
 # of `analyze_plane!`. These are line-for-line ports of the CPU routines in
@@ -515,6 +586,43 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         end
     end
     return nothing
+end
+
+# Deformation on the KA backend: the prefiltered coefficient arrays already
+# live where the kernel runs (host memory), so this is the pure proving tier
+# for `_ka_deform!` — device extensions add their own method that stages the
+# coefficients once per pair. The predictor values at the pass-grid nodes are
+# evaluated on the host exactly like the CPU path (a tiny Gridded(Linear())
+# job), so vector attribution is unchanged.
+function apply_predictor(::_KABackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
+                         itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
+                         ::Type{T}; threaded::Bool = false,
+                         warpA::Union{Nothing,Matrix{T}} = nothing,
+                         warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
+    ny, nx = length(y), length(x)
+    predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
+    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
+                                    Gridded(Linear())), Flat())
+    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
+                                    Gridded(Linear())), Flat())
+    u = T[itp_u(yi, xj) for yi in y, xj in x]
+    v = T[itp_v(yi, xj) for yi in y, xj in x]
+
+    nr, nc = size(imgA)
+    warpA === nothing && (warpA = Matrix{T}(undef, nr, nc))
+    warpB === nothing && (warpB = Matrix{T}(undef, nr, nc))
+    py, px = predictor.y, predictor.x
+    gny, gnx = length(py), length(px)
+    y0 = T(first(py))
+    x0 = T(first(px))
+    ysp = gny > 1 ? T(py[2] - py[1]) : one(T)
+    xsp = gnx > 1 ? T(px[2] - px[1]) : one(T)
+    ka = CPU()
+    _ka_deform!(ka)(warpA, warpB, parent(itpA.itp.coefs), parent(itpB.itp.coefs),
+                    predictor.u, predictor.v, y0, ysp, x0, xsp, gny, gnx, nr, nc;
+                    ndrange = (nr, nc))
+    KernelAbstractions.synchronize(ka)
+    return warpA, warpB, u, v
 end
 
 # ---------------------------------------------------------------------------

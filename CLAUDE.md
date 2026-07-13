@@ -180,8 +180,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   (`_KABackend`/`_KACorrelationEngine` live in `src/ka_backend.jl` too; no
   ext needed). The exts import the kernels from Hammerhead and `using` the
   core's strong deps directly (works on 1.10 — verified). `test/test_ka.jl`
-  guards the kernels, and on this box `:ka` is
-  bitwise-identical to `:cpu`. Scope: `:cross` + `:gauss3`/`:gauss9` only;
+  guards the kernels; on this box `:ka` matches `:cpu` bitwise for
+  non-deforming passes, and to ~1e-12 once a pass deforms — Phase 3 moved
+  deformation into the portable `_ka_deform!` kernel (prefilter stays on the
+  CPU; the kernel does bilinear predictor eval + cubic B-spline resampling
+  from the padded coefficients, verified against Interpolations.jl to ~9e-16;
+  seam: `apply_predictor(backend, …)` with a CPU-delegating default, so the
+  device exts keep CPU deformation until they stage coefficients themselves).
+  Scope: `:cross` + `:gauss3`/`:gauss9` only;
   phase/gauss2d/UQ/keep_planes are rejected with a clear error
   (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its
   per-camera `run_piv` calls (dewarp + 3C reconstruction stay CPU), and

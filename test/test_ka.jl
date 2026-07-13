@@ -126,6 +126,36 @@
             progress = false)
     end
 
+    @testset "device deformation kernel" begin
+        # Direct comparison of the portable deformation kernel against the CPU
+        # cubic-B-spline path (Interpolations.jl) on a smooth predictor: same
+        # interpolation model, different evaluation order, so agreement is
+        # floating-point-level, not bitwise.
+        small = imgA[1:96, 1:128]
+        smallB = imgB[1:96, 1:128]
+        itpA = Hammerhead.image_interpolant(small, Float64)
+        itpB = Hammerhead.image_interpolant(smallB, Float64)
+        py = [16.5, 48.5, 80.5]
+        px = [16.5, 48.5, 80.5, 112.5]
+        pu = [0.8 * sin(0.05 * yi) + 0.3 * cos(0.04 * xj) for yi in py, xj in px]
+        pv = [0.5 * cos(0.03 * yi) - 0.4 * sin(0.06 * xj) for yi in py, xj in px]
+        pred = (x = px, y = py, u = pu, v = pv)
+        gx = [20.5, 60.5, 100.5]
+        gy = [20.5, 50.5]
+        wA_cpu, wB_cpu, u_cpu, v_cpu = Hammerhead.apply_predictor(small, smallB,
+            itpA, itpB, pred, gx, gy, Float64; threaded = false)
+        wA_ka, wB_ka, u_ka, v_ka = Hammerhead.apply_predictor(kab, small, smallB,
+            itpA, itpB, pred, gx, gy, Float64; threaded = false)
+        # Pass-grid predictor values use the identical host evaluation.
+        @test isequal(u_ka, u_cpu) && isequal(v_ka, v_cpu)
+        @test maximum(abs.(wA_ka .- wA_cpu)) < 1e-12
+        @test maximum(abs.(wB_ka .- wB_cpu)) < 1e-12
+        # No predictor: pass-through, like the CPU path.
+        pA, pB, z_u, z_v = Hammerhead.apply_predictor(kab, small, smallB,
+            nothing, nothing, nothing, gx, gy, Float64)
+        @test pA === small && pB === smallB && all(iszero, z_u) && all(iszero, z_v)
+    end
+
     @testset "stereo on :ka" begin
         # The stereo driver forwards the backend to its per-camera run_piv
         # calls (dewarping and 3C reconstruction stay on the CPU).

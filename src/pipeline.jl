@@ -499,6 +499,14 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
     return warpA, warpB, u, v
 end
 
+# Backend-dispatched deformation seam: the default is the CPU cubic-B-spline
+# path above; KA-family backends override this to evaluate the same
+# interpolation model in a portable kernel (see `_ka_deform!`).
+apply_predictor(::_AbstractHammerheadBackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
+                itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
+                ::Type{T}; kwargs...) where {T} =
+    apply_predictor(imgA, imgB, itpA, itpB, predictor, x, y, T; kwargs...)
+
 # Shared validation + replacement tail of a pass (single-pair or ensemble).
 # `alternatives` optionally carries the secondary/tertiary peak displacements
 # as a pair of (ny, nx, n_peaks-1) arrays (NaN where absent) for peak
@@ -610,7 +618,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     maxiter > 2 && params.convergence_tol > 0 && sizehint!(change_buf, ny * nx)
     local result, warpA, warpB
     for it in 1:maxiter
-        warpA, warpB, u, v = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+        warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
                                              warpA = bufA, warpB = bufB)
         if it > 1
