@@ -187,20 +187,31 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
         if predictor === nothing
             itpA = itpB = nothing
             warpbufs = (nothing, nothing)
+            dctx = nothing
         elseif workspace === nothing
             itpA = image_interpolant(imgA, T)
             itpB = image_interpolant(imgB, T)
+            # A backend with a deform context stages this pair's coefficients
+            # where its engine computes and keeps the warped pair resident
+            # there — image pair in, device-side accumulate, vector grid out.
+            dctx = _deform_context(backend, nothing, itpA, itpB, imgsize, T)
             warpbufs = (nothing, nothing)
         else
             itpA, workspace.itpA_coefs = image_interpolant!(workspace.itpA_coefs, imgA, T)
             itpB, workspace.itpB_coefs = image_interpolant!(workspace.itpB_coefs, imgB, T)
-            workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, imgsize))
-            workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, imgsize))
-            warpbufs = (workspace.warpA, workspace.warpB)
+            dctx = _deform_context(backend, workspace, itpA, itpB, imgsize, T)
+            if dctx === nothing
+                workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, imgsize))
+                workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, imgsize))
+                warpbufs = (workspace.warpA, workspace.warpB)
+            else
+                warpbufs = (nothing, nothing)
+            end
         end
         warpA, warpB, pu, pv = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                                grid.x, grid.y, T; threaded,
-                                               warpA = warpbufs[1], warpB = warpbufs[2])
+                                               warpA = warpbufs[1], warpB = warpbufs[2],
+                                               ctx = dctx)
         u, v = pu, pv  # identical for every pair (shared predictor)
         if length(chunks) == 1
             accumulate_planes!(accum, chunks[1], engines[1], warpA, warpB,

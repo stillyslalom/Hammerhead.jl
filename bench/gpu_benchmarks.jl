@@ -50,7 +50,38 @@ function bench(backend, n::Int, ::Type{T}; samples = 4) where {T}
             string(T), n, length(r_cpu.u), tcpu, tgpu, tcpu / tgpu, dmax)
 end
 
+# Multipass with symmetric image deformation: exercises the device-resident
+# deformation path (coefficients staged once per call, warped images consumed
+# in place by the correlation engine).
+function bench_multipass(backend, n::Int, ::Type{T}; samples = 3) where {T}
+    rng = MersenneTwister(2026 + n)
+    flow = vortex_flow(n / 2, n / 2, 4.0)
+    A64, B64, _, _ = generate_synthetic_piv_pair(flow, (n, n), 1.0;
+        particle_density = 0.006, background_noise = 0.003, rng)
+    A = T.(A64); B = T.(B64)
+    sched = Hammerhead.multipass_parameters([64, 32];
+        padding = true, apodization = :gauss, final = (max_iterations = 2,))
+
+    r_cpu = run_piv(A, B, sched; threaded = true)                 # warmup + reference
+    r_gpu = run_piv(A, B, sched; backend, threaded = false)       # warmup
+    valid = .!r_cpu.outliers .& .!r_cpu.mask
+    dmax = max(maximum(abs.(r_gpu.u[valid] .- r_cpu.u[valid])),
+               maximum(abs.(r_gpu.v[valid] .- r_cpu.v[valid])))
+
+    tmin(f) = minimum(@elapsed(f()) for _ in 1:samples)
+    tcpu = tmin(() -> run_piv(A, B, sched; threaded = true))
+    tgpu = tmin(() -> run_piv(A, B, sched; backend, threaded = false))
+    @printf("%-7s %4d²  %6d win   CPU %7.3f s   GPU %7.3f s   speedup %5.2fx   max|Δ| %.1e\n",
+            string(T), n, length(r_cpu.u), tcpu, tgpu, tcpu / tgpu, dmax)
+end
+
 for n in (1024, 2048)
     bench(backend, n, Float64)
     bench(backend, n, Float32)
+end
+
+println("multipass 64/32 + iterated final (deformation path):")
+for n in (1024, 2048)
+    bench_multipass(backend, n, Float64)
+    bench_multipass(backend, n, Float32)
 end

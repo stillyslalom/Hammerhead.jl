@@ -185,8 +185,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   deformation into the portable `_ka_deform!` kernel (prefilter stays on the
   CPU; the kernel does bilinear predictor eval + cubic B-spline resampling
   from the padded coefficients, verified against Interpolations.jl to ~9e-16;
-  seam: `apply_predictor(backend, …)` with a CPU-delegating default, so the
-  device exts keep CPU deformation until they stage coefficients themselves).
+  seam: `apply_predictor(backend, …; ctx)` with a CPU-delegating default).
+  Phase 3b made device deformation zero-copy per sweep: `_deform_context`
+  stages the prefiltered padded coefficients once per `run_piv` call (per
+  pair in ensemble) into a portable `_KADeformContext` — built with generic
+  `KernelAbstractions.allocate` and pooled in the workspace's engine dict, so
+  `:ka` proves the exact code path the device exts run — whose warp output
+  buffers stay device-resident; per-sweep traffic is only the coarse
+  predictor grid, and the engines' `_stage_pair!` consumes device-resident
+  warped images in place (host images still upload for non-deforming passes).
   Scope: `:cross` + `:gauss3`/`:gauss9` only;
   phase/gauss2d/UQ/keep_planes are rejected with a clear error
   (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its

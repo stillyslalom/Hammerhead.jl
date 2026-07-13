@@ -66,13 +66,15 @@
     r_ka_ws = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws.u, m_ka.u) && isequal(r_ka_ws.v, m_ka.v)
     # The workspace pools engines per window configuration (one per pass of
-    # the 64/32 schedule); a second run reuses the identical engine objects —
-    # and with them the batch buffers and FFT plans — with identical results.
-    @test length(ws.engines) == 2
+    # the 64/32 schedule) plus the deform context (staged coefficients + warp
+    # buffers); a second run reuses the identical objects — and with them the
+    # batch buffers and FFT plans — with identical results.
+    @test length(ws.engines) == 3
+    @test haskey(ws.engines, (:ka_deform, Float64, size(imgA)))
     engine_ids = Dict(k => map(objectid, v) for (k, v) in ws.engines)
     r_ka_ws2 = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws2.u, m_ka.u) && isequal(r_ka_ws2.v, m_ka.v)
-    @test length(ws.engines) == 2
+    @test length(ws.engines) == 3
     @test all(map(objectid, ws.engines[k]) == engine_ids[k] for k in keys(engine_ids))
 
     @testset "ensemble on :ka" begin
@@ -154,6 +156,17 @@
         pA, pB, z_u, z_v = Hammerhead.apply_predictor(kab, small, smallB,
             nothing, nothing, nothing, gx, gy, Float64)
         @test pA === small && pB === smallB && all(iszero, z_u) && all(iszero, z_v)
+        # The staged-context path the drivers (and the device extensions) use:
+        # coefficients copied into the context once, warp output in the
+        # context's resident buffers — values identical to the direct path
+        # (same kernel, same inputs).
+        ctx = Hammerhead._deform_context(kab, nothing, itpA, itpB,
+                                         size(small), Float64)
+        wA_ctx, wB_ctx, u_ctx, v_ctx = Hammerhead.apply_predictor(kab, small,
+            smallB, itpA, itpB, pred, gx, gy, Float64; ctx)
+        @test wA_ctx === ctx.warpA && wB_ctx === ctx.warpB
+        @test isequal(wA_ctx, wA_ka) && isequal(wB_ctx, wB_ka)
+        @test isequal(u_ctx, u_ka) && isequal(v_ctx, v_ka)
     end
 
     @testset "stereo on :ka" begin

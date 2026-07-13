@@ -186,6 +186,72 @@ end
     end
 end
 
+# Per-call deformation context for the KA-family backends: the prefiltered
+# padded B-spline coefficients staged where `_ka_deform!` runs, the resident
+# warp output buffers, and the (lazily resized) coarse predictor-grid arrays.
+# Staging happens once per `run_piv` call (`_ka_deform_context` below); every
+# deformation sweep of every pass then reuses the resident coefficients, and
+# on a device backend the warped images never visit the host — the
+# correlation engines use them in place.
+mutable struct _KADeformContext{T,D,M<:AbstractMatrix{T}}
+    dev::D
+    coefA::M
+    coefB::M
+    warpA::M
+    warpB::M
+    pu::M
+    pv::M
+end
+
+# Build (or draw from the workspace pool) a deform context on KA backend `dev`
+# and stage this call's coefficients into it. The pooled buffers are pure
+# scratch — fully rewritten here and by each sweep — so cross-call reuse via
+# the workspace leaves results identical.
+function _ka_deform_context(dev, workspace, key, itpA, itpB,
+                            imgsize::Dims{2}, ::Type{T}) where {T}
+    nr, nc = imgsize
+    make = () -> _KADeformContext(dev,
+        KernelAbstractions.allocate(dev, T, nr + 2, nc + 2),
+        KernelAbstractions.allocate(dev, T, nr + 2, nc + 2),
+        KernelAbstractions.allocate(dev, T, nr, nc),
+        KernelAbstractions.allocate(dev, T, nr, nc),
+        KernelAbstractions.allocate(dev, T, 0, 0),
+        KernelAbstractions.allocate(dev, T, 0, 0))
+    ctx = workspace === nothing ? make() : pooled_engines(make, workspace, key, 1)[1]
+    # The padded parent of the offset-axed coefficient array — exactly what
+    # `_pk_cubic` indexes (logical k at parent k+1).
+    copyto!(ctx.coefA, parent(itpA.itp.coefs))
+    copyto!(ctx.coefB, parent(itpB.itp.coefs))
+    return ctx
+end
+
+# One deformation sweep against a staged context: evaluate the pass-grid
+# predictor values on the host (tiny), upload the coarse predictor grids
+# (vector-grid sized, the only per-sweep transfer), and launch `_ka_deform!`
+# into the context's resident warp buffers.
+function _ka_apply_predictor_ctx(ctx::_KADeformContext{T}, predictor,
+                                 x::AbstractVector, y::AbstractVector) where {T}
+    u, v = predictor_node_values(predictor, x, y, T)
+    py, px = predictor.y, predictor.x
+    gny, gnx = length(py), length(px)
+    if size(ctx.pu) != (gny, gnx)
+        ctx.pu = KernelAbstractions.allocate(ctx.dev, T, gny, gnx)
+        ctx.pv = KernelAbstractions.allocate(ctx.dev, T, gny, gnx)
+    end
+    copyto!(ctx.pu, convert(Matrix{T}, predictor.u))
+    copyto!(ctx.pv, convert(Matrix{T}, predictor.v))
+    nr, nc = size(ctx.warpA)
+    y0 = T(first(py))
+    x0 = T(first(px))
+    ysp = gny > 1 ? T(py[2] - py[1]) : one(T)
+    xsp = gnx > 1 ? T(px[2] - px[1]) : one(T)
+    _ka_deform!(ctx.dev)(ctx.warpA, ctx.warpB, ctx.coefA, ctx.coefB,
+                         ctx.pu, ctx.pv, y0, ysp, x0, xsp, gny, gnx, nr, nc;
+                         ndrange = (nr, nc))
+    KernelAbstractions.synchronize(ctx.dev)
+    return ctx.warpA, ctx.warpB, u, v
+end
+
 # ---------------------------------------------------------------------------
 # Device-side plane analysis: peak finding, subpixel refinement, peak ratio,
 # correlation moment, and alternative-peak refinement — the batched analogue
@@ -590,23 +656,22 @@ end
 
 # Deformation on the KA backend: the prefiltered coefficient arrays already
 # live where the kernel runs (host memory), so this is the pure proving tier
-# for `_ka_deform!` — device extensions add their own method that stages the
-# coefficients once per pair. The predictor values at the pass-grid nodes are
-# evaluated on the host exactly like the CPU path (a tiny Gridded(Linear())
-# job), so vector attribution is unchanged.
+# for `_ka_deform!` and — via the `:ka` `_deform_context` below — for the
+# staged-context path the device extensions run with device arrays. The
+# predictor values at the pass-grid nodes are evaluated on the host exactly
+# like the CPU path (a tiny Gridded(Linear()) job), so vector attribution is
+# unchanged. Without a context (direct calls) the kernel reads the
+# interpolants' coefficients in place.
 function apply_predictor(::_KABackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
                          itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
                          ::Type{T}; threaded::Bool = false,
                          warpA::Union{Nothing,Matrix{T}} = nothing,
-                         warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
+                         warpB::Union{Nothing,Matrix{T}} = nothing,
+                         ctx = nothing) where {T}
     ny, nx = length(y), length(x)
     predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
-    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
-                                    Gridded(Linear())), Flat())
-    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
-                                    Gridded(Linear())), Flat())
-    u = T[itp_u(yi, xj) for yi in y, xj in x]
-    v = T[itp_v(yi, xj) for yi in y, xj in x]
+    ctx === nothing || return _ka_apply_predictor_ctx(ctx, predictor, x, y)
+    u, v = predictor_node_values(predictor, x, y, T)
 
     nr, nc = size(imgA)
     warpA === nothing && (warpA = Matrix{T}(undef, nr, nc))
@@ -624,6 +689,14 @@ function apply_predictor(::_KABackend, imgA::AbstractMatrix, imgB::AbstractMatri
     KernelAbstractions.synchronize(ka)
     return warpA, warpB, u, v
 end
+
+# The :ka context runs the identical staged-context machinery the device
+# extensions use — coefficient copy, pooled buffers, per-sweep predictor
+# upload — on host arrays, guarding that shared path in CI without hardware.
+_deform_context(::_KABackend, workspace, itpA, itpB,
+                imgsize::Dims{2}, ::Type{T}) where {T} =
+    _ka_deform_context(CPU(), workspace, (:ka_deform, T, imgsize),
+                       itpA, itpB, imgsize, T)
 
 # ---------------------------------------------------------------------------
 # Ensemble (sum-of-correlation) support: the whole window grid's summed planes

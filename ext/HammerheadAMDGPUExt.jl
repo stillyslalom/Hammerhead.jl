@@ -6,8 +6,11 @@ module HammerheadAMDGPUExt
 # (`src/ka_backend.jl`, the `backend = :ka` proving tier); the only
 # device-specific work here is host<->device staging and the rocFFT batched
 # transform. The whole pipeline —
+# predictor deformation (from once-per-call staged B-spline coefficients),
 # gather, FFTs, cross-power, shift/gain, peak finding + subpixel + moment —
-# runs on the device; only the packed per-window scalars come back to the host.
+# runs on the device; the warped images stay device-resident between
+# deformation and correlation, and only the packed per-window scalars come
+# back to the host.
 #
 # STATUS: validated on an RX 6800 XT (gfx1030) against `backend = :cpu`
 # (max deviation ~1e-14 in Float64, single-pass/multipass/masked), and 1.3-2.4x
@@ -31,6 +34,12 @@ import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
 import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
     _ka_crosspower!, _ka_shiftgain!, _ka_analyze!
+
+# Device-resident deformation (Phase 3b): the staged-context machinery is
+# portable core code (proven on `:ka`); this extension only points it at the
+# ROC backend.
+import Hammerhead: apply_predictor, _deform_context, _ka_deform_context,
+    _ka_apply_predictor_ctx
 
 struct _AMDGPUBackend <: _AbstractHammerheadBackend end
 
@@ -142,6 +151,56 @@ function _ensure_image!(engine::_AMDGPUCorrelationEngine{T}, sz::NTuple{2,Int},
     return engine
 end
 
+# Deformation staging: the prefiltered B-spline coefficients go to the device
+# once per `run_piv` call (per pair in the ensemble driver) and the deform
+# context's warp buffers stay resident, so per-sweep deformation transfers
+# only the coarse predictor grid (see `_ka_deform_context` in the core).
+_deform_context(::_AMDGPUBackend, workspace, itpA, itpB,
+                imgsize::Dims{2}, ::Type{T}) where {T} =
+    _ka_deform_context(ROCBackend(), workspace, (:amdgpu_deform, T, imgsize),
+                       itpA, itpB, imgsize, T)
+
+function apply_predictor(::_AMDGPUBackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
+                         itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
+                         ::Type{T}; threaded::Bool = false,
+                         warpA = nothing, warpB = nothing, ctx = nothing) where {T}
+    predictor === nothing &&
+        return imgA, imgB, zeros(T, length(y), length(x)), zeros(T, length(y), length(x))
+    # Without a staged context (direct calls outside the drivers), deform on
+    # the CPU as before.
+    ctx === nothing &&
+        return apply_predictor(imgA, imgB, itpA, itpB, predictor, x, y, T;
+                               threaded, warpA, warpB)
+    return _ka_apply_predictor_ctx(ctx, predictor, x, y)
+end
+
+# Resolve this sweep's device images and mask. Warped images arriving from the
+# deform context are already device-resident and are used in place; host
+# images (a non-deforming pass, or direct calls) are uploaded to the engine's
+# staging buffers as before.
+function _stage_pair!(engine::_AMDGPUCorrelationEngine{T}, imgA, imgB, mask) where {T}
+    hasmask = mask !== nothing
+    if imgA isa ROCArray
+        A_d, B_d = imgA, imgB
+        hasmask && size(engine.mask_d) != size(imgA) &&
+            (engine.mask_d = AMDGPU.zeros(Bool, size(imgA)...))
+    else
+        _ensure_image!(engine, size(imgA), hasmask)
+        # Upload this sweep's images once; apod/gain live on the device.
+        copyto!(engine.imgA_d, imgA)
+        copyto!(engine.imgB_d, imgB)
+        A_d, B_d = engine.imgA_d, engine.imgB_d
+    end
+    maskarg = engine.empty_mask
+    if hasmask
+        # A BitMatrix (e.g. from `falses`) or a view can't memcpy to the device;
+        # materialize a dense Array{Bool} first (identity when already dense).
+        copyto!(engine.mask_d, convert(Array{Bool}, mask))
+        maskarg = engine.mask_d
+    end
+    return A_d, B_d, maskarg, hasmask
+end
+
 function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
@@ -160,20 +219,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     sr, sc = nr ÷ 2, nc ÷ 2
     bs = min(_AMDGPU_BATCH, njobs)
     _ensure_batch!(engine, bs)
-    hasmask = mask !== nothing
-    _ensure_image!(engine, size(imgA), hasmask)
+    A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = ROCBackend()
 
-    # Upload this sweep's (deformed) images once; apod/gain live on the device.
-    copyto!(engine.imgA_d, imgA)
-    copyto!(engine.imgB_d, imgB)
-    maskarg = engine.empty_mask
-    if hasmask
-        # A BitMatrix (e.g. from `falses`) or a view can't memcpy to the device;
-        # materialize a dense Array{Bool} first (identity when already dense).
-        copyto!(engine.mask_d, convert(Array{Bool}, mask))
-        maskarg = engine.mask_d
-    end
     gainarg = engine.padded ? engine.gain_d : engine.apod_d   # dummy when unpadded (unread)
     use_regionalmax = params.peak_finder === :regionalmax
     use_gauss9 = params.subpixel_method === :gauss9
@@ -189,10 +237,10 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         copyto!(engine.origins_d, engine.origins_host)
         fill!(engine.CA, 0)
         fill!(engine.CB, 0)
-        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, engine.imgA_d,
-                              engine.imgB_d, engine.origins_d, maskarg, hasmask,
+        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, A_d,
+                              B_d, engine.origins_d, maskarg, hasmask,
                               wr, wc; ndrange = nreal)
-        _ka_gather!(ka)(engine.CA, engine.CB, engine.imgA_d, engine.imgB_d,
+        _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         KernelAbstractions.synchronize(ka)
@@ -273,17 +321,9 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     sr, sc = nr ÷ 2, nc ÷ 2
     bs = min(_AMDGPU_BATCH, njobs)
     _ensure_batch!(engine, bs)
-    hasmask = mask !== nothing
-    _ensure_image!(engine, size(imgA), hasmask)
+    A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = ROCBackend()
 
-    copyto!(engine.imgA_d, imgA)
-    copyto!(engine.imgB_d, imgB)
-    maskarg = engine.empty_mask
-    if hasmask
-        copyto!(engine.mask_d, convert(Array{Bool}, mask))
-        maskarg = engine.mask_d
-    end
     gainarg = engine.padded ? engine.gain_d : engine.apod_d   # dummy when unpadded (unread)
 
     for start in 1:bs:njobs
@@ -296,10 +336,10 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         copyto!(engine.origins_d, engine.origins_host)
         fill!(engine.CA, 0)
         fill!(engine.CB, 0)
-        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, engine.imgA_d,
-                              engine.imgB_d, engine.origins_d, maskarg, hasmask,
+        _ka_window_means!(ka)(engine.meanA_d, engine.meanB_d, A_d,
+                              B_d, engine.origins_d, maskarg, hasmask,
                               wr, wc; ndrange = nreal)
-        _ka_gather!(ka)(engine.CA, engine.CB, engine.imgA_d, engine.imgB_d,
+        _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         KernelAbstractions.synchronize(ka)

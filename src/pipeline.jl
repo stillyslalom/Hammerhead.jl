@@ -345,20 +345,30 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     if !deforms
         itpA = itpB = nothing
         warp_buffers = nothing
+        dctx = nothing
     elseif workspace === nothing
         itpA = image_interpolant(imgA, T)
         itpB = image_interpolant(imgB, T)
+        # A backend with a deform context keeps the warped images resident on
+        # its device, so the host warp buffers are only needed without one.
+        dctx = _deform_context(be, nothing, itpA, itpB, size(imgA), T)
         # The deformed image pair is the same size every pass, and each pass
         # fully overwrites it before use, so allocate the buffers once here.
-        warp_buffers = (Matrix{T}(undef, size(imgA)), Matrix{T}(undef, size(imgB)))
+        warp_buffers = dctx === nothing ?
+            (Matrix{T}(undef, size(imgA)), Matrix{T}(undef, size(imgB))) : nothing
     else
         # Reuse the workspace's padded coefficient buffers across pairs (each is
         # refilled and prefiltered in place), stashing any freshly allocated one.
         itpA, workspace.itpA_coefs = image_interpolant!(workspace.itpA_coefs, imgA, T)
         itpB, workspace.itpB_coefs = image_interpolant!(workspace.itpB_coefs, imgB, T)
-        workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, size(imgA)))
-        workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, size(imgB)))
-        warp_buffers = (workspace.warpA, workspace.warpB)
+        dctx = _deform_context(be, workspace, itpA, itpB, size(imgA), T)
+        if dctx === nothing
+            workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, size(imgA)))
+            workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, size(imgB)))
+            warp_buffers = (workspace.warpA, workspace.warpB)
+        else
+            warp_buffers = nothing
+        end
     end
 
     result = nothing
@@ -370,7 +380,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
         result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
                           threaded, force_replace = k < length(passes),
                           predictor_smoothing, mask, mask_threshold,
-                          warp_buffers, backend = be, workspace)
+                          warp_buffers, backend = be, workspace,
+                          deform_context = dctx)
     end
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -477,6 +488,20 @@ function pass_grid(::Type{T}, imgsize::Dims{2}, params::PIVParameters,
     return (; x, y, grid_mask, jobs)
 end
 
+# Predictor displacement evaluated at the pass-grid nodes: the same
+# Gridded(Linear())/Flat() evaluation the CPU deformation interpolates the
+# images with, run on the host — the vector grid is tiny next to the images,
+# so every backend shares this bit (vector attribution is backend-independent).
+function predictor_node_values(predictor, x::AbstractVector, y::AbstractVector,
+                               ::Type{T}) where {T}
+    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
+                                    Gridded(Linear())), Flat())
+    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
+                                    Gridded(Linear())), Flat())
+    return T[itp_u(yi, xj) for yi in y, xj in x],
+           T[itp_v(yi, xj) for yi in y, xj in x]
+end
+
 # Deform the image pair symmetrically by the predictor and evaluate the
 # predictor displacement on the pass grid. `itpA`/`itpB` are the prebuilt cubic
 # B-spline image interpolants (unused, hence permitted `nothing`, when there is
@@ -500,12 +525,24 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
 end
 
 # Backend-dispatched deformation seam: the default is the CPU cubic-B-spline
-# path above; KA-family backends override this to evaluate the same
-# interpolation model in a portable kernel (see `_ka_deform!`).
+# path above (dropping the deform context, which the CPU path never needs);
+# KA-family backends override this to evaluate the same interpolation model in
+# a portable kernel (see `_ka_deform!`).
 apply_predictor(::_AbstractHammerheadBackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
                 itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
-                ::Type{T}; kwargs...) where {T} =
+                ::Type{T}; ctx = nothing, kwargs...) where {T} =
     apply_predictor(imgA, imgB, itpA, itpB, predictor, x, y, T; kwargs...)
+
+# Per-call deformation context, created right after the image interpolants and
+# threaded through `piv_pass` into every `apply_predictor` sweep. Device
+# backends override this to stage the prefiltered B-spline coefficients on the
+# device once per `run_piv` call (per pair in the ensemble driver) and to hold
+# device-resident warp output buffers, so the per-sweep deformation does no
+# host<->device image traffic at all — the correlation engines detect the
+# device-resident warped images and skip their own staging. The CPU path needs
+# no context; `nothing` keeps the host warp buffers in play.
+_deform_context(::_AbstractHammerheadBackend, workspace, itpA, itpB,
+                imgsize::Dims{2}, ::Type) = nothing
 
 # Shared validation + replacement tail of a pass (single-pair or ensemble).
 # `alternatives` optionally carries the secondary/tertiary peak displacements
@@ -557,7 +594,8 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   mask_threshold::Real = 0.5,
                   warp_buffers = nothing,
                   backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
-                  workspace::Union{Nothing,PIVWorkspace} = nothing)
+                  workspace::Union{Nothing,PIVWorkspace} = nothing,
+                  deform_context = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
@@ -620,7 +658,8 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     for it in 1:maxiter
         warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
-                                             warpA = bufA, warpB = bufB)
+                                             warpA = bufA, warpB = bufB,
+                                             ctx = deform_context)
         if it > 1
             fill!(residual_u, zero(T))
             fill!(residual_v, zero(T))
