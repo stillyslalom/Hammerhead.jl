@@ -51,6 +51,7 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
 - **How-to guides** — recipes for specific jobs:
   [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
   [effort selection](howto/effort.md),
+  [GPU execution](howto/gpu.md),
   [validation tuning](howto/validation.md),
   [ensemble correlation](howto/ensemble.md),
   [batch processing](howto/batch.md), and

@@ -1,6 +1,7 @@
 module Hammerhead
 
 using FFTW
+using KernelAbstractions
 using LinearAlgebra
 using Interpolations
 using LsqFit: curve_fit
@@ -51,6 +52,7 @@ include("dewarp.jl")
 include("quality.jl")
 include("masking.jl")
 include("pipeline.jl")
+include("ka_backend.jl")
 include("particles.jl")
 include("ptv.jl")
 include("tracking.jl")

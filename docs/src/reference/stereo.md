@@ -9,7 +9,9 @@ dot-grid target detection, image dewarping onto a common world plane,
 three-component reconstruction, and disparity self-calibration. The
 [stereo tutorial](../tutorials/stereo.md) walks the whole chain;
 [Stereo geometry and self-calibration](../explanation/stereo.md) explains
-the method.
+the method. [`run_piv_stereo`](@ref) can forward a GPU backend to its two
+per-camera PIV calls; see [Run PIV on a GPU](../howto/gpu.md) for the CPU/GPU
+boundary.
 
 ```@index
 Pages = ["stereo.md"]

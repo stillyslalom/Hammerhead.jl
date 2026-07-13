@@ -116,6 +116,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
   the deform buffers, and a per-window-config correlator pool across `run_piv`
   calls — bitwise-identical; the sequence/ensemble drivers hold one)
+- `ka_backend.jl` — portable KernelAbstractions correlation/analysis kernels
+  + the built-in `backend = :ka` engine that runs them on the KA CPU backend
+  (details and GPU kernel conventions under the GPU-extension bullet below)
 - `particles.jl` — `Particles` (struct-of-arrays) + `detect_particles`
   (local-maxima + 3-point log-Gaussian fits) and the shared uniform-cell
   neighbor list (`build_cell_list`/`within_radius!`/`knn`) used by dedupe,
@@ -163,6 +166,90 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `PhysicalScale(pixel_size::Length, dt::Time)` constructor (ustrip + unit
   labels; no core stub needed — it's a constructor method, not a
   stub-shadowing function)
+- `ext/HammerheadAMDGPUExt.jl` (`backend = :amdgpu`, trigger AMDGPU, adds
+  rocFFT) + `ext/HammerheadCUDAExt.jl` (`backend = :cuda`, trigger CUDA, adds
+  cuFFT; compat "5, 6" — the 6.0 subpackage split keeps the `using CUDA`
+  surface) — batched device correlation engines sharing the portable
+  kernels in `src/ka_backend.jl` (gather, cross-power,
+  shift/gain, and the full `analyze_plane!` port: peak finding, gauss3/gauss9
+  subpixel, ratio, moment, alt peaks — only packed per-window scalars return
+  to the host). KernelAbstractions and AbstractFFTs are core hard deps
+  (AbstractFFTs was already in the graph via FFTW), so a GPU backend needs
+  only its device package loaded, and `backend = :ka` — those kernels on the
+  KA CPU backend, the hardware-free proving tier — is built into the core
+  (`_KABackend`/`_KACorrelationEngine` live in `src/ka_backend.jl` too; no
+  ext needed). The exts import the kernels from Hammerhead and `using` the
+  core's strong deps directly (works on 1.10 — verified). `test/test_ka.jl`
+  guards the kernels; on this box `:ka` matches `:cpu` bitwise for
+  non-deforming passes, and to ~1e-12 once a pass deforms — Phase 3 moved
+  deformation into the portable `_ka_deform!` kernel (prefilter stays on the
+  CPU; the kernel does bilinear predictor eval + cubic B-spline resampling
+  from the padded coefficients, verified against Interpolations.jl to ~9e-16;
+  seam: `apply_predictor(backend, …; ctx)` with a CPU-delegating default).
+  Phase 3b made device deformation zero-copy per sweep: `_deform_context`
+  stages the prefiltered padded coefficients once per `run_piv` call (per
+  pair in ensemble) into a portable `_KADeformContext` — built with generic
+  `KernelAbstractions.allocate` and pooled in the workspace's engine dict, so
+  `:ka` proves the exact code path the device exts run — whose warp output
+  buffers stay device-resident; per-sweep traffic is only the coarse
+  predictor grid, and the engines' `_stage_pair!` consumes device-resident
+  warped images in place (host images still upload for non-deforming passes).
+  Scope: `:cross` + `:gauss3`/`:gauss9` only;
+  phase/gauss2d/UQ/keep_planes are rejected with a clear error
+  (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its
+  per-camera `run_piv` calls (dewarp + 3C reconstruction stay CPU), and
+  `run_piv_ensemble` runs on all KA-family backends: the summed planes live in
+  a device-resident plane-major accumulator (`_KAPlaneAccumulator`, odd
+  trailing dim against channel conflicts; `_ka_shiftgain_accum!` adds each
+  pair's planes in place, `ensemble_analyze!` returns only packed per-window
+  scalars), via the engine-dispatched hooks `_plane_accumulator` /
+  `accumulate_planes!` / `ensemble_analyze!`. Phase 4b runs the Wieneke UQ
+  statistics kernel in Float64 on all KA-family backends: fused single-pair
+  and final post-iteration sweeps return packed scalars only, while ensemble
+  statistics remain device-resident and additive across pairs. Phase 4c cut
+  the UQ recompute: `_ka_uq_stats!` originally re-derived the smoothed ΔC
+  stencil (12 array reads/pixel) scratch-free, twice per pixel for each of the
+  40 covariance offsets — profiling (`bench/gpu_profile_uq.jl`, RTX 2000 Ada)
+  put it at 44–62% of a UQ multipass run's device time (half the wall-clock),
+  the top opportunity by far (correlation FFTs run every pass but are only
+  ~4–8% each; UQ is final-pass-only). `_ka_uq_fill!` now materializes the
+  smoothed field once per (component, window) into a batch-major device scratch
+  buffer `uqdcs[k, comp, r, c]` (window index leading for coalesced wavefront
+  reads, like `Rt`; +1 leading-dim pad) in plane precision T — so the Float64
+  read-back is bitwise-identical to the recompute — and fuses in the window
+  mean; the stats kernel reads the cache. Result: the stats kernel dropped
+  ~5–8×, the whole UQ-multipass pipeline ~2× (e.g. Float64 2048² 1.50 s →
+  0.74 s device time), `:ka`↔`:cpu` still ~3e-15 and ensemble bitwise, all on
+  hardware. Phase 5 flipped the plane batch to *plane-major* `Rt[i, j, k]`
+  (window index trailing, +1 trailing pad) and made `_ka_analyze!`
+  *cooperative*: one workgroup of `_KA_TPW` (=128) threads per window, the
+  threads splitting the K sequential exclusion argmax scans (the kernel's whole
+  cost — subpixel/ratio/moment already read only a 3×3 via the cached peak).
+  Only portable cooperative shape the KA CPU backend runs: each thread writes
+  its (best, column-major-order) partial to `@localmem`, ONE `@synchronize`,
+  thread 1 reduces + applies the exclusion/positivity break + records the peak,
+  then does the serial subpixel/moment/alt-peaks (`bench/analyze_ka_coop.jl` is
+  the proving prototype — ordinary locals don't survive a barrier on the CPU
+  backend, so all cross-barrier state must be `@localmem`). Plane-major (not
+  batch-major) because a block's threads now stride *within* one plane, so
+  contiguous plane pixels coalesce; batch-major regressed at high window counts.
+  Launch is `ndrange = _KA_TPW * nreal`, groupsize `_KA_TPW`, kernel takes
+  `Val{TPW}`. On the RTX 2000 Ada `_ka_analyze!` dropped from ~26% → ~8% of a
+  Float32 2048² non-UQ multipass trace, and it's no longer the top kernel; all
+  paths still match `:cpu` to ~1e-15 / ensemble bitwise. GPU kernel
+  conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
+  no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
+  compile to malloc hostcalls (use `% Int32` wrapping stores and
+  `unsafe_trunc` after guards); the cooperative analyze needs the plane-major
+  `Rt[i, j, k]` layout so a block's within-plane strided reads coalesce; the
+  `Rt` trailing (window) dimension is padded +1 because a power-of-two
+  plane-to-plane byte stride funnels writes into one memory channel; GPU FFT
+  in-place plans apply via `p * x` (neither rocFFT nor
+  cuFFT implements FFTW's 3-arg `mul!`). `:amdgpu` is hardware-validated +
+  benched (`bench/gpu_validate.jl` / `bench/gpu_benchmarks.jl`; ROCm 6.4
+  required for RDNA2 on Windows — 7.1 dropped it); `:cuda` is also
+  hardware-validated (RTX 2000 Ada, CUDA.jl 6.2, driver CUDA 12.8: all paths
+  match `:cpu` to ~1e-15 (Float64), 1.4–2.3× threaded-CPU speed)
 
 ## HammerheadGUI (HammerheadGUI/)
 

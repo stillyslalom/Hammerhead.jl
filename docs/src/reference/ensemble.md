@@ -6,7 +6,9 @@ CurrentModule = Hammerhead
 
 Ensemble (sum-of-correlation) PIV for low-SNR recordings, time-series
 statistics over result sequences, temporal validation, accuracy diagnostics,
-and spectra. See the [ensemble how-to](../howto/ensemble.md).
+and spectra. See the [ensemble how-to](../howto/ensemble.md). GPU backends
+keep summed planes and uncertainty statistics device-resident; setup and
+memory sizing are covered in [Run PIV on a GPU](../howto/gpu.md).
 
 ```@index
 Pages = ["ensemble.md"]

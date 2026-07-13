@@ -122,8 +122,10 @@ analyzed. `scale` attaches a [`PhysicalScale`](@ref) to the stereo result
 (not to the per-camera results): set `dt` and the unit labels only, leaving
 `pixel_size = 1` — the stereo fields are already in world units, so
 [`physical`](@ref) only needs to divide by the frame interval. Remaining
-keyword arguments (`threaded`, `predictor_smoothing`, `mask_threshold`) are
-forwarded to [`run_piv`](@ref).
+keyword arguments (`threaded`, `predictor_smoothing`, `backend`,
+`mask_threshold`) are forwarded to [`run_piv`](@ref). A GPU backend accelerates
+the two per-camera PIV analyses; dewarping and reconstruction remain on the
+CPU (see [Run PIV on a GPU](@ref)).
 
 Both cameras are analyzed with the same parameters and mask, so their vector
 grids, masks, and (via the union) outlier maps are directly compatible; the
@@ -134,11 +136,16 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         dw1::ImageDewarper, dw2::ImageDewarper,
                         params::Union{PIVParameters,AbstractVector{PIVParameters}};
                         effort::Union{Nothing,Symbol} = nothing,
+                        backend::Symbol = :cpu,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         scale::Union{Nothing,PhysicalScale} = nothing,
                         kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    # Check the backend's option scope before the (relatively expensive)
+    # dewarps; the per-camera run_piv calls would reject it later anyway.
+    _check_backend_params(_resolve_backend(backend),
+                          params isa PIVParameters ? [params] : params)
     dw1.grid == dw2.grid ||
         throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
                             "got $(dw1.grid) and $(dw2.grid)"))
@@ -156,10 +163,10 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     b = Matrix{T}(undef, size(grid))
     dewarp!(a, dw1, A1)
     dewarp!(b, dw1, B1)
-    r1 = run_piv(a, b, params; mask = node_mask, kwargs...)
+    r1 = run_piv(a, b, params; backend, mask = node_mask, kwargs...)
     dewarp!(a, dw2, A2)
     dewarp!(b, dw2, B2)
-    r2 = run_piv(a, b, params; mask = node_mask, kwargs...)
+    r2 = run_piv(a, b, params; backend, mask = node_mask, kwargs...)
     result = reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, grid)
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -168,17 +175,20 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
                         dw1::ImageDewarper, dw2::ImageDewarper;
                         effort::Union{Nothing,Symbol} = nothing,
+                        backend::Symbol = :cpu,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         kwargs...)
     if effort === nothing
-        return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, PIVParameters(); mask, kwargs...)
+        return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, PIVParameters();
+                              backend, mask, kwargs...)
     end
     dw1.grid == dw2.grid ||
         throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
                             "got $(dw1.grid) and $(dw2.grid)"))
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
-    return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes; mask, driver_kwargs...)
+    return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes;
+                          backend, mask, driver_kwargs...)
 end
 
 # Combine two per-camera 2C results (on the same dewarped grid) into the 3C

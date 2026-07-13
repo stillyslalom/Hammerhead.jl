@@ -26,6 +26,30 @@ julia --project=. bench/run_benchmarks.jl > new.log
 Treat >20 % changes in the minima as signal; smaller differences are usually
 noise.
 
+## GPU backends
+
+`bench/gpu_validate.jl` checks a device backend against the CPU reference
+(single-pass, multipass, masked, ensemble, and uncertainty paths) and
+`bench/gpu_benchmarks.jl` times it (see
+the headers for the required environment; both take the backend selector as
+ARGS[1]). On the dev box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the
+`:amdgpu` backend matches `:cpu` to ~7e-15 (Float64) and runs a
+padded+apodized 32/16 single pass at 1.3–2.4× the threaded CPU speed
+(1024²–2048², Float64/Float32). The `:cuda` backend is likewise validated on
+an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): every path matches `:cpu` to
+~1e-15 (Float64) and runs 1.7–2.8× the threaded CPU speed (1024²–2048²,
+Float64/Float32; multipass-deformation included).
+
+`bench/gpu_profile_uq.jl <backend>` (CUDA only — it uses `CUDA.@profile`)
+prints the per-kernel device-time breakdown of a UQ-enabled multipass run.
+This is how the Phase 4c UQ optimization was scoped and verified: on the RTX
+2000 Ada the smoothed-ΔC recompute (`_ka_uq_stats!`) was 44–62% of device
+time; caching the field in `_ka_uq_fill!` cut that kernel ~5–8× and halved the
+whole UQ pipeline's device time, with `:ka`↔`:cpu` UQ still matching to ~3e-15.
+
+The user-facing setup, support matrix, memory sizing, and troubleshooting
+guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
+
 ## Allocation/GC profiling
 
 For batch memory work, profile the real Case E sequence workload with:

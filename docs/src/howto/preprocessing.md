@@ -57,6 +57,11 @@ preprocessors are safe there. If you pass in-memory matrices, they are
 handed to `preprocess` as-is — use the allocating forms in that case to
 leave your arrays untouched.
 
+Preprocessing currently runs on the CPU even when a PIV driver uses a GPU
+backend. The processed pair is uploaded afterward; keep mutating chains
+allocation-light and reuse batch-driver workspaces as described in
+[Run PIV on a GPU](gpu.md).
+
 ## Check the effect before committing
 
 Preprocessing that helps correlation can also destroy information (an

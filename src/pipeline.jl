@@ -3,8 +3,10 @@
 
 Reusable scratch for [`run_piv`](@ref): the padded cubic-B-spline coefficient
 buffers of the two image interpolants, the two image-deformation output
-buffers, and a pool of window correlators (cached FFTW plans) keyed by window
-configuration. Build one with [`piv_workspace`](@ref) and pass it as the
+buffers, and a pool of window correlators (cached FFTW plans) — or, on the
+KA-family backends, of correlation engines with their batch buffers and FFT
+plans — keyed by window configuration. Build one with [`piv_workspace`](@ref)
+and pass it as the
 `workspace` keyword to reuse this scratch across many `run_piv` calls on
 **equally sized** image pairs — [`run_piv_sequence`](@ref) and
 [`run_piv_ensemble`](@ref) do this internally so a whole batch pays the
@@ -17,6 +19,7 @@ pair loop, so `run_piv`'s own internal threading (which only reads the
 interpolant coefficients and writes disjoint buffer regions) stays race-free.
 """
 mutable struct PIVWorkspace
+    _backend::_AbstractHammerheadBackend
     imgsize::Union{Nothing,Dims{2}}
     T::Union{Nothing,DataType}
     itpA_coefs::Any                          # padded coefficient buffer, image A
@@ -24,19 +27,24 @@ mutable struct PIVWorkspace
     warpA::Any                               # deformation output buffer, image A
     warpB::Any                               # deformation output buffer, image B
     correlators::Dict{Any,Vector{Correlator}}
+    engines::Dict{Any,Vector{Any}}           # non-CPU engine pool (buffers + FFT plans)
 end
 
 """
-    piv_workspace() -> PIVWorkspace
+    piv_workspace(; backend = :cpu) -> PIVWorkspace
 
 Construct an empty [`PIVWorkspace`](@ref). Its buffers allocate lazily on the
 first [`run_piv`](@ref) call and are reused (and resized on demand) thereafter
 — pass one via the `workspace` keyword when running many equally sized pairs
 yourself, to amortize the per-pair interpolant/deformation/correlator
-allocations across the batch.
+allocations across the batch. `backend = :cpu` selects the execution backend;
+the core package provides the CPU backend, and package extensions add device
+selectors (see the internals reference).
 """
-piv_workspace() = PIVWorkspace(nothing, nothing, nothing, nothing, nothing, nothing,
-                               Dict{Any,Vector{Correlator}}())
+piv_workspace(; backend::Symbol = :cpu) =
+    PIVWorkspace(_resolve_backend(backend), nothing, nothing, nothing, nothing,
+                 nothing, nothing, Dict{Any,Vector{Correlator}}(),
+                 Dict{Any,Vector{Any}}())
 
 # Point the workspace at this call's image size/precision, discarding buffers
 # from a differently shaped prior run. Deformation output buffers are ensured
@@ -51,6 +59,7 @@ function ws_prepare!(ws::PIVWorkspace, imgsize::Dims{2}, ::Type{T}) where {T}
         ws.warpA = nothing
         ws.warpB = nothing
         empty!(ws.correlators)
+        empty!(ws.engines)
     end
     return ws
 end
@@ -90,6 +99,37 @@ function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::I
     end
     return pool
 end
+
+# Engine pool for the non-CPU backends, mirroring `piv_correlators`: engines
+# own their (device) buffers and FFT plans, so drawing them from a
+# per-window-configuration pool amortizes those allocations across a batch.
+# The pool grows only serially, before any fan-out, and each chunk uses a
+# distinct entry. Engines are pure scratch — every buffer is rewritten before
+# it is read on each call — so reuse leaves results identical.
+function pooled_engines(make, workspace, key, nchunks::Int)
+    workspace === nothing && return [make() for _ in 1:nchunks]
+    pool = get!(() -> Any[], workspace.engines, key)
+    while length(pool) < nchunks
+        push!(pool, make())
+    end
+    return pool[1:nchunks]
+end
+
+# Build this pass's per-chunk correlation engines for the selected backend. The
+# CPU backend wraps pooled FFTW correlators (plans reused across pairs via the
+# workspace); other backends (loaded from an extension) add their own method
+# and own their device engine/buffer lifecycle.
+piv_correlation_engines(::_CPUBackend, workspace, params::PIVParameters,
+                        ::Type{T}, nchunks::Int) where {T} =
+    [_make_correlation_engine(c) for c in piv_correlators(workspace, params, T, nchunks)]
+
+# A backend that resolves but supplies no correlation engine (e.g. its
+# extension is not loaded) fails here with a clear message rather than a raw
+# MethodError deeper in the pass.
+piv_correlation_engines(backend::_AbstractHammerheadBackend, workspace,
+                        params::PIVParameters, ::Type{T}, nchunks::Int) where {T} =
+    throw(ArgumentError("backend $(typeof(backend)) does not implement PIV " *
+                        "correlation; load the extension package that provides it"))
 
 const EFFORT_LEVELS = (:low, :medium, :high)
 const EFFORT_FINAL_ONLY = (:uncertainty, :max_iterations, :keep_correlation_planes)
@@ -165,6 +205,7 @@ end
     run_piv(imgA, imgB, passes::AbstractVector{PIVParameters};
             threaded = Threads.nthreads() > 1,
             predictor_smoothing = true,
+            backend = :cpu,
             mask = nothing, mask_threshold = 0.5,
             workspace = nothing, scale = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
@@ -240,6 +281,14 @@ Windows below the threshold are correlated over their valid pixels only.
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
 
+`backend = :cpu` selects the execution backend. The core package provides
+`:cpu` (FFTW) and `:ka` (the same portable KernelAbstractions kernels the GPU
+backends run, on the CPU); package extensions add the device selectors
+`:amdgpu` (ROCm, loaded with `using AMDGPU`) and `:cuda` (NVIDIA, loaded with
+`using CUDA`) — see [Run PIV on a GPU](@ref) for installation, supported
+features, memory sizing, and validation. Backend
+implementation types are internal.
+
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch
 is reused across calls — pass the same one to every `run_piv` in a hand-written
@@ -263,6 +312,7 @@ Returns the [`PIVResult`](@ref) of the final pass.
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  passes::AbstractVector{PIVParameters};
                  effort::Union{Nothing,Symbol} = nothing,
+                 backend::Symbol = :cpu,
                  threaded::Bool = Threads.nthreads() > 1,
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
@@ -271,6 +321,12 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    be = _resolve_backend(backend)
+    workspace === nothing || typeof(workspace._backend) === typeof(be) ||
+        throw(ArgumentError("workspace backend $(typeof(workspace._backend)) does not " *
+                            "match run backend $(typeof(be)); build the workspace with " *
+                            "the same `backend`"))
+    _check_backend_params(be, passes)
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
@@ -290,20 +346,30 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     if !deforms
         itpA = itpB = nothing
         warp_buffers = nothing
+        dctx = nothing
     elseif workspace === nothing
         itpA = image_interpolant(imgA, T)
         itpB = image_interpolant(imgB, T)
+        # A backend with a deform context keeps the warped images resident on
+        # its device, so the host warp buffers are only needed without one.
+        dctx = _deform_context(be, nothing, itpA, itpB, size(imgA), T)
         # The deformed image pair is the same size every pass, and each pass
         # fully overwrites it before use, so allocate the buffers once here.
-        warp_buffers = (Matrix{T}(undef, size(imgA)), Matrix{T}(undef, size(imgB)))
+        warp_buffers = dctx === nothing ?
+            (Matrix{T}(undef, size(imgA)), Matrix{T}(undef, size(imgB))) : nothing
     else
         # Reuse the workspace's padded coefficient buffers across pairs (each is
         # refilled and prefiltered in place), stashing any freshly allocated one.
         itpA, workspace.itpA_coefs = image_interpolant!(workspace.itpA_coefs, imgA, T)
         itpB, workspace.itpB_coefs = image_interpolant!(workspace.itpB_coefs, imgB, T)
-        workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, size(imgA)))
-        workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, size(imgB)))
-        warp_buffers = (workspace.warpA, workspace.warpB)
+        dctx = _deform_context(be, workspace, itpA, itpB, size(imgA), T)
+        if dctx === nothing
+            workspace.warpA === nothing && (workspace.warpA = Matrix{T}(undef, size(imgA)))
+            workspace.warpB === nothing && (workspace.warpB = Matrix{T}(undef, size(imgB)))
+            warp_buffers = (workspace.warpA, workspace.warpB)
+        else
+            warp_buffers = nothing
+        end
     end
 
     result = nothing
@@ -315,7 +381,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
         result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
                           threaded, force_replace = k < length(passes),
                           predictor_smoothing, mask, mask_threshold,
-                          warp_buffers, workspace)
+                          warp_buffers, backend = be, workspace,
+                          deform_context = dctx)
     end
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -422,6 +489,20 @@ function pass_grid(::Type{T}, imgsize::Dims{2}, params::PIVParameters,
     return (; x, y, grid_mask, jobs)
 end
 
+# Predictor displacement evaluated at the pass-grid nodes: the same
+# Gridded(Linear())/Flat() evaluation the CPU deformation interpolates the
+# images with, run on the host — the vector grid is tiny next to the images,
+# so every backend shares this bit (vector attribution is backend-independent).
+function predictor_node_values(predictor, x::AbstractVector, y::AbstractVector,
+                               ::Type{T}) where {T}
+    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
+                                    Gridded(Linear())), Flat())
+    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
+                                    Gridded(Linear())), Flat())
+    return T[itp_u(yi, xj) for yi in y, xj in x],
+           T[itp_v(yi, xj) for yi in y, xj in x]
+end
+
 # Deform the image pair symmetrically by the predictor and evaluate the
 # predictor displacement on the pass grid. `itpA`/`itpB` are the prebuilt cubic
 # B-spline image interpolants (unused, hence permitted `nothing`, when there is
@@ -443,6 +524,26 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
     v = T[itp_v(yi, xj) for yi in y, xj in x]
     return warpA, warpB, u, v
 end
+
+# Backend-dispatched deformation seam: the default is the CPU cubic-B-spline
+# path above (dropping the deform context, which the CPU path never needs);
+# KA-family backends override this to evaluate the same interpolation model in
+# a portable kernel (see `_ka_deform!`).
+apply_predictor(::_AbstractHammerheadBackend, imgA::AbstractMatrix, imgB::AbstractMatrix,
+                itpA, itpB, predictor, x::AbstractVector, y::AbstractVector,
+                ::Type{T}; ctx = nothing, kwargs...) where {T} =
+    apply_predictor(imgA, imgB, itpA, itpB, predictor, x, y, T; kwargs...)
+
+# Per-call deformation context, created right after the image interpolants and
+# threaded through `piv_pass` into every `apply_predictor` sweep. Device
+# backends override this to stage the prefiltered B-spline coefficients on the
+# device once per `run_piv` call (per pair in the ensemble driver) and to hold
+# device-resident warp output buffers, so the per-sweep deformation does no
+# host<->device image traffic at all — the correlation engines detect the
+# device-resident warped images and skip their own staging. The CPU path needs
+# no context; `nothing` keeps the host warp buffers in play.
+_deform_context(::_AbstractHammerheadBackend, workspace, itpA, itpB,
+                imgsize::Dims{2}, ::Type) = nothing
 
 # Shared validation + replacement tail of a pass (single-pair or ensemble).
 # `alternatives` optionally carries the secondary/tertiary peak displacements
@@ -493,7 +594,9 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                   mask_threshold::Real = 0.5,
                   warp_buffers = nothing,
-                  workspace::Union{Nothing,PIVWorkspace} = nothing)
+                  backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
+                  workspace::Union{Nothing,PIVWorkspace} = nothing,
+                  deform_context = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
@@ -531,10 +634,15 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     planes = params.keep_correlation_planes ?
              fill!(Matrix{Union{Nothing,Matrix{T}}}(undef, ny, nx), nothing) : nothing
 
-    nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
-    # One correlator per chunk (pooled and reused across pairs when a workspace
-    # is supplied); each chunk uses a distinct entry, so the fan-out is safe.
-    correlators = piv_correlators(workspace, params, T, nchunks)
+    # Host-thread chunk count, subject to the backend's own policy: the CPU
+    # backend fans the window grid out across tasks, while a device backend
+    # collapses this to one logical batch (nchunks == 1) that its engine tiles
+    # internally.
+    nchunks = _engine_nchunks(backend, threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1)
+    # One correlation engine per chunk (CPU engines wrap pooled FFTW
+    # correlators when a workspace is supplied); each chunk uses a distinct
+    # entry, so the fan-out is safe.
+    engines = piv_correlation_engines(backend, workspace, params, T, nchunks)
     chunk_size = cld(length(grid.jobs), max(nchunks, 1))
 
     # Sweeps always replace flagged vectors (the next predictor must be well
@@ -549,9 +657,10 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     maxiter > 2 && params.convergence_tol > 0 && sizehint!(change_buf, ny * nx)
     local result, warpA, warpB
     for it in 1:maxiter
-        warpA, warpB, u, v = apply_predictor(imgA, imgB, itpA, itpB, predictor,
+        warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
-                                             warpA = bufA, warpB = bufB)
+                                             warpA = bufA, warpB = bufB,
+                                             ctx = deform_context)
         if it > 1
             fill!(residual_u, zero(T))
             fill!(residual_v, zero(T))
@@ -562,7 +671,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
             process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
                              alt_u, alt_v, fused_unc ? uncertainty_u : nothing,
                              fused_unc ? uncertainty_v : nothing, grid.jobs, warpA,
-                             warpB, params, correlators[1], mask, planes)
+                             warpB, params, engines[1], mask, planes)
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
@@ -570,7 +679,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                                                 fused_unc ? uncertainty_u : nothing,
                                                 fused_unc ? uncertainty_v : nothing,
                                                 chunk, warpA, warpB, params,
-                                                correlators[ci], mask, planes)
+                                                engines[ci], mask, planes)
             end
         end
         if alt_u !== nothing
@@ -615,12 +724,14 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         # windows whose correlation produced the returned field.
         if nchunks == 1
             uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
-                               warpA, warpB, params, correlators[1].apod, mask)
+                               warpA, warpB, params, _correlation_apod(engines[1]), mask,
+                               engines[1])
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
                                                   warpA, warpB, params,
-                                                  correlators[ci].apod, mask)
+                                                  _correlation_apod(engines[ci]), mask,
+                                                  engines[ci])
             end
         end
     end
@@ -693,6 +804,11 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs,
     return nothing
 end
 
+uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
+                   apod, mask, engine) =
+    uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
+                       params, apod, mask)
+
 """
     image_interpolant(img, ::Type{T}) -> extrapolation
 
@@ -759,20 +875,15 @@ function deform_columns!(warpA, warpB, itpA, itpB, itp_u, itp_v, cols, nr)
     return nothing
 end
 
-make_correlator(params::PIVParameters, ::Type{T}) where {T} =
-    params.correlation_method === :cross ?
-        CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
-        PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
-
-# The caller supplies this chunk's correlator (one per chunk), plus per-call
-# peak scratch, so chunks can run on concurrent tasks. Every (gi, gj) is written
-# by exactly one job and the per-window math doesn't depend on chunking or on
-# which correlator instance runs it, so threaded results match serial results
-# exactly.
+# The caller supplies this chunk's correlation engine (one per chunk), plus
+# per-call peak scratch, so chunks can run on concurrent tasks. Every (gi, gj)
+# is written by exactly one job and the per-window math doesn't depend on
+# chunking or on which CPU correlator instance runs it, so threaded results
+# match serial results exactly.
 function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           uncertainty_u, uncertainty_v, jobs,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
-                          correlator::Correlator,
+                          engine::_CPUCorrelationEngine,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing)
     wr, wc = params.window_size
@@ -789,7 +900,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
         # Fully clean windows take the unmasked fast path.
         submask !== nothing && !any(submask) && (submask = nothing)
-        R = correlation_plane!(correlator, subA, subB, submask)
+        R = _correlation_plane!(engine, subA, subB, submask)
         # R is an aliased internal buffer, overwritten by the next window —
         # copy before retaining it.
         planes === nothing || (planes[gi, gj] = copy(R))
@@ -810,10 +921,20 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         if uncertainty_u !== nothing
             fill!(ustats, 0.0)
             accumulate_uncertainty!(ustats, uscratch, subA, subB, submask,
-                                    correlator.apod)
+                                    _correlation_apod(engine))
             uncertainty_u[gi, gj] = finalize_uncertainty(T, view(ustats, 1, :))
             uncertainty_v[gi, gj] = finalize_uncertainty(T, view(ustats, 2, :))
         end
     end
     return nothing
 end
+
+process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
+                 uncertainty_u, uncertainty_v, jobs,
+                 imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
+                 correlator::Correlator,
+                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                 planes = nothing) =
+    process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
+                     uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
+                     _make_correlation_engine(correlator), mask, planes)

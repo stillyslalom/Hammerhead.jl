@@ -24,6 +24,13 @@ are:
 Those numbers are typical single-threaded timings on 256×256 synthetic pairs,
 not guarantees for every seeding density or flow.
 
+Effort and execution backend are independent choices. For example,
+`run_piv(imgA, imgB; effort = :high, backend = :amdgpu)` runs the same
+high-effort schedule through the AMD GPU extension, including final-pass
+Float64 uncertainty statistics. Small `:low` and `:medium` jobs often remain
+faster on the CPU because GPU setup and transfers do not amortize. See
+[Run PIV on a GPU](gpu.md) before selecting a device backend.
+
 ## Override the parts that matter
 
 When `effort` is set, `PIVParameters` keyword arguments override the preset:

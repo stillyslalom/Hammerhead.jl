@@ -113,3 +113,9 @@ The corrected dewarpers then drop into stereo processing of the recording:
 ```julia
 stereo = run_piv_stereo(A1, B1, A2, B2, dw1c, dw2c, passes)
 ```
+
+For large per-camera analyses, `backend = :amdgpu` or `:cuda` forwards GPU
+execution to both 2C PIV calls. Dewarping the four raw images and reconstructing
+the final 3C field remain CPU operations, so stereo does not yet form a fully
+device-resident pipeline. See [Run PIV on a GPU](gpu.md) for setup and the
+supported PIV option matrix.
