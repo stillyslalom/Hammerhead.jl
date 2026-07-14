@@ -22,19 +22,21 @@ using Statistics
         only2[8, 8] = 1.0
         only2[8, 9] = 0.9    # inside the exclusion box
         @test length(find_peaks(only2, 3)) == 1
-        @test length(find_peaks(only2, 3; exclusion_radius = 0)) == 3 ||
-              length(find_peaks(only2, 3; exclusion_radius = 0)) == 2
+        @test length(find_peaks(only2, 3; exclusion_radius = 0,
+                                peak_finder = :exclusion)) == 3 ||
+              length(find_peaks(only2, 3; exclusion_radius = 0,
+                                peak_finder = :exclusion)) == 2
 
         nearby = zeros(16, 16)
         nearby[8, 8] = 1.0
         nearby[8, 9] = 0.1
         nearby[8, 10] = 0.8   # distinct local maximum inside the exclusion box
-        @test length(find_peaks(nearby, 2)) == 1
-        rmax = find_peaks(nearby, 2; peak_finder = :regionalmax)
+        @test length(find_peaks(nearby, 2; peak_finder = :exclusion)) == 1
+        rmax = find_peaks(nearby, 2)
         @test length(rmax) == 2
         @test rmax[1].location == (8, 8)
         @test rmax[2].location == (8, 10)
-        @test calculate_peak_ratio(nearby, (8, 8); peak_finder = :regionalmax) ≈ 1 / 0.8
+        @test calculate_peak_ratio(nearby, (8, 8)) ≈ 1 / 0.8
         @test_throws ArgumentError find_peaks(nearby, 2; peak_finder = :watershed)
         @test_throws ArgumentError calculate_peak_ratio(nearby, (8, 8); peak_finder = :watershed)
 
@@ -49,7 +51,7 @@ using Statistics
         @test PIVParameters().n_peaks == 3
         @test PIVParameters(n_peaks = 1).n_peaks == 1
         @test_throws ArgumentError PIVParameters(n_peaks = 0)
-        @test PIVParameters(peak_finder = :regionalmax).peak_finder === :regionalmax
+        @test PIVParameters(peak_finder = :exclusion).peak_finder === :exclusion
     end
 
     @testset "peak substitution end-to-end" begin

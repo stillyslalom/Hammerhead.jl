@@ -397,38 +397,6 @@ end
     return true
 end
 
-# `find_peaks_regionalmax!` port. Serial per-window (runs on thread 1).
-@inline function _pk_find_regionalmax!(vals, locs, Rt, k, K, nr, nc)
-    nfound = 0
-    @inbounds for j in 1:nc, i in 1:nr
-        _pk_localmax(Rt, k, i, j, nr, nc) || continue
-        val = Rt[i, j, k]
-        (nfound < K || val > vals[nfound, k]) || continue
-
-        pos = nfound
-        while pos >= 1 && val > vals[pos, k]
-            pos -= 1
-        end
-        ins = pos + 1
-        ins <= K || continue
-        nfound < K && (nfound += 1)
-        for m in nfound:-1:(ins + 1)
-            vals[m, k] = vals[m - 1, k]
-            locs[1, m, k] = locs[1, m - 1, k]
-            locs[2, m, k] = locs[2, m - 1, k]
-        end
-        vals[ins, k] = val
-        locs[1, ins, k] = i % Int32   # wrapping store, see _pk_find_exclusion!
-        locs[2, ins, k] = j % Int32
-    end
-    nfound == 0 && return 0
-    found = 1
-    @inbounds while found < nfound && vals[found + 1, k] > 0
-        found += 1
-    end
-    return found
-end
-
 # `subpixel_gauss3` port.
 @inline function _pk_gauss3(Rt, k, i, j, nr, nc)
     T = eltype(Rt)
@@ -522,22 +490,19 @@ end
 # `vals` (K, batch) and `locs` (2, K, batch) are per-window device scratch,
 # indexed by the group's window `k`, so only thread 1 writes each slice.
 #
-# The default exclusion peak search is the cost — K sequential full-plane
-# argmax scans (11% of a UQ-multipass run's device time; higher without UQ).
-# It is parallelized here: each thread strided-scans a share of the plane and
-# writes its (best value, column-major order) partial to `@localmem`; ONE
-# `@synchronize`; thread 1 reduces the TPW partials, applies the CPU exclusion/
-# positivity break, and records the peak into the shared `vals`/`locs` slice so
-# the next peak's scan can exclude it. This single-barrier structure is the only
-# cooperative shape the KA CPU backend runs (ordinary locals do not survive a
-# barrier — see bench/analyze_ka_coop.jl), so `:ka` still proves the exact code
-# path the device backends execute. Tie-break `>` OR (`==` AND smaller order)
-# reproduces the CPU scan's first-wins. Subpixel/ratio/moment/alt-peaks then run
-# serially on thread 1 (they already read only a 3×3 via the cached peak
-# location — no rescan to parallelize). The non-default `:regionalmax` finder
-# stays serial on thread 1; `use_regionalmax` is a uniform kernel argument, so
-# every thread of every group takes the same branch and executes the same
-# barrier count.
+# Both peak finders perform K sequential full-plane selections. Each thread
+# strided-scans a share of the plane and writes its (best value, column-major
+# order) partial to `@localmem`; thread 1 reduces the TPW partials and records
+# the peak into the shared `vals`/`locs` slice for the next selection. The
+# exclusion path rejects points inside fixed boxes around earlier peaks; the
+# regional-max path tests the shared 8-neighbor predicate and rejects only the
+# exact maxima already selected. Repeated selection is equivalent to the CPU
+# regional-max insertion list, including first-wins ordering for equal-valued
+# distinct maxima. The barriers also make `:ka` prove the exact code path the
+# device backends execute (ordinary locals do not survive a barrier on the KA
+# CPU backend; see bench/analyze_ka_coop.jl). Subpixel/ratio/moment/alt-peaks
+# then run serially on thread 1 because they read only a 3×3 neighborhood via
+# the cached peak location.
 @kernel function _ka_analyze!(out, vals, locs, @Const(Rt), use_regionalmax,
                               use_gauss9, npeaks, nr, nc, ::Val{TPW}) where {TPW}
     @uniform T = eltype(Rt)
@@ -550,8 +515,64 @@ end
     nf = @localmem Int (1,)
     if use_regionalmax
         @inbounds if tid == 1
-            nfound = _pk_find_regionalmax!(vals, locs, Rt, k, K, nr, nc)
-            nf[1] = nfound
+            nf[1] = 0
+        end
+        @synchronize
+        # Select the strongest K regional maxima cooperatively. A selected
+        # maximum is excluded by exact location on later scans; unlike the
+        # classic finder there is deliberately no spatial exclusion zone.
+        for _ in 1:K
+            @inbounds begin
+                best = T(-Inf)
+                bord = 0
+                fsf = nf[1]
+                p = tid
+                while p <= P
+                    i = (p - 1) % nr + 1
+                    j = (p - 1) ÷ nr + 1
+                    selected = false
+                    for q in 1:fsf
+                        if i == locs[1, q, k] && j == locs[2, q, k]
+                            selected = true
+                            break
+                        end
+                    end
+                    if !selected && _pk_localmax(Rt, k, i, j, nr, nc)
+                        v = Rt[i, j, k]
+                        if bord == 0 || v > best || (v == best && p < bord)
+                            best = v
+                            bord = p
+                        end
+                    end
+                    p += TPW
+                end
+                sval[tid] = best
+                sord[tid] = bord
+            end
+            @synchronize
+            @inbounds if tid == 1
+                bv = sval[1]
+                bo = sord[1]
+                for t in 2:TPW
+                    if bo == 0 || (sord[t] != 0 &&
+                       (sval[t] > bv || (sval[t] == bv && sord[t] < bo)))
+                        bv = sval[t]
+                        bo = sord[t]
+                    end
+                end
+                fsf = nf[1]
+                # The primary may be non-positive on a degenerate plane, but
+                # secondaries must be positive, exactly like the CPU finder.
+                if bo != 0 && !(fsf > 0 && bv <= 0)
+                    ii = (bo - 1) % nr + 1
+                    jj = (bo - 1) ÷ nr + 1
+                    vals[fsf + 1, k] = bv
+                    locs[1, fsf + 1, k] = ii % Int32
+                    locs[2, fsf + 1, k] = jj % Int32
+                    nf[1] = fsf + 1
+                end
+            end
+            @synchronize
         end
     else
         @inbounds if tid == 1

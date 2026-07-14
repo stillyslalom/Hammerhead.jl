@@ -47,8 +47,11 @@ end
     @test_throws ArgumentError PIVParameters(correlation_method = :fancy)
     @test_throws ArgumentError PIVParameters(apodization = :hann)
     @test_throws ArgumentError PIVParameters(subpixel_method = :spline)
-    @test PIVParameters().peak_finder === :exclusion
-    @test PIVParameters(peak_finder = :regionalmax).peak_finder === :regionalmax
+    @test PIVParameters().peak_finder === :regionalmax
+    @test PIVParameters(peak_finder = :exclusion).peak_finder === :exclusion
+    @test !occursin("peak_finder", sprint(show, PIVParameters()))
+    @test occursin("peak_finder=:exclusion",
+                   sprint(show, PIVParameters(peak_finder = :exclusion)))
     @test_throws ArgumentError PIVParameters(peak_finder = :watershed)
     @test_throws ArgumentError PIVParameters(uod_threshold = 0)
     @test_throws ArgumentError PIVParameters(uod_neighborhood = 0)
@@ -497,7 +500,8 @@ end
     R[16, 16] = 1.0
     R[8, 24] = 0.25
     @test calculate_peak_ratio(R, (16, 16)) ≈ 4.0
-    @test calculate_peak_ratio(R, (16, 16); exclusion_radius = 10) == Inf
+    @test calculate_peak_ratio(R, (16, 16); exclusion_radius = 10,
+                               peak_finder = :exclusion) == Inf
     @test_throws ArgumentError calculate_peak_ratio(R, (0, 0))
 
     # A wider Gaussian peak has a larger moment than a narrow one.
