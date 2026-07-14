@@ -12,9 +12,6 @@
 # stay CPU-first (or land in a later phase).
 function _ka_scope_check(passes, name::Symbol, fp64::Bool = true)
     for p in passes
-        p.correlation_method === :cross ||
-            throw(ArgumentError("backend :$name supports correlation_method = :cross only " *
-                                "(got :$(p.correlation_method)); use backend = :cpu"))
         p.subpixel_method in (:gauss3, :gauss9) ||
             throw(ArgumentError("backend :$name supports subpixel_method :gauss3 or :gauss9 " *
                                 "only (got :$(p.subpixel_method)); use backend = :cpu"))
@@ -190,6 +187,21 @@ end
 @kernel function _ka_crosspower!(CA, @Const(CB))
     I = @index(Global)
     @inbounds CA[I] = conj(CA[I]) * CB[I]
+end
+
+# Filtered phase correlation: normalize the cross-power spectrum while
+# retaining the Gaussian low-pass used by `PhaseCorrelator`.  `W` contains one
+# FFT plane in column-major order, so the same weights repeat for every window
+# in the batched third dimension.  Adding eps(T), rather than dividing by the
+# bare magnitude, keeps zero-energy bins finite and exactly mirrors the CPU
+# reference implementation.
+@kernel function _ka_phasepower!(CA, @Const(CB), @Const(W), nfreq)
+    I = @index(Global)
+    @inbounds begin
+        s = conj(CA[I]) * CB[I]
+        T = typeof(real(s))
+        CA[I] = W[mod1(I, nfreq)] * s / (abs(s) + eps(T))
+    end
 end
 
 # fftshift + magnitude (+ overlap gain when padded) into the real plane batch.
@@ -716,6 +728,7 @@ mutable struct _KACorrelationEngine{T,KB}
     kpk::Int                        # peaks located per window, max(n_peaks, 2)
     apod::Matrix{T}
     gain::Matrix{T}                 # fftshifted overlap gain; empty if unpadded
+    phase_filter::Matrix{T}          # Gaussian FFT weights; empty for cross-correlation
     bs::Int
     CA::Array{Complex{T},3}
     CB::Array{Complex{T},3}
@@ -743,9 +756,11 @@ function _make_ka_engine(params::PIVParameters, ::Type{T}) where {T}
     fft_size = size(cpu.R)
     padded = !isempty(cpu.gain)
     gain = padded ? Matrix{T}(cpu.gain) : Matrix{T}(undef, 0, 0)
+    phase_filter = params.correlation_method === :phase ?
+        Matrix{T}(cpu.W) : Matrix{T}(undef, 0, 0)
     return _KACorrelationEngine{T,typeof(CPU())}(
         CPU(), params.window_size, fft_size, padded, max(params.n_peaks, 2),
-        apod, gain, 0,
+        apod, gain, phase_filter, 0,
         Array{Complex{T},3}(undef, 0, 0, 0), Array{Complex{T},3}(undef, 0, 0, 0),
         Array{T,3}(undef, 0, 0, 0), Vector{T}(undef, 0), Vector{T}(undef, 0),
         Matrix{Int}(undef, 0, 2),
@@ -762,8 +777,19 @@ end
 piv_correlation_engines(::_KABackend, workspace, params::PIVParameters,
                         ::Type{T}, nchunks::Int) where {T} =
     pooled_engines(() -> _make_ka_engine(params, T), workspace,
-                   (:ka, T, params.window_size, params.padding,
+                   (:ka, T, params.correlation_method, params.window_size, params.padding,
                     params.apodization, max(params.n_peaks, 2)), nchunks)
+
+function _ka_spectrum!(engine::_KACorrelationEngine, params::PIVParameters)
+    ka = engine.ka
+    if params.correlation_method === :phase
+        _ka_phasepower!(ka)(engine.CA, engine.CB, engine.phase_filter,
+                            length(engine.phase_filter); ndrange = length(engine.CA))
+    else
+        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+    end
+    return nothing
+end
 
 function _ensure_buffers!(engine::_KACorrelationEngine{T}, bs::Int) where {T}
     if engine.bs != bs
@@ -839,7 +865,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.fwd, engine.CA)
         mul!(engine.CB, engine.fwd, engine.CB)
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_spectrum!(engine, params)
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.bwd, engine.CA)
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
@@ -1037,7 +1063,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.fwd, engine.CA)
         mul!(engine.CB, engine.fwd, engine.CB)
-        _ka_crosspower!(ka)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _ka_spectrum!(engine, params)
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.bwd, engine.CA)
         # Only the nreal live slices accumulate — the tail of the last tile

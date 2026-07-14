@@ -194,8 +194,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   buffers stay device-resident; per-sweep traffic is only the coarse
   predictor grid, and the engines' `_stage_pair!` consumes device-resident
   warped images in place (host images still upload for non-deforming passes).
-  Scope: `:cross` + `:gauss3`/`:gauss9` only;
-  phase/gauss2d/UQ/keep_planes are rejected with a clear error
+  Scope: `:cross`/`:phase` + `:gauss3`/`:gauss9` only (phase uses the CPU
+  correlator's Gaussian filter and epsilon-guarded normalized cross-power);
+  gauss2d/keep_planes are rejected with a clear error
   (`_ka_scope_check`); `run_piv_stereo` forwards the backend to its
   per-camera `run_piv` calls (dewarp + 3C reconstruction stay CPU), and
   `run_piv_ensemble` runs on all KA-family backends: the summed planes live in

@@ -99,7 +99,7 @@ currently implements:
 | Feature | `:cpu` | KA-family |
 |---|:---:|:---:|
 | Cross-correlation | yes | yes |
-| Phase correlation | yes | no |
+| Phase correlation | yes | yes, filtered normalized spectrum |
 | `:gauss3` / `:gauss9` subpixel fit | yes | yes |
 | `:gauss2d` subpixel fit | yes | no |
 | Padding and Gaussian apodization | yes | yes |
@@ -111,7 +111,7 @@ currently implements:
 
 Unsupported combinations raise an `ArgumentError` before analysis rather
 than silently switching algorithms or falling back to the CPU. Use
-`backend = :cpu` when phase correlation, `:gauss2d`, or retained correlation
+`backend = :cpu` when `:gauss2d` or retained correlation
 planes are required.
 
 Stereo forwards the backend to both per-camera PIV analyses. Dewarping and

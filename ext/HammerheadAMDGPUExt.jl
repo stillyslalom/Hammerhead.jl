@@ -41,7 +41,7 @@ import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_
 
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
 import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
-    _ka_crosspower!, _ka_shiftgain!, _ka_analyze!
+    _ka_crosspower!, _ka_phasepower!, _ka_shiftgain!, _ka_analyze!
 import Hammerhead: _ka_uq_fill!, _ka_uq_stats!
 
 # Device-resident deformation (Phase 3b): the staged-context machinery is
@@ -95,6 +95,7 @@ mutable struct _AMDGPUCorrelationEngine{T}
     kpk::Int                              # peaks located per window, max(n_peaks, 2)
     apod_d::ROCArray{T,2}                 # window-sized (device)
     gain_d::ROCArray{T,2}                 # fftshifted gain (device); empty if unpadded
+    phase_filter_d::ROCArray{T,2}         # Gaussian FFT weights; empty for cross-correlation
     empty_mask::ROCArray{Bool,2}          # 0×0 dummy passed when there is no mask
     # image-sized device staging (lazily (re)sized to the run's image)
     img_size::NTuple{2,Int}
@@ -132,9 +133,11 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
     fft_size = size(cpu.R)
     padded = !isempty(cpu.gain)
     gain_d = padded ? ROCArray{T}(Matrix{T}(cpu.gain)) : AMDGPU.zeros(T, 0, 0)
+    phase_filter_d = params.correlation_method === :phase ?
+        ROCArray{T}(Matrix{T}(cpu.W)) : AMDGPU.zeros(T, 0, 0)
     return _AMDGPUCorrelationEngine{T}(
         params.window_size, fft_size, padded, max(params.n_peaks, 2),
-        apod_d, gain_d, AMDGPU.zeros(Bool, 0, 0),
+        apod_d, gain_d, phase_filter_d, AMDGPU.zeros(Bool, 0, 0),
         (0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Bool, 0, 0),
         0, AMDGPU.zeros(Complex{T}, 0, 0, 0), AMDGPU.zeros(Complex{T}, 0, 0, 0),
         AMDGPU.zeros(T, 0, 0, 0), AMDGPU.zeros(T, 0), AMDGPU.zeros(T, 0),
@@ -151,8 +154,20 @@ end
 piv_correlation_engines(::_AMDGPUBackend, workspace, params::PIVParameters,
                         ::Type{T}, nchunks::Int) where {T} =
     pooled_engines(() -> _make_amdgpu_engine(params, T), workspace,
-                   (:amdgpu, T, params.window_size, params.padding,
+                   (:amdgpu, T, params.correlation_method, params.window_size, params.padding,
                     params.apodization, max(params.n_peaks, 2)), nchunks)
+
+function _device_spectrum!(engine::_AMDGPUCorrelationEngine, params::PIVParameters, ka)
+    if params.correlation_method === :phase
+        _ka_phasepower!(ka, _WG_ELEMENTWISE)(
+            engine.CA, engine.CB, engine.phase_filter_d, length(engine.phase_filter_d);
+            ndrange = length(engine.CA))
+    else
+        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB;
+                                             ndrange = length(engine.CA))
+    end
+    return nothing
+end
 
 function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
     if engine.bs != bs
@@ -302,7 +317,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         # implement the 3-arg `mul!(x, p, x)` that FFTW does).
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _device_spectrum!(engine, params, ka)
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         _ka_shiftgain!(ka)(engine.Rt, engine.CA, gainarg, engine.padded, sr, sc, nr, nc;
@@ -455,7 +470,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         KernelAbstractions.synchronize(ka)
         engine.fwd * engine.CA
         engine.fwd * engine.CB
-        _ka_crosspower!(ka, _WG_ELEMENTWISE)(engine.CA, engine.CB; ndrange = length(engine.CA))
+        _device_spectrum!(engine, params, ka)
         KernelAbstractions.synchronize(ka)
         engine.bwd * engine.CA
         # Only the nreal live slices accumulate — the last tile's tail holds

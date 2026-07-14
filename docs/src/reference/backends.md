@@ -57,14 +57,16 @@ an abstract type with a fixed list of methods. The principal hooks are:
 
 Capability predicates such as `_supports_fft`, `_supports_batched_fft`, and
 `_supports_fp64` default to `false`; a backend must opt in. The KA-family
-scope guard currently permits cross-correlation, `:gauss3` or `:gauss9`
+scope guard currently permits cross- or filtered phase correlation,
+`:gauss3` or `:gauss9`
 subpixel estimation, and optional Float64 uncertainty statistics. It rejects
-phase correlation, `:gauss2d`, and retained correlation planes. A new backend
+`:gauss2d` and retained correlation planes. A new backend
 should fail unsupported configurations in `_check_backend_params`, rather
 than falling back to the CPU in the middle of a pass.
 
 [`PIVWorkspace`](@ref) owns a backend object and a private engine pool keyed
-by backend, precision, window configuration, and peak count. An engine owns
+by backend, precision, correlation method, window configuration, and peak
+count. An engine owns
 mutable scratch arrays and FFT plans. Consequently a workspace is
 backend-specific and must not be shared by concurrent `run_piv` calls.
 
@@ -76,7 +78,9 @@ For each device tile, `process_windows!` follows this sequence:
 2. `_ka_gather!` copies mean-subtracted, apodized interrogation windows into
    the complex FFT batches.
 3. The backend's batched forward FFT plans transform both batches.
-4. `_ka_crosspower!` forms the cross spectrum in place.
+4. `_ka_crosspower!` forms the cross spectrum in place, or
+   `_ka_phasepower!` forms an epsilon-guarded normalized spectrum with the
+   same Gaussian frequency filter as the CPU `PhaseCorrelator`.
 5. The backend's inverse FFT plan transforms the correlation batch.
 6. `_ka_shiftgain!` centers each plane and applies overlap-gain correction
    when padding is enabled.

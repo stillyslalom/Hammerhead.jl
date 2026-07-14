@@ -49,6 +49,18 @@ println("single-pass max |Δu| = ", maximum(abs.(r_gpu.u[valid] .- r_cpu.u[valid
 println("gpu median (u,v) = (", median(r_gpu.u[valid]), ", ", median(r_gpu.v[valid]),
         ")  truth = (", du, ", ", dv, ")")
 
+# Filtered phase correlation: normalized cross-power and the Gaussian spectral
+# weights both run on the device. This also exercises padded zero-energy bins.
+phaseparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                            apodization = :gauss, correlation_method = :phase)
+p_cpu = run_piv(imgA, imgB, phaseparams; threaded = false)
+p_gpu = run_piv(imgA, imgB, phaseparams; backend, threaded = false)
+pvalid = .!p_cpu.outliers .& .!p_cpu.mask
+dpu = maximum(abs.(p_gpu.u[pvalid] .- p_cpu.u[pvalid]))
+dpv = maximum(abs.(p_gpu.v[pvalid] .- p_cpu.v[pvalid]))
+println("phase max errors: u = ", dpu, "  v = ", dpv)
+@assert all(isfinite, p_gpu.u[pvalid]) && dpu < 1e-3 && dpv < 1e-3
+
 sched = Hammerhead.multipass_parameters([64, 32]; padding = true, apodization = :gauss)
 m_cpu = run_piv(imgA, imgB, sched; threaded = false)
 m_gpu = run_piv(imgA, imgB, sched; backend, threaded = false)
@@ -76,6 +88,15 @@ e_gpu = run_piv_ensemble(pairs, params; backend, progress = false, threaded = fa
 evalid = .!e_cpu.outliers .& .!e_cpu.mask
 println("ensemble max |Δu| = ", maximum(abs.(e_gpu.u[evalid] .- e_cpu.u[evalid])),
         "  max |Δv| = ", maximum(abs.(e_gpu.v[evalid] .- e_cpu.v[evalid])))
+pe_cpu = run_piv_ensemble(pairs, phaseparams; progress = false, threaded = false)
+pe_gpu = run_piv_ensemble(pairs, phaseparams; backend, progress = false,
+                          threaded = false)
+pevalid = .!pe_cpu.outliers .& .!pe_cpu.mask
+dpeu = maximum(abs.(pe_gpu.u[pevalid] .- pe_cpu.u[pevalid]))
+dpev = maximum(abs.(pe_gpu.v[pevalid] .- pe_cpu.v[pevalid]))
+println("ensemble phase max errors: u = ", dpeu, "  v = ", dpev)
+@assert dpeu < 1e-3 && dpev < 1e-3
+
 me_cpu = run_piv_ensemble(pairs, sched; progress = false, threaded = false)
 me_gpu = run_piv_ensemble(pairs, sched; backend, progress = false, threaded = false)
 mevalid = .!me_cpu.outliers .& .!me_cpu.mask

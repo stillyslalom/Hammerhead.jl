@@ -104,9 +104,39 @@
     r_ka_t = run_piv(imgA, imgB, params; backend = :ka, threaded = true)
     @test isequal(r_ka_t.u, r_ka.u) && isequal(r_ka_t.v, r_ka.v)
 
+    # Filtered phase correlation uses the same robust normalized spectrum as
+    # the CPU path, including padded FFTs and zero-energy frequency bins.
+    phaseparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                                apodization = :gauss, correlation_method = :phase)
+    phase_cpu = run_piv(imgA, imgB, phaseparams; threaded = false)
+    phase_ka = run_piv(imgA, imgB, phaseparams; backend = :ka, threaded = false)
+    phasevalid = .!phase_cpu.outliers .& .!phase_cpu.mask
+    @test maximum(abs.(phase_ka.u[phasevalid] .- phase_cpu.u[phasevalid])) < 1e-3
+    @test maximum(abs.(phase_ka.v[phasevalid] .- phase_cpu.v[phasevalid])) < 1e-3
+    @test all(isfinite, phase_ka.u[phasevalid])
+
+    # Zero-energy bins remain zero instead of producing NaN/Inf. The second
+    # batch slice confirms that the 2D filter repeats over the batched layout.
+    phase_CA = zeros(ComplexF64, 4, 6, 2)
+    phase_CB = zeros(ComplexF64, 4, 6, 2)
+    phase_W = reshape(collect(1.0:24.0), 4, 6)
+    phase_dev = Hammerhead.CPU()
+    Hammerhead._ka_phasepower!(phase_dev)(phase_CA, phase_CB, phase_W,
+        length(phase_W); ndrange = length(phase_CA))
+    Hammerhead.KernelAbstractions.synchronize(phase_dev)
+    @test all(iszero, phase_CA)
+
+    # A shared workspace must not reuse a cross engine for phase correlation.
+    phase_ws = piv_workspace(; backend = :ka)
+    cross_ws_result = run_piv(imgA, imgB, params; backend = :ka,
+                              workspace = phase_ws, threaded = false)
+    phase_ws_result = run_piv(imgA, imgB, phaseparams; backend = :ka,
+                              workspace = phase_ws, threaded = false)
+    @test isequal(cross_ws_result.u, r_ka.u)
+    @test isequal(phase_ws_result.u, phase_ka.u)
+    @test length(phase_ws.engines) == 2
+
     # Out-of-scope options report a clear error rather than silently differing.
-    @test_throws ArgumentError run_piv(imgA, imgB,
-        PIVParameters(correlation_method = :phase); backend = :ka)
     @test_throws ArgumentError run_piv(imgA, imgB,
         PIVParameters(subpixel_method = :gauss2d); backend = :ka)
     @test Hammerhead._supports_fp64(kab)
@@ -163,6 +193,17 @@
                            e_cpu.correlation_moment[evalid])) < 1e-3
         @test isapprox(median(e_ka.u[evalid]), du; atol = 0.05)
         @test isapprox(median(e_ka.v[evalid]), dv; atol = 0.05)
+
+        # Phase spectra are normalized before their planes enter the same
+        # device-resident ensemble accumulator.
+        pe_cpu = run_piv_ensemble(pairs, phaseparams; progress = false,
+                                  threaded = false)
+        pe_ka = run_piv_ensemble(pairs, phaseparams; backend = :ka,
+                                 progress = false, threaded = false)
+        pevalid = .!pe_cpu.outliers .& .!pe_cpu.mask
+        @test maximum(abs.(pe_ka.u[pevalid] .- pe_cpu.u[pevalid])) < 1e-3
+        @test maximum(abs.(pe_ka.v[pevalid] .- pe_cpu.v[pevalid])) < 1e-3
+        @test all(isfinite, pe_ka.u[pevalid])
 
         # Multi-pass ensemble: the shared-predictor deformation path plus the
         # predictor-relative alternative peaks in the device analyze/scatter.
