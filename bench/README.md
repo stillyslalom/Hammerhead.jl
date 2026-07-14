@@ -32,10 +32,14 @@ noise.
 (single-pass, multipass, masked, ensemble, and uncertainty paths) and
 `bench/gpu_benchmarks.jl` times it (see
 the headers for the required environment; both take the backend selector as
-ARGS[1]). On the dev box's RX 6800 XT (ROCm 6.4, 4 CPU threads), the
+ARGS[1]; the benchmark optionally takes `exclusion` or `regionalmax` as
+ARGS[2], defaulting to the package's `regionalmax`). On the dev box's RX 6800
+XT (ROCm 6.4, 4 CPU threads), the
 `:amdgpu` backend matches `:cpu` to ~7e-15 (Float64) and runs a
-padded+apodized 32/16 single pass at 1.3–2.4× the threaded CPU speed
-(1024²–2048², Float64/Float32). The `:cuda` backend is likewise validated on
+padded+apodized 32/16 single pass at 2.8–3.6× the threaded CPU speed with
+`:exclusion` and 1.8–3.2× with `:regionalmax` (1024²–2048²,
+Float64/Float32); regional-max multipass runs at 2.5–3.1× CPU. The `:cuda`
+backend is likewise validated on
 an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): every path matches `:cpu` to
 ~1e-15 (Float64) and runs 1.7–2.8× the threaded CPU speed (1024²–2048²,
 Float64/Float32; multipass-deformation included).

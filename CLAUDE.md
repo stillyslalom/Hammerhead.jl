@@ -223,20 +223,26 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   hardware. Phase 5 flipped the plane batch to *plane-major* `Rt[i, j, k]`
   (window index trailing, +1 trailing pad) and made `_ka_analyze!`
   *cooperative*: one workgroup of `_KA_TPW` (=128) threads per window, the
-  threads splitting the K sequential exclusion argmax scans (the kernel's whole
+  threads splitting the K sequential peak-selection scans (the kernel's whole
   cost — subpixel/ratio/moment already read only a 3×3 via the cached peak).
-  Only portable cooperative shape the KA CPU backend runs: each thread writes
-  its (best, column-major-order) partial to `@localmem`, ONE `@synchronize`,
-  thread 1 reduces + applies the exclusion/positivity break + records the peak,
-  then does the serial subpixel/moment/alt-peaks (`bench/analyze_ka_coop.jl` is
-  the proving prototype — ordinary locals don't survive a barrier on the CPU
-  backend, so all cross-barrier state must be `@localmem`). Plane-major (not
+  Both `:exclusion` and the production-default `:regionalmax` path are cooperative:
+  each thread writes its (best, column-major-order) partial to `@localmem`,
+  thread 1 reduces + applies the finder-specific rejection/positivity rule +
+  records the peak, then does the serial subpixel/moment/alt-peaks. Regional-max
+  re-tests the shared 8-neighbor predicate on each of K scans and excludes only
+  previously selected exact locations; this is exactly equivalent to the CPU's
+  one-scan insertion list, including equal-value ordering and plateau ties.
+  (`bench/analyze_ka_coop.jl` was the proving prototype — ordinary locals don't
+  survive a barrier on the CPU backend, so all cross-barrier state must be
+  `@localmem`.) Plane-major (not
   batch-major) because a block's threads now stride *within* one plane, so
   contiguous plane pixels coalesce; batch-major regressed at high window counts.
   Launch is `ndrange = _KA_TPW * nreal`, groupsize `_KA_TPW`, kernel takes
   `Val{TPW}`. On the RTX 2000 Ada `_ka_analyze!` dropped from ~26% → ~8% of a
-  Float32 2048² non-UQ multipass trace, and it's no longer the top kernel; all
-  paths still match `:cpu` to ~1e-15 / ensemble bitwise. GPU kernel
+  Float32 2048² non-UQ multipass trace, and it's no longer the top kernel.
+  Mirroring the same implementation to the RX 6800 XT moved `:regionalmax`
+  from 0.8–1.3× CPU to 1.8–3.2× single-pass and 2.5–3.1× multipass; all paths
+  still match `:cpu` to ~1e-15 / ensemble bitwise. GPU kernel
   conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
   no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
   compile to malloc hostcalls (use `% Int32` wrapping stores and

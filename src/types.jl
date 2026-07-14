@@ -140,12 +140,12 @@ Immutable, validated configuration for a PIV analysis.
   so values up to 2 are free; each additional peak costs about one extra
   scan of the correlation plane, and alternatives are always refined with
   the cheap 3-point fit.
-- `peak_finder = :exclusion`: how integer correlation peaks are selected.
-  `:exclusion` is the classic path: repeatedly take the largest remaining
-  value outside a fixed exclusion box around stronger peaks. `:regionalmax`
-  first restricts candidates to 8-connected local maxima, so a real nearby
-  secondary peak can still contribute to peak-ratio validation and peak
-  substitution even when it lies inside the fixed exclusion box.
+- `peak_finder = :regionalmax`: how integer correlation peaks are selected.
+  The default first restricts candidates to 8-connected local maxima, so a
+  real nearby secondary peak can still contribute to peak-ratio validation
+  and peak substitution. `:exclusion` is the classic alternative: repeatedly
+  take the largest remaining value outside a fixed exclusion box around
+  stronger peaks.
 - `uncertainty = false`: estimate a per-vector measurement uncertainty from
   correlation statistics (Wieneke 2015) into the `uncertainty_u` /
   `uncertainty_v` fields of the result. The estimator analyzes the residual
@@ -232,7 +232,7 @@ struct PIVParameters
         apodization::Symbol = :none,
         subpixel_method::Symbol = :gauss3,
         n_peaks::Int = 3,
-        peak_finder::Symbol = :exclusion,
+        peak_finder::Symbol = :regionalmax,
         uncertainty::Bool = false,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
@@ -282,7 +282,7 @@ function Base.show(io::IO, p::PIVParameters)
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
         "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
         "n_peaks=$(p.n_peaks), ",
-        p.peak_finder === :exclusion ? "" : "peak_finder=:$(p.peak_finder), ",
+        p.peak_finder === :regionalmax ? "" : "peak_finder=:$(p.peak_finder), ",
         p.uncertainty ? "uncertainty=true, " : "", "uod=",
         p.uod_enable ? "(threshold=$(p.uod_threshold), neighborhood=$(p.uod_neighborhood))" : "off",
         ", min_peak_ratio=$(p.min_peak_ratio)",

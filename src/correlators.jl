@@ -282,17 +282,18 @@ function correlation_plane!(c::Correlator, subA::AbstractMatrix, subB::AbstractM
 end
 
 """
-    find_peaks(R, k; exclusion_radius = 2, peak_finder = :exclusion) -> Vector of (value, location)
+    find_peaks(R, k; exclusion_radius = 2, peak_finder = :regionalmax) -> Vector of (value, location)
 
-Locate up to `k` correlation peaks in descending order. With
-`peak_finder = :exclusion`, this returns the global maximum, then repeatedly
-the largest value outside square exclusion zones of `±exclusion_radius` pixels
-around every peak already found. With `peak_finder = :regionalmax`, candidates
-are 8-connected local maxima, so nearby but distinct secondary peaks are not
-hidden by the fixed exclusion box. Peaks after the first must be positive.
+Locate up to `k` correlation peaks in descending order. With the default
+`peak_finder = :regionalmax`, candidates are 8-connected local maxima, so
+nearby but distinct secondary peaks are not hidden by a fixed exclusion box.
+With `peak_finder = :exclusion`, this returns the global maximum, then
+repeatedly the largest value outside square exclusion zones of
+`±exclusion_radius` pixels around every peak already found. Peaks after the
+first must be positive.
 """
 function find_peaks(R::AbstractMatrix{T}, k::Int; exclusion_radius::Int = 2,
-                    peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
+                    peak_finder::Symbol = :regionalmax) where {T<:AbstractFloat}
     k >= 1 || throw(ArgumentError("k must be at least 1, got $k"))
     vals = Vector{T}(undef, k)
     locs = Vector{NTuple{2,Int}}(undef, k)
@@ -304,7 +305,7 @@ end
 # and returns how many peaks were found.
 function find_peaks!(vals, locs, R::AbstractMatrix{T}, k::Int;
                      exclusion_radius::Int = 2,
-                     peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
+                     peak_finder::Symbol = :regionalmax) where {T<:AbstractFloat}
     peak_finder === :exclusion &&
         return find_peaks_exclusion!(vals, locs, R, k; exclusion_radius)
     peak_finder === :regionalmax &&

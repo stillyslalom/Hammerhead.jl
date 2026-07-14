@@ -1,6 +1,7 @@
 /Manifest*.toml
 /bench/Manifest*.toml
 /bench/CUDA/Manifest*.toml
+/bench/AMDGPU/Manifest*.toml
 /HammerheadGUI/Manifest*.toml
 /cases/
 /docs/Manifest*.toml

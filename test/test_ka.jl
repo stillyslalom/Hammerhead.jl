@@ -25,6 +25,62 @@
     @test isapprox(median(r_ka.u[valid]), du; atol = 0.05)
     @test isapprox(median(r_ka.v[valid]), dv; atol = 0.05)
 
+    @testset "cooperative regional-max peak finding" begin
+        # Exercise the analysis kernel directly on crafted planes so ordering,
+        # plateau ties, non-positive secondaries, and NaN handling are checked
+        # independently of FFT round-off.
+        function ka_regional_peaks(R, K = 4)
+            T = eltype(R)
+            nr, nc = size(R)
+            Rt = zeros(T, nr, nc, 2) # plane-major batch plus trailing pad
+            copyto!(view(Rt, :, :, 1), R)
+            vals = zeros(T, K, 1)
+            locs = zeros(Int32, 2, K, 1)
+            out = zeros(T, 5 + 2 * (K - 1), 1)
+            dev = Hammerhead.CPU()
+            Hammerhead._ka_analyze!(dev, Hammerhead._KA_TPW)(
+                out, vals, locs, Rt, true, false, K, nr, nc,
+                Val(Hammerhead._KA_TPW); ndrange = Hammerhead._KA_TPW)
+            Hammerhead.KernelAbstractions.synchronize(dev)
+            found = round(Int, out[5, 1])
+            return [(value = vals[m, 1],
+                     location = (Int(locs[1, m, 1]), Int(locs[2, m, 1])))
+                    for m in 1:found]
+        end
+
+        nearby = zeros(16, 16)
+        nearby[8, 8] = 1.0
+        nearby[8, 9] = 0.1
+        nearby[8, 10] = 0.8 # distinct maximum inside the exclusion radius
+        nearby[5, 3] = 0.6
+        nearby[12, 13] = 0.6 # equal value: earlier column-major point wins
+        @test ka_regional_peaks(nearby) ==
+              find_peaks(nearby, 4; peak_finder = :regionalmax)
+
+        plateau = ones(7, 9)
+        @test ka_regional_peaks(plateau) ==
+              find_peaks(plateau, 4; peak_finder = :regionalmax)
+
+        nonpositive = fill(-2.0, 8, 8)
+        nonpositive[3, 4] = -1.0
+        @test ka_regional_peaks(nonpositive) ==
+              find_peaks(nonpositive, 4; peak_finder = :regionalmax)
+
+        allnan = fill(NaN, 8, 8)
+        @test isempty(ka_regional_peaks(allnan))
+    end
+
+    # End-to-end production option: parameter plumbing plus batched FFT and
+    # cooperative regional-max analysis must remain equivalent to the CPU.
+    rparams = PIVParameters(window_size = 32, overlap = 16, padding = true,
+                            apodization = :gauss, peak_finder = :regionalmax)
+    rr_cpu = run_piv(imgA, imgB, rparams; threaded = false)
+    rr_ka = run_piv(imgA, imgB, rparams; backend = :ka, threaded = false)
+    rrvalid = .!rr_cpu.outliers .& .!rr_cpu.mask
+    @test maximum(abs.(rr_ka.u[rrvalid] .- rr_cpu.u[rrvalid])) < 1e-3
+    @test maximum(abs.(rr_ka.v[rrvalid] .- rr_cpu.v[rrvalid])) < 1e-3
+    @test maximum(abs.(rr_ka.peak_ratio[rrvalid] .- rr_cpu.peak_ratio[rrvalid])) < 1e-3
+
     # Multipass deformation with the :gauss3-alternatives path exercised.
     schedule = Hammerhead.multipass_parameters([64, 32]; padding = true, apodization = :gauss)
     m_cpu = run_piv(imgA, imgB, schedule; threaded = false)

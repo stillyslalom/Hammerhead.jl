@@ -1,17 +1,16 @@
 """
     calculate_peak_ratio(R, peakloc::Tuple{Int,Int}; exclusion_radius=2,
-                         peak_finder=:exclusion)
+                         peak_finder=:regionalmax)
 
-Ratio of the primary correlation peak at `peakloc` to the largest value outside
-a square exclusion zone of `±exclusion_radius` pixels around it
-(`peak_finder = :exclusion`, the default), or to the largest other regional
-maximum (`peak_finder = :regionalmax`). Returns `Inf` when no positive
-secondary peak exists. Higher values indicate a more reliable displacement
-estimate.
+Ratio of the primary correlation peak at `peakloc` to the largest other
+regional maximum (`peak_finder = :regionalmax`, the default), or to the largest
+value outside a square exclusion zone of `±exclusion_radius` pixels around it
+(`peak_finder = :exclusion`). Returns `Inf` when no positive secondary peak
+exists. Higher values indicate a more reliable displacement estimate.
 """
 function calculate_peak_ratio(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int};
                               exclusion_radius::Int = 2,
-                              peak_finder::Symbol = :exclusion) where {T<:AbstractFloat}
+                              peak_finder::Symbol = :regionalmax) where {T<:AbstractFloat}
     nr, nc = size(R)
     pr, pc = peakloc
     (1 <= pr <= nr && 1 <= pc <= nc) ||
