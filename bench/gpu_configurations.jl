@@ -42,13 +42,15 @@ GC.gc()
 
 rows = benchmark_piv_configurations(A, B; effort,
                                     backends = (:cpu, backend), samples)
-println("configuration  backend  UQ       seconds   speedup   max delta uv   max delta UQ")
+println("configuration  backend  UQ       seconds   speedup   p99 delta uv   p99 delta UQ   max delta uv   max delta UQ")
 for r in rows
     println(rpad(string(r.configuration), 15),
             rpad(string(r.backend), 9),
             rpad(string(r.uncertainty_backend), 9),
             lpad(round(r.seconds, digits = 3), 9),
             lpad(round(r.speedup, digits = 2), 10),
+            lpad(string(round(r.p99_vector_delta, sigdigits = 3)), 15),
+            lpad(string(round(r.p99_uncertainty_delta, sigdigits = 3)), 15),
             lpad(string(round(r.max_vector_delta, sigdigits = 3)), 15),
             lpad(string(round(r.max_uncertainty_delta, sigdigits = 3)), 15))
 end

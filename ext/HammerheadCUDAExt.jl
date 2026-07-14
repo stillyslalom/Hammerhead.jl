@@ -64,16 +64,31 @@ _supports_fp64(::_CUDABackend) = true
 _check_backend_params(b::_CUDABackend, passes) =
     _ka_scope_check(passes, :cuda, _supports_fp64(b))
 
-# Windows per device sub-batch (bounds device-memory footprint). The analysis
-# kernel launches one *workgroup* per window, so the sub-batch size *is* that
-# kernel's launch parallelism (in workgroups): at 2048 windows an 8-tile 2048²
-# grid starves the device (8 sequential launches, ~4.7 ms each), while a single
-# well-occupied launch of the whole grid runs the same work in ~6 ms. 8192 gives
-# near-peak occupancy on this class of GPU while keeping the Float64 complex
-# buffers bounded (~1.3 GB at 8192; the RTX 2000 Ada has 16 GB). Measured: 2048²
-# Float32 single-pass 104 ms → 76 ms versus a 2048 sub-batch.
-const _CUDA_BATCH = 8192
+# Windows per device sub-batch. The analysis kernel launches one *workgroup*
+# per window, so the sub-batch size *is* that kernel's launch parallelism (in
+# workgroups): at 2048 windows an 8-tile 2048² grid starves the device (8
+# sequential launches, ~4.7 ms each), while a single well-occupied launch of
+# the whole grid runs the same work in ~6 ms. So bigger is better for
+# occupancy — until the batch buffers spill VRAM to shared/system memory, which
+# is catastrophic (measured 4096² Float64 effort=:high: bs=8192 → 33 s spilling
+# vs bs=1024 → 7.5 s). The spill driver is the correlation buffers at the *first
+# pass's* fft_size, not cuFFT workspace (~0 for our power-of-two transforms): a
+# 128² window pads to a 256² FFT, so CA+CB+Rt alone is ~20 GiB at bs=8192 in
+# Float64 — over a 16 GiB card. `_cuda_batch_cap` therefore sizes the batch to a
+# fraction of free VRAM, computed exactly from the engine's fft_size and T,
+# keeping small-window/Float32 passes at the occupancy-optimal default while
+# shrinking the large-FFT/Float64 passes that would otherwise spill.
+const _CUDA_BATCH_DEFAULT = 8192
+const _CUDA_MEM_FRACTION = 0.7      # of free VRAM budgeted for the batch buffers
+const _CUDA_MIN_BATCH = 256         # floor: keep enough windows for occupancy
+const _CUDA_BATCH_QUANTUM = 512     # quantize the cap so free-VRAM wobble across
+                                    # a sequence doesn't thrash `_ensure_batch!`
 
+# Exact per-window device-byte footprint of the sub-batch buffers that scale
+# with the batch: CA + CB (Complex{T}), Rt (T), and the UQ ΔC cache uqdcs
+# (2·mm²·T, mm = larger window side). The per-window scalars (means, peaks,
+# origins, packed output) are negligible next to these and are covered by the
+# `_CUDA_MEM_FRACTION` headroom.
 # KernelAbstractions' occupancy-based default workgroup size leaves the
 # elementwise cross-power far off peak bandwidth on NVIDIA; an explicit
 # warp-multiple block recovers ~8x on `_ka_crosspower!` (RTX 2000 Ada, 2048²
@@ -123,6 +138,30 @@ mutable struct _CUDACorrelationEngine{T}
 end
 
 _correlation_apod(engine::_CUDACorrelationEngine) = engine.apod_d
+
+# Exact per-window device-byte footprint of the sub-batch buffers that scale
+# with the batch: CA + CB (Complex{T}), Rt (T), and the UQ ΔC cache uqdcs
+# (2·mm²·T, mm = larger window side). The per-window scalars (means, peaks,
+# origins, packed output) are negligible next to these and are covered by the
+# `_CUDA_MEM_FRACTION` headroom.
+_cuda_bytes_per_window(engine::_CUDACorrelationEngine{T}) where {T} =
+    prod(engine.fft_size) * (2 * sizeof(Complex{T}) + sizeof(T)) +
+    2 * max(engine.wsize...)^2 * sizeof(T)
+
+# Memory-aware sub-batch size for this engine. `HAMMERHEAD_CUDA_BATCH` forces a
+# fixed value (benchmark/debug escape hatch). Otherwise budget a fraction of
+# *currently free* VRAM — plus this engine's own resident batch buffers, which
+# `_ensure_batch!` frees as it reallocates, so repeated calls across a sequence
+# don't ratchet the cap down — and clamp to [MIN, default].
+function _cuda_batch_cap(engine::_CUDACorrelationEngine{T}) where {T}
+    ov = get(ENV, "HAMMERHEAD_CUDA_BATCH", "")
+    isempty(ov) || return parse(Int, ov)
+    bpw = _cuda_bytes_per_window(engine)
+    budget = (CUDA.free_memory() + engine.bs * bpw) * _CUDA_MEM_FRACTION
+    cap = floor(Int, budget / bpw)
+    cap = (cap ÷ _CUDA_BATCH_QUANTUM) * _CUDA_BATCH_QUANTUM
+    return clamp(cap, _CUDA_MIN_BATCH, _CUDA_BATCH_DEFAULT)
+end
 
 function _make_cuda_engine(params::PIVParameters, ::Type{T}) where {T}
     # Reuse the CPU correlator's apodization window and overlap-gain plane so
@@ -277,7 +316,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     wr, wc = engine.wsize
     nr, nc = engine.fft_size
     sr, sc = nr ÷ 2, nc ÷ 2
-    bs = min(_CUDA_BATCH, njobs)
+    bs = min(_cuda_batch_cap(engine), njobs)
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = CUDABackend()
@@ -364,7 +403,7 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     isempty(jobvec) && return nothing
     wr, wc = engine.wsize
-    bs = min(_CUDA_BATCH, length(jobvec))
+    bs = min(_cuda_batch_cap(engine), length(jobvec))
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = CUDABackend()
@@ -435,7 +474,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     wr, wc = engine.wsize
     nr, nc = engine.fft_size
     sr, sc = nr ÷ 2, nc ÷ 2
-    bs = min(_CUDA_BATCH, njobs)
+    bs = min(_cuda_batch_cap(engine), njobs)
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = CUDABackend()
@@ -495,7 +534,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_CUDACorrelationEng
     njobs = acc.njobs
     njobs == 0 && return nothing
     nr, nc = engine.fft_size
-    bs = min(_CUDA_BATCH, njobs)
+    bs = min(_cuda_batch_cap(engine), njobs)
     _ensure_batch!(engine, bs)
     ka = CUDABackend()
     use_regionalmax = params.peak_finder === :regionalmax

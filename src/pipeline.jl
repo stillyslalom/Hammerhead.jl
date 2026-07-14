@@ -993,8 +993,12 @@ reported time is the minimum of `samples` runs. A workspace is reused within
 each configuration, matching sequence-style production use.
 
 Each returned row contains `configuration`, `backend`, `uncertainty_backend`,
-`seconds`, `speedup`, `max_vector_delta`, and `max_uncertainty_delta`. Deltas
-are measured against the CPU result over entries finite in both results.
+`seconds`, `speedup`, `max_vector_delta`, `p99_vector_delta`,
+`max_uncertainty_delta`, and `p99_uncertainty_delta`. Deltas are measured
+against the CPU result over entries finite in both results; the `p99_*`
+0.99-quantiles report bulk agreement, since the `max_*` field-wide extremes
+are dominated by the near-outlier windows the Wieneke estimator legitimately
+assigns huge σ.
 Benchmark the same image precision, size, schedule, mask, and preprocessing
 used in production; backend rankings are workload- and hardware-dependent.
 """
@@ -1073,24 +1077,30 @@ function benchmark_piv_configurations(imgA::AbstractMatrix{<:Real},
     cpu_time = timed[cpu_index].seconds
     rows = NamedTuple[]
     for (row, result) in zip(timed, results)
+        vmax, vp99 = _benchmark_deltas(reference, result, false)
+        umax, up99 = _benchmark_deltas(reference, result, true)
         push!(rows, merge(row,
             (speedup = cpu_time / row.seconds,
-             max_vector_delta = _benchmark_max_delta(reference, result, false),
-             max_uncertainty_delta = _benchmark_max_delta(reference, result, true))))
+             max_vector_delta = vmax, p99_vector_delta = vp99,
+             max_uncertainty_delta = umax, p99_uncertainty_delta = up99)))
     end
     return rows
 end
 
-function _benchmark_max_delta(a::PIVResult, b::PIVResult, uncertainty::Bool)
+# Max and 0.99-quantile of |a - b| over entries finite in both. The max is a
+# raw field-wide extreme, so a single near-outlier window (which the Wieneke
+# estimator legitimately reports huge σ for) dominates it; the p99 tracks the
+# bulk agreement the way production validation compares medians over
+# non-outlier vectors.
+function _benchmark_deltas(a::PIVResult, b::PIVResult, uncertainty::Bool)
     afields = uncertainty ? (a.uncertainty_u, a.uncertainty_v) : (a.u, a.v)
     bfields = uncertainty ? (b.uncertainty_u, b.uncertainty_v) : (b.u, b.v)
-    delta = 0.0
-    found = false
+    deltas = Float64[]
     for (x, y) in zip(afields, bfields), i in eachindex(x, y)
         if isfinite(x[i]) && isfinite(y[i])
-            delta = max(delta, abs(Float64(x[i]) - Float64(y[i])))
-            found = true
+            push!(deltas, abs(Float64(x[i]) - Float64(y[i])))
         end
     end
-    return found ? delta : NaN
+    isempty(deltas) && return (NaN, NaN)
+    return (maximum(deltas), quantile(deltas, 0.99))
 end
