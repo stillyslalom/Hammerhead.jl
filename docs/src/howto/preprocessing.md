@@ -12,7 +12,7 @@ vector field on real data.
 | [`subtract_background`](@ref) | static background (walls, glare) | first, with a [`compute_background`](@ref) image |
 | [`highpass_filter`](@ref) | low-frequency illumination gradients | sheet inhomogeneity; `sigma` a few × particle diameter |
 | [`intensity_cap`](@ref) | overexposed particles and reflections [Shavit2007](@cite) | before correlation, cheap and safe |
-| [`clahe`](@ref) | poor local contrast | dim regions next to bright ones |
+| [`clahe`](@ref) (contrast-limited adaptive histogram equalization, CLAHE) | poor local contrast | dim regions next to bright ones |
 
 Each has a mutating form (`subtract_background!`, `highpass_filter!`,
 `intensity_cap!`, `clahe!`) that operates in place on a floating-point
@@ -57,7 +57,8 @@ preprocessors are safe there. If you pass in-memory matrices, they are
 handed to `preprocess` as-is — use the allocating forms in that case to
 leave your arrays untouched.
 
-Preprocessing currently runs on the CPU even when a PIV driver uses a GPU
+Preprocessing currently runs on the central processing unit (CPU) even when a
+particle image velocimetry (PIV) driver uses a graphics processing unit (GPU)
 backend. The processed pair is uploaded afterward; keep mutating chains
 allocation-light and reuse batch-driver workspaces as described in
 [Run PIV on a GPU](gpu.md).

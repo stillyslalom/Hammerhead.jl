@@ -8,8 +8,9 @@
 # says no, and how to read a three-component measurement when nobody knows
 # the right answer.
 #
-# The data is case E of the 4th International PIV Challenge
-# [Kahler2016](@cite): a vortex ring at Re ≈ 2300, recorded time-resolved
+# The data is case E of the 4th International Particle Image Velocimetry
+# (PIV) Challenge [Kahler2016](@cite): a vortex ring at Reynolds number
+# ``Re \approx 2300``, recorded time-resolved
 # by R. R. La Foy in the AEThER laboratory at Virginia Tech. We use the
 # two cameras distributed to the Challenge participants: camera 1 views
 # the light sheet head-on, camera 3 is pitched about 25° about the
@@ -76,7 +77,8 @@ cam3 = calibrate_camera(grids3, zs)
  quality3 = calibration_quality(cam3, grids3, zs))
 
 # On the synthetic plates of the previous tutorial these residuals were
-# in the thousandths of a pixel. Here they are ~0.7 and ~1.1 px RMS —
+# in the thousandths of a pixel. Here they are ~0.7 and ~1.1 px
+# root-mean-square (RMS) —
 # and that is *fine*. Re-detecting the plate at different positions
 # reproduces each dot's residual to 0.15–0.3 px: the residuals are
 # dominated by where the dots actually sit on the physical plate
@@ -195,7 +197,7 @@ stereo = run_piv_stereo(A1, B1, A3, B3, dw1c, dw3c, passes)
 # in mm, displacements in mm per frame interval (1 ms here — multiply by
 # 1000 for m/s; Hammerhead does not yet apply time scaling itself). Its
 # `mask` and `outliers` are the unions of the per-camera flags: a stereo
-# vector is only as good as *both* 2C measurements underneath it, and the
+# vector is only as good as *both* two-component (2C) measurements underneath it, and the
 # per-camera results remain available as `stereo.cam1` / `stereo.cam2`.
 
 sel = .!(stereo.mask .| stereo.outliers)

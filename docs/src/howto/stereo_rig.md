@@ -2,7 +2,8 @@
 
 **Goal:** go from calibration-plate photographs to corrected camera models
 ready for [`run_piv_stereo`](@ref). This guide describes the workflow on
-real data, using the 4th International PIV Challenge case E
+real data, using case E of the 4th International Particle Image Velocimetry
+(PIV) Challenge
 [Kahler2016](@cite) — a time-resolved stereo vortex ring recorded with a
 LaVision two-level dot-grid plate — as the running example. For
 executable end-to-end walkthroughs, see the
@@ -62,7 +63,7 @@ plate roughly half the dots should report `level == 1`.
 Judge the fit with [`calibration_quality`](@ref) — but know what you're
 looking at. On the real 4E plates:
 
-- Per-dot reprojection residuals of **~0.5–1 px RMS** that are
+- Per-dot reprojection residuals of **~0.5–1 px root-mean-square (RMS)** that are
   *repeatable across plate positions* reflect the plate's dot-position
   manufacturing tolerance, not detection error. Don't chase them with
   model changes; they are a property of the target.
@@ -115,7 +116,8 @@ stereo = run_piv_stereo(A1, B1, A2, B2, dw1c, dw2c, passes)
 ```
 
 For large per-camera analyses, `backend = :amdgpu` or `:cuda` forwards GPU
-execution to both 2C PIV calls. Dewarping the four raw images and reconstructing
-the final 3C field remain CPU operations, so stereo does not yet form a fully
+execution to both two-component (2C) PIV calls. Dewarping the four raw images
+and reconstructing the final three-component (3C) field remain CPU operations,
+so stereo does not yet form a fully
 device-resident pipeline. See [Run PIV on a GPU](gpu.md) for setup and the
 supported PIV option matrix.

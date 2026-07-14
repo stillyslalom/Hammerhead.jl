@@ -1,4 +1,4 @@
-# Work interactively with the GUI
+# Work interactively with the graphical user interface (GUI)
 
 **Goal:** do the common interactive jobs — browse results, draw a mask,
 run a batch, review a calibration — with the HammerheadGUI tools, and get

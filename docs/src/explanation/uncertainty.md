@@ -1,7 +1,9 @@
 # Uncertainty quantification
 
-With `uncertainty = true` in [`PIVParameters`](@ref), Hammerhead estimates a
-per-vector measurement uncertainty — one standard deviation, in pixels —
+Uncertainty quantification (UQ) asks how much random error is likely in each
+particle image velocimetry (PIV) vector; it is not a claim that the true value
+is known. With `uncertainty = true` in [`PIVParameters`](@ref), Hammerhead
+estimates a per-vector measurement uncertainty — one standard deviation, in pixels —
 into the `uncertainty_u` / `uncertainty_v` fields of the result. The
 estimator is the *correlation statistics* method of
 [Wieneke2015](@citet), implemented from the paper.
@@ -47,7 +49,8 @@ that window** — nothing more:
   non-outlier vectors rather than means — a handful of near-outlier
   windows otherwise dominates.
 
-On synthetic noise sweeps, the median estimate tracks the measured RMS
+On synthetic noise sweeps, the median estimate tracks the measured
+root-mean-square (RMS)
 error within about ±25% up to 20% image noise.
 
 ## Ensemble pooling
@@ -62,9 +65,11 @@ single-pair results instead.
 
 ## Execution precision on GPU backends
 
-The KA-family backends compute the same additive statistics on their execution
-device and always accumulate them in Float64, including for Float32 images.
-An iterative pass runs one UQ sweep over the final device-resident warped
+The KernelAbstractions (KA) family of backends computes the same additive
+statistics on its execution device and always accumulates them in Float64,
+including for Float32 images.
+An iterative pass runs one uncertainty-quantification sweep over the final
+device-resident warped
 windows; an ensemble keeps the pooled statistics on the device until final
 analysis. The CPU finalizer remains the correctness reference. Consumer GPUs
 with weak Float64 throughput may spend more time on UQ than on correlation;

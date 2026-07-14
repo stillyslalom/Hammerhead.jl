@@ -1,10 +1,12 @@
-# # Particle tracking (PTV)
+# # Particle tracking velocimetry (PTV)
 #
-# Cross-correlation PIV reports one vector per interrogation window. When the
-# seeding is sparse — near a wall, in a dilute spray, or wherever you want
-# *Lagrangian* particle paths rather than an Eulerian field — it is better to
-# track individual particles. Hammerhead's PTV pipeline detects particles in
-# each frame, matches them across a pair, and links them across a sequence.
+# Particle image velocimetry (PIV) reports one vector per interrogation window.
+# Particle tracking velocimetry (PTV) instead follows identifiable particles.
+# When the seeding is sparse — near a wall, in a dilute spray, or wherever you want
+# paths that follow individual particles (*Lagrangian* measurements) rather
+# than velocities reported at fixed spatial locations (an *Eulerian* field) —
+# it is better to track individual particles. Hammerhead's PTV pipeline detects
+# particles in each frame, matches them across a pair, and links them across a sequence.
 # Everything here is synthetic and self-contained, so the ground truth is known
 # exactly.
 #

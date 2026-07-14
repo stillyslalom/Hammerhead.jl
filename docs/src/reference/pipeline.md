@@ -4,7 +4,8 @@ CurrentModule = Hammerhead
 
 # Core pipeline and parameters
 
-The single-pair and multi-pass PIV engine: [`run_piv`](@ref) and its
+The single-pair and multi-pass particle image velocimetry (PIV) engine:
+[`run_piv`](@ref) and its
 configuration ([`PIVParameters`](@ref), [`multipass_parameters`](@ref)),
 the [`PIVResult`](@ref) container, analysis masks, correlators, and
 plotting. See the [first tutorial](../tutorials/first_vector_field.md) for a
@@ -55,7 +56,8 @@ Private = false
 
 ## Correlators
 
-Lower-level access to the FFT correlation engine used by [`run_piv`](@ref):
+Lower-level access to the fast Fourier transform (FFT) correlation engine used
+by [`run_piv`](@ref):
 correlator objects cache FFTW plans and buffers per window size.
 
 ```@autodocs

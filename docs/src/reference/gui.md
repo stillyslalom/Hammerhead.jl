@@ -2,7 +2,7 @@
 CurrentModule = HammerheadGUI
 ```
 
-# GUI (HammerheadGUI)
+# Graphical user interface (GUI; HammerheadGUI)
 
 The desktop GUI companion package, built on GLMakie. Each component is a
 framework-free controller (plain Julia + Observables, in the

@@ -69,6 +69,7 @@ makedocs(;
             "Synthetic data" => "reference/synthetic.md",
             "PTV (particle tracking)" => "reference/ptv.md",
             "GUI (HammerheadGUI)" => "reference/gui.md",
+            "KernelAbstractions and GPU backends" => "reference/backends.md",
             "Internals" => "reference/internals.md",
         ],
         "Bibliography" => "references.md",

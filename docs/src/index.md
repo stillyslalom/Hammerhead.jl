@@ -5,10 +5,17 @@ CurrentModule = Hammerhead
 # Hammerhead
 
 Documentation for [Hammerhead](https://github.com/stillyslalom/Hammerhead.jl),
-a Julia package for particle image velocimetry (PIV): planar (2D2C) and
-stereoscopic (2D3C) analysis with multi-pass image deformation, vector
-validation, per-vector uncertainty quantification, ensemble correlation,
-camera calibration, and disparity self-calibration.
+a Julia package for particle image velocimetry (PIV). Hammerhead supports
+planar two-dimensional, two-component (2D2C) measurements and stereoscopic
+two-dimensional, three-component (2D3C) measurements. It includes multi-pass
+image deformation, vector validation, per-vector uncertainty quantification,
+ensemble correlation, camera calibration, and disparity self-calibration.
+
+PIV starts from two images of tracer particles separated by a known time
+interval. By finding how the particle pattern moves from the first image to
+the second, it estimates a displacement vector at each location in the image.
+Supplying the physical pixel size and time interval turns those displacements
+into velocities.
 
 ## Quick example
 
@@ -35,9 +42,13 @@ result.x, result.y    # interrogation grid centers (px)
 result.outliers       # validation flags
 ```
 
+The returned `u` and `v` values are displacements, not yet physical velocities.
+See [Scale results to physical units](howto/scaling.md) when your pixel size and
+frame interval are known.
+
 Whole recordings are processed with [`run_piv_sequence`](@ref), which loads
 frame pairs (see [`image_pairs`](@ref)), applies optional preprocessing, and
-persists results incrementally to JLD2 ([`save_results`](@ref) /
+persists results incrementally in the JLD2 Julia data format ([`save_results`](@ref) /
 [`load_results`](@ref)).
 
 ## Where to go next

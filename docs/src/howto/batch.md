@@ -38,8 +38,8 @@ results = run_piv_sequence(pairs, passes;
 )
 ```
 
-With `output` set, each result is written to the JLD2 file **as it
-completes** — a crashed batch keeps its finished pairs. For file-path pairs
+With `output` set, each result is written to the JLD2-format Julia data file
+**as it completes** — a crashed batch keeps its finished pairs. For file-path pairs
 the source image paths are stored alongside the results. Threading applies
 within each pair (the window grid is split across tasks); results are
 bitwise identical to serial processing.
@@ -119,7 +119,7 @@ Sequences of same-grid results feed the statistics utilities directly:
 
 ```julia
 validate_temporal!(results)                  # flag temporal outliers in place
-stats = field_statistics(results)            # mean, RMS, Reynolds stress, counts
+stats = field_statistics(results)            # mean, root-mean-square (RMS), Reynolds stress, counts
 f, psd = power_spectrum([r.u[12, 8] for r in results]; dt = 1/10_000)
 ```
 

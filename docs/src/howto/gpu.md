@@ -1,10 +1,12 @@
 # Run PIV on a GPU
 
-**Goal:** select and validate a GPU backend, understand which work stays on
+**Goal:** run particle image velocimetry (PIV) on a graphics processing unit
+(GPU), select and validate the backend, and understand which work stays on
 the device, and avoid configurations where transfer or Float64 cost outweighs
 the acceleration.
 
-Hammerhead's default `backend = :cpu` remains the complete reference
+Hammerhead's default `backend = :cpu` uses the central processing unit (CPU)
+and remains the complete reference
 implementation. GPU support is optional: loading AMDGPU.jl or CUDA.jl
 activates a package extension without adding either device stack to
 Hammerhead's normal installation.
@@ -76,7 +78,8 @@ stereo = run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes;
 ```
 
 [`run_piv_sequence`](@ref) and [`run_piv_ensemble`](@ref) create a matching
-[`PIVWorkspace`](@ref) and reuse device buffers and FFT plans across pairs.
+[`PIVWorkspace`](@ref) and reuse device buffers and fast Fourier transform
+(FFT) plans across pairs.
 For a hand-written loop, do the same explicitly:
 
 ```julia
@@ -90,7 +93,8 @@ reverse, is an error.
 
 ## Check that the configuration is supported
 
-The KA-family backends (`:ka`, `:amdgpu`, and `:cuda`) currently implement:
+The KernelAbstractions (KA) family of backends (`:ka`, `:amdgpu`, and `:cuda`)
+currently implements:
 
 | Feature | `:cpu` | KA-family |
 |---|:---:|:---:|
@@ -111,7 +115,8 @@ than silently switching algorithms or falling back to the CPU. Use
 planes are required.
 
 Stereo forwards the backend to both per-camera PIV analyses. Dewarping and
-3C reconstruction remain on the CPU. Loading, preprocessing, validation,
+three-component (3C) reconstruction remain on the CPU. Loading, preprocessing,
+validation,
 outlier replacement, smoothing, and result construction are also CPU work.
 
 ## Understand device residency
@@ -164,7 +169,7 @@ The returned fields follow the image precision, while uncertainty's internal
 statistics remain Float64. On GPUs with weak Float64 throughput, uncertainty
 may erase the speedup from correlation. The RX 6800 XT development system is
 one such case: use the CPU reference or benchmark the complete workload when
-UQ dominates.
+uncertainty quantification (UQ) dominates.
 
 ## Validate a device and benchmark the workload
 

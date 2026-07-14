@@ -1,4 +1,4 @@
-# # A tour of the GUI
+# # A tour of the graphical user interface (GUI)
 #
 # Hammerhead's interactive tools live in a companion package,
 # **HammerheadGUI**: a result explorer, a polygon mask editor, a batch
@@ -8,8 +8,8 @@
 # - Every tool is a thin shell over the same API this manual documents.
 #   What you click is what you would have typed: the mask editor produces
 #   the `Bool` matrices [`run_piv`](@ref) takes, the batch runner writes
-#   the JLD2 files [`load_results`](@ref) reads — the GUI and your scripts
-#   mix freely.
+#   the JLD2-format Julia data files [`load_results`](@ref) reads — the GUI and
+#   your scripts mix freely.
 # - Every window is driven by a *controller*: a plain-Julia object holding
 #   the tool's state as `Observables`. You can construct it yourself,
 #   drive it from the REPL, and any open view follows live. (Why it is
@@ -135,7 +135,8 @@ bc.results[]
 # ## Calibration diagnostics on a real plate
 #
 # The calibration tools work on the same data as the
-# [real stereo tutorial](stereo_real.md): PIV Challenge case 4E's
+# [real stereo tutorial](stereo_real.md): Particle Image Velocimetry (PIV)
+# Challenge case 4E's
 # two-level plate, imaged at three traverse positions.
 # [`calibration_review`](@ref) runs the grid detection, fits a camera, and
 # shows each plate with its dots colored by reprojection error:

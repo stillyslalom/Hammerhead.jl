@@ -1,7 +1,9 @@
-# # Stereo PIV end to end
+# # Stereo particle image velocimetry (PIV) end to end
 #
-# Two cameras viewing the light sheet from different angles measure all
-# three velocity components. This tutorial walks the entire stereo chain
+# Ordinary planar PIV measures two in-plane displacement components. Two
+# cameras viewing the same light sheet from different angles provide enough
+# information to recover the third, out-of-plane component as well. This
+# tutorial walks the entire stereo chain
 # on a synthetic rig — calibration plate to three-component vector field —
 # so every step has a known ground truth:
 #
@@ -88,7 +90,8 @@ cams = [calibrate_camera(g, zs) for g in grids]
 cams[1]
 
 # Always check the fit. On these noise-free synthetic plates the residual
-# is tiny; on real plates expect ~0.5–1 px RMS dominated by the plate's
+# is tiny; on real plates expect ~0.5–1 px root-mean-square (RMS) error
+# dominated by the plate's
 # manufacturing tolerance (see the
 # [stereo-rig how-to](../howto/stereo_rig.md)):
 

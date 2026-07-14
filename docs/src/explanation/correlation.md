@@ -1,7 +1,9 @@
 # Correlation accuracy
 
-The defaults of [`PIVParameters`](@ref) favor speed; two switches —
-`padding` and `apodization` — trade roughly 4× the FFT cost for a large
+Particle image velocimetry (PIV) estimates a window's displacement from the
+location of its correlation peak. The defaults of [`PIVParameters`](@ref)
+favor speed; two switches — `padding` and `apodization` — trade roughly 4×
+the fast Fourier transform (FFT) cost for a large
 accuracy gain. This page explains what each one does and what accuracy to
 expect.
 
@@ -35,7 +37,8 @@ edge effects.
 
 The combination `padding = true, apodization = :gauss` is the accuracy
 configuration: on noise-free synthetic data with a converged multi-pass
-schedule it reaches about **0.03 px RMS** error. All tutorials use it.
+schedule it reaches about **0.03 px root-mean-square (RMS)** error. All
+tutorials use it.
 
 ## Subpixel peak fitting and peak locking
 

@@ -1,6 +1,7 @@
 # Stereo geometry and self-calibration
 
-Planar PIV measures two displacement components projected onto the image
+Planar particle image velocimetry (PIV) measures two displacement components
+projected onto the image
 plane. With two cameras viewing the light sheet from different angles,
 the projections differ, and the difference encodes the out-of-plane
 component. This page explains Hammerhead's stereo chain: calibration →
@@ -14,7 +15,8 @@ Hammerhead provides two, both fit with [`calibrate_camera`](@ref) from
 calibration plate at several Z positions and running
 [`detect_calibration_grid`](@ref):
 
-- [`PinholeCamera`](@ref) — a projective (DLT) model. Physically grounded
+- [`PinholeCamera`](@ref) — a projective model fitted by direct linear
+  transformation (DLT). Physically grounded
   and exactly invertible, but it cannot represent lens distortion or
   refraction. Needs points on ≥ 2 Z planes.
 - [`SoloffCamera`](@ref) — the 19-term polynomial of
@@ -44,7 +46,7 @@ a validity mask; the analysis is restricted to the stereo overlap (see
 At each grid point, camera *i*'s viewing ray drifts in-plane by
 `(tXᵢ, tYᵢ)` world units per unit Z (evaluated from the calibration by
 central differences). A world displacement `(dx, dy, dz)` therefore appears
-in camera *i*'s dewarped 2C field as
+in camera *i*'s dewarped two-component (2C) field as
 
 ```
 uᵢ = dx − dz·tXᵢ,    vᵢ = dy − dz·tYᵢ.
@@ -92,7 +94,8 @@ error contaminates `w` directly. The fix is *disparity self-calibration*
 The returned dewarpers are drop-in replacements for
 [`run_piv_stereo`](@ref), and the [`SelfCalibrationReport`](@ref) records
 per-pass disparity statistics, fitted planes, and the cumulative world
-transform. Well-corrected setups converge to a residual disparity RMS below
+transform. Well-corrected setups converge to a residual disparity
+root-mean-square (RMS) below
 0.1 px on real recordings [Wieneke2005](@cite); the synthetic test fixtures
 reach 0.01 px.
 

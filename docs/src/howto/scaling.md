@@ -46,8 +46,9 @@ p.x, p.y     # positions, mm
 The converted result carries an *identity* scale with the same unit labels,
 so `physical(p) === p` — you cannot double-convert.
 
-Convert **last**. Validation thresholds, [`peak_locking`](@ref), UOD's
-0.1 px noise floor, and the correlation diagnostics all speak pixels, and
+Convert **last**. Validation thresholds, [`peak_locking`](@ref), the 0.1 px
+noise floor used by universal outlier detection (UOD), and the correlation
+diagnostics all speak pixels, and
 `physical` deliberately leaves `peak_ratio`/`correlation_moment` untouched.
 Run the full pixel-side analysis first and convert at the end, for plotting
 and physics.
@@ -93,9 +94,10 @@ physical(stereo).w    # out-of-plane velocity, mm/s
 The embedded per-camera results (`stereo.cam1`, `stereo.cam2`) always stay
 in dewarped pixels — they are diagnostics.
 
-## PTV and trajectories
+## Particle tracking velocimetry (PTV) and trajectories
 
-[`run_ptv`](@ref) results convert like PIV (the `match_residual` is a
+[`run_ptv`](@ref) results convert like particle image velocimetry (PIV) results
+(the `match_residual` is a
 frame-A distance, so it scales with `pixel_size`), and
 [`ptv_to_grid`](@ref) carries the scale onto the binned grid — bin the raw
 result, then convert.

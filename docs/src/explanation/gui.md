@@ -1,4 +1,4 @@
-# The GUI's controller–view split
+# The graphical user interface (GUI) controller–view split
 
 Every HammerheadGUI tool is two pieces with a strict boundary between
 them: a **controller** that owns all state and logic, and a **view** that
@@ -55,7 +55,8 @@ export *is* [`polygon_mask`](@ref) — the same rasterization, the same
 [the masking model](masking.md); its "save" writes the image
 [`load_mask`](@ref) reads. The batch runner *is*
 [`run_piv_sequence`](@ref) with its documented progress callback; its
-output file is an ordinary [`save_results`](@ref) JLD2. The calibration
+output file is an ordinary JLD2-format Julia data file written by
+[`save_results`](@ref). The calibration
 review calls [`detect_calibration_grid`](@ref) and
 [`calibrate_camera`](@ref) verbatim. Nothing you produce in the GUI is in
 a GUI-only format, and any GUI workflow has a line-for-line scripted

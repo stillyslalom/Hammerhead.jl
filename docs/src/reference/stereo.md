@@ -4,7 +4,8 @@ CurrentModule = Hammerhead
 
 # Calibration, dewarping, and stereo
 
-Everything stereoscopic (2D3C): camera calibration models and fitting,
+Everything stereoscopic: two-dimensional, three-component (2D3C) particle
+image velocimetry (PIV), including camera calibration models and fitting,
 dot-grid target detection, image dewarping onto a common world plane,
 three-component reconstruction, and disparity self-calibration. The
 [stereo tutorial](../tutorials/stereo.md) walks the whole chain;

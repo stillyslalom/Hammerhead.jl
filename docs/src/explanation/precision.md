@@ -17,13 +17,15 @@ on large recordings.
 
 ## Why not just always Float64?
 
-PIV is bandwidth-bound: the dominant costs are FFTs over interrogation
+Particle image velocimetry (PIV) is bandwidth-bound: the dominant costs are
+fast Fourier transforms (FFTs) over interrogation
 windows and B-spline resampling over whole images. Single precision is
 plenty for image data quantized to 8–16 bits, and choosing precision at the
 input keeps the choice in the caller's hands with zero configuration
 surface — there is no `precision` parameter to document or misuse.
 
-On GPU backends, image deformation, FFTs, and correlation planes still follow
+On graphics processing unit (GPU) backends, image deformation, FFTs, and
+correlation planes still follow
 the image type. Float32 therefore reduces the dominant device buffers. The
 uncertainty exception below remains Float64 on the GPU as well; see
 [Run PIV on a GPU](../howto/gpu.md) for the resulting memory and performance

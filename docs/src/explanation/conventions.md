@@ -43,7 +43,8 @@ lengths and whose displacements (and uncertainties) are velocities
 seconds in, mm/s out. Load Unitful for quantity-based construction
 (`PhysicalScale(20.0u"µm", 0.5u"ms")`).
 
-Convert **last**: validators, [`peak_locking`](@ref), UOD's `epsilon` floor,
+Convert **last**: validators, [`peak_locking`](@ref), the `epsilon` floor used
+by universal outlier detection (UOD),
 and the correlation diagnostics (`peak_ratio`, `correlation_moment`) are
 pixel-native and are never converted — run them on the raw result. A
 converted result carries an identity scale with the same unit labels, so
@@ -75,9 +76,10 @@ attach a [`PhysicalScale`](@ref) with `dt` and the unit labels only
 (`pixel_size` stays 1) and call [`physical`](@ref) — the per-camera `cam1`/
 `cam2` results always stay in dewarped pixels.
 
-## Particle tracking (PTV)
+## Particle tracking velocimetry (PTV)
 
-Particle tracking measures the same displacement as PIV but per *particle*
+Particle tracking velocimetry measures the same displacement as particle
+image velocimetry (PIV) but per *particle*
 instead of per *window*, and it is the better tool wherever the seeding is
 sparse or Lagrangian information matters: low-density flows, the near-wall
 region where large windows straddle a velocity gradient, or any case where you

@@ -7,9 +7,11 @@
 #
 # ## Generate a synthetic image pair
 #
-# PIV measures displacement between two exposures of a particle-seeded
-# flow. Hammerhead's `SyntheticData` submodule renders such image pairs
-# from a prescribed velocity field, displacing each particle by its local
+# Particle image velocimetry (PIV) measures displacement between two images
+# of a flow seeded with small tracer particles. A short light pulse freezes
+# the particles in each exposure; their pattern shifts between exposures as
+# the fluid moves. Hammerhead's `SyntheticData` submodule renders such image
+# pairs from a prescribed velocity field, displacing each particle by its local
 # velocity times ``\Delta t`` — so the ground truth is known exactly.
 #
 # A velocity field is any function `(x, y, z, t) -> (u, v, w)`. Ready-made
@@ -67,6 +69,11 @@ end
 
 result = run_piv(imgA, imgB)
 
+# An *interrogation window* is a small image region containing several
+# particles. Correlation finds the shift that best aligns its particle pattern
+# between frames, so each window produces one representative displacement
+# vector rather than one vector per particle.
+#
 # The [`PIVResult`](@ref) holds the interrogation grid (`x` along columns,
 # `y` along rows, in pixels) and the displacement fields (`u` along x, `v`
 # along y — a particle at `(row, col)` in frame A is found at
@@ -80,7 +87,8 @@ plot_vector_field(result)
 # large windows, then uses each pass's validated field to *deform* the
 # images before the next, finer pass — so late passes only measure a small
 # residual and can afford small windows. Two more switches, `padding` and
-# `apodization`, remove the systematic bias of plain FFT correlation (see
+# `apodization`, remove the systematic bias of plain fast Fourier transform
+# (FFT) correlation (see
 # [Correlation accuracy](../explanation/correlation.md)). This is the
 # recommended configuration for real work:
 
@@ -123,7 +131,8 @@ u_ref, v_ref = midpoint_reference(result)
 err = error_statistics(result, u_ref, v_ref)
 (bias_u = err.bias_u, rms_u = err.rms_u, rms_v = err.rms_v, n = err.n)
 
-# About 0.03 px of random error and negligible bias over the whole field —
+# About 0.03 pixels (px) of root-mean-square (RMS) error and negligible bias
+# over the whole field —
 # this is what the padded, apodized, multi-pass configuration is for. For
 # comparison, plain un-padded single-pass correlation carries a systematic
 # bias of ~0.15 px on its own.
@@ -133,8 +142,8 @@ err = error_statistics(result, u_ref, v_ref)
 # With `uncertainty = true`, the final pass estimates each vector's random
 # error from correlation statistics (Wieneke 2015) into `uncertainty_u` /
 # `uncertainty_v`. The median estimate should sit at the noise-driven
-# share of the RMS error we just measured — without ever seeing the
-# ground truth:
+# share of the root-mean-square error we just measured — without ever seeing
+# the ground truth:
 
 using Statistics: median
 

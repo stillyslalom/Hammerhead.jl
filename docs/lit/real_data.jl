@@ -7,9 +7,11 @@
 # measurement using only what the analysis itself reports: validation
 # flags, peak ratios, and per-vector uncertainty.
 #
-# The data is case A of the first International PIV Challenge
+# The data is case A of the first International Particle Image Velocimetry
+# (PIV) Challenge
 # [Stanislas2003](@cite): a wing-tip vortex 1.64 m behind a transport
-# aircraft half-model in the DNW-LLF wind tunnel, recorded by C. Kähler
+# aircraft half-model in the German–Dutch Wind Tunnels Large Low-Speed
+# Facility (DNW-LLF), recorded by C. Kähler of the German Aerospace Center
 # (DLR). The Challenge organizers chose it because it concentrates common
 # large-facility problems in one image pair — strong velocity gradients,
 # varying particle image sizes, and loss of seeding in the vortex core.
@@ -149,8 +151,9 @@ end
 # distribution as the judge. This recording suggests three candidates —
 # [`highpass_filter`](@ref) for the illumination gradient,
 # [`intensity_cap`](@ref) for the bright particles [Shavit2007](@cite),
-# and [`clahe`](@ref) for the dim core. Run the same analysis behind each
-# and compare:
+# and contrast-limited adaptive histogram equalization ([`clahe`](@ref),
+# commonly abbreviated CLAHE) for the dim core. Run the same analysis behind
+# each and compare:
 
 candidates = [
     "raw"              => identity,
@@ -187,7 +190,7 @@ end
 # the flow (the particles really are missing), not a defect any filter can
 # repair. With more than one image pair, ensemble correlation can pool the
 # few particles that do transit the core across many instants — see
-# [Ensemble correlation for low SNR](../howto/ensemble.md).
+# [Ensemble correlation for low signal-to-noise ratio (SNR)](../howto/ensemble.md).
 #
 # ## Where to go next
 #

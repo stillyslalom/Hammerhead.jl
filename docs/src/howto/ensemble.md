@@ -1,8 +1,9 @@
-# Ensemble correlation for low SNR
+# Ensemble correlation for low signal-to-noise ratio
 
 **Goal:** extract a mean displacement field from recordings whose
-individual pairs are too noisy for reliable peaks — micro-PIV, weak
-seeding, low laser power (e.g. PIV Challenge case 4A).
+individual pairs are too noisy for reliable peaks — micro-scale particle
+image velocimetry (micro-PIV), weak seeding, or low laser power (for example,
+PIV Challenge case 4A). This is the low signal-to-noise ratio (SNR) regime.
 
 ## When it applies
 

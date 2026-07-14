@@ -1,6 +1,7 @@
 # Choose an effort level
 
-**Goal:** pick a PIV schedule quickly, then override only the knobs your data
+**Goal:** pick a particle image velocimetry (PIV) schedule quickly, then
+override only the knobs your data
 actually requires.
 
 For routine runs, omit the explicit pass vector and use `effort`:
@@ -17,9 +18,9 @@ are:
 
 | Effort | Schedule | Options | Typical synthetic result |
 |---|---|---|---|
-| `:low` | `[32]` | [`PIVParameters`](@ref) defaults | 1× time; ~0.10 px uniform-shift RMS, ~0.43 px vortex RMS |
-| `:medium` | `[64, 32]` | defaults | ~4× time; ~0.02 px uniform-shift RMS, ~0.22 px vortex RMS |
-| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | ~32× time; ~0.02 px uniform-shift RMS, ~0.09 px vortex RMS |
+| `:low` | `[32]` | [`PIVParameters`](@ref) defaults | 1× time; ~0.10 px uniform-shift root-mean-square (RMS) error, ~0.43 px vortex RMS error |
+| `:medium` | `[64, 32]` | defaults | ~4× time; ~0.02 px uniform-shift RMS error, ~0.22 px vortex RMS error |
+| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | ~32× time; ~0.02 px uniform-shift RMS error, ~0.09 px vortex RMS error |
 
 Those numbers are typical single-threaded timings on 256×256 synthetic pairs,
 not guarantees for every seeding density or flow.

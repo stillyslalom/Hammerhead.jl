@@ -8,7 +8,7 @@ surviving into your statistics).
 
 Every [`run_piv`](@ref) pass applies, in order:
 
-1. **Universal outlier detection** (normalized median test,
+1. **Universal outlier detection (UOD)** (normalized median test,
    [WesterweelScarano2005](@cite)) — `uod_threshold = 2.0`,
    `uod_neighborhood = 2` (a 5×5 neighborhood), noise floor
    `epsilon = 0.1` px.

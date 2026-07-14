@@ -4,7 +4,8 @@ CurrentModule = Hammerhead
 
 # Ensemble and statistics
 
-Ensemble (sum-of-correlation) PIV for low-SNR recordings, time-series
+Ensemble (sum-of-correlation) particle image velocimetry (PIV) for recordings
+with low signal-to-noise ratio (SNR), time-series
 statistics over result sequences, temporal validation, accuracy diagnostics,
 and spectra. See the [ensemble how-to](../howto/ensemble.md). GPU backends
 keep summed planes and uncertainty statistics device-resident; setup and

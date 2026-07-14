@@ -1,6 +1,7 @@
 # Multi-pass interrogation and image deformation
 
-A single correlation pass faces a hard trade-off: small windows resolve
+In particle image velocimetry (PIV), a single correlation pass faces a hard
+trade-off: small windows resolve
 fine flow structure but can only measure small displacements reliably (the
 quarter-window rule), while large windows measure large displacements but
 average over structure. Multi-pass interrogation with window refinement
@@ -80,7 +81,7 @@ Two features **require** a converged schedule:
 - Per-vector [uncertainty quantification](uncertainty.md) assumes the
   correlation peak of the deformed windows sits at nearly zero residual;
   it runs on the final pass only.
-- The ~0.03 px RMS accuracy figure of the
+- The ~0.03 px root-mean-square (RMS) accuracy figure of the
   [padded + apodized configuration](correlation.md) is only reached once
   the residual is small.
 

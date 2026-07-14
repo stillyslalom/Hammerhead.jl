@@ -20,7 +20,8 @@ supported.)
 ## Masked ≠ outlier
 
 Hammerhead keeps two distinct per-vector flags in a [`PIVResult`](@ref),
-and conflating them is the most common masking mistake in PIV software:
+and conflating them is the most common masking mistake in particle image
+velocimetry (PIV) software:
 
 - `result.mask` — windows **dropped** because they overlap the mask. They
   carry *no measurement*: `u`, `v`, `peak_ratio`, and `correlation_moment`
