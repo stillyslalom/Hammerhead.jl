@@ -146,6 +146,8 @@
     uqA, uqB = imgA[1:96, 1:96], imgB[1:96, 1:96]
     uq_cpu = run_piv(uqA, uqB, uqparams; threaded = false)
     uq_ka = run_piv(uqA, uqB, uqparams; backend = :ka, threaded = false)
+    uq_hybrid = run_piv(uqA, uqB, uqparams; backend = :ka,
+                        uncertainty_backend = :cpu, threaded = true)
     uqvalid = isfinite.(uq_cpu.uncertainty_u) .& isfinite.(uq_ka.uncertainty_u)
     vqvalid = isfinite.(uq_cpu.uncertainty_v) .& isfinite.(uq_ka.uncertainty_v)
     @test any(uqvalid) && any(vqvalid)
@@ -153,6 +155,23 @@
                        uq_cpu.uncertainty_u[uqvalid])) < 1e-10
     @test maximum(abs.(uq_ka.uncertainty_v[vqvalid] .-
                        uq_cpu.uncertainty_v[vqvalid])) < 1e-10
+    hqvalid = isfinite.(uq_cpu.uncertainty_u) .& isfinite.(uq_hybrid.uncertainty_u)
+    hvvalid = isfinite.(uq_cpu.uncertainty_v) .& isfinite.(uq_hybrid.uncertainty_v)
+    @test isequal(uq_hybrid.u, uq_ka.u) && isequal(uq_hybrid.v, uq_ka.v)
+    @test maximum(abs.(uq_hybrid.uncertainty_u[hqvalid] .-
+                       uq_cpu.uncertainty_u[hqvalid])) < 1e-10
+    @test maximum(abs.(uq_hybrid.uncertainty_v[hvvalid] .-
+                       uq_cpu.uncertainty_v[hvvalid])) < 1e-10
+    @test_throws ArgumentError run_piv(uqA, uqB, uqparams; backend = :ka,
+                                       uncertainty_backend = :automatic)
+
+    config_bench = benchmark_piv_configurations(uqA, uqB, uqparams;
+                                                backends = (:cpu, :ka),
+                                                samples = 1, warmup = false)
+    @test [r.configuration for r in config_bench] == [:cpu, :device, :hybrid]
+    @test all(r.seconds > 0 && isfinite(r.speedup) for r in config_bench)
+    @test config_bench[1].max_vector_delta == 0
+    @test config_bench[1].max_uncertainty_delta == 0
     @test_throws ArgumentError run_piv(imgA, imgB,
         PIVParameters(keep_correlation_planes = true); backend = :ka)
 

@@ -207,7 +207,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `accumulate_planes!` / `ensemble_analyze!`. Phase 4b runs the Wieneke UQ
   statistics kernel in Float64 on all KA-family backends: fused single-pair
   and final post-iteration sweeps return packed scalars only, while ensemble
-  statistics remain device-resident and additive across pairs. Phase 4c cut
+  statistics remain device-resident and additive across pairs. Single-pair,
+  sequence, and stereo runs can instead set `uncertainty_backend = :cpu` for
+  a vendor-neutral hybrid path: correlation/deformation stay on the selected
+  backend, the final warped pair transfers to the host once, and threaded CPU
+  UQ preserves the same Float64 estimator. `benchmark_piv_configurations`
+  compares CPU/device/hybrid on a representative production pair; the
+  convenience CLI is `bench/gpu_configurations.jl`. Phase 4c cut
   the UQ recompute: `_ka_uq_stats!` originally re-derived the smoothed ΔC
   stencil (12 array reads/pixel) scratch-free, twice per pixel for each of the
   40 covariance offsets — profiling (`bench/gpu_profile_uq.jl`, RTX 2000 Ada)

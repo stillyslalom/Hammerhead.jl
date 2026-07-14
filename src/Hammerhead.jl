@@ -15,6 +15,7 @@ using JLD2: jldopen
 using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
+export benchmark_piv_configurations
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export polygon_mask, load_mask

@@ -56,6 +56,17 @@ guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
 
 ## Allocation/GC profiling
 
+For a portable CPU/device/hybrid comparison on a target machine, run:
+
+```bash
+julia --project=<gpuenv> -t auto bench/gpu_configurations.jl amdgpu 2048 Float32 high 3
+```
+
+Use `cuda` or `ka` instead of `amdgpu` as appropriate. The script compares
+all-CPU, all-device, and device-correlation plus threaded-CPU uncertainty.
+For real data or a custom pass schedule, call `benchmark_piv_configurations`
+directly with a representative loaded image pair.
+
 For batch memory work, profile the real Case E sequence workload with:
 
 ```bash

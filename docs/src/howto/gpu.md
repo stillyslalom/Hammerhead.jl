@@ -167,9 +167,38 @@ result = run_piv_sequence(pairs, passes;
 
 The returned fields follow the image precision, while uncertainty's internal
 statistics remain Float64. On GPUs with weak Float64 throughput, uncertainty
-may erase the speedup from correlation. The RX 6800 XT development system is
-one such case: use the CPU reference or benchmark the complete workload when
-uncertainty quantification (UQ) dominates.
+may erase the speedup from correlation. Route only the uncertainty sweep to
+the threaded CPU without changing where correlation and deformation run:
+
+```julia
+result = run_piv(imgA, imgB; effort = :high,
+    backend = :amdgpu,
+    uncertainty_backend = :cpu,
+)
+```
+
+The policy is backend-independent: the same keyword works with `:cuda`,
+`:amdgpu`, `:ka`, and future device backends. The default
+`uncertainty_backend = :same` preserves fully device-resident execution.
+Neither choice changes the requested estimator or its Float64 statistics.
+
+Do not infer the best policy from the GPU vendor or product family. Benchmark
+the actual precision, image size, schedule, and mask on the target machine:
+
+```julia
+rows = benchmark_piv_configurations(imgA, imgB;
+    effort = :high,
+    backends = (:cpu, :amdgpu),
+    samples = 3,
+)
+
+foreach(println, rows)
+best = rows[argmin(getfield.(rows, :seconds))]
+```
+
+This measures all-CPU, all-device, and hybrid configurations, reusing a
+workspace within each configuration and reporting numerical deltas against
+the CPU reference. Replace `:amdgpu` with `:cuda` as appropriate.
 
 ## Validate a device and benchmark the workload
 
@@ -179,6 +208,7 @@ multi-pass, masks, ensemble accumulation, and uncertainty:
 ```bash
 julia --project=/path/to/gpu-env -t 4 bench/gpu_validate.jl amdgpu
 julia --project=/path/to/gpu-env -t 4 bench/gpu_benchmarks.jl amdgpu
+julia --project=/path/to/gpu-env -t 4 bench/gpu_configurations.jl amdgpu 2048 Float32 high 3
 ```
 
 Pass `cuda` for NVIDIA. GPU comparisons use scientific tolerances because

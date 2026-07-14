@@ -289,6 +289,14 @@ backends run, on the CPU); package extensions add the device selectors
 features, memory sizing, and validation. Backend
 implementation types are internal.
 
+`uncertainty_backend = :same` evaluates correlation-statistics uncertainty on
+the selected `backend`. Set it to `:cpu` to keep correlation and deformation
+on that backend while transferring the final deformed pair once and evaluating
+uncertainty on the threaded CPU. This hybrid policy is backend-independent and
+is often preferable when the selected device has weak Float64 throughput. Use
+[`benchmark_piv_configurations`](@ref) on the production workload rather than
+selecting the policy from the device vendor or product name.
+
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch
 is reused across calls — pass the same one to every `run_piv` in a hand-written
@@ -313,6 +321,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  passes::AbstractVector{PIVParameters};
                  effort::Union{Nothing,Symbol} = nothing,
                  backend::Symbol = :cpu,
+                 uncertainty_backend::Symbol = :same,
                  threaded::Bool = Threads.nthreads() > 1,
                  predictor_smoothing::Bool = true,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
@@ -322,6 +331,8 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     be = _resolve_backend(backend)
+    uncertainty_backend in (:same, :cpu) ||
+        throw(ArgumentError("uncertainty_backend must be :same or :cpu, got :$uncertainty_backend"))
     workspace === nothing || typeof(workspace._backend) === typeof(be) ||
         throw(ArgumentError("workspace backend $(typeof(workspace._backend)) does not " *
                             "match run backend $(typeof(be)); build the workspace with " *
@@ -382,6 +393,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           threaded, force_replace = k < length(passes),
                           predictor_smoothing, mask, mask_threshold,
                           warp_buffers, backend = be, workspace,
+                          uncertainty_backend,
                           deform_context = dctx)
     end
     return scale === nothing ? result : with_scale(result, scale)
@@ -596,6 +608,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   warp_buffers = nothing,
                   backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
                   workspace::Union{Nothing,PIVWorkspace} = nothing,
+                  uncertainty_backend::Symbol = :same,
                   deform_context = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
@@ -627,7 +640,11 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     unc = params.uncertainty && !force_replace
     uncertainty_u = fill(T(NaN), ny, nx)
     uncertainty_v = fill(T(NaN), ny, nx)
-    fused_unc = unc && maxiter == 1
+    # Route only UQ to the host when requested; correlation and deformation
+    # stay on `backend`. This is deliberately capability/performance policy,
+    # not vendor policy.
+    host_uq = unc && uncertainty_backend === :cpu && !(backend isa _CPUBackend)
+    fused_unc = unc && maxiter == 1 && !host_uq
     # Opt-in full-plane storage: one cell per window (masked/skipped windows,
     # which are absent from grid.jobs, stay `nothing`). Each job writes only
     # its own cell, so the threaded path needs no locking.
@@ -719,7 +736,25 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         predictor = build_predictor(result, predictor_smoothing)
     end
 
-    if unc && !fused_unc
+    if host_uq
+        # `Array` is the portable device-to-host seam for CUDA, AMDGPU, and
+        # future array-backed extensions. Avoid copying an existing host Array.
+        hostA = warpA isa Array ? warpA : Array(warpA)
+        hostB = warpB isa Array ? warpB : Array(warpB)
+        host_nchunks = threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1
+        host_apod = apodization_window(T, params.window_size, params.apodization)
+        host_chunk_size = cld(length(grid.jobs), max(host_nchunks, 1))
+        if host_nchunks == 1
+            uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
+                               hostA, hostB, params, host_apod, mask)
+        elseif host_nchunks > 1
+            @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs,
+                                                                   host_chunk_size))
+                Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
+                                                  hostA, hostB, params, host_apod, mask)
+            end
+        end
+    elseif unc && !fused_unc
         # warpA/warpB still hold the deformation of the last sweep — the
         # windows whose correlation produced the returned field.
         if nchunks == 1
@@ -938,3 +973,124 @@ process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                      uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
                      _make_correlation_engine(correlator), mask, planes)
+
+"""
+    benchmark_piv_configurations(imgA, imgB, params = nothing;
+        effort = nothing, backends = (:cpu,), samples = 3, warmup = true,
+        threaded = Threads.nthreads() > 1, kwargs...) -> Vector{NamedTuple}
+
+Benchmark CPU, device, and hybrid PIV execution on a representative in-memory
+image pair. `backends` is a collection of loaded backend selectors, for example
+`(:cpu, :cuda)` or `(:cpu, :amdgpu)`. Every device backend is measured twice
+when uncertainty is enabled: fully on-device (`configuration = :device`) and
+with correlation/deformation on the device but uncertainty on the threaded CPU
+(`configuration = :hybrid`). The CPU reference is always included.
+
+Pass an explicit [`PIVParameters`](@ref) or schedule as `params`, or omit it
+and use `effort = :low/:medium/:high`. Remaining keywords are handled exactly
+as by [`run_piv`](@ref). Compilation is excluded when `warmup = true`; each
+reported time is the minimum of `samples` runs. A workspace is reused within
+each configuration, matching sequence-style production use.
+
+Each returned row contains `configuration`, `backend`, `uncertainty_backend`,
+`seconds`, `speedup`, `max_vector_delta`, and `max_uncertainty_delta`. Deltas
+are measured against the CPU result over entries finite in both results.
+Benchmark the same image precision, size, schedule, mask, and preprocessing
+used in production; backend rankings are workload- and hardware-dependent.
+"""
+function benchmark_piv_configurations(imgA::AbstractMatrix{<:Real},
+                                      imgB::AbstractMatrix{<:Real},
+                                      params::Union{Nothing,PIVParameters,
+                                                    AbstractVector{PIVParameters}} = nothing;
+                                      effort::Union{Nothing,Symbol} = nothing,
+                                      backends = (:cpu,), samples::Int = 3,
+                                      warmup::Bool = true,
+                                      threaded::Bool = Threads.nthreads() > 1,
+                                      kwargs...)
+    samples > 0 || throw(ArgumentError("samples must be positive, got $samples"))
+    size(imgA) == size(imgB) ||
+        throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
+    if params === nothing
+        piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+        if effort === nothing
+            isempty(piv_kwargs) ||
+                throw(ArgumentError("PIV parameter keywords require an effort level"))
+            passes = [PIVParameters()]
+        else
+            passes = effort_schedule(effort; image_size = size(imgA), piv_kwargs...)
+        end
+    else
+        effort === nothing ||
+            throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+        passes = params isa PIVParameters ? [params] : collect(params)
+        driver_kwargs = (; kwargs...)
+    end
+    isempty(passes) && throw(ArgumentError("at least one pass is required"))
+
+    requested = backends isa Symbol ? [backends] : unique(Symbol.(collect(backends)))
+    :cpu in requested || pushfirst!(requested, :cpu)
+    has_uq = any(p -> p.uncertainty, passes)
+    configs = NamedTuple[]
+    for b in requested
+        if b === :cpu
+            push!(configs, (configuration = :cpu, backend = :cpu,
+                            uncertainty_backend = :same))
+        else
+            push!(configs, (configuration = :device, backend = b,
+                            uncertainty_backend = :same))
+            has_uq && push!(configs, (configuration = :hybrid, backend = b,
+                                      uncertainty_backend = :cpu))
+        end
+    end
+
+    timed = NamedTuple[]
+    results = PIVResult[]
+    for config in configs
+        workspace = piv_workspace(; backend = config.backend)
+        run_once() = run_piv(imgA, imgB, passes;
+                             backend = config.backend,
+                             uncertainty_backend = config.uncertainty_backend,
+                             threaded, workspace, driver_kwargs...)
+        warmup && run_once()
+        best_time = Inf
+        best_result = nothing
+        for _ in 1:samples
+            GC.gc()
+            t0 = time_ns()
+            result = run_once()
+            elapsed = (time_ns() - t0) / 1e9
+            if elapsed < best_time
+                best_time = elapsed
+                best_result = result
+            end
+        end
+        push!(results, best_result)
+        push!(timed, merge(config, (seconds = best_time,)))
+    end
+
+    cpu_index = findfirst(r -> r.backend === :cpu, timed)
+    reference = results[cpu_index]
+    cpu_time = timed[cpu_index].seconds
+    rows = NamedTuple[]
+    for (row, result) in zip(timed, results)
+        push!(rows, merge(row,
+            (speedup = cpu_time / row.seconds,
+             max_vector_delta = _benchmark_max_delta(reference, result, false),
+             max_uncertainty_delta = _benchmark_max_delta(reference, result, true))))
+    end
+    return rows
+end
+
+function _benchmark_max_delta(a::PIVResult, b::PIVResult, uncertainty::Bool)
+    afields = uncertainty ? (a.uncertainty_u, a.uncertainty_v) : (a.u, a.v)
+    bfields = uncertainty ? (b.uncertainty_u, b.uncertainty_v) : (b.u, b.v)
+    delta = 0.0
+    found = false
+    for (x, y) in zip(afields, bfields), i in eachindex(x, y)
+        if isfinite(x[i]) && isfinite(y[i])
+            delta = max(delta, abs(Float64(x[i]) - Float64(y[i])))
+            found = true
+        end
+    end
+    return found ? delta : NaN
+end
