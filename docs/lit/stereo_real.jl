@@ -191,11 +191,13 @@ passes = multipass_parameters([64, 32, 32];
 
 B1 = load_image(frame(1, 51))
 B3 = load_image(frame(3, 51))
-stereo = run_piv_stereo(A1, B1, A3, B3, dw1c, dw3c, passes)
+stereo = run_piv_stereo(A1, B1, A3, B3, dw1c, dw3c, passes;
+    scale = PhysicalScale(dt = 1e-3, length_unit = "mm", time_unit = "s"))
 
-# The [`StereoPIVResult`](@ref)'s grid and units are world-side: positions
-# in mm, displacements in mm per frame interval (1 ms here — multiply by
-# 1000 for m/s; Hammerhead does not yet apply time scaling itself). Its
+# The [`StereoPIVResult`](@ref)'s grid and measured arrays are world-side:
+# positions in mm and displacements in mm per frame interval. The attached
+# [`PhysicalScale`](@ref) records the 1 ms interval; `physical(stereo)`
+# converts the displacements and uncertainties to velocities in mm/s. Its
 # `mask` and `outliers` are the unions of the per-camera flags: a stereo
 # vector is only as good as *both* two-component (2C) measurements underneath it, and the
 # per-camera results remain available as `stereo.cam1` / `stereo.cam2`.
