@@ -4,30 +4,46 @@
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/dev/)
 [![Build Status](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml?query=branch%3Amain)
 
-Particle image velocimetry (PIV) in Julia: planar (2D2C) and stereoscopic
-(2D3C) PIV plus 2D2C particle tracking (PTV), developed and validated against
-the [International PIV Challenge](https://pivchallenge.org/) cases.
+Particle image velocimetry (PIV) in Julia: planar two-dimensional,
+two-component (2D2C) and stereoscopic two-dimensional, three-component (2D3C)
+PIV, plus 2D2C particle tracking velocimetry (PTV). Hammerhead is developed
+and validated against the
+[International PIV Challenge](https://pivchallenge.org/) cases.
 
-- Multi-pass WIDIM analysis with symmetric image deformation; zero-padded,
-  Gaussian-apodized correlation reaches ~0.03 px RMS on synthetic benchmarks
+PIV measures fluid motion from two images of small tracer particles taken a
+known time apart. Hammerhead divides the images into small *interrogation
+windows*, finds how far each particle pattern moved, and returns a displacement
+vector at every window. Supplying the physical pixel size and time between
+frames converts those displacements into velocities. PTV is the sparse-seeding
+counterpart: it follows identifiable particles instead of comparing patterns
+inside windows.
+
+- Multi-pass window-deformation iterative multigrid (WIDIM) analysis with
+  symmetric image deformation; zero-padded, Gaussian-apodized correlation
+  reaches ~0.03 px root-mean-square (RMS) error on synthetic benchmarks
 - Vector validation (universal outlier detection, peak ratio, correlation
   moment) with secondary-peak substitution and local-median replacement
 - Per-vector uncertainty quantification from correlation statistics
   ([Wieneke 2015](https://doi.org/10.1088/0957-0233/26/7/074002))
-- Ensemble (sum-of-correlation) analysis for low-SNR / micro-PIV recordings,
-  plus time-series statistics and temporal validation
-- Full stereo chain: dot-grid target detection, camera calibration (pinhole
-  DLT and Soloff polynomial), image dewarping, 3C reconstruction, and
+- Ensemble (sum-of-correlation) analysis for low signal-to-noise ratio (SNR)
+  and micro-PIV recordings, plus time-series statistics and temporal validation
+- Full stereo chain: dot-grid target detection, camera calibration with
+  pinhole direct linear transformation (DLT) and Soloff polynomial models,
+  image dewarping, three-component (3C) reconstruction, and
   disparity self-calibration
   ([Wieneke 2005](https://doi.org/10.1007/s00348-005-0962-z))
 - Particle tracking: subpixel particle detection, hybrid PIV-guided two-frame
   matching, and multi-frame trajectory linking
-- Batch drivers with incremental JLD2 output, static masking, in-place
-  preprocessing, physical-unit metadata, and Makie plotting
+- Batch drivers with incremental JLD2-format Julia data output, static masking,
+  in-place preprocessing, physical-unit metadata, and Makie plotting
 
-The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/) has
-executable tutorials (including real PIV Challenge recordings), how-to guides,
-explanations of the methods, and the full API reference.
+New to velocimetry? Start with the executable
+[first-vector-field tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/first_vector_field/),
+then analyze a
+[real wind-tunnel recording](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/real_data/).
+The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/) also has
+task-oriented how-to guides, explanations of the methods, stereo and PTV
+tutorials, and the full API reference.
 
 ## Planar PIV
 
@@ -41,7 +57,7 @@ using Hammerhead
 imgA = load_image("frame_0001.tif")  # grayscale Matrix{Float64} in [0, 1]
 imgB = load_image("frame_0002.tif")
 
-# One-line presets trading speed for accuracy (:low, :medium, :high):
+# One-line presets trade speed for accuracy (:low, :medium, :high):
 result = run_piv(imgA, imgB; effort = :high)
 
 # Or spell out the multi-pass schedule: each pass uses the previous validated
@@ -62,11 +78,17 @@ result.outliers                   # validation flags
 result.uncertainty_u              # per-vector σ (Wieneke 2015), final pass
 ```
 
+The `u` and `v` arrays are displacements in pixels, not yet physical
+velocities. Each entry represents the motion measured by one interrogation
+window. See [Physical units](#physical-units) when the pixel size and frame
+interval are known.
+
 Sign convention: a particle at `(row, col)` in the first image found at
 `(row + v, col + u)` in the second yields positive `(u, v)`.
 
 `padding = true` with `apodization = :gauss` is the accuracy configuration
-(unbiased, ~0.03 px RMS on synthetic data) at ~4× the FFT cost per window.
+(unbiased, ~0.03 px RMS on synthetic data) at roughly four times the fast
+Fourier transform (FFT) cost per window.
 Vectors failing validation are first re-tested against their
 secondary/tertiary correlation peaks — a locally consistent alternative is
 accepted as measured data — and otherwise replaced with the local median and
@@ -125,7 +147,7 @@ Per-camera uncertainties propagate through the reconstruction into
 [stereo tutorials](https://stillyslalom.github.io/Hammerhead.jl/dev/) for the
 end-to-end walkthrough, including one on real PIV Challenge case-4E data.
 
-## Particle tracking (PTV)
+## Particle tracking velocimetry (PTV)
 
 For seeding densities too sparse for correlation windows, track individual
 particles:
@@ -189,17 +211,17 @@ phys = physical(result)   # positions in m, velocities in m/s; labels for plotti
 With Unitful loaded (a weak dependency),
 `PhysicalScale(22.0u"µm", 1.0u"ms")` carries the unit names into plot labels.
 
-## GPU / alternative backends
+## Graphics processing unit (GPU) and alternative backends
 
 Correlation can run through portable KernelAbstractions kernels:
 `backend = :ka` (CPU, built in) is bitwise-checked against the default
 engine, and loading a device package enables the matching GPU backend —
 `using AMDGPU` for `backend = :amdgpu`, `using CUDA` for `backend = :cuda`.
 The GPU backends batch whole passes on the device, including subpixel peak
-analysis, and currently cover cross-correlation with `:gauss3`/`:gauss9`
-subpixel fits, multi-pass deformation, ensemble accumulation, and Float64
-uncertainty statistics. Phase correlation, `:gauss2d`, and retained
-correlation planes remain CPU-only. See the
+analysis, and currently cover cross- and phase correlation with
+`:gauss3`/`:gauss9` subpixel fits, multi-pass deformation, ensemble
+accumulation, and Float64 uncertainty statistics. The `:gauss2d` fit and
+retained correlation planes remain CPU-only. See the
 [GPU how-to](docs/src/howto/gpu.md) for installation, feature coverage,
 device-memory sizing, validation, and performance guidance.
 
