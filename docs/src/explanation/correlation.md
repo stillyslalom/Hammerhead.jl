@@ -7,6 +7,24 @@ the fast Fourier transform (FFT) cost for a large
 accuracy gain. This page explains what each one does and what accuracy to
 expect.
 
+## Enlarged search areas
+
+Set `search_area_size` larger than `window_size` when the first-pass
+displacement can exceed the interrogation window's useful capture range. The
+frame-A interrogation window remains small (preserving spatial resolution and
+particle sampling) and is embedded at the center of the larger frame-B search
+area. Each size difference must be even so the two footprints have exactly the
+same pixel-grid center. Grid stride remains `window_size - overlap`; only the
+outer centers move inward to keep the search area inside the images.
+
+The correlation plane is search-area-sized (twice that size with `padding`),
+and only lags for which the interrogation footprint lies fully inside the
+search area are eligible peaks. Gaussian apodization is applied to the
+interrogation footprint; the larger search footprint is left untapered so
+candidates near its boundary are not suppressed. Existing equal-area runs use
+the original correlation path bit for bit. Enlarged search areas currently
+require `backend = :cpu`; KA-family backends reject them explicitly.
+
 ## Plain circular correlation biases toward zero
 
 FFT-based cross-correlation is *circular*: content shifted out of one side
@@ -26,6 +44,9 @@ wrap-around. Linear correlation has its own bias, though: a displacement of
 linearly with displacement, skewing the peak shape. Hammerhead therefore
 normalizes each correlation plane by the overlap gain (the number of
 contributing pixel pairs at each shift), which restores an unbiased peak.
+For an enlarged search area, eligible lags already keep the complete
+interrogation footprint inside the search footprint, so their overlap weight
+is constant and no additional gain is needed.
 This normalization is built in — `padding = true` always includes it.
 
 ## Gaussian apodization

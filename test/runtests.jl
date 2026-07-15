@@ -38,10 +38,14 @@ end
 @testset "PIVParameters validation" begin
     p = PIVParameters()
     @test p.window_size == (32, 32)
+    @test p.search_area_size == p.window_size
     @test p.overlap == (16, 16)
     @test PIVParameters(window_size = 64).window_size == (64, 64)
+    @test PIVParameters(window_size = 16, search_area_size = 32, overlap = 8).search_area_size == (32, 32)
     @test PIVParameters(overlap = 0).overlap == (0, 0)
     @test_throws ArgumentError PIVParameters(window_size = 2)
+    @test_throws ArgumentError PIVParameters(window_size = 16, search_area_size = 14)
+    @test_throws ArgumentError PIVParameters(window_size = 16, search_area_size = 31)
     @test_throws ArgumentError PIVParameters(overlap = (32, 16))     # overlap == window
     @test_throws ArgumentError PIVParameters(overlap = -1)
     @test_throws ArgumentError PIVParameters(correlation_method = :fancy)
@@ -56,6 +60,46 @@ end
     @test_throws ArgumentError PIVParameters(uod_threshold = 0)
     @test_throws ArgumentError PIVParameters(uod_neighborhood = 0)
     @test_throws ArgumentError PIVParameters(min_peak_ratio = -1)
+end
+
+@testset "Extended search areas" begin
+    rng = MersenneTwister(71)
+    imgA = rand(rng, Float64, 128, 128)
+    imgB = zeros(128, 128)
+    imgB[4:end, 11:end] .= imgA[1:end-3, 1:end-10]
+
+    params = PIVParameters(window_size = 16, search_area_size = 48, overlap = 8,
+                           subpixel_method = :none, n_peaks = 1,
+                           uod_enable = false, keep_correlation_planes = true)
+    r = run_piv(imgA, imgB, params; threaded = false)
+    @test size(r.u) == (11, 11)
+    @test r.x == collect(24.5:8:104.5)
+    @test r.y == collect(24.5:8:104.5)
+    @test median(r.u) == 10
+    @test median(r.v) == 3
+    @test all(p -> size(p) == (48, 48), r.correlation_planes)
+
+    # Explicit equality is the legacy path, including low-level correlators.
+    p0 = PIVParameters(window_size = 16, overlap = 8, uod_enable = false)
+    p1 = PIVParameters(window_size = 16, search_area_size = 16, overlap = 8,
+                       uod_enable = false)
+    r0 = run_piv(imgA, imgB, p0; threaded = false)
+    r1 = run_piv(imgA, imgB, p1; threaded = false)
+    @test isequal(r0.u, r1.u) && isequal(r0.v, r1.v)
+
+    c = CrossCorrelator{Float64}((16, 16); search_area_size = (48, 48))
+    low = correlate(c, @view(imgA[17:32, 17:32]), @view(imgB[1:48, 1:48]);
+                    subpixel = :none)
+    @test (low.du, low.dv) == (10.0, 3.0)
+    @test_throws DimensionMismatch correlate(c, imgA[1:16, 1:16], imgB[1:16, 1:16])
+    @test_throws ArgumentError run_piv(imgA, imgB, params; backend = :ka)
+
+    # A search-only masked fringe can drop the node even when its centered
+    # interrogation footprint is clean.
+    mask = falses(128, 128)
+    mask[1:16, 1:48] .= true
+    rm = run_piv(imgA, imgB, params; mask, mask_threshold = 0.3, threaded = false)
+    @test rm.mask[1, 1]
 end
 
 @testset "multipass_parameters" begin
@@ -104,6 +148,8 @@ end
     @test !any(p.padding for p in unpadded)
     small_final = Hammerhead.effort_schedule(:high; window_size = 16)
     @test [p.window_size[1] for p in small_final] == [64, 32, 16]
+    searched = Hammerhead.effort_schedule(:high; search_area_size = 48)
+    @test [p.search_area_size[1] for p in searched] == [192, 96, 48]
     final_wins = Hammerhead.effort_schedule(:high; uncertainty = false,
                                             final = (uncertainty = true,
                                                      max_iterations = 4))

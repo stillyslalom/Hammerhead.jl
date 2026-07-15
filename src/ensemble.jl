@@ -274,7 +274,7 @@ _uncertainty_scratch(engine::_CPUCorrelationEngine, ::Type{T}) where {T} =
 # accumulator (see `_KAPlaneAccumulator` in ka_backend.jl).
 _plane_accumulator(::_CPUCorrelationEngine, params::PIVParameters,
                    ::Type{T}, njobs::Int) where {T} =
-    [zeros(T, params.padding ? 2 .* params.window_size : params.window_size)
+    [zeros(T, params.padding ? 2 .* params.search_area_size : params.search_area_size)
      for _ in 1:njobs]
 
 # Peak-find and post-process every summed ensemble plane on the host: subpixel
@@ -318,17 +318,25 @@ function accumulate_planes!(accum, jobrange, engine, imgA, imgB, jobs,
                             params::PIVParameters, mask,
                             uacc = nothing, uscratch = nothing)
     wr, wc = params.window_size
+    sr, sc = params.search_area_size
+    mr, mc = div.(params.search_area_size .- params.window_size, 2)
     for j in jobrange
         gi, gj, rs, cs = jobs[j]
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
-        subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
-        submask = mask === nothing ? nothing :
+        subB_uq = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
+        srs, scs = rs - mr, cs - mc
+        subB = @view imgB[srs:(srs + sr - 1), scs:(scs + sc - 1)]
+        submaskA = mask === nothing ? nothing :
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
+        submaskB = mask === nothing ? nothing :
+                   (params.search_area_size == params.window_size ? submaskA :
+                    view(mask, srs:(srs + sr - 1), scs:(scs + sc - 1)))
         # Fully clean windows take the unmasked fast path.
-        submask !== nothing && !any(submask) && (submask = nothing)
-        accum[j] .+= _correlation_plane!(engine, subA, subB, submask)
+        submaskA !== nothing && !any(submaskA) && (submaskA = nothing)
+        submaskB !== nothing && !any(submaskB) && (submaskB = nothing)
+        accum[j] .+= _correlation_plane!(engine, subA, subB, (submaskA, submaskB))
         uacc === nothing ||
-            accumulate_uncertainty!(uacc[j], uscratch, subA, subB, submask,
+            accumulate_uncertainty!(uacc[j], uscratch, subA, subB_uq, submaskA,
                                     _correlation_apod(engine))
     end
     return nothing

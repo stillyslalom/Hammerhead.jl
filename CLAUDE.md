@@ -364,6 +364,14 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   the correlators) and `padding + apodization = :gauss` is the accuracy
   configuration (~0.03 px RMS). Test tolerances encode this (0.25 px plain,
   0.05–0.1 px deformed/padded) — don't loosen them to make a change pass.
+- **Extended search areas:** `search_area_size >= window_size` with an even
+  per-axis difference keeps the frame-A interrogation footprint concentric
+  with the larger frame-B search footprint. Grid stride remains
+  `window_size - overlap`; only the outer centers move inward. CPU single-pair
+  and ensemble paths support it (including masks, retained planes, phase,
+  padding, and apodization); KA-family backends reject it explicitly until
+  their gather kernels carry independent footprints. UQ always uses the
+  centered equal-size interrogation pair, not the larger search footprint.
 - **UOD defaults matter:** `epsilon = 0.1` px is the physical noise floor
   (near-zero flags everything on uniform fields); `uod_neighborhood = 2`
   (5×5) because 3×3 falsely flags smooth gradients at field edges.

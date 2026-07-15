@@ -25,11 +25,13 @@ function apodization_window(::Type{T}, wsize::Dims{2}, apodization::Symbol) wher
 end
 
 """
-    CrossCorrelator{T}(window_size::Dims{2}; padding=false, apodization=:none)
+    CrossCorrelator{T}(window_size::Dims{2}; search_area_size=window_size,
+                       padding=false, apodization=:none)
     CrossCorrelator(window_size; kwargs...)  # T = Float32
 
-FFT-based cross-correlation of two interrogation windows, with preallocated
-buffers and cached in-place FFTW plans.
+FFT-based cross-correlation of a frame-A interrogation window against a
+centered frame-B search area, with preallocated buffers and cached in-place
+FFTW plans. The search area defaults to the interrogation size.
 
 - `padding = true` zero-pads the FFT to twice the window size, replacing
   circular with true linear correlation; this removes the wrap-around noise
@@ -44,26 +46,40 @@ struct CrossCorrelator{T<:AbstractFloat,FP,IP} <: Correlator
     apod::Matrix{T}
     gain::Matrix{T}  # overlap normalization for padded correlation; empty if unpadded
     wsize::Dims{2}
+    ssize::Dims{2}
     fp::FP
     ip::IP
 end
 
-function CrossCorrelator{T}(window_size::Dims{2};
+function search_area_tuple(window_size::Dims{2}, search_area_size)
+    ssize = search_area_size === nothing ? window_size :
+            search_area_size isa Integer ? (Int(search_area_size), Int(search_area_size)) :
+            (Int(search_area_size[1]), Int(search_area_size[2]))
+    all(ssize .>= window_size) ||
+        throw(ArgumentError("search_area_size must be at least window_size, got $ssize for $window_size"))
+    all(iseven.(ssize .- window_size)) ||
+        throw(ArgumentError("search_area_size - window_size must be even in each dimension, got $ssize for $window_size"))
+    return ssize
+end
+
+function CrossCorrelator{T}(window_size::Dims{2}; search_area_size = nothing,
                             padding::Bool = false, apodization::Symbol = :none) where {T<:AbstractFloat}
-    fft_size = padding ? 2 .* window_size : window_size
+    ssize = search_area_tuple(window_size, search_area_size)
+    fft_size = padding ? 2 .* ssize : ssize
     C1 = zeros(Complex{T}, fft_size)
     fp = plan_fft!(C1)
     ip = inv(fp)
     apod = apodization_window(T, window_size, apodization)
-    gain = padding ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
+    gain = padding && ssize == window_size ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
     CrossCorrelator(C1, zeros(Complex{T}, fft_size), zeros(T, fft_size),
-                    apod, gain, window_size, fp, ip)
+                    apod, gain, window_size, ssize, fp, ip)
 end
 
 CrossCorrelator(window_size::Dims{2}; kwargs...) = CrossCorrelator{Float32}(window_size; kwargs...)
 
 """
-    PhaseCorrelator{T}(window_size::Dims{2}; padding=false, apodization=:none,
+    PhaseCorrelator{T}(window_size::Dims{2}; search_area_size=window_size,
+                       padding=false, apodization=:none,
                        filter_sigma=min(fft_size...) / 8)
     PhaseCorrelator(window_size; kwargs...)  # T = Float32
 
@@ -86,15 +102,18 @@ struct PhaseCorrelator{T<:AbstractFloat,FP,IP} <: Correlator
     apod::Matrix{T}
     gain::Matrix{T}  # overlap normalization for padded correlation; empty if unpadded
     wsize::Dims{2}
+    ssize::Dims{2}
     fp::FP
     ip::IP
 end
 
-function PhaseCorrelator{T}(window_size::Dims{2};
+function PhaseCorrelator{T}(window_size::Dims{2}; search_area_size = nothing,
                             padding::Bool = false, apodization::Symbol = :none,
-                            filter_sigma::Real = min((padding ? 2 .* window_size : window_size)...) / 8) where {T<:AbstractFloat}
+                            filter_sigma::Union{Nothing,Real} = nothing) where {T<:AbstractFloat}
+    ssize = search_area_tuple(window_size, search_area_size)
+    fft_size = padding ? 2 .* ssize : ssize
+    filter_sigma = filter_sigma === nothing ? min(fft_size...) / 8 : filter_sigma
     filter_sigma > 0 || throw(ArgumentError("filter_sigma must be positive, got $filter_sigma"))
-    fft_size = padding ? 2 .* window_size : window_size
     C1 = zeros(Complex{T}, fft_size)
     fp = plan_fft!(C1)
     ip = inv(fp)
@@ -102,9 +121,9 @@ function PhaseCorrelator{T}(window_size::Dims{2};
     fc = fftfreq(fft_size[2], fft_size[2])
     W = T[exp(-(fi^2 + fj^2) / (2 * filter_sigma^2)) for fi in fr, fj in fc]
     apod = apodization_window(T, window_size, apodization)
-    gain = padding ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
+    gain = padding && ssize == window_size ? overlap_gain!(C1, fp, ip, apod) : Matrix{T}(undef, 0, 0)
     PhaseCorrelator(C1, zeros(Complex{T}, fft_size), zeros(T, fft_size), W,
-                    apod, gain, window_size, fp, ip)
+                    apod, gain, window_size, ssize, fp, ip)
 end
 
 PhaseCorrelator(window_size::Dims{2}; kwargs...) = PhaseCorrelator{Float32}(window_size; kwargs...)
@@ -117,11 +136,14 @@ for CT in (CrossCorrelator, PhaseCorrelator)
 end
 
 window_size(c::Correlator) = c.wsize
+search_area_size(c::Correlator) = c.ssize
 
 make_correlator(params::PIVParameters, ::Type{T}) where {T} =
     params.correlation_method === :cross ?
-        CrossCorrelator{T}(params.window_size; params.padding, params.apodization) :
-        PhaseCorrelator{T}(params.window_size; params.padding, params.apodization)
+        CrossCorrelator{T}(params.window_size; search_area_size = params.search_area_size,
+                           params.padding, params.apodization) :
+        PhaseCorrelator{T}(params.window_size; search_area_size = params.search_area_size,
+                           params.padding, params.apodization)
 
 # Private correlation-engine hook. The CPU engine is deliberately just a thin
 # wrapper around the existing FFTW correlator so current results and workspace
@@ -136,7 +158,7 @@ _make_correlation_engine(params::PIVParameters, ::Type{T}) where {T} =
 _make_correlation_engine(c::Correlator) = _CPUCorrelationEngine(c)
 _correlation_apod(engine::_CPUCorrelationEngine) = engine.correlator.apod
 _correlation_plane!(engine::_CPUCorrelationEngine, subA::AbstractMatrix, subB::AbstractMatrix,
-                    mask::Union{Nothing,AbstractMatrix{Bool}} = nothing) =
+                    mask = nothing) =
     correlation_plane!(engine.correlator, subA, subB, mask)
 
 # Padded (linear) correlation weights each lag by the shrinking window overlap
@@ -164,43 +186,78 @@ end
 # the valid-pixel mean, so they contribute exactly zero after mean subtraction
 # — no intensity step at the mask edge to bias the correlation peak.
 function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix,
-                       submask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+                       submask = nothing)
     T = eltype(c.R)
     wr, wc = c.wsize
-    if size(c.C1) != c.wsize
+    sr, sc = c.ssize
+    off_r, off_c = div.(c.ssize .- c.wsize, 2)
+    maskA, maskB = submask isa Tuple ? submask : (submask, submask)
+    if size(c.C1) != c.wsize || c.ssize != c.wsize
         fill!(c.C1, zero(eltype(c.C1)))
         fill!(c.C2, zero(eltype(c.C2)))
     end
-    if submask === nothing
-        meanA = T(sum(subA) / length(subA))
-        meanB = T(sum(subB) / length(subB))
-        @inbounds for j in 1:wc, i in 1:wr
-            c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
-            c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
-        end
-    else
-        size(submask) == c.wsize ||
-            throw(DimensionMismatch("mask must match the window size $(c.wsize), got $(size(submask))"))
-        sA = zero(T)
-        sB = zero(T)
-        n = 0
-        @inbounds for j in 1:wc, i in 1:wr
-            submask[i, j] && continue
-            sA += T(subA[i, j])
-            sB += T(subB[i, j])
-            n += 1
-        end
-        meanA = n > 0 ? sA / n : zero(T)
-        meanB = n > 0 ? sB / n : zero(T)
-        @inbounds for j in 1:wc, i in 1:wr
-            if submask[i, j]
-                c.C1[i, j] = zero(eltype(c.C1))
-                c.C2[i, j] = zero(eltype(c.C2))
-            else
+    if c.ssize == c.wsize && maskA === maskB
+        # Preserve the original equal-area path bit for bit.
+        if maskA === nothing
+            meanA = T(sum(subA) / length(subA))
+            meanB = T(sum(subB) / length(subB))
+            @inbounds for j in 1:wc, i in 1:wr
                 c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
                 c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
             end
+        else
+            size(maskA) == c.wsize ||
+                throw(DimensionMismatch("mask must match the window size $(c.wsize), got $(size(maskA))"))
+            sA = zero(T); sB = zero(T); n = 0
+            @inbounds for j in 1:wc, i in 1:wr
+                maskA[i, j] && continue
+                sA += T(subA[i, j]); sB += T(subB[i, j]); n += 1
+            end
+            meanA = n > 0 ? sA / n : zero(T)
+            meanB = n > 0 ? sB / n : zero(T)
+            @inbounds for j in 1:wc, i in 1:wr
+                if maskA[i, j]
+                    c.C1[i, j] = zero(eltype(c.C1)); c.C2[i, j] = zero(eltype(c.C2))
+                else
+                    c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
+                    c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
+                end
+            end
         end
+        return c
+    end
+
+    maskA === nothing || size(maskA) == c.wsize ||
+        throw(DimensionMismatch("frame-A mask must match window size $(c.wsize), got $(size(maskA))"))
+    maskB === nothing || size(maskB) == c.ssize ||
+        throw(DimensionMismatch("frame-B mask must match search-area size $(c.ssize), got $(size(maskB))"))
+    if maskA === nothing
+        meanA = T(sum(subA) / length(subA))
+    else
+        sA = zero(T); nA = 0
+        @inbounds for j in 1:wc, i in 1:wr
+            maskA[i, j] && continue
+            sA += T(subA[i, j]); nA += 1
+        end
+        meanA = nA > 0 ? sA / nA : zero(T)
+    end
+    if maskB === nothing
+        meanB = T(sum(subB) / length(subB))
+    else
+        sB = zero(T); nB = 0
+        @inbounds for j in 1:sc, i in 1:sr
+            maskB[i, j] && continue
+            sB += T(subB[i, j]); nB += 1
+        end
+        meanB = nB > 0 ? sB / nB : zero(T)
+    end
+    @inbounds for j in 1:wc, i in 1:wr
+        c.C1[off_r + i, off_c + j] = maskA !== nothing && maskA[i, j] ?
+            zero(eltype(c.C1)) : c.apod[i, j] * (T(subA[i, j]) - meanA)
+    end
+    @inbounds for j in 1:sc, i in 1:sr
+        c.C2[i, j] = maskB !== nothing && maskB[i, j] ?
+            zero(eltype(c.C2)) : T(subB[i, j]) - meanB
     end
     return c
 end
@@ -234,10 +291,11 @@ end
 """
     correlate(c::Correlator, subA, subB; subpixel=:gauss3, mask=nothing)
 
-Correlate two interrogation windows and locate the displacement peak.
-`mask` is an optional window-sized `Bool` matrix; `true` pixels are excluded
-from the correlation (they enter at the valid-pixel mean, contributing zero
-after mean subtraction).
+Correlate a frame-A interrogation window against a frame-B search area and
+locate the displacement peak. For equal sizes, `mask` may be one window-sized
+`Bool` matrix. For an enlarged search area, pass `(maskA, maskB)` matching the
+two inputs; `true` pixels are excluded from the correlation (they enter at the
+valid-pixel mean, contributing zero after mean subtraction).
 
 Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 - `du`, `dv`: subpixel displacement of `subB` relative to `subA` along columns
@@ -255,7 +313,7 @@ Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 """
 function correlate(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix;
                    subpixel::Symbol = :gauss3,
-                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+                   mask = nothing)
     R = correlation_plane!(c, subA, subB, mask)
     res = locate_displacement(R, subpixel)
     return (; res.du, res.dv, res.peak, res.peakloc, res.refined_peakloc, correlation = R)
@@ -266,9 +324,9 @@ end
 # shared by `correlate` and ensemble (sum-of-correlation) PIV. The returned
 # plane aliases c's internal buffer.
 function correlation_plane!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix,
-                            mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
-    size(subA) == size(subB) == window_size(c) ||
-        throw(DimensionMismatch("expected windows of size $(window_size(c)), got $(size(subA)) and $(size(subB))"))
+                            mask = nothing)
+    size(subA) == window_size(c) && size(subB) == search_area_size(c) ||
+        throw(DimensionMismatch("expected frame-A window $(window_size(c)) and frame-B search area $(search_area_size(c)), got $(size(subA)) and $(size(subB))"))
     # Mean subtraction removes the DC pedestal from the correlation plane; it
     # doesn't move the integer peak but biases the subpixel fit.
     load_windows!(c, subA, subB, mask)
@@ -278,7 +336,22 @@ function correlation_plane!(c::Correlator, subA::AbstractMatrix, subB::AbstractM
     mul!(c.C1, c.ip, c.C1)
     fftshift_abs!(c.R, c.C1)
     isempty(c.gain) || (c.R .*= c.gain)
+    restrict_search_lags!(c.R, c.wsize, c.ssize)
     return c.R
+end
+
+# A larger frame-B search area adds only the lags for which the centered
+# frame-A interrogation footprint remains wholly inside that area. Values
+# outside that range are circular/partial-overlap artifacts and must never be
+# selected as displacement peaks. Equal areas retain the legacy full plane.
+function restrict_search_lags!(R, wsize::Dims{2}, ssize::Dims{2})
+    ssize == wsize && return R
+    mr, mc = div.(ssize .- wsize, 2)
+    cr, cc = div.(size(R), 2) .+ 1
+    @inbounds for j in axes(R, 2), i in axes(R, 1)
+        (abs(i - cr) <= mr && abs(j - cc) <= mc) || (R[i, j] = zero(eltype(R)))
+    end
+    return R
 end
 
 """

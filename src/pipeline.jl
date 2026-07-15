@@ -92,7 +92,8 @@ end
 # workspace, fresh correlators are made per pass (the prior behavior).
 function piv_correlators(workspace, params::PIVParameters, ::Type{T}, nchunks::Int) where {T}
     workspace === nothing && return Correlator[make_correlator(params, T) for _ in 1:nchunks]
-    key = (T, params.correlation_method, params.window_size, params.padding, params.apodization)
+    key = (T, params.correlation_method, params.window_size, params.search_area_size,
+           params.padding, params.apodization)
     pool = get!(() -> Correlator[], workspace.correlators, key)
     while length(pool) < nchunks
         push!(pool, make_correlator(params, T))
@@ -164,6 +165,7 @@ end
 Build the schedule used by `effort = :low`, `:medium`, or `:high`. Keyword
 arguments whose names match [`PIVParameters`](@ref) fields override the preset;
 `window_size` rescales the pyramid so the final pass has that size,
+`search_area_size` likewise sets the final search size and rescales its pyramid,
 `uncertainty`, `max_iterations`, and `keep_correlation_planes` apply to the
 final pass only, and `final = (;)` is merged last.
 """
@@ -196,12 +198,38 @@ function effort_schedule(level::Symbol; ensemble::Bool = false,
 
     shared_override = (; (k => getproperty(overrides, k)
                           for k in keys(overrides)
-                          if !(k === :window_size || k in EFFORT_FINAL_ONLY))...)
+                          if !(k in (:window_size, :search_area_size) || k in EFFORT_FINAL_ONLY))...)
     final_override = (; (k => getproperty(overrides, k)
                          for k in keys(overrides)
                          if k in EFFORT_FINAL_ONLY)...)
     shared = merge(preset_shared, shared_override)
     final_all = merge(preset_final, final_override, final)
+    if haskey(overrides, :search_area_size)
+        target = window_tuple(haskey(final_all, :search_area_size) ?
+                              getproperty(final_all, :search_area_size) :
+                              getproperty(overrides, :search_area_size))
+        final_without_search = (; (k => getproperty(final_all, k)
+                                    for k in keys(final_all)
+                                    if k !== :search_area_size)...)
+        final_window = last(windows)
+        all(target .>= final_window) ||
+            throw(ArgumentError("search_area_size must be at least the final window_size $final_window, got $target"))
+        all(iseven.(target .- final_window)) ||
+            throw(ArgumentError("search_area_size - final window_size must be even in each dimension, got $target and $final_window"))
+        searches = [ntuple(2) do d
+            s = max(w[d], round(Int, target[d] * w[d] / final_window[d]))
+            isodd(s - w[d]) && (s += 1)
+            if image_size !== nothing && s > image_size[d]
+                s = image_size[d] - mod(image_size[d] - w[d], 2)
+            end
+            s
+        end for w in windows]
+        return [begin
+                    extra = i == length(windows) ? merge(shared, final_without_search) : shared
+                    PIVParameters(; window_size = w, search_area_size = searches[i],
+                                  overlap = floor.(Int, w .* 0.5), extra...)
+                end for (i, w) in enumerate(windows)]
+    end
     return multipass_parameters(windows; shared..., final = final_all)
 end
 
@@ -220,7 +248,12 @@ must be equally sized real-valued matrices (load and convert image files with
 your preferred image package).
 
 Each pass tiles the images into interrogation windows (`window_size`,
-`overlap`), correlates each window pair (`correlation_method`, optionally
+`overlap`). When `search_area_size` is larger, the centered frame-A
+interrogation window is correlated against that larger frame-B search area;
+grid stride remains `window_size - overlap`, while the outer grid centers move
+inward far enough to contain the search area. This raises the first-pass
+capture range without increasing the particle-sampling window. The pass then
+correlates each pair (`correlation_method`, optionally
 zero-padded and apodized), refines the peak to subpixel precision
 (`subpixel_method`), and validates the resulting field (universal outlier
 detection, peak-ratio threshold, and any additional `validation` pipeline —
@@ -250,7 +283,8 @@ pairs measure:
 
 With an effort level, `PIVParameters` keyword overrides are applied on top of
 the preset: most fields apply to every pass, `window_size` rescales the
-pyramid's final window size, and `uncertainty`, `max_iterations`, and
+pyramid's final window size, `search_area_size` sets the final search size and
+rescales it with the window pyramid, and `uncertainty`, `max_iterations`, and
 `keep_correlation_planes` apply to the final pass only. `final = (;)` merges
 last and wins over both the preset and field keywords. The final window size is
 a seeding-density and physics decision, so smaller is not automatically better.
@@ -280,7 +314,10 @@ describes static lab-frame geometry and is not warped between passes. Windows
 whose masked-pixel fraction reaches `mask_threshold` produce no vector: they
 are flagged in `result.mask`, hold `NaN`, are never counted as outliers, and
 neither enter validation neighborhoods nor donate to replacement medians.
-Windows below the threshold are correlated over their valid pixels only.
+For enlarged searches, the threshold is applied independently to the frame-A
+interrogation footprint and frame-B search footprint; reaching it in either
+drops the node. Footprints below the threshold are correlated over their valid
+pixels only.
 
 With `threaded = true` (the default on multithreaded sessions) the window grid
 of each pass is split across tasks; results are identical to the serial path.
@@ -494,17 +531,21 @@ function pass_grid(::Type{T}, imgsize::Dims{2}, params::PIVParameters,
                    mask_threshold::Real) where {T}
     nr, nc = imgsize
     wr, wc = params.window_size
-    (wr <= nr && wc <= nc) ||
-        throw(ArgumentError("window size $(params.window_size) exceeds image size $((nr, nc))"))
-    row_starts = 1:(wr - params.overlap[1]):(nr - wr + 1)
-    col_starts = 1:(wc - params.overlap[2]):(nc - wc + 1)
+    sr, sc = params.search_area_size
+    mr, mc = div.(params.search_area_size .- params.window_size, 2)
+    (sr <= nr && sc <= nc) ||
+        throw(ArgumentError("search area $(params.search_area_size) exceeds image size $((nr, nc))"))
+    row_starts = (1 + mr):(wr - params.overlap[1]):(nr - wr - mr + 1)
+    col_starts = (1 + mc):(wc - params.overlap[2]):(nc - wc - mc + 1)
     x = T[cs + (wc - 1) / 2 for cs in col_starts]
     y = T[rs + (wr - 1) / 2 for rs in row_starts]
     grid_mask = falses(length(row_starts), length(col_starts))
     if mask !== nothing
         for (gj, cs) in enumerate(col_starts), (gi, rs) in enumerate(row_starts)
-            frac = count(view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))) / (wr * wc)
-            grid_mask[gi, gj] = frac >= mask_threshold
+            frac_window = count(view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))) / (wr * wc)
+            srs, scs = rs - mr, cs - mc
+            frac_search = count(view(mask, srs:(srs + sr - 1), scs:(scs + sc - 1))) / (sr * sc)
+            grid_mask[gi, gj] = frac_window >= mask_threshold || frac_search >= mask_threshold
         end
     end
     jobs = [(gi, gj, rs, cs) for (gj, cs) in enumerate(col_starts)
@@ -935,6 +976,8 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                           planes = nothing)
     wr, wc = params.window_size
+    sr, sc = params.search_area_size
+    mr, mc = div.(params.search_area_size .- params.window_size, 2)
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     k = max(params.n_peaks, 2)
     vals = Vector{T}(undef, k)
@@ -943,12 +986,18 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     ustats = uncertainty_u === nothing ? nothing : zeros(2, UQ_NSTATS)
     for (gi, gj, rs, cs) in jobs
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
-        subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
-        submask = mask === nothing ? nothing :
+        subB_uq = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
+        srs, scs = rs - mr, cs - mc
+        subB = @view imgB[srs:(srs + sr - 1), scs:(scs + sc - 1)]
+        submaskA = mask === nothing ? nothing :
                   view(mask, rs:(rs + wr - 1), cs:(cs + wc - 1))
+        submaskB = mask === nothing ? nothing :
+                   (params.search_area_size == params.window_size ? submaskA :
+                    view(mask, srs:(srs + sr - 1), scs:(scs + sc - 1)))
         # Fully clean windows take the unmasked fast path.
-        submask !== nothing && !any(submask) && (submask = nothing)
-        R = _correlation_plane!(engine, subA, subB, submask)
+        submaskA !== nothing && !any(submaskA) && (submaskA = nothing)
+        submaskB !== nothing && !any(submaskB) && (submaskB = nothing)
+        R = _correlation_plane!(engine, subA, subB, (submaskA, submaskB))
         # R is an aliased internal buffer, overwritten by the next window —
         # copy before retaining it.
         planes === nothing || (planes[gi, gj] = copy(R))
@@ -968,7 +1017,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         end
         if uncertainty_u !== nothing
             fill!(ustats, 0.0)
-            accumulate_uncertainty!(ustats, uscratch, subA, subB, submask,
+            accumulate_uncertainty!(ustats, uscratch, subA, subB_uq, submaskA,
                                     _correlation_apod(engine))
             uncertainty_u[gi, gj] = finalize_uncertainty(T, view(ustats, 1, :))
             uncertainty_v[gi, gj] = finalize_uncertainty(T, view(ustats, 2, :))

@@ -12,6 +12,9 @@
 # stay CPU-first (or land in a later phase).
 function _ka_scope_check(passes, name::Symbol, fp64::Bool = true)
     for p in passes
+        p.search_area_size == p.window_size ||
+            throw(ArgumentError("backend :$name does not support enlarged search_area_size yet; " *
+                                "use backend = :cpu"))
         p.subpixel_method in (:gauss3, :gauss9) ||
             throw(ArgumentError("backend :$name supports subpixel_method :gauss3 or :gauss9 " *
                                 "only (got :$(p.subpixel_method)); use backend = :cpu"))

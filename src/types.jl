@@ -118,6 +118,11 @@ Immutable, validated configuration for a PIV analysis.
 # Keyword arguments
 - `window_size = (32, 32)`: interrogation window size `(rows, cols)`; an `Int` is
   expanded to a square window.
+- `search_area_size = window_size`: centered search-area size `(rows, cols)`.
+  Each dimension must be at least the interrogation-window size and differ
+  from it by an even number of pixels, so both areas share one pixel-grid
+  center. A larger search area increases the measurable first-pass
+  displacement without increasing the particle-sampling window.
 - `overlap = (16, 16)`: window overlap `(rows, cols)`; must satisfy
   `0 ≤ overlap < window_size`. An `Int` is expanded likewise.
 - `correlation_method = :cross`: `:cross` (standard FFT cross-correlation) or
@@ -206,6 +211,7 @@ per pass) — see [`run_piv`](@ref) and [`multipass_parameters`](@ref).
 """
 struct PIVParameters
     window_size::Tuple{Int,Int}
+    search_area_size::Tuple{Int,Int}
     overlap::Tuple{Int,Int}
     correlation_method::Symbol
     padding::Bool
@@ -226,6 +232,7 @@ struct PIVParameters
 
     function PIVParameters(;
         window_size::Union{Int,Tuple{Int,Int}} = (32, 32),
+        search_area_size::Union{Nothing,Int,Tuple{Int,Int}} = nothing,
         overlap::Union{Int,Tuple{Int,Int}} = (16, 16),
         correlation_method::Symbol = :cross,
         padding::Bool = false,
@@ -245,9 +252,15 @@ struct PIVParameters
         keep_correlation_planes::Bool = false,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
+        ss = search_area_size === nothing ? ws :
+             search_area_size isa Int ? (search_area_size, search_area_size) : search_area_size
         ov = overlap isa Int ? (overlap, overlap) : overlap
         all(>=(4), ws) ||
             throw(ArgumentError("window_size must be at least 4 in each dimension, got $ws"))
+        all(ss .>= ws) ||
+            throw(ArgumentError("search_area_size must be at least window_size in each dimension, got search_area_size=$ss for window_size=$ws"))
+        all(iseven.(ss .- ws)) ||
+            throw(ArgumentError("search_area_size - window_size must be even in each dimension so the areas share a center, got search_area_size=$ss for window_size=$ws"))
         all(0 .<= ov .< ws) ||
             throw(ArgumentError("overlap must satisfy 0 ≤ overlap < window_size, got overlap=$ov for window_size=$ws"))
         correlation_method in (:cross, :phase) ||
@@ -270,7 +283,7 @@ struct PIVParameters
             throw(ArgumentError("max_iterations must be at least 1, got $max_iterations"))
         convergence_tol >= 0 ||
             throw(ArgumentError("convergence_tol must be non-negative, got $convergence_tol"))
-        new(ws, ov, correlation_method, padding, apodization, subpixel_method,
+        new(ws, ss, ov, correlation_method, padding, apodization, subpixel_method,
             n_peaks, peak_finder, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers,
             max_iterations, Float64(convergence_tol), keep_correlation_planes)
@@ -278,7 +291,9 @@ struct PIVParameters
 end
 
 function Base.show(io::IO, p::PIVParameters)
-    print(io, "PIVParameters(window_size=$(p.window_size), overlap=$(p.overlap), ",
+    print(io, "PIVParameters(window_size=$(p.window_size)",
+        p.search_area_size == p.window_size ? "" : ", search_area_size=$(p.search_area_size)",
+        ", overlap=$(p.overlap), ",
         "correlation_method=:$(p.correlation_method), padding=$(p.padding), ",
         "apodization=:$(p.apodization), subpixel_method=:$(p.subpixel_method), ",
         "n_peaks=$(p.n_peaks), ",
@@ -325,8 +340,9 @@ single precision.
   replacement is active, the `u`/`v` entries at
   these positions hold the local-median replacement rather than the measured
   displacement.
-- `mask`: `BitMatrix` marking interrogation windows dropped because they
-  overlap the analysis mask (see `mask` in [`run_piv`](@ref)). Masked windows
+- `mask`: `BitMatrix` marking nodes dropped because their interrogation or
+  search-area footprint overlaps the analysis mask beyond the threshold (see
+  `mask` in [`run_piv`](@ref)). Masked windows
   hold `NaN` in `u`/`v`/`peak_ratio`/`correlation_moment` and are never
   counted as outliers. All-false when no mask was supplied.
 - `parameters`: the `PIVParameters` of the (final) pass.

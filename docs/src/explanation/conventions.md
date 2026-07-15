@@ -117,7 +117,11 @@ displacements. Pass an existing `PIVResult`, a displacement NamedTuple, or
 
 ## Grid layout
 
-Interrogation windows tile the image starting at the top-left corner with a
-stride of `window_size - overlap`; `result.x`/`result.y` are the window
+Interrogation windows use a stride of `window_size - overlap`;
+`result.x`/`result.y` are their window
 *centers*. All per-vector fields (`u`, `v`, `peak_ratio`, `outliers`, …)
 share the `(length(y), length(x))` grid shape.
+
+With the default `search_area_size == window_size`, tiling begins at the
+top-left corner. A larger centered search area moves the outer centers inward
+so its full footprint stays inside both images, without changing the stride.

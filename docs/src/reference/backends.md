@@ -60,7 +60,7 @@ Capability predicates such as `_supports_fft`, `_supports_batched_fft`, and
 scope guard currently permits cross- or filtered phase correlation,
 `:gauss3` or `:gauss9`
 subpixel estimation, and optional Float64 uncertainty statistics. It rejects
-`:gauss2d` and retained correlation planes. A new backend
+enlarged `search_area_size`, `:gauss2d`, and retained correlation planes. A new backend
 should fail unsupported configurations in `_check_backend_params`, rather
 than falling back to the CPU in the middle of a pass.
 

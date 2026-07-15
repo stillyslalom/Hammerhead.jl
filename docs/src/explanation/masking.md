@@ -35,8 +35,9 @@ A window is never both: masked cells are excluded from validation entirely.
 
 ## How masked pixels enter the correlation
 
-A window whose masked-pixel fraction reaches `mask_threshold` (default 0.5)
-is dropped. Windows *below* the threshold are still correlated, over their
+A node is dropped when the masked-pixel fraction reaches `mask_threshold`
+(default 0.5) in either its frame-A interrogation footprint or frame-B search
+footprint. Footprints *below* the threshold are still correlated, over their
 valid pixels only: masked pixels are loaded at the mean of the window's
 valid pixels, which is zero after the correlator's mean subtraction. This
 choice means the mask edge introduces **no intensity step** — a hard zero
