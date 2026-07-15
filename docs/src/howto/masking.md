@@ -40,6 +40,19 @@ pixel logic if that's easier, e.g. `mask = background .> 0.8` to exclude
 persistently bright (reflective) pixels of a
 [`compute_background`](@ref) image.
 
+For common bright reflections, dark bodies, low-texture regions, or sharp
+geometry edges, [`automatic_mask`](@ref) provides intensity-, local-contrast-,
+and edge-derived masks. Its two-frame method applies the detector to both
+frames and returns their union, the safe pair-mask convention for a moving
+boundary:
+
+```julia
+mask = automatic_mask(imgA, imgB; method = :intensity,
+                      threshold = 0.9, side = :high, grow = 3)
+mask = grow_mask(mask, 2)       # add another safety margin
+mask = shrink_mask(mask, 1)     # trim an over-conservative mask
+```
+
 ## Control when a window is dropped
 
 Windows whose masked-pixel fraction reaches `mask_threshold` (default 0.5)
@@ -66,7 +79,9 @@ own statistics (the built-in [`field_statistics`](@ref) and
 ## Batch and stereo
 
 The same `mask` keyword flows through [`run_piv_sequence`](@ref) and
-[`run_piv_ensemble`](@ref) (one static mask for the whole sequence). For
-stereo, pass a *grid-sized* mask to [`run_piv_stereo`](@ref) /
+[`run_ptv_sequence`](@ref). It may be one static mask, a per-pair sequence, a
+per-frame sequence (the two exposure masks are unioned), or an
+`(i, frameA, frameB) -> mask` callback. Ensemble correlation uses one static
+mask for all pairs. For stereo, pass a *grid-sized* mask to [`run_piv_stereo`](@ref) /
 [`self_calibrate`](@ref); it is combined with the dewarpers' out-of-view
 masks automatically.

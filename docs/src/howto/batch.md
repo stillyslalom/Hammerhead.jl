@@ -23,6 +23,19 @@ pairs = image_pairs(files)                   # double-frame: (1,2), (3,4), ...
 pairs = image_pairs(files; mode = :chained)  # time-resolved: (1,2), (2,3), ...
 ```
 
+For sampled or multi-delay recordings, use `stride`, zero-based `offset`, and
+one or more `deltas`:
+
+```julia
+pairs = image_pairs(files; mode=:chained, stride=2, offset=1, deltas=(1, 4))
+```
+
+`FrameSource(n, i -> read_vendor_frame(i))` adapts a proprietary CINE, MRAW,
+SEQ, video, or camera reader without a package dependency. Pair construction
+does not read frames. Optional `timestamps` travel with the pairs; when a
+`PhysicalScale` is passed to the sequence driver, each result receives the
+pair's actual `dt`. Use `TIFFStack("recording.tif")` for multi-page TIFFs.
+
 For true shell-style `*` globbing across nested directories, add
 [Glob.jl](https://github.com/vtjnash/Glob.jl) (`Glob.glob("cam1/*.tif")`);
 the predicate filter above covers most batch needs without a dependency.
@@ -47,6 +60,31 @@ bitwise identical to serial processing.
 To halve memory traffic on large recordings, load frames in single
 precision with `image_type = Float32` (see the
 [precision policy](../explanation/precision.md)).
+
+For synchronized stereo recordings, pass one pair list per camera and reuse
+the calibrated dewarpers across the run:
+
+```julia
+stereo = run_piv_stereo_sequence(cam1_pairs, cam2_pairs, dw1, dw2, passes;
+    preprocess = (preprocess_cam1, preprocess_cam2),
+    output = "run_042_stereo.jld2",
+    progress = (done, total) -> update_progress(done, total),
+    cancel = () -> cancellation_requested[],
+)
+```
+
+`mask` may also be a vector with one entry per pair or a callback
+`(i, frameA, frameB) -> mask`. Return `(maskA, maskB)` when geometry moves
+between exposures; Hammerhead excludes their union (`true` always means
+excluded). Pass `roi=ROI(101:900, 201:1200)` to analyze a crop while keeping
+returned coordinates in the original image frame.
+
+The driver stops cleanly between acquisitions when `cancel()` becomes true
+and returns the completed prefix. Each completed `StereoPIVResult` is already
+persisted. A single shared preprocessing function is also accepted. The
+equivalent one-list layout is `(A1, B1, A2, B2)` per acquisition. Timestamped
+camera `FramePair`s must have matching intervals and attach their actual `dt`
+to each scaled stereo result.
 
 ## Run the sequence on a GPU
 
@@ -113,13 +151,22 @@ Standalone results (e.g. from interactive work) round-trip with
 save_results("snapshot.jld2", result)        # single result or a vector
 ```
 
+`TrackingResult` is supported by the same lossless JLD2 persistence. For
+language-neutral exchange, `export_table("field.csv", result)` writes the
+stable `hammerhead-table-1` long-form schema. Its fixed columns are
+`TABLE_COLUMNS`; planar, stereo, and PTV rows use the same superset and leave
+inapplicable values empty. Identifiers, flags, quality values, uncertainties,
+and unit strings are included, and attached scaling is applied. Planar and
+stereo grids can also be written for ParaView with
+`export_vtk("field.vtk", result)` (legacy ASCII structured-grid VTK).
+
 ## Post-process the sequence
 
 Sequences of same-grid results feed the statistics utilities directly:
 
 ```julia
 validate_temporal!(results)                  # flag temporal outliers in place
-stats = field_statistics(results)            # mean, root-mean-square (RMS), Reynolds stress, counts
+stats = field_statistics(results)            # planar or stereo mean/RMS/stresses/counts
 f, psd = power_spectrum([r.u[12, 8] for r in results]; dt = 1/10_000)
 ```
 

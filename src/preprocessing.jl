@@ -202,3 +202,36 @@ Allocating form of [`clahe!`](@ref): returns a new floating-point matrix and
 leaves `img` untouched.
 """
 clahe(img::AbstractMatrix{<:Real}; kwargs...) = clahe!(float_copy(img); kwargs...)
+
+"""Stretch the `low` and `high` intensity percentiles to `[0,1]`, clipping outside."""
+function percentile_stretch!(img::AbstractMatrix{<:AbstractFloat}; low::Real=1, high::Real=99)
+    0 <= low < high <= 100 || throw(ArgumentError("percentiles must satisfy 0 <= low < high <= 100"))
+    lo,hi = quantile(vec(img), [low/100,high/100])
+    if !(hi > lo); return fill!(img, eltype(img)(0.5)); end
+    img .= clamp.((img .- lo) ./ (hi-lo), zero(eltype(img)), one(eltype(img)))
+    img
+end
+percentile_stretch(img::AbstractMatrix{<:Real}; kwargs...) = percentile_stretch!(float_copy(img); kwargs...)
+
+"""Invert intensities about their finite range (`lo + hi - value`)."""
+function invert_image!(img::AbstractMatrix{<:AbstractFloat})
+    lo,hi=extrema(img); img .= lo+hi .- img; img
+end
+invert_image(img::AbstractMatrix{<:Real}) = invert_image!(float_copy(img))
+
+"""
+    local_variance_normalize!(img; sigma=3, epsilon=1e-3)
+
+Subtract a Gaussian local mean and divide by the local standard deviation.
+This is useful for multiplicative illumination/contrast variation; unlike
+CLAHE it preserves a linear standardized response, but it can amplify noise
+in flat areas, controlled by `epsilon`.
+"""
+function local_variance_normalize!(img::AbstractMatrix{<:AbstractFloat}; sigma::Real=3,
+                                   epsilon::Real=1e-3)
+    sigma > 0 || throw(ArgumentError("sigma must be positive")); epsilon > 0 || throw(ArgumentError("epsilon must be positive"))
+    mu=gaussian_blur(img,sigma); second=gaussian_blur(img.^2,sigma)
+    img .= (img .- mu) ./ sqrt.(max.(second .- mu.^2, zero(eltype(img))) .+ epsilon^2)
+    img
+end
+local_variance_normalize(img::AbstractMatrix{<:Real}; kwargs...) = local_variance_normalize!(float_copy(img); kwargs...)

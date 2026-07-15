@@ -34,7 +34,7 @@ inside windows.
   ([Wieneke 2005](https://doi.org/10.1007/s00348-005-0962-z))
 - Particle tracking: subpixel particle detection, hybrid PIV-guided two-frame
   matching, and multi-frame trajectory linking
-- Batch drivers with incremental JLD2-format Julia data output, static masking,
+- Batch drivers with incremental JLD2-format Julia data output, dynamic masking,
   in-place preprocessing, physical-unit metadata, and Makie plotting
 
 New to velocimetry? Start with the executable

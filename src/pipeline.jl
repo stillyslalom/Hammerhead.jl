@@ -331,9 +331,17 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                  mask_threshold::Real = 0.5,
                  workspace::Union{Nothing,PIVWorkspace} = nothing,
-                 scale::Union{Nothing,PhysicalScale} = nothing)
+                 scale::Union{Nothing,PhysicalScale} = nothing,
+                 roi = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    if roi !== nothing
+        rr = roi isa ROI ? roi : ROI(roi)
+        a, b, m = roi_views(imgA, imgB, mask, rr)
+        result = run_piv(a, b, passes; backend, uncertainty_backend, threaded,
+                         predictor_smoothing, mask=m, mask_threshold, workspace, scale)
+        return offset_result(result, rr)
+    end
     be = _resolve_backend(backend)
     uncertainty_backend in (:same, :cpu) ||
         throw(ArgumentError("uncertainty_backend must be :same or :cpu, got :$uncertainty_backend"))

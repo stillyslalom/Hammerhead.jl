@@ -172,6 +172,28 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         @test HammerheadGUI.Controllers.polygon_at(seeded, 100.0, 100.0) === nothing
         ms = polygon_mask(seeded)
         @test ms[10, 10] && ms[35, 35] && !ms[25, 25]
+
+        # Holes subtract from earlier exclusion polygons, and morphology can
+        # then add or remove a pixel safety margin.
+        holed = MaskEditor(imgA;
+            polygons = [[(5, 5), (30, 5), (30, 30), (5, 30)],
+                        [(12, 12), (22, 12), (22, 22), (12, 22)]],
+            holes = [false, true])
+        mh = polygon_mask(holed)
+        @test mh[8, 8] && !mh[16, 16]
+        n0 = count(mh)
+        grow_mask!(holed, 1)
+        @test count(polygon_mask(holed)) > n0
+        shrink_mask!(holed, 1)
+        @test count(polygon_mask(holed)) < count(Hammerhead.grow_mask(mh, 1))
+
+        drawn_hole = MaskEditor(imgA; polygons = [[(5, 5), (30, 5), (30, 30), (5, 30)]])
+        begin_hole!(drawn_hole)
+        for p in ((12, 12), (22, 12), (22, 22), (12, 22))
+            add_vertex!(drawn_hole, p...)
+        end
+        close_active!(drawn_hole)
+        @test !polygon_mask(drawn_hole)[16, 16]
         clear_polygons!(seeded)
         @test isempty(seeded.polygons[])
         @test_throws ArgumentError MaskEditor(imgA; polygons = [[(0, 0), (1, 1)]])

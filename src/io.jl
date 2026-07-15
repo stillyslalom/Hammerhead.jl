@@ -61,18 +61,16 @@ pairs for [`run_piv_sequence`](@ref):
   (requires an even number of frames).
 - `mode = :chained` — time-resolved recordings: `(1, 2), (2, 3), …`
 """
-function image_pairs(files::AbstractVector; mode::Symbol = :paired)
-    if mode === :paired
-        iseven(length(files)) ||
-            throw(ArgumentError("mode = :paired requires an even number of frames, got $(length(files))"))
-        return [(files[i], files[i + 1]) for i in 1:2:(length(files) - 1)]
-    elseif mode === :chained
-        length(files) >= 2 ||
-            throw(ArgumentError("mode = :chained requires at least 2 frames, got $(length(files))"))
-        return [(files[i], files[i + 1]) for i in 1:(length(files) - 1)]
-    else
-        throw(ArgumentError("mode must be :paired or :chained, got :$mode"))
+function image_pairs(files::AbstractVector; mode::Symbol = :paired,
+                     stride::Integer = 1, offset::Integer = 0, deltas = (1,))
+    # Preserve the original strict paired-mode diagnostic for the default.
+    if mode === :paired && stride == 1 && offset == 0 && deltas == (1,) && isodd(length(files))
+        throw(ArgumentError("mode = :paired requires an even number of frames, got $(length(files))"))
     end
+    mode === :chained && length(files) < 2 &&
+        throw(ArgumentError("mode = :chained requires at least 2 frames, got $(length(files))"))
+    return [(files[a], files[b]) for (a,b) in
+            _pair_indices(length(files); mode, stride, offset, deltas)]
 end
 
 """
@@ -144,7 +142,7 @@ Save a [`PIVResult`](@ref), [`StereoPIVResult`](@ref), or [`PTVResult`](@ref)
 overwriting `path` if it exists. Read back with [`load_results`](@ref).
 """
 function save_results(path::AbstractString,
-                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult}})
+                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         for (i, r) in enumerate(results)
@@ -154,7 +152,7 @@ function save_results(path::AbstractString,
     return path
 end
 
-save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult}) =
+save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}) =
     save_results(path, [result])
 
 """
@@ -230,13 +228,15 @@ function run_piv_sequence(pairs::AbstractVector,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
+                          mask = nothing,
+                          scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     workspace = piv_workspace(; backend)
-    _run_sequence((imgA, imgB) -> run_piv(imgA, imgB, params; backend, workspace, kwargs...),
+    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, kwargs...),
                   PIVResult, pairs;
-                  preprocess, output, progress, image_type, label = "PIV")
+                  preprocess, output, progress, image_type, mask, scale, label = "PIV")
 end
 
 function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -245,13 +245,15 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
+                          mask = nothing,
+                          scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     workspace = piv_workspace(; backend)
     process = effort === nothing ?
-        ((imgA, imgB) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, kwargs...)) :
-        ((imgA, imgB) -> run_piv(imgA, imgB; effort, backend, workspace, kwargs...))
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, kwargs...)) :
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, kwargs...))
     _run_sequence(process, PIVResult, pairs;
-                  preprocess, output, progress, image_type, label = "PIV")
+                  preprocess, output, progress, image_type, mask, scale, label = "PIV")
 end
 
 """
@@ -273,9 +275,11 @@ function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVPara
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           image_type::Type{<:AbstractFloat} = Float64,
+                          mask = nothing,
+                          scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
-    _run_sequence((imgA, imgB) -> run_ptv(imgA, imgB, params; kwargs...), PTVResult, pairs;
-                  preprocess, output, progress, image_type, label = "PTV")
+    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_ptv(imgA, imgB, params; mask, scale, kwargs...), PTVResult, pairs;
+                  preprocess, output, progress, image_type, mask, scale, label = "PTV")
 end
 
 # Shared sequence driver: iterate `pairs`, load/preprocess each frame, run
@@ -296,7 +300,9 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        output::Union{Nothing,AbstractString,Function} = nothing,
                        progress::Union{Bool,Function} = true,
                        image_type::Type{<:AbstractFloat} = Float64,
-                       label::AbstractString = "PIV") where {R}
+                       label::AbstractString = "PIV",
+                       mask = nothing,
+                       scale = nothing) where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     results = Vector{R}(undef, length(pairs))
     file = output isa AbstractString ? jldopen(output, "w") : nothing
@@ -314,15 +320,17 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
             try
                 imgA, imgB = fetch_frames(pending)
                 i < length(pairs) && (pending = load_pair(pairs[i + 1]))
-                results[i] = process(imgA, imgB)
+                pmask = pair_mask(mask, i, pair, imgA, imgB)
+                results[i] = process(imgA, imgB, i, pair, pmask, pair_scale(scale, pair))
             catch
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
                 rethrow()
             end
             if file !== nothing
                 file[result_key(i)] = results[i]
-                if frameA isa AbstractString && frameB isa AbstractString
-                    file[source_key(i)] = [String(frameA), String(frameB)]
+                labels = pair_source_labels(frameA, frameB)
+                if labels !== nothing
+                    file[source_key(i)] = labels
                 end
             elseif output isa Function
                 write_pair_file(String(output(i, pair)), results[i], frameA, frameB)
@@ -344,8 +352,9 @@ function write_pair_file(path::AbstractString, result, frameA, frameB)
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         f[result_key(1)] = result
-        if frameA isa AbstractString && frameB isa AbstractString
-            f[source_key(1)] = [String(frameA), String(frameB)]
+        labels = pair_source_labels(frameA, frameB)
+        if labels !== nothing
+            f[source_key(1)] = labels
         end
     end
     return path
@@ -364,8 +373,50 @@ end
 
 frame_label(x::AbstractString) = x
 frame_label(x) = summary(x)
+source_label(x::AbstractString) = String(x)
+source_label(x) = nothing
+function pair_source_labels(a, b)
+    la, lb = source_label(a), source_label(b)
+    la === nothing || lb === nothing ? nothing : [la, lb]
+end
 
 load_frame(x::AbstractString, ::Type{T}) where {T} = load_image(T, x)
 load_frame(x::AbstractMatrix{<:Real}, ::Type) = x
 load_frame(x, ::Type) =
     throw(ArgumentError("sequence entries must be file paths or real-valued matrices, got $(typeof(x))"))
+
+function pair_mask(spec, i, pair, imgA, imgB)
+    spec === nothing && return nothing
+    value = if spec isa Function
+        spec(i, imgA, imgB)
+    elseif spec isa AbstractMatrix{Bool}
+        spec
+    elseif spec isa AbstractVector
+        # A vector may describe pairs directly, or frames when a FramePair
+        # exposes source indices. Frame-wise masks are unioned across A/B.
+        a, b = pair[1], pair[2]
+        if hasproperty(a, :index) && hasproperty(b, :index) &&
+           hasproperty(a, :source) && length(spec) == length(getproperty(a, :source))
+            (spec[getproperty(a, :index)], spec[getproperty(b, :index)])
+        else
+            spec[i]
+        end
+    else
+        spec
+    end
+    if value isa Tuple && length(value) == 2
+        a, b = value
+        size(a) == size(b) || throw(DimensionMismatch("pair masks must have equal size"))
+        return BitMatrix(a .| b)
+    end
+    value isa AbstractMatrix{Bool} ||
+        throw(ArgumentError("mask must be a Bool matrix, a sequence, a callback, or a pair of masks"))
+    return value
+end
+
+function pair_scale(scale, pair)
+    scale === nothing && return nothing
+    dt = hasproperty(pair, :dt) ? getproperty(pair, :dt) : nothing
+    dt === nothing && return scale
+    PhysicalScale(scale.pixel_size, dt, scale.length_unit, scale.time_unit)
+end

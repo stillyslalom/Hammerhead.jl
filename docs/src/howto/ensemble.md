@@ -53,6 +53,23 @@ and correlation-plane area, not pair count; padding quadruples the plane
 footprint. Use the sizing formula and validation workflow in
 [Run PIV on a GPU](gpu.md) before a large production ensemble.
 
+## Stereo ensembles
+
+For a statistically stationary low-SNR stereo recording, compose one
+ensemble field per camera followed by calibrated 3C reconstruction:
+
+```julia
+mean3c = run_piv_stereo_ensemble(cam1_pairs, cam2_pairs, dw1, dw2, passes;
+    preprocess = (preprocess_cam1, preprocess_cam2),
+)
+```
+
+Raw frames are loaded and dewarped lazily on each pass, so the driver does not
+retain the entire dewarped recording. As in planar ensemble PIV, the result is
+one stationary mean field. Use `run_piv_stereo_sequence` followed by
+`field_statistics` when physical fluctuations and all six Reynolds-stress
+terms are required.
+
 ## Practical notes
 
 - **More pairs beat bigger windows.** The whole point is that window size

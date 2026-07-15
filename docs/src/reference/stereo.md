@@ -7,10 +7,12 @@ CurrentModule = Hammerhead
 Everything stereoscopic: two-dimensional, three-component (2D3C) particle
 image velocimetry (PIV), including camera calibration models and fitting,
 dot-grid target detection, image dewarping onto a common world plane,
-three-component reconstruction, and disparity self-calibration. The
+three-component reconstruction, synchronized sequence processing, stereo
+ensemble correlation, and disparity self-calibration. The
 [stereo tutorial](../tutorials/stereo.md) walks the whole chain;
 [Stereo geometry and self-calibration](../explanation/stereo.md) explains
-the method. [`run_piv_stereo`](@ref) can forward a GPU backend to its two
+the method. [`run_piv_stereo`](@ref), [`run_piv_stereo_sequence`](@ref), and
+[`run_piv_stereo_ensemble`](@ref) can forward a GPU backend to their two
 per-camera PIV calls; see [Run PIV on a GPU](../howto/gpu.md) for the CPU/GPU
 boundary.
 
@@ -19,6 +21,10 @@ Pages = ["stereo.md"]
 ```
 
 ## Camera models and calibration
+
+This section also includes [`PlanarTransform`](@ref) and
+[`planar_calibration`](@ref), the lightweight two-point calibration for
+planar 2D2C work.
 
 ```@autodocs
 Modules = [Hammerhead]

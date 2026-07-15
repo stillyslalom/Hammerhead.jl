@@ -289,6 +289,10 @@ dot nearest the image center. Dots clipped by the image border are excluded.
   marker is found) becomes the origin. A consistent origin across cameras
   requires the marker.
 - `invert = false`: set for dark dots on a bright background.
+- `orientation = :image`: `:image` keeps +X image-right and +Y image-up.
+  `:fiducials` instead uses the square-to-triangle direction as +X and plate
+  handedness for +Y, so arbitrary camera roll does not change world indices;
+  both markers must be visible.
 - `threshold = :otsu`: foreground threshold — `:otsu` or an absolute value in
   image intensity units.
 - `min_area = 9`: minimum blob area in pixels; blobs smaller than 15% of the
@@ -301,11 +305,14 @@ function detect_calibration_grid(img::AbstractMatrix{<:Real};
                                  origin_level::Symbol = :front,
                                  origin_offset::Union{Nothing,Tuple{<:Real,<:Real}} = nothing,
                                  invert::Bool = false,
+                                 orientation::Symbol = :image,
                                  threshold = :otsu,
                                  min_area::Int = 9)
     spacing > 0 || throw(ArgumentError("spacing must be positive, got $spacing"))
     origin_level in (:front, :back) ||
         throw(ArgumentError("origin_level must be :front or :back, got :$origin_level"))
+    orientation in (:image, :fiducials) ||
+        throw(ArgumentError("orientation must be :image or :fiducials, got :$orientation"))
     two_level && iszero(level_separation) &&
         throw(ArgumentError("a two-level target needs a nonzero level_separation"))
 
@@ -327,9 +334,23 @@ function detect_calibration_grid(img::AbstractMatrix{<:Real};
     candidates = two_level ? ((1, 1), (1, -1), (-1, -1), (-1, 1)) :
                              ((1, 0), (0, 1), (-1, 0), (0, -1))
     pdir(c) = normalize(predict(q0 .+ c) - predict(q0))
-    c_x = argmax(c -> pdir(c)[1], candidates)                       # image-right
-    c_y = argmax(c -> -pdir(c)[2],
-                 filter(c -> c != c_x && c != (-c_x[1], -c_x[2]), collect(candidates)))  # image-up
+    if orientation === :fiducials
+        square !== nothing && triangle !== nothing ||
+            throw(ArgumentError("orientation=:fiducials requires both square and triangle markers"))
+        marker_x = normalize(triangle - square)
+        c_x = argmax(c -> dot(pdir(c), marker_x), candidates)
+        ycandidates = filter(c -> c != c_x && c != (-c_x[1], -c_x[2]), collect(candidates))
+        # Image rows point down. Preserve the conventional right-handed plate
+        # frame by choosing +Y on the counter-image-handed side of +X. This
+        # rule rotates with the markers and is therefore invariant to camera
+        # roll, unlike an image-up convention.
+        cross2(a, b) = a[1] * b[2] - a[2] * b[1]
+        c_y = argmin(c -> cross2(pdir(c_x), pdir(c)), ycandidates)
+    else
+        c_x = argmax(c -> pdir(c)[1], candidates)                   # image-right
+        c_y = argmax(c -> -pdir(c)[2],
+                     filter(c -> c != c_x && c != (-c_x[1], -c_x[2]), collect(candidates)))
+    end
     half = two_level ? 1 : 2
     tocoord(qi) = (half * (qi[1] * c_x[1] + qi[2] * c_x[2]),
                    half * (qi[1] * c_y[1] + qi[2] * c_y[2]))

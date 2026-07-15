@@ -43,3 +43,109 @@ function polygon_mask(sz::Dims{2}, vertices::AbstractVector)
     end
     return mask
 end
+
+"""
+    grow_mask(mask, radius=1) -> BitMatrix
+    shrink_mask(mask, radius=1) -> BitMatrix
+
+Grow or shrink an exclusion mask by a circular pixel radius. These helpers
+preserve Hammerhead's `true = excluded` convention. A zero radius copies the
+input.
+"""
+function grow_mask(mask::AbstractMatrix{Bool}, radius::Integer = 1)
+    radius >= 0 || throw(ArgumentError("radius must be nonnegative, got $radius"))
+    out = falses(size(mask))
+    offsets = [(dr, dc) for dr in -radius:radius, dc in -radius:radius
+               if dr * dr + dc * dc <= radius * radius]
+    nr, nc = size(mask)
+    for c in 1:nc, r in 1:nr
+        mask[r, c] || continue
+        for (dr, dc) in offsets
+            rr, cc = r + dr, c + dc
+            1 <= rr <= nr && 1 <= cc <= nc && (out[rr, cc] = true)
+        end
+    end
+    return out
+end
+
+function shrink_mask(mask::AbstractMatrix{Bool}, radius::Integer = 1)
+    radius >= 0 || throw(ArgumentError("radius must be nonnegative, got $radius"))
+    radius == 0 && return BitMatrix(mask)
+    padded = falses(size(mask) .+ 2radius)
+    padded[radius+1:end-radius, radius+1:end-radius] .= mask
+    eroded = .!grow_mask(.!padded, radius)
+    return BitMatrix(eroded[radius+1:end-radius, radius+1:end-radius])
+end
+
+function _local_variance(A::AbstractMatrix{<:Real}, radius::Int)
+    radius >= 1 || throw(ArgumentError("radius must be at least 1, got $radius"))
+    nr, nc = size(A)
+    S = zeros(Float64, nr + 1, nc + 1)
+    S2 = similar(S)
+    for c in 1:nc, r in 1:nr
+        x = Float64(A[r, c])
+        S[r + 1, c + 1] = x + S[r, c + 1] + S[r + 1, c] - S[r, c]
+        S2[r + 1, c + 1] = x * x + S2[r, c + 1] + S2[r + 1, c] - S2[r, c]
+    end
+    variance = zeros(Float64, nr, nc)
+    for c in 1:nc, r in 1:nr
+        r1, r2 = max(1, r - radius), min(nr, r + radius)
+        c1, c2 = max(1, c - radius), min(nc, c + radius)
+        n = (r2 - r1 + 1) * (c2 - c1 + 1)
+        s = S[r2 + 1, c2 + 1] - S[r1, c2 + 1] - S[r2 + 1, c1] + S[r1, c1]
+        s2 = S2[r2 + 1, c2 + 1] - S2[r1, c2 + 1] - S2[r2 + 1, c1] + S2[r1, c1]
+        variance[r, c] = max(0.0, s2 / n - (s / n)^2)
+    end
+    return variance
+end
+
+"""
+    automatic_mask(image; method=:intensity, threshold=:auto, side=:high,
+                   radius=5, grow=0) -> BitMatrix
+    automatic_mask(imageA, imageB; kwargs...) -> BitMatrix
+
+Construct an image-derived exclusion mask. `method` is `:intensity`,
+`:contrast` (local standard deviation), or `:edge` (gradient magnitude).
+`threshold=:auto` selects a robust tail quantile; a numeric threshold uses
+the image's intensity units. The pair method returns the union of both frame
+masks, the normal convention for moving geometry.
+"""
+function automatic_mask(image::AbstractMatrix{<:Real};
+                        method::Symbol = :intensity, threshold = :auto,
+                        side::Symbol = method === :contrast ? :low : :high,
+                        radius::Integer = 5, grow::Integer = 0)
+    method in (:intensity, :contrast, :edge) ||
+        throw(ArgumentError("method must be :intensity, :contrast, or :edge, got :$method"))
+    side in (:low, :high) || throw(ArgumentError("side must be :low or :high, got :$side"))
+    A = Float64.(image)
+    score = if method === :intensity
+        A
+    elseif method === :contrast
+        sqrt.(_local_variance(A, Int(radius)))
+    else
+        nr, nc = size(A)
+        G = zeros(Float64, nr, nc)
+        for c in 1:nc, r in 1:nr
+            gx = (A[r, min(nc, c + 1)] - A[r, max(1, c - 1)]) / 2
+            gy = (A[min(nr, r + 1), c] - A[max(1, r - 1), c]) / 2
+            G[r, c] = hypot(gx, gy)
+        end
+        G
+    end
+    t = if threshold === :auto
+        q = method === :contrast && side === :low ? 0.05 :
+            side === :low ? 0.01 : method === :contrast ? 0.95 : 0.99
+        quantile(vec(score), q)
+    elseif threshold isa Real
+        Float64(threshold)
+    else
+        throw(ArgumentError("threshold must be :auto or a number, got $threshold"))
+    end
+    mask = side === :high ? score .>= t : score .<= t
+    return grow == 0 ? BitMatrix(mask) : grow_mask(mask, grow)
+end
+
+function automatic_mask(imageA::AbstractMatrix{<:Real}, imageB::AbstractMatrix{<:Real}; kwargs...)
+    size(imageA) == size(imageB) || throw(DimensionMismatch("pair images must have equal size"))
+    return automatic_mask(imageA; kwargs...) .| automatic_mask(imageB; kwargs...)
+end

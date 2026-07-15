@@ -18,7 +18,13 @@ struct Trajectory{T<:AbstractFloat}
     start_frame::Int
     x::Vector{T}
     y::Vector{T}
+    frames::Vector{Int}
 end
+
+Trajectory{T}(start_frame::Int, x::Vector{T}, y::Vector{T}) where {T} =
+    Trajectory{T}(start_frame, x, y, collect(start_frame:start_frame+length(x)-1))
+Trajectory(start_frame::Int, x::Vector{T}, y::Vector{T}) where {T<:AbstractFloat} =
+    Trajectory{T}(start_frame, x, y)
 
 Base.length(t::Trajectory) = length(t.x)
 
@@ -56,6 +62,10 @@ mutable struct _Track{T<:AbstractFloat}
     start_frame::Int
     x::Vector{T}
     y::Vector{T}
+    frames::Vector{Int}
+    intensity::T
+    diameter::T
+    missed::Int
 end
 
 make_field_interp(::Nothing) = nothing
@@ -79,7 +89,7 @@ end
 """
     track_particles(frames, params = PTVParameters();
                     predictor = :piv, piv_passes = multipass_parameters([64, 32]),
-                    min_track_length = 3, mask = nothing, scale = nothing,
+                    min_track_length = 3, max_gap = 0, mask = nothing, scale = nothing,
                     image_type = Float64, progress = true) -> TrackingResult
 
 Link particles across a sequence of `frames` (≥ 2 file paths or real-valued
@@ -89,8 +99,10 @@ heads with ≥ 2 points, and a field predictor for fresh 1-point heads (the
 `predictor` option on the first transition, exactly as in [`run_ptv`](@ref);
 the binned previous transition afterwards) — then matched with the greedy PTV
 matcher. Scattered-UOD-flagged links are rejected (never linked, so they cannot
-poison the constant-velocity predictor). Unmatched heads terminate their track
-(no gap bridging in v1); unmatched frame-`(k+1)` particles seed new tracks.
+poison the constant-velocity predictor). `max_gap` keeps unmatched heads alive
+for a bounded number of missed frames and records reacquisition gaps explicitly
+in [`Trajectory`](@ref)`s `frames`; its default zero terminates immediately as
+before. Unmatched frame-`(k+1)` particles seed new tracks.
 
 Only tracks with `length ≥ min_track_length` (which must be ≥ 2) are returned,
 sorted by `start_frame` then first position. `scale` attaches a
@@ -104,6 +116,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
                          predictor = :piv,
                          piv_passes = multipass_parameters([64, 32]),
                          min_track_length::Int = 3,
+                         max_gap::Int = 0,
                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                          scale::Union{Nothing,PhysicalScale} = nothing,
                          image_type::Type{<:AbstractFloat} = Float64,
@@ -112,6 +125,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     n_frames >= 2 || throw(ArgumentError("track_particles needs at least 2 frames, got $n_frames"))
     min_track_length >= 2 ||
         throw(ArgumentError("min_track_length must be at least 2, got $min_track_length"))
+    max_gap >= 0 || throw(ArgumentError("max_gap must be nonnegative, got $max_gap"))
     T = float(image_type)
 
     # Load every frame once (needed for detection, and frames 1–2 for the
@@ -126,7 +140,8 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     active = _Track{T}[]
     p1 = particles[1]
     for i in 1:length(p1)
-        tr = _Track{T}(1, T[p1.x[i]], T[p1.y[i]])
+        tr = _Track{T}(1, T[p1.x[i]], T[p1.y[i]], Int[1],
+                       T(p1.intensity[i]), T(p1.diameter[i]), 0)
         push!(all_tracks, tr)
         push!(active, tr)
     end
@@ -146,28 +161,34 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
         pred_y = Vector{T}(undef, M)
         for (i, tr) in enumerate(active)
             hx = tr.x[end]; hy = tr.y[end]
+            elapsed = (k + 1) - tr.frames[end]
             if length(tr.x) >= 2
-                pred_x[i] = hx + (tr.x[end] - tr.x[end - 1])
-                pred_y[i] = hy + (tr.y[end] - tr.y[end - 1])
+                dtlast = tr.frames[end] - tr.frames[end - 1]
+                pred_x[i] = hx + (tr.x[end] - tr.x[end - 1]) * elapsed / dtlast
+                pred_y[i] = hy + (tr.y[end] - tr.y[end - 1]) * elapsed / dtlast
             elseif interp === nothing
                 pred_x[i] = hx
                 pred_y[i] = hy
             else
-                pred_x[i] = hx + T(interp[1](hy, hx))
-                pred_y[i] = hy + T(interp[2](hy, hx))
+                pred_x[i] = hx + T(interp[1](hy, hx)) * elapsed
+                pred_y[i] = hy + T(interp[2](hy, hx)) * elapsed
             end
         end
 
         cl_b = build_cell_list(pb.x, pb.y, params.search_radius)
-        index_a, index_b, _ = greedy_match(pred_x, pred_y, cl_b, params.search_radius)
+        index_a, index_b, _ = greedy_match(pred_x, pred_y, cl_b, params.search_radius;
+            intensity_a=T[tr.intensity for tr in active], intensity_b=pb.intensity,
+            diameter_a=T[tr.diameter for tr in active], diameter_b=pb.diameter,
+            intensity_weight=params.intensity_weight, diameter_weight=params.diameter_weight)
 
         # Scattered UOD on this transition's matches, at the frame-k head
         # positions; flagged links are rejected below.
         nm = length(index_a)
         hx = T[active[index_a[m]].x[end] for m in 1:nm]
         hy = T[active[index_a[m]].y[end] for m in 1:nm]
-        mu = T[pb.x[index_b[m]] - hx[m] for m in 1:nm]
-        mv = T[pb.y[index_b[m]] - hy[m] for m in 1:nm]
+        gaps = Int[(k + 1) - active[index_a[m]].frames[end] for m in 1:nm]
+        mu = T[(pb.x[index_b[m]] - hx[m]) / gaps[m] for m in 1:nm]
+        mv = T[(pb.y[index_b[m]] - hy[m]) / gaps[m] for m in 1:nm]
         flags = params.uod_enable ? scattered_uod(hx, hy, mu, mv, params) : falses(nm)
 
         extended = falses(M)
@@ -178,6 +199,10 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
             ia = index_a[m]; ib = index_b[m]
             push!(active[ia].x, pb.x[ib])
             push!(active[ia].y, pb.y[ib])
+            push!(active[ia].frames, k + 1)
+            active[ia].intensity = pb.intensity[ib]
+            active[ia].diameter = pb.diameter[ib]
+            active[ia].missed = 0
             extended[ia] = true
             accepted_b[ib] = true
             push!(amx, hx[m]); push!(amy, hy[m]); push!(amu, mu[m]); push!(amv, mv[m])
@@ -185,11 +210,17 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
 
         newactive = _Track{T}[]
         for (i, tr) in enumerate(active)
-            extended[i] && push!(newactive, tr)   # unextended heads terminate
+            if extended[i]
+                push!(newactive, tr)
+            else
+                tr.missed += 1
+                tr.missed <= max_gap && push!(newactive, tr)
+            end
         end
         for j in 1:length(pb)
             accepted_b[j] && continue
-            tr = _Track{T}(k + 1, T[pb.x[j]], T[pb.y[j]])
+            tr = _Track{T}(k + 1, T[pb.x[j]], T[pb.y[j]], Int[k + 1],
+                           T(pb.intensity[j]), T(pb.diameter[j]), 0)
             push!(all_tracks, tr)
             push!(newactive, tr)
         end
@@ -201,7 +232,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
 
     kept = [tr for tr in all_tracks if length(tr.x) >= min_track_length]
     sort!(kept; by = tr -> (tr.start_frame, tr.x[1], tr.y[1]))
-    trajectories = [Trajectory{T}(tr.start_frame, tr.x, tr.y) for tr in kept]
+    trajectories = [Trajectory{T}(tr.start_frame, tr.x, tr.y, tr.frames) for tr in kept]
     return TrackingResult{T}(trajectories, n_frames, params, scale)
 end
 
@@ -224,13 +255,13 @@ function trajectory_velocities(t::Trajectory{T},
     n >= 2 || throw(ArgumentError("trajectory_velocities needs at least 2 points, got $n"))
     u = Vector{T}(undef, n)
     v = Vector{T}(undef, n)
-    u[1] = t.x[2] - t.x[1]
-    v[1] = t.y[2] - t.y[1]
-    u[n] = t.x[n] - t.x[n - 1]
-    v[n] = t.y[n] - t.y[n - 1]
+    u[1] = (t.x[2] - t.x[1]) / (t.frames[2] - t.frames[1])
+    v[1] = (t.y[2] - t.y[1]) / (t.frames[2] - t.frames[1])
+    u[n] = (t.x[n] - t.x[n - 1]) / (t.frames[n] - t.frames[n - 1])
+    v[n] = (t.y[n] - t.y[n - 1]) / (t.frames[n] - t.frames[n - 1])
     for i in 2:(n - 1)
-        u[i] = (t.x[i + 1] - t.x[i - 1]) / 2
-        v[i] = (t.y[i + 1] - t.y[i - 1]) / 2
+        u[i] = (t.x[i + 1] - t.x[i - 1]) / (t.frames[i + 1] - t.frames[i - 1])
+        v[i] = (t.y[i + 1] - t.y[i - 1]) / (t.frames[i + 1] - t.frames[i - 1])
     end
     if scale !== nothing && !(scale.pixel_size == 1.0 && scale.dt == 1.0)
         f = T(scale.pixel_size / scale.dt)

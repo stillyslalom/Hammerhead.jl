@@ -27,6 +27,10 @@ and [`track_particles`](@ref).
   range (px, 4σ). Particles with a `NaN` diameter (centroid fallback) pass.
 - `search_radius = 3.0`: match search radius (px) around the predicted
   frame-B position of each frame-A particle.
+- `intensity_weight = 0`, `diameter_weight = 0`: optional nonnegative
+  appearance penalties added to squared spatial match cost. The penalties use
+  squared log-ratios, so they are scale-free; zero preserves distance-only
+  matching exactly.
 - `uod_enable = true`: flag outliers with the scattered normalized median test
   (Duncan et al. 2010).
 - `uod_threshold = 2.0`: scattered-UOD sensitivity (higher is less sensitive).
@@ -41,6 +45,8 @@ struct PTVParameters
     min_diameter::Float64
     max_diameter::Float64
     search_radius::Float64
+    intensity_weight::Float64
+    diameter_weight::Float64
     uod_enable::Bool
     uod_threshold::Float64
     uod_neighbors::Int
@@ -53,6 +59,8 @@ struct PTVParameters
         min_diameter::Real = 1.0,
         max_diameter::Real = 12.0,
         search_radius::Real = 3.0,
+        intensity_weight::Real = 0.0,
+        diameter_weight::Real = 0.0,
         uod_enable::Bool = true,
         uod_threshold::Real = 2.0,
         uod_neighbors::Int = 8,
@@ -66,6 +74,8 @@ struct PTVParameters
             throw(ArgumentError("min_separation must be positive, got $min_separation"))
         search_radius > 0 ||
             throw(ArgumentError("search_radius must be positive, got $search_radius"))
+        intensity_weight >= 0 || throw(ArgumentError("intensity_weight must be nonnegative"))
+        diameter_weight >= 0 || throw(ArgumentError("diameter_weight must be nonnegative"))
         uod_threshold > 0 ||
             throw(ArgumentError("uod_threshold must be positive, got $uod_threshold"))
         uod_epsilon > 0 ||
@@ -76,7 +86,8 @@ struct PTVParameters
             throw(ArgumentError("uod_neighbors must be at least 3, got $uod_neighbors"))
         thr = threshold === :auto ? :auto : Float64(threshold)
         new(thr, Float64(threshold_k), Float64(min_separation), Float64(min_diameter),
-            Float64(max_diameter), Float64(search_radius), uod_enable,
+            Float64(max_diameter), Float64(search_radius), Float64(intensity_weight),
+            Float64(diameter_weight), uod_enable,
             Float64(uod_threshold), uod_neighbors, Float64(uod_epsilon))
     end
 end
@@ -85,6 +96,8 @@ function Base.show(io::IO, p::PTVParameters)
     print(io, "PTVParameters(threshold=", p.threshold === :auto ? ":auto" : p.threshold,
         ", threshold_k=$(p.threshold_k), min_separation=$(p.min_separation), ",
         "diameter=($(p.min_diameter), $(p.max_diameter)), search_radius=$(p.search_radius), ",
+        (p.intensity_weight > 0 || p.diameter_weight > 0) ?
+            "appearance_weights=($(p.intensity_weight), $(p.diameter_weight)), " : "",
         "uod=", p.uod_enable ?
             "(threshold=$(p.uod_threshold), neighbors=$(p.uod_neighbors), epsilon=$(p.uod_epsilon))" : "off",
         ")")
@@ -159,25 +172,37 @@ end
 # `(cost, i, j)` (deterministic), and pairs whose A- and B-index are both
 # unused are accepted greedily. Returns `(index_a, index_b, residual)`.
 function greedy_match(pred_x::AbstractVector{T}, pred_y::AbstractVector{T},
-                      cl_b::CellList{T}, search_radius::Real) where {T}
-    candidates = Tuple{T,Int,Int}[]
+                      cl_b::CellList{T}, search_radius::Real;
+                      intensity_a=nothing, intensity_b=nothing,
+                      diameter_a=nothing, diameter_b=nothing,
+                      intensity_weight::Real=0, diameter_weight::Real=0) where {T}
+    candidates = Tuple{T,T,Int,Int}[]
     buf = Int[]
     for i in eachindex(pred_x)
         within_radius!(buf, cl_b, pred_x[i], pred_y[i], search_radius)
         for j in buf
-            cost = (cl_b.px[j] - pred_x[i])^2 + (cl_b.py[j] - pred_y[i])^2
-            push!(candidates, (cost, i, j))
+            distance2 = (cl_b.px[j] - pred_x[i])^2 + (cl_b.py[j] - pred_y[i])^2
+            cost = distance2
+            if intensity_weight > 0 && intensity_a !== nothing && intensity_b !== nothing &&
+               intensity_a[i] > 0 && intensity_b[j] > 0
+                cost += intensity_weight * log(intensity_b[j] / intensity_a[i])^2
+            end
+            if diameter_weight > 0 && diameter_a !== nothing && diameter_b !== nothing &&
+               isfinite(diameter_a[i]) && isfinite(diameter_b[j]) && diameter_a[i] > 0 && diameter_b[j] > 0
+                cost += diameter_weight * log(diameter_b[j] / diameter_a[i])^2
+            end
+            push!(candidates, (cost, distance2, i, j))
         end
     end
     sort!(candidates)                    # lexicographic: (cost, i, j)
     used_a = falses(length(pred_x))
     used_b = falses(cl_b.n)
     index_a = Int[]; index_b = Int[]; residual = T[]
-    for (cost, i, j) in candidates
+    for (_, distance2, i, j) in candidates
         (used_a[i] || used_b[j]) && continue
         used_a[i] = true
         used_b[j] = true
-        push!(index_a, i); push!(index_b, j); push!(residual, sqrt(cost))
+        push!(index_a, i); push!(index_b, j); push!(residual, sqrt(distance2))
     end
     return index_a, index_b, residual
 end
@@ -306,7 +331,13 @@ function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  predictor = :piv,
                  piv_passes = multipass_parameters([64, 32]),
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                 scale::Union{Nothing,PhysicalScale} = nothing)
+                 scale::Union{Nothing,PhysicalScale} = nothing,
+                 roi = nothing)
+    if roi !== nothing
+        rr = roi isa ROI ? roi : ROI(roi)
+        a, b, m = roi_views(imgA, imgB, mask, rr)
+        return offset_result(run_ptv(a, b, params; predictor, piv_passes, mask=m, scale), rr)
+    end
     size(imgA) == size(imgB) ||
         throw(DimensionMismatch("images must have the same size, got $(size(imgA)) and $(size(imgB))"))
     mask === nothing || size(mask) == size(imgA) ||
@@ -325,7 +356,10 @@ function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     px, py = predicted_positions(pa, pred)
 
     cl_b = build_cell_list(pb.x, pb.y, params.search_radius)
-    index_a, index_b, residual = greedy_match(px, py, cl_b, params.search_radius)
+    index_a, index_b, residual = greedy_match(px, py, cl_b, params.search_radius;
+        intensity_a=pa.intensity, intensity_b=pb.intensity,
+        diameter_a=pa.diameter, diameter_b=pb.diameter,
+        intensity_weight=params.intensity_weight, diameter_weight=params.diameter_weight)
 
     n = length(index_a)
     x = T[pa.x[index_a[k]] for k in 1:n]

@@ -24,18 +24,25 @@ editing an existing set.
 struct MaskEditor
     image::Matrix{Float64}
     polygons::Observable{Vector{Vector{Tuple{Float64,Float64}}}}
+    holes::Observable{Vector{Bool}}
     active::Observable{Vector{Tuple{Float64,Float64}}}
+    hole_mode::Observable{Bool}
     selected::Observable{Union{Nothing,Int}}
     show_mask::Observable{Bool}
+    raster::Observable{Union{Nothing,BitMatrix}}
 end
 
-function MaskEditor(image::AbstractMatrix{<:Real}; polygons = Vector{Tuple{Float64,Float64}}[])
+function MaskEditor(image::AbstractMatrix{<:Real}; polygons = Vector{Tuple{Float64,Float64}}[],
+                    holes = falses(length(polygons)))
     polys = [[(Float64(v[1]), Float64(v[2])) for v in p] for p in polygons]
     all(p -> length(p) >= 3, polys) ||
         throw(ArgumentError("every seeded polygon needs at least 3 vertices"))
-    return MaskEditor(Matrix{Float64}(image), Observable(polys),
-                      Observable(Tuple{Float64,Float64}[]),
-                      Observable{Union{Nothing,Int}}(nothing), Observable(false))
+    length(holes) == length(polys) ||
+        throw(ArgumentError("holes must have one entry per seeded polygon"))
+    return MaskEditor(Matrix{Float64}(image), Observable(polys), Observable(Bool.(holes)),
+                      Observable(Tuple{Float64,Float64}[]), Observable(false),
+                      Observable{Union{Nothing,Int}}(nothing), Observable(false),
+                      Observable{Union{Nothing,BitMatrix}}(nothing))
 end
 
 MaskEditor(path::AbstractString; kwargs...) = MaskEditor(load_image(path); kwargs...)
@@ -83,11 +90,22 @@ function close_active!(me::MaskEditor)
     committed = length(verts) >= 3
     if committed
         push!(me.polygons[], copy(verts))
+        push!(me.holes[], me.hole_mode[])
         notify(me.polygons)
+        notify(me.holes)
     end
     empty!(verts)
+    me.hole_mode[] = false
     notify(me.active)
     return committed
+end
+
+"""Begin drawing a polygon that removes an area from the exclusion mask."""
+function begin_hole!(me::MaskEditor)
+    isempty(me.active[]) || throw(ArgumentError("finish the active polygon first"))
+    me.hole_mode[] = true
+    me.selected[] = nothing
+    return me
 end
 
 # Even-odd point-in-polygon (matches Hammerhead.polygon_mask's fill rule).
@@ -121,6 +139,9 @@ polygon at `(x, y)`.
 """
 function click!(me::MaskEditor, x::Real, y::Real)
     if !isempty(me.active[])
+        return add_vertex!(me, x, y)
+    end
+    if me.hole_mode[]
         return add_vertex!(me, x, y)
     end
     hit = polygon_at(me, x, y)
@@ -157,8 +178,10 @@ function delete_selected!(me::MaskEditor)
     i = me.selected[]
     i === nothing && return me
     deleteat!(me.polygons[], i)
+    deleteat!(me.holes[], i)
     me.selected[] = nothing
     notify(me.polygons)
+    notify(me.holes)
     return me
 end
 
@@ -169,9 +192,13 @@ Delete all polygons and cancel any active drawing.
 """
 function clear_polygons!(me::MaskEditor)
     empty!(me.polygons[])
+    empty!(me.holes[])
     empty!(me.active[])
+    me.raster[] = nothing
+    me.hole_mode[] = false
     me.selected[] = nothing
     notify(me.polygons)
+    notify(me.holes)
     notify(me.active)
     return me
 end
@@ -184,11 +211,29 @@ convention (image-sized, `true` = excluded) — pass it as `mask` to
 `run_piv`. All-`false` when no polygons are committed.
 """
 function Hammerhead.polygon_mask(me::MaskEditor)
-    mask = falses(size(me.image))
-    for p in me.polygons[]
-        mask .|= polygon_mask(size(me.image), p)
+    mask = me.raster[] === nothing ? falses(size(me.image)) : copy(me.raster[])
+    for (p, hole) in zip(me.polygons[], me.holes[])
+        pm = polygon_mask(size(me.image), p)
+        hole ? (mask .&= .!pm) : (mask .|= pm)
     end
     return mask
+end
+
+
+"""Rasterize the editor state and grow the excluded region by `radius` pixels."""
+function grow_mask!(me::MaskEditor, radius::Integer = 1)
+    me.raster[] = Hammerhead.grow_mask(polygon_mask(me), radius)
+    empty!(me.polygons[]); empty!(me.holes[])
+    notify(me.polygons); notify(me.holes)
+    return me
+end
+
+"""Rasterize the editor state and shrink the excluded region by `radius` pixels."""
+function shrink_mask!(me::MaskEditor, radius::Integer = 1)
+    me.raster[] = Hammerhead.shrink_mask(polygon_mask(me), radius)
+    empty!(me.polygons[]); empty!(me.holes[])
+    notify(me.polygons); notify(me.holes)
+    return me
 end
 
 """
@@ -211,6 +256,7 @@ function status_text(me::MaskEditor)
     n = length(me.polygons[])
     parts = ["$n polygon" * (n == 1 ? "" : "s")]
     isempty(me.active[]) || push!(parts, "drawing ($(length(me.active[])) vertices)")
+    me.hole_mode[] && isempty(me.active[]) && push!(parts, "next polygon is a hole")
     me.selected[] === nothing || push!(parts, "selected: $(me.selected[])")
     return join(parts, " · ")
 end

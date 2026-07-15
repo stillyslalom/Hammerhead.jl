@@ -6,7 +6,8 @@ CurrentModule = Hammerhead
 
 Ensemble (sum-of-correlation) particle image velocimetry (PIV) for recordings
 with low signal-to-noise ratio (SNR), time-series
-statistics over result sequences, temporal validation, accuracy diagnostics,
+statistics over planar and stereo result sequences, temporal validation,
+accuracy diagnostics,
 and spectra. See the [ensemble how-to](../howto/ensemble.md). GPU backends
 keep summed planes and uncertainty statistics device-resident; setup and
 memory sizing are covered in [Run PIV on a GPU](../howto/gpu.md).

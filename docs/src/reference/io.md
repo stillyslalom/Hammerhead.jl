@@ -16,6 +16,6 @@ Pages = ["io.md"]
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["io.jl"]
+Pages = ["io.jl", "interoperability.jl"]
 Private = false
 ```

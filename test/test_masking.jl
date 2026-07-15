@@ -22,6 +22,25 @@ using Statistics
         @test_throws ArgumentError polygon_mask((20, 20), [(1, 1), (2, 2)])
     end
 
+    @testset "automatic and morphological masks" begin
+        seed = falses(9, 9); seed[5, 5] = true
+        grown = grow_mask(seed, 2)
+        @test count(grown) == 13
+        @test shrink_mask(grown, 2) == seed
+        @test grow_mask(seed, 0) == seed
+        @test_throws ArgumentError grow_mask(seed, -1)
+
+        img = zeros(16, 16); img[4:6, 7:9] .= 10
+        bright = automatic_mask(img; threshold = 5.0)
+        @test bright == (img .>= 5)
+        edge = automatic_mask(img; method = :edge, threshold = 1.0)
+        @test any(edge) && !edge[1, 1]
+        pair = automatic_mask(img, reverse(img; dims = 1); threshold = 5.0)
+        @test pair == ((img .>= 5) .| (reverse(img; dims = 1) .>= 5))
+        @test_throws DimensionMismatch automatic_mask(img, zeros(2, 2))
+        @test_throws ArgumentError automatic_mask(img; method = :magic)
+    end
+
     @testset "universal_outlier_detection exclude" begin
         rng = MersenneTwister(7)
         u = 3.0 .+ 0.05 .* randn(rng, 8, 8)

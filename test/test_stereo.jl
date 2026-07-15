@@ -79,6 +79,48 @@ end
     @test s0.uncertainty_w[1, 1] ≈ σmm / (sqrt(2) * tan(deg2rad(20.0))) atol = 1e-5
 end
 
+@testset "Stereo: statistics and temporal validation" begin
+    cams = (make_test_camera(yaw_deg = -18.0), make_test_camera(yaw_deg = 27.0))
+    grid = DewarpGrid(x = -10.0:0.5:10.0, y = -10.0:0.5:10.0)
+    sx, sy = step(grid.x), step(grid.y)
+    delta = max(abs(sx), abs(sy))
+    Xw, Yw = 3.0, -4.0
+    exact(d) = begin
+        rs = map(cams) do cam
+            t = Hammerhead.ray_slopes(cam, Xw, Yw, grid.z, delta)
+            pu = (d[1] - d[3] * t[1]) / sx
+            pv = (d[2] - d[3] * t[2]) / sy
+            PIVResult([(Xw - first(grid.x)) / sx + 1],
+                      [(Yw - first(grid.y)) / sy + 1], fill(pu, 1, 1),
+                      fill(pv, 1, 1), ones(1, 1), ones(1, 1),
+                      fill(NaN, 1, 1), fill(NaN, 1, 1), falses(1, 1),
+                      falses(1, 1), PIVParameters())
+        end
+        Hammerhead.reconstruct_stereo(rs[1], rs[2], cams[1], cams[2], grid)
+    end
+    stats = field_statistics([exact((1.0, 2.0, 3.0)), exact((3.0, 0.0, 7.0))])
+    @test stats.mean_u[1] ≈ 2.0
+    @test stats.mean_v[1] ≈ 1.0
+    @test stats.mean_w[1] ≈ 5.0
+    @test stats.rms_u[1] ≈ 1.0
+    @test stats.rms_v[1] ≈ 1.0
+    @test stats.rms_w[1] ≈ 2.0
+    @test stats.reynolds_uu[1] ≈ 1.0
+    @test stats.reynolds_vv[1] ≈ 1.0
+    @test stats.reynolds_ww[1] ≈ 4.0
+    @test stats.reynolds_uv[1] ≈ -1.0
+    @test stats.reynolds_uw[1] ≈ 2.0
+    @test stats.reynolds_vw[1] ≈ -2.0
+    @test stats.count[1] == 2
+
+    history = [exact((0.01k, -0.01k, 0.0)) for k in 1:7]
+    history[4].w[1] = 20.0
+    validate_temporal!(history)
+    @test history[4].outliers[1]
+    @test sum(r.outliers[1] for r in history) == 1
+    @test_throws ArgumentError validate_temporal!(history; epsilon = 0)
+end
+
 @testset "run_piv_stereo: 3C reconstruction" begin
     cams = (make_test_camera(yaw_deg = -20.0), make_test_camera(yaw_deg = 20.0))
     grid = DewarpGrid(x = -25.0:0.2:25.0, y = -25.0:0.2:25.0)
@@ -249,8 +291,43 @@ end
     @test_throws DimensionMismatch run_piv_stereo(A1[1:256, :], B1[1:256, :], A2, B2,
                                                   dws[1], dws[2], params)
 
+    # Synchronized batch: both source layouts, progress callback, clean
+    # between-pair cancellation, and incremental output.
+    done = Tuple{Int,Int}[]
+    seq = run_piv_stereo_sequence([(A1, B1)], [(A2, B2)], dws[1], dws[2], params;
+                                  progress = (i, n) -> push!(done, (i, n)))
+    @test length(seq) == 1 && done == [(1, 1)]
+    @test median(seq[1].w) ≈ truth[3] atol = 0.05
+    seq4 = run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
+                                   progress = false)
+    @test isequal(seq4[1].w, seq[1].w)
+    @test isempty(run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
+                                          progress = false, cancel = () -> true))
+    @test_throws DimensionMismatch run_piv_stereo_sequence([(A1, B1)], [],
+                                                           dws[1], dws[2], params;
+                                                           progress = false)
+
+    # Low-SNR stereo is a first-class calibrated composition of the two
+    # per-camera sum-of-correlation fields.
+    ens = run_piv_stereo_ensemble([(A1, B1)], [(A2, B2)], dws[1], dws[2], params;
+                                  progress = false)
+    @test median(ens.u) ≈ truth[1] atol = 0.05
+    @test median(ens.v) ≈ truth[2] atol = 0.05
+    @test median(ens.w) ≈ truth[3] atol = 0.07
+
     # JLD2 roundtrip, including a mixed PIVResult/StereoPIVResult file.
     mktempdir() do dir
+        sequence_path = joinpath(dir, "sequence.jld2")
+        pre_count = [Ref(0), Ref(0)]
+        preprocessors = ((img -> (pre_count[1][] += 1; img)),
+                         (img -> (pre_count[2][] += 1; img)))
+        persisted = run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2],
+                                            params; output = sequence_path,
+                                            preprocess = preprocessors,
+                                            progress = false)
+        @test getindex.(pre_count) == [2, 2]
+        @test isequal(load_results(sequence_path)[1].w, persisted[1].w)
+
         path = joinpath(dir, "stereo.jld2")
         save_results(path, stereo)
         loaded = load_results(path)

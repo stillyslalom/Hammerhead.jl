@@ -32,23 +32,29 @@ function mask_editor(me::MaskEditor; size = (1000, 700))
 
     controls = GridLayout(fig[1, 2]; tellheight = false, valign = :top)
     status_obs = lift((args...) -> status_text(me),
-                      me.polygons, me.active, me.selected)
+                      me.polygons, me.active, me.hole_mode, me.selected)
     Label(controls[1, 1], status_obs; halign = :left, justification = :left,
           word_wrap = true, tellwidth = false)
     mask_toggle_grid = GridLayout(controls[2, 1]; halign = :left)
     mask_toggle = Toggle(mask_toggle_grid[1, 1]; active = me.show_mask[])
     Label(mask_toggle_grid[1, 2], "show mask"; halign = :left)
     close_btn = Button(controls[3, 1]; label = "close polygon", tellwidth = false)
-    undo_btn = Button(controls[4, 1]; label = "undo vertex", tellwidth = false)
-    delete_btn = Button(controls[5, 1]; label = "delete selected", tellwidth = false)
-    clear_btn = Button(controls[6, 1]; label = "clear all", tellwidth = false)
-    save_btn = Button(controls[7, 1]; label = "save mask…", tellwidth = false)
+    hole_btn = Button(controls[4, 1]; label = "draw hole", tellwidth = false)
+    undo_btn = Button(controls[5, 1]; label = "undo vertex", tellwidth = false)
+    grow_btn = Button(controls[6, 1]; label = "grow mask 1 px", tellwidth = false)
+    shrink_btn = Button(controls[7, 1]; label = "shrink mask 1 px", tellwidth = false)
+    delete_btn = Button(controls[8, 1]; label = "delete selected", tellwidth = false)
+    clear_btn = Button(controls[9, 1]; label = "clear all", tellwidth = false)
+    save_btn = Button(controls[10, 1]; label = "save mask…", tellwidth = false)
     colsize!(fig.layout, 2, Fixed(180))
 
     # Widget <-> controller.
     _sync_toggle!(mask_toggle, me.show_mask)
     on(_ -> close_active!(me), close_btn.clicks)
+    on(_ -> begin_hole!(me), hole_btn.clicks)
     on(_ -> undo_vertex!(me), undo_btn.clicks)
+    on(_ -> grow_mask!(me), grow_btn.clicks)
+    on(_ -> shrink_mask!(me), shrink_btn.clicks)
     on(_ -> delete_selected!(me), delete_btn.clicks)
     on(_ -> clear_polygons!(me), clear_btn.clicks)
     on(save_btn.clicks) do _
@@ -94,16 +100,16 @@ function mask_editor(me::MaskEditor; size = (1000, 700))
         empty!(poly_plots)
         overlay[] === nothing || delete!(ax, overlay[])
         overlay[] = nothing
-        for (i, p) in enumerate(me.polygons[])
+        for (i, (p, hole)) in enumerate(zip(me.polygons[], me.holes[]))
             sel = me.selected[] == i
             plt = poly!(ax, [Point2f(v[1], v[2]) for v in p];
-                        color = (:red, sel ? 0.45 : 0.2),
-                        strokecolor = sel ? :yellow : :red,
+                        color = (hole ? :dodgerblue : :red, sel ? 0.45 : 0.2),
+                        strokecolor = sel ? :yellow : hole ? :dodgerblue : :red,
                         strokewidth = sel ? 2.5 : 1.5)
             translate!(plt, 0, 0, 2)
             push!(poly_plots, plt)
         end
-        if me.show_mask[] && !isempty(me.polygons[])
+        if me.show_mask[] && (me.raster[] !== nothing || !isempty(me.polygons[]))
             m = polygon_mask(me)
             shade = [v ? 1.0f0 : NaN32 for v in permutedims(m)]
             overlay[] = heatmap!(ax, 1:nc, 1:nr, shade;
@@ -114,7 +120,7 @@ function mask_editor(me::MaskEditor; size = (1000, 700))
         return
     end
     onany((args...) -> refresh_polygons!(),
-          me.polygons, me.selected, me.show_mask)
+          me.polygons, me.holes, me.raster, me.selected, me.show_mask)
 
     refresh_polygons!()
     return fig

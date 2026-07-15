@@ -161,13 +161,8 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     T = float(promote_type(eltype(A1), eltype(B1), eltype(A2), eltype(B2)))
     a = Matrix{T}(undef, size(grid))
     b = Matrix{T}(undef, size(grid))
-    dewarp!(a, dw1, A1)
-    dewarp!(b, dw1, B1)
-    r1 = run_piv(a, b, params; backend, mask = node_mask, kwargs...)
-    dewarp!(a, dw2, A2)
-    dewarp!(b, dw2, B2)
-    r2 = run_piv(a, b, params; backend, mask = node_mask, kwargs...)
-    result = reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, grid)
+    result = _run_piv_stereo!(a, b, A1, B1, A2, B2, dw1, dw2, params,
+                              node_mask; backend, kwargs...)
     return scale === nothing ? result : with_scale(result, scale)
 end
 
@@ -189,6 +184,289 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
     return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes;
                           backend, mask, driver_kwargs...)
+end
+
+# Allocation-controllable core used by the sequence driver. One dewarped pair
+# buffer and one stateful PIV workspace are sufficient because the two camera
+# analyses are deliberately serial; both are reused across cameras and pairs.
+function _run_piv_stereo!(a, b, A1, B1, A2, B2, dw1, dw2, params, node_mask;
+                          backend::Symbol, workspace = nothing, kwargs...)
+    dewarp!(a, dw1, A1)
+    dewarp!(b, dw1, B1)
+    r1 = run_piv(a, b, params; backend, workspace, mask = node_mask, kwargs...)
+    dewarp!(a, dw2, A2)
+    dewarp!(b, dw2, B2)
+    r2 = run_piv(a, b, params; backend, workspace, mask = node_mask, kwargs...)
+    return reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, dw1.grid)
+end
+
+function _stereo_node_mask(dw1, dw2, mask)
+    dw1.grid == dw2.grid ||
+        throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
+                            "got $(dw1.grid) and $(dw2.grid)"))
+    node_mask = dw1.mask .| dw2.mask
+    if mask !== nothing
+        size(mask) == size(dw1.grid) ||
+            throw(DimensionMismatch("mask size $(size(mask)) does not match the " *
+                                    "dewarp grid size $(size(dw1.grid))"))
+        node_mask .|= mask
+    end
+    return node_mask
+end
+
+
+"""
+    run_piv_stereo_sequence(pairs1, pairs2, dw1, dw2, params = PIVParameters(); kwargs...)
+    run_piv_stereo_sequence(acquisitions, dw1, dw2, params = PIVParameters(); kwargs...)
+
+Process a synchronized stereo recording. `pairs1` and `pairs2` are equal-length
+camera pair lists in the same format accepted by [`run_piv_sequence`](@ref).
+As a convenience, `acquisitions` may instead contain 4-tuples
+`(A1, B1, A2, B2)`. The supplied [`ImageDewarper`](@ref)s, a dewarped-image
+buffer pair, and one [`PIVWorkspace`](@ref) are reused for the whole sequence.
+
+`preprocess` may be one function shared by both cameras or a tuple
+`(preprocess1, preprocess2)`; each hook runs after loading and before
+dewarping. `output` is either one incrementally written JLD2 path or a
+function `(i, acquisition) -> path` for per-acquisition files. Four source
+paths are recorded when all four inputs are paths. `progress` has the same
+Boolean/callback contract as [`run_piv_sequence`](@ref). `cancel` may be a
+zero-argument predicate; when it becomes true, processing stops between
+acquisitions and the completed prefix is returned (and remains persisted).
+The next synchronized acquisition is prefetched while the current one runs.
+Timestamped [`FramePair`](@ref)s attach their actual pair-specific `dt` to
+each result when `scale` is supplied; the two cameras' intervals must agree.
+
+Pass explicit `params`, or omit them and use `effort = :low`, `:medium`, or
+`:high`. Other keywords are forwarded to [`run_piv_stereo`](@ref).
+"""
+function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper,
+                                 params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    length(pairs1) == length(pairs2) ||
+        throw(DimensionMismatch("camera pair sequences must have equal length, got " *
+                                "$(length(pairs1)) and $(length(pairs2))"))
+    _check_stereo_pair_times(pairs1, pairs2)
+    acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
+    return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
+                                    scale_pairs = pairs1, kwargs...)
+end
+
+function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper;
+                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    length(pairs1) == length(pairs2) ||
+        throw(DimensionMismatch("camera pair sequences must have equal length, got " *
+                                "$(length(pairs1)) and $(length(pairs2))"))
+    _check_stereo_pair_times(pairs1, pairs2)
+    acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
+    if effort === nothing
+        return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters();
+                                        scale_pairs = pairs1, kwargs...)
+    end
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
+    return _run_piv_stereo_sequence(acquisitions, dw1, dw2, passes;
+                                    scale_pairs = pairs1, driver_kwargs...)
+end
+
+function _check_stereo_pair_times(pairs1, pairs2)
+    for (i, (p1, p2)) in enumerate(zip(pairs1, pairs2))
+        dt1 = hasproperty(p1, :dt) ? getproperty(p1, :dt) : nothing
+        dt2 = hasproperty(p2, :dt) ? getproperty(p2, :dt) : nothing
+        if dt1 !== nothing && dt2 !== nothing && dt1 != dt2
+            throw(ArgumentError("camera pair $i has inconsistent frame intervals: " *
+                                "$dt1 and $dt2"))
+        end
+    end
+    return nothing
+end
+
+function run_piv_stereo_sequence(acquisitions::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper,
+                                 params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params; kwargs...)
+end
+
+function run_piv_stereo_sequence(acquisitions::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper;
+                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    if effort === nothing
+        return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters(); kwargs...)
+    end
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
+    return _run_piv_stereo_sequence(acquisitions, dw1, dw2, passes; driver_kwargs...)
+end
+
+function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
+                                  backend::Symbol = :cpu,
+                                  preprocess = nothing,
+                                  output::Union{Nothing,AbstractString,Function} = nothing,
+                                  progress::Union{Bool,Function} = true,
+                                  cancel::Union{Nothing,Function} = nothing,
+                                  image_type::Type{<:AbstractFloat} = Float64,
+                                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                                  scale::Union{Nothing,PhysicalScale} = nothing,
+                                  scale_pairs = nothing,
+                                  kwargs...)
+    isempty(acquisitions) && throw(ArgumentError("acquisitions must not be empty"))
+    all(a -> a isa Tuple && length(a) == 4, acquisitions) ||
+        throw(ArgumentError("each stereo acquisition must be a 4-tuple (A1, B1, A2, B2)"))
+    node_mask = _stereo_node_mask(dw1, dw2, mask)
+    pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
+                 (preprocess, preprocess)
+    workspace = piv_workspace(; backend)
+    results = StereoPIVResult[]
+    a = b = nothing
+    file = output isa AbstractString ? jldopen(output, "w") : nothing
+    load_acquisition(acq) = Threads.@spawn begin
+        frames = ntuple(4) do k
+            img = load_frame(acq[k], image_type)
+            pre = k <= 2 ? pre1 : pre2
+            pre === nothing ? img : pre(img)
+        end
+        T = float(promote_type(map(eltype, frames)...))
+        return frames, T
+    end
+    try
+        file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
+        meter = Progress(length(acquisitions); desc = "Stereo PIV sequence: ",
+                         enabled = progress === true)
+        pending = load_acquisition(first(acquisitions))
+        for (i, acq) in enumerate(acquisitions)
+            if cancel !== nothing && cancel()
+                # Ensure a prefetched preprocessor is no longer active when
+                # this call returns to its caller.
+                try
+                    fetch(pending)
+                catch
+                end
+                break
+            end
+            try
+                frames, T = fetch_frames(pending)
+                i < length(acquisitions) && (pending = load_acquisition(acquisitions[i + 1]))
+                if a === nothing || eltype(a) !== T
+                    a = Matrix{T}(undef, size(dw1.grid))
+                    b = similar(a)
+                end
+                result = _run_piv_stereo!(a, b, frames..., dw1, dw2, params,
+                                          node_mask; backend, workspace, kwargs...)
+                result_scale = scale_pairs === nothing ? scale : pair_scale(scale, scale_pairs[i])
+                push!(results, result_scale === nothing ? result : with_scale(result, result_scale))
+            catch
+                @error "Stereo PIV sequence failed on acquisition $i of $(length(acquisitions))"
+                rethrow()
+            end
+            if file !== nothing
+                file[result_key(i)] = results[end]
+                all(x -> x isa AbstractString, acq) &&
+                    (file[source_key(i)] = String[String(x) for x in acq])
+            elseif output isa Function
+                _write_stereo_pair_file(String(output(i, acq)), results[end], acq)
+            end
+            progress isa Function ? progress(i, length(acquisitions)) : next!(meter)
+        end
+    finally
+        file === nothing || close(file)
+    end
+    return results
+end
+
+function _write_stereo_pair_file(path, result, acquisition)
+    dir = dirname(path)
+    isempty(dir) || mkpath(dir)
+    jldopen(path, "w") do f
+        f["format_version"] = RESULTS_FORMAT_VERSION
+        f[result_key(1)] = result
+        all(x -> x isa AbstractString, acquisition) &&
+            (f[source_key(1)] = String[String(x) for x in acquisition])
+    end
+    return path
+end
+
+
+# Lazy source adapter used by the stereo ensemble driver. It lets the planar
+# ensemble engine reload and dewarp each raw frame once per pass without
+# retaining the entire dewarped recording in memory.
+struct _DewarpedFrame{S,D,F,T<:AbstractFloat}
+    source::S
+    dewarper::D
+    preprocess::F
+    image_type::Type{T}
+end
+
+function load_frame(src::_DewarpedFrame, ::Type)
+    img = load_frame(src.source, src.image_type)
+    src.preprocess === nothing || (img = src.preprocess(img))
+    return dewarp(src.dewarper, img)
+end
+
+"""
+    run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2,
+                            params = PIVParameters(); kwargs...) -> StereoPIVResult
+
+Low-SNR stereoscopic PIV by composing two synchronized
+[`run_piv_ensemble`](@ref) analyses followed by the same calibrated 3C
+reconstruction used by [`run_piv_stereo`](@ref). The two camera pair lists
+must have equal nonzero length. Frames are loaded, optionally preprocessed,
+and dewarped lazily on every ensemble pass; the whole dewarped recording is
+never retained in memory. `preprocess` may be shared or a camera-specific
+2-tuple. The dewarper overlap and optional world-grid `mask` are applied to
+both cameras. Other keywords follow [`run_piv_ensemble`](@ref), including
+`effort`, `backend`, `image_type`, and `progress`.
+
+The result estimates one stationary ensemble-mean 3C field. Its propagated
+uncertainty is the noise-driven uncertainty of that mean, not physical
+pair-to-pair turbulence; use [`field_statistics`](@ref) on a stereo sequence
+for the latter.
+"""
+function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper,
+                                 params::Union{PIVParameters,AbstractVector{PIVParameters}};
+                                 effort::Union{Nothing,Symbol} = nothing,
+                                 backend::Symbol = :cpu, preprocess = nothing,
+                                 image_type::Type{<:AbstractFloat} = Float64,
+                                 progress::Bool = true,
+                                 mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
+                                 scale::Union{Nothing,PhysicalScale} = nothing,
+                                 kwargs...)
+    effort === nothing ||
+        throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    length(pairs1) == length(pairs2) ||
+        throw(DimensionMismatch("camera pair sequences must have equal length, got " *
+                                "$(length(pairs1)) and $(length(pairs2))"))
+    isempty(pairs1) && throw(ArgumentError("camera pair sequences must not be empty"))
+    node_mask = _stereo_node_mask(dw1, dw2, mask)
+    pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
+                 (preprocess, preprocess)
+    wrap(pairs, dw, pre) = [(_DewarpedFrame(p[1], dw, pre, image_type),
+                             _DewarpedFrame(p[2], dw, pre, image_type)) for p in pairs]
+    r1 = run_piv_ensemble(wrap(pairs1, dw1, pre1), params; backend, mask = node_mask,
+                          image_type, progress, kwargs...)
+    r2 = run_piv_ensemble(wrap(pairs2, dw2, pre2), params; backend, mask = node_mask,
+                          image_type, progress, kwargs...)
+    result = reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, dw1.grid)
+    return scale === nothing ? result : with_scale(result, scale)
+end
+
+function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
+                                 dw1::ImageDewarper, dw2::ImageDewarper;
+                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    if effort === nothing
+        return run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2, PIVParameters(); kwargs...)
+    end
+    # Let the planar ensemble effort method split parameter and driver keys.
+    piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
+    passes = effort_schedule(effort; ensemble = true, image_size = size(dw1.grid), piv_kwargs...)
+    return run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2, passes; driver_kwargs...)
 end
 
 # Combine two per-camera 2C results (on the same dewarped grid) into the 3C

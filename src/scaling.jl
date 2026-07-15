@@ -103,7 +103,7 @@ function physical(r::TrackingResult{T}) where {T}
     # must survive anyway (velocities are derived by differencing).
     (s === nothing || s.pixel_size == 1.0) && return r
     fp = T(s.pixel_size)
-    trajectories = [Trajectory{T}(t.start_frame, t.x .* fp, t.y .* fp)
+    trajectories = [Trajectory{T}(t.start_frame, t.x .* fp, t.y .* fp, t.frames)
                     for t in r.trajectories]
     return TrackingResult{T}(trajectories, r.n_frames, r.parameters,
                              PhysicalScale(1.0, s.dt, s.length_unit, s.time_unit))

@@ -36,7 +36,7 @@ export ResultExplorer, nframes, current_result, set_frame!,
        vector_data, auto_lengthscale
 export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
-       save_mask, status_text
+       begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
 export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
        parse_schedule, set_schedule!, build_parameters, validate,
        start!, cancel!
@@ -52,7 +52,7 @@ export ResultExplorer, result_explorer, result_explorer!,
        available_fields, field_values, set_field!,
        select_nearest!, clear_selection!, describe_selection
 export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
-       delete_selected!, clear_polygons!, save_mask
+       begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
        start!, cancel!
 export CalibrationReview, calibration_review, selfcal_review,

@@ -5,17 +5,18 @@ geometry, walls, reflections, or (in stereo) parts of the plane one camera
 cannot see. Hammerhead handles these with a single, consistent masking
 model.
 
-## Masks are static, image-sized, and `true` = excluded
+## Masks are image-sized and `true` = excluded
 
 An analysis mask is a `Bool` matrix the size of the images, with `true`
 marking pixels to *exclude*. Build one with [`polygon_mask`](@ref), load one
 from an image file with [`load_mask`](@ref), or use any Bool array; combine
 regions with `.|`. Pass it as `run_piv(imgA, imgB, passes; mask)`.
 
-The mask describes **static lab-frame geometry**. It is deliberately *not*
-warped between passes of a multi-pass run: a wall stays where it is no
-matter what the flow does. (Per-frame dynamic masks are not currently
-supported.)
+A single mask describes **static lab-frame geometry** and is deliberately not
+warped between passes. Sequence drivers also accept one mask per pair, one
+mask per frame (the two exposure masks are unioned), or an
+`(i, frameA, frameB) -> mask` callback. Union semantics prevent geometry that
+occupies either exposure from contributing to that pair's correlation.
 
 ## Masked ≠ outlier
 

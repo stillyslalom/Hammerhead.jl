@@ -128,6 +128,21 @@ end
     @test io !== nothing
     @test grid.pixels[io] ≈ world_to_pixel(cam, (0.0, 0.0, 0.0)) atol = 1e-6
 
+    # Fiducial-oriented indexing is invariant to camera roll. A 180-degree
+    # sensor roll used to reverse both image-anchored axes.
+    gf = detect_calibration_grid(img; spacing = 15.0,
+                                 origin_offset = (30.0, 7.5),
+                                 orientation = :fiducials)
+    rolled = reverse(img; dims = (1, 2))
+    gr = detect_calibration_grid(rolled; spacing = 15.0,
+                                 origin_offset = (30.0, 7.5),
+                                 orientation = :fiducials)
+    for (p, idx) in zip(gf.pixels, gf.indices)
+        pr = [size(img, 2) + 1 - p[1], size(img, 1) + 1 - p[2]]
+        j = argmin([norm(q - pr) for q in gr.pixels])
+        @test gr.indices[j] == idx
+    end
+
     # Detection survives sensor noise with subpixel accuracy.
     rng = MersenneTwister(9)
     noisy = clamp.(img .+ 0.02 .* randn(rng, size(img)...), 0.0, 1.0)
@@ -142,6 +157,8 @@ end
     gp = detect_calibration_grid(plain; spacing = 15.0)
     @test gp.square === nothing && gp.triangle === nothing
     @test any(==((0, 0)), gp.indices)
+    @test_throws ArgumentError detect_calibration_grid(plain; spacing = 15.0,
+                                                       orientation = :fiducials)
     # ... but an origin_offset without a marker is an error.
     @test_throws ArgumentError detect_calibration_grid(plain; spacing = 15.0,
                                                        origin_offset = (30.0, 7.5))

@@ -659,7 +659,9 @@ include("test_uncertainty.jl")
 include("test_ensemble.jl")
 include("test_ptv.jl")
 include("test_io.jl")
+include("test_interoperability.jl")
 include("test_scaling.jl")
+include("test_polish_analysis.jl")
 include("test_reference.jl")
 
 end # top-level testset
