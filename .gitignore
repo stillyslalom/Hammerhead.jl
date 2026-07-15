@@ -9,3 +9,4 @@
 /bench/profile-output/
 *.log
 /docs/src/tutorials/
+AGENTS.md

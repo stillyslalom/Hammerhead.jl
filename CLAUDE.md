@@ -74,7 +74,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   unless supplied; backward-compatible 11-/12-arg constructors keep old call
   sites valid — every result type uses the same trailing-`scale` trick)
 - `synthetic_data.jl` — synthetic particle images with ground truth
-- `preprocessing.jl` — background subtraction, intensity cap, highpass, CLAHE
+- `preprocessing.jl` — background subtraction, intensity cap, highpass, CLAHE,
+  percentile contrast stretching, inversion, and local-variance normalization
 - `correlators.jl` — `CrossCorrelator{T}`/`PhaseCorrelator{T}` cache FFTW
   plans + buffers per window size; subpixel peak fits
 - `uncertainty.jl` — Wieneke 2015 correlation-statistics uncertainty
@@ -84,10 +85,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   (19-term polynomial) / `TransformedCamera` (rigid world pre-transform
   wrapper), `calibrate_camera`, `world_to_pixel` / `pixel_to_world`,
   `apply_world_transform`, fit-quality metrics
+- `planar_calibration.jl` — `PlanarTransform` + two-point
+  `planar_calibration` with explicit rotation/reflection/anisotropic scaling
 - `target_detection.jl` — `detect_calibration_grid` (dot-grid plates →
   indexed point pairs), `calibration_points`, `calibrate_camera` /
   `calibration_quality` convenience methods on `(grids, zs)`,
-  `render_calibration_target` (synthetic ground-truth fixture)
+  `render_calibration_target` (synthetic ground-truth fixture);
+  `orientation = :fiducials` makes indexing roll-invariant when both square
+  and triangle markers are visible (`:image` remains the upright default)
 - `dewarp.jl` — `DewarpGrid` (world-plane pixel grid spec, shared per rig) +
   `ImageDewarper` (per-camera precomputed source-coordinate map), `dewarp[!]`
   cubic B-spline resampling onto the common plane, `common_dewarp_grid`
@@ -95,7 +100,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   descending `y`)
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
-- `masking.jl` — `polygon_mask`
+- `masking.jl` — `polygon_mask`, intensity/contrast/edge `automatic_mask`,
+  and circular `grow_mask`/`shrink_mask`
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
   image deformation; a pass with `max_iterations > 1` iterates against its
   own validated field until the *q95* per-vector change drops below
@@ -124,19 +130,22 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   neighbor list (`build_cell_list`/`within_radius!`/`knn`) used by dedupe,
   matching, and scattered UOD
 - `ptv.jl` — `PTVParameters`, `PTVResult`, `run_ptv` (hybrid PIV-guided
-  greedy matching via `greedy_match`), `scattered_uod`, `ptv_to_grid`
-  (`bin_to_grid`)
+  greedy matching via `greedy_match`, optionally weighted by intensity and
+  diameter consistency), `scattered_uod`, `ptv_to_grid` (`bin_to_grid`)
 - `tracking.jl` — `Trajectory`, `TrackingResult`, `track_particles`
-  (constant-velocity + field predictor linking), `trajectory_velocities`
+  (constant-velocity + field predictor linking, bounded gap bridging;
+  trajectories retain explicit frame indices), `trajectory_velocities`
 - `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
   dewarped images → geometric least-squares 3C reconstruction with
-  uncertainty propagation)
+  uncertainty propagation), synchronized `run_piv_stereo_sequence`, and
+  per-camera-correlation `run_piv_stereo_ensemble`
 - `scaling.jl` — `with_scale` (attach/strip `PhysicalScale` metadata,
   arrays shared) + `physical` (same-type conversion to physical units) +
   `plot_axis_labels` (Makie-free label helper) for all four result types
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
   (JLD2: `format_version` 1 + `results/000001`… + optional `sources/…`;
-  entries may be `PIVResult`, `StereoPIVResult`, or `PTVResult`; the
+  entries may be `PIVResult`, `StereoPIVResult`, `PTVResult`, or
+  `TrackingResult`; the
   pre-registration dev formats were retired without a load shim when the
   `scale` field landed),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
@@ -148,14 +157,22 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   pairs — the workspace lives only on the serial `process` call, never the
   prefetch task), `frame_index_strings` (differing frame-index substrings
   from a path pair)
+- `interoperability.jl` — `ROI`; lazy `AbstractFrameSource` / `FrameSource` /
+  `FrameRef` / timestamped `FramePair` / `TIFFStack`; flexible stride, offset,
+  multi-delay pairing; dynamic static/per-frame/per-pair/callback masks with
+  pair-union semantics; stable long-form `export_table` CSV and structured-grid
+  `export_vtk`
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor; one
   `PIVWorkspace` reuses the interpolant/deform buffers across pairs)
 - `selfcal.jl` — `self_calibrate` (Wieneke 2005 disparity self-calibration:
   ensemble cam1↔cam2 disparity map → triangulation → sheet-plane fit →
   rigid world transform of both cameras) + `SelfCalibrationReport`
-- `statistics.jl` — `field_statistics`, `validate_temporal!`,
-  `power_spectrum`
+- `statistics.jl` — planar/stereo `field_statistics`, 2C/3C
+  `validate_temporal!`, `power_spectrum`
+- `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
+  swirling strength/Q, profile/region extraction, circulation, and
+  attached-scale results-vector spectra
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -528,22 +545,18 @@ before comparing renders in tests; `word_wrap` labels need an explicit
 
 ## Deferred backlog
 
-Target detection for rolled cameras, multi-frame TIFF in `load_image`,
-dynamic (per-frame) masks, temporal spectra beyond the per-point
-`power_spectrum` utility (a results-vector method could default `dt` from
-the attached scale), uncertainty propagation into derived quantities
-(Wieneke 2015 §3.2: needs spatial error autocorrelation), light-sheet
-thickness/overlap estimation from disparity correlation peak widths
-(Wieneke 2005 §5), multi-frame real-data doc demos (`compute_background` /
-`run_piv_ensemble` on Challenge sequences like 2A/4A — the committed
-case-A pair covers the single-pair real-data tutorial, but sequences are
-too large to commit and need build-time download from pivchallenge.org,
-e.g. DataDeps.jl in `docs/Project.toml`, within the docs CI budget).
+Rolled-target detection still needs broader synthetic coverage and a real
+rotated-target regression fixture; `orientation = :fiducials` already provides
+the roll-invariant convention when both markers are visible. Other analysis
+deferrals are uncertainty propagation into derived quantities (Wieneke 2015
+§3.2: needs spatial error autocorrelation) and light-sheet thickness/overlap
+estimation from disparity-correlation peak widths (Wieneke 2005 §5). Multi-frame
+real-data doc demos (`compute_background` / `run_piv_ensemble` on Challenge
+sequences like 2A/4A) still need build-time download/caching within the docs CI
+budget; the committed case-A pair covers only the single-pair tutorial.
 
-PTV (Phase 8) deferrals: gap bridging / track re-acquisition (no bridging in
-v1 — an unmatched head just terminates), relaxation-method matching, match
-costs beyond distance (intensity/diameter similarity), per-particle position
-uncertainty,
-stereo PTV, GUI explorer support for `PTVResult`/`TrackingResult` (incl.
-unit-labeled axes from an attached scale), and the
-Duncan et al. distance-weighted scattered-UOD variant (v1 is the plain test).
+PTV deferrals: relaxation-method matching, per-particle position/displacement
+uncertainty, stereo PTV, GUI explorer support for persisted
+`PTVResult`/`TrackingResult` (including trajectory gaps and unit-labeled axes),
+and the Duncan et al. distance-weighted scattered-UOD variant (v1 is the plain
+test).

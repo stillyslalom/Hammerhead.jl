@@ -10,11 +10,10 @@
 # markers: a filled square (origin anchor) and a filled upward-pointing
 # triangle (reported for diagnostics).
 #
-# World axes are anchored to the image: +X is the lattice direction closest to
-# image-right and +Y the one closest to image-up (decreasing row). This is
-# consistent across cameras as long as they are mounted roughly upright (no
-# large roll), which covers standard stereo rigs; rolled cameras would need an
-# explicit orientation convention on top.
+# With `orientation = :image`, world axes are anchored to image-right/image-up
+# and therefore assume a roughly upright camera. `orientation = :fiducials`
+# instead uses the square-to-triangle direction and plate handedness, providing
+# a roll-invariant convention when both markers are visible.
 
 """
     CalibrationGrid

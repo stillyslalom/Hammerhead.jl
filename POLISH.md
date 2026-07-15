@@ -1,178 +1,104 @@
 # Hammerhead polish backlog
 
-Hammerhead's numerical core is already competitive with established PIV
-toolchains: multi-pass WIDIM with symmetric deformation, robust validation,
-ensemble correlation, correlation-statistics uncertainty, stereo calibration
-and self-calibration, GPU execution, and baseline 2D PTV are implemented.
-
-The remaining practitioner-facing gaps are primarily workflow completeness and
-interoperability rather than correlation accuracy. This backlog compares the
-current package with common expectations established by OpenPIV, PIVlab, and
-commercial 2D/stereo PIV workflows.
+Hammerhead's numerical core and the baseline planar, stereo, PTV, batch,
+masking, analysis, export, and calibration workflows are implemented. This
+file tracks only the remaining work, grouped into suggested delivery slices
+rather than historical priority buckets. The step numbers express a useful
+order, not a global dependency chain: Steps 2–6 can proceed independently,
+subject to the within-step dependencies called out below.
 
 Tomographic PIV, volumetric reconstruction, acquisition hardware control,
-Shake-the-Box, pressure-from-PIV, and modal-analysis suites are not baseline
-targets here. They remain out of scope unless the package scope changes.
+Shake-the-Box, pressure-from-PIV, and modal-analysis suites remain out of scope
+unless the package scope changes.
 
-## P0: complete the advertised result workflows
+## Step 0: register the core package
 
-### Stereo sequences and statistics
+Core registration does not freeze a pre-1.0 API, and making installation
+routine is the best way to get the real-user feedback needed to stabilize the
+remaining interfaces.
 
-Stereo sequence, ensemble, temporal-validation, and statistics APIs now carry
-the full 2D3C result through the same workflow as a planar result.
+- [ ] Complete General-registry registration for the core package.
 
-- [x] Add `run_piv_stereo_sequence` with synchronized camera sources,
-  incremental output, preprocessing hooks, progress/cancellation, and reuse of
-  dewarpers and PIV workspaces.
-- [x] Generalize `field_statistics` to `StereoPIVResult`, including mean/RMS
-  for all three components and all six Reynolds-stress terms.
-- [x] Generalize temporal validation to stereo results.
-- [x] Decide whether low-SNR stereo needs a first-class stereo ensemble driver
-  or a documented composition of per-camera ensemble results followed by 3C
-  reconstruction.
-- [x] Add sequence coverage to the stereo GUI workflow.
+## Step 1: stabilize advanced correlation semantics
 
-### Interoperable result export
+Build the search-area abstraction first because it defines window geometry,
+output-grid coordinates, masking behavior, deformation, retained planes, and
+CPU/GPU backend contracts. Evaluate other correlation changes only after those
+semantics are stable.
 
-JLD2 is appropriate for lossless Julia round trips but is not a sufficient
-exchange format for MATLAB, Python, ParaView, Tecplot, CFD comparison, or data
-archival workflows.
-
-- [x] Add a long-form table/CSV exporter for planar, stereo, and PTV results.
-  Include coordinates, components, mask/outlier flags, quality metrics,
-  uncertainty, frame/source identifiers, and units.
-- [x] Add VTK structured-grid export for planar and stereo fields.
-- [x] Define and document a stable, language-neutral column/schema contract.
-- [x] Add `TrackingResult` to package-native persistence.
-- [ ] Consider HDF5 or netCDF only after the table and VTK schemas stabilize.
-
-### Dynamic masks
-
-The current mask is one static lab-frame `Bool` matrix for a whole run. This is
-insufficient for moving bodies, free surfaces, flexible structures, translating
-models, and frame-dependent reflections.
-
-- [x] Let sequence drivers accept a static mask, a mask sequence, or a callback
-  such as `(i, frameA, frameB) -> mask`.
-- [x] Define pair-mask semantics when the geometry differs between frames A
-  and B (normally the union of both frame masks).
-- [x] Add basic intensity-, contrast-, and edge-derived automatic masks.
-- [x] Extend the GUI editor with holes and grow/shrink operations without
-  weakening the existing `true = excluded` convention.
-
-## P1: remove common ingestion and analysis friction
-
-### Frame sources and pairing
-
-`load_image` deliberately accepts only a single 2D image, and `image_pairs`
-only constructs adjacent paired or chained sequences. Real recordings commonly
-arrive as stacks, videos, camera containers, and multi-delay sequences.
-
-- [x] Add multi-page TIFF stack support.
-- [x] Introduce a small frame-source interface so image lists, stacks, videos,
-  and user-defined camera readers can feed the same sequence drivers lazily.
-- [ ] Add optional video ingestion through a weak dependency or adapter.
-- [x] Add arbitrary frame stride/offset and multi-`delta t` pair generation.
-- [x] Preserve per-frame timestamps and allow variable `dt` where the source
-  supplies it.
-- [x] Document the adapter pattern for proprietary CINE/MRAW/SEQ/vendor files;
-  do not add hard dependencies on every camera format.
-
-### Derived flow quantities
-
-The built-in analysis currently stops at planar means, RMS components,
-`mean(u'v')`, valid counts, and a scalar PSD. Common PIV exploration begins
-with spatial derivatives and profile extraction.
-
-- [x] Add mask-aware vorticity, divergence, and strain-rate calculations.
-- [x] Add swirling strength and Q criterion with explicit 2D semantics.
-- [x] Add line/profile and region/area extraction utilities.
-- [x] Add circulation over a user-supplied contour or region.
-- [x] Add a results-vector spectrum helper that obtains `dt` from attached
-  scale metadata and handles invalid samples explicitly.
-- [ ] Propagate measurement uncertainty into derived quantities once spatial
-  error-correlation assumptions are defined.
-- [x] Keep streamlines/pathlines and higher-level turbulence analysis as a
-  second slice rather than coupling them to the initial derivative API.
-
-### PTV trajectory robustness
-
-The current tracker terminates a trajectory after one missed match. Real PTV
-data routinely contains one- or two-frame detection dropout.
-
-- [x] Add bounded gap bridging and track reacquisition.
-- [x] Add optional intensity and diameter consistency to the match cost.
-- [ ] Add per-particle position and displacement uncertainty.
-- [ ] Persist and visualize `TrackingResult` and `PTVResult` in the GUI.
-- [x] Treat stereo PTV as a separate later milestone; do not overload the 2D
-  tracker design prematurely.
-
-### Rotation-invariant calibration-target detection
-
-The camera models accept manually supplied correspondences, but automatic
-target detection assumes a roughly upright target/camera orientation. Camera
-roll is common in constrained stereo arrangements.
-
-- [x] Make lattice-axis and fiducial indexing invariant to arbitrary in-plane
-  rotation.
-- [ ] Add rolled-camera synthetic fixtures and at least one real rotated-target
-  regression case.
-- [x] Preserve the current world-axis and marker-origin conventions after
-  rotation is resolved.
-
-## P2: close smaller core-API gaps
-
-### First-class region of interest
-
-Users can crop matrices manually, but then must restore coordinate offsets and
-keep masks, calibration, physical scaling, and exports consistent.
-
-- [x] Add an ROI/offset abstraction to single-pair and sequence drivers.
-- [x] Return coordinates in the original image frame by default.
-- [ ] Make ROI selection editable in the GUI.
-
-### Correlation options used in reference toolchains
-
-- [ ] Support independent interrogation and search-area sizes for large first-
-  pass displacement without increasing the particle-sampling window.
+- [ ] Support independent interrogation and search-area sizes for large
+  first-pass displacement without increasing the particle-sampling window.
 - [ ] Evaluate variance-normalized cross-correlation for strong local intensity
   and contrast changes; document when phase correlation or CLAHE is preferable.
-- [ ] Consider adaptive/nonuniform interrogation only after the search-area API
-  and output-grid semantics are stable.
+- [ ] Consider adaptive/nonuniform interrogation after the search-area API and
+  output-grid semantics are stable.
 - [ ] Revisit ensemble pass iteration (`max_iterations` is currently ignored)
   if low-SNR accuracy cases demonstrate a practical benefit.
 
-### Planar calibration ergonomics
+## Step 2: add PTV/trajectory GUI support and particle uncertainty
 
-`PhysicalScale` supplies one pixel-size factor and one constant `dt`. Add a
-convenient planar workflow without turning result arrays into unitful storage.
+Basic browsing does not depend on an uncertainty estimator and should ship
+first. Uncertainty overlays should follow only after particle-fit and match
+uncertainty have defensible semantics. The GUI should consume the existing
+package-native persistence rather than inventing a GUI-only representation.
 
-- [x] Add calibration from two image points plus a known physical distance.
-- [x] Support axis rotation/reflection and anisotropic pixel scales where
-  appropriate.
-- [ ] Provide a GUI calibration-line tool and make the resulting coordinate
-  transform explicit in exports.
+- [ ] Load and visualize persisted `PTVResult` and `TrackingResult` values in
+  the GUI, including attached-scale axis labels and trajectory gaps.
+- [ ] Add per-particle position and displacement uncertainty.
+- [ ] Add particle/displacement uncertainty overlays to the GUI.
 
-### Preprocessing breadth
+## Step 3: finish interactive planar workflow ergonomics
 
-- [x] Add percentile contrast stretching and image inversion.
-- [x] Evaluate local variance normalization against current high-pass/CLAHE
-  workflows.
-- [ ] Add optional morphological phase separation for two-phase images if a
+Reuse the existing `ROI` and `PlanarTransform` core APIs so GUI selections and
+exports share exactly the same coordinate semantics.
+
+- [ ] Make ROI selection editable in the GUI.
+- [ ] Provide a GUI calibration-line tool and make the resulting planar
+  coordinate transform explicit in table and VTK exports.
+
+## Step 4: harden rotated-target calibration
+
+The indexing algorithm is rotation-invariant via
+`orientation = :fiducials`, which requires both square and triangle markers;
+the default `:image` convention remains image-oriented. The remaining work is
+regression coverage across rendering conditions and real optics.
+
+- [ ] Add rolled-camera synthetic fixtures covering perspective, noise, marker
+  visibility, and two-level targets.
+- [ ] Add at least one real rotated-target regression case while preserving the
+  current world-axis and marker-origin conventions.
+
+## Step 5: mature ingestion, archival formats, and real-data examples
+
+Keep camera/video formats behind adapters or weak dependencies. Stabilize the
+existing table and VTK contracts with real users before adding another archival
+schema.
+
+- [ ] Add optional video ingestion through a weak dependency or frame-source
+  adapter.
+- [ ] Consider HDF5 or netCDF after the table and VTK schemas have stabilized.
+- [ ] Add end-to-end real sequence examples once download and caching fit the
+  documentation CI budget.
+
+## Step 6: add validation-dependent analysis features
+
+These items need explicit physical/statistical assumptions or a contributed
+validated dataset before an API should be committed.
+
+- [ ] Propagate measurement uncertainty into derived quantities after defining
+  spatial error-correlation assumptions.
+- [ ] Add optional morphological phase separation for two-phase images when a
   validated use case is contributed.
-- [x] Keep all additions in-place-first and avoid duplicating maintained
-  JuliaImages functionality.
+- [ ] Estimate light-sheet thickness/overlap from disparity-correlation peak
+  widths once the Wieneke 2005 §5 model has a validated stereo fixture.
 
-## Release and adoption polish
+## Step 7: package and distribute the GUI
 
-- [ ] Complete General-registry registration for the core and GUI packages.
+Do this after the remaining public APIs and desktop workflow are sufficiently
+stable to avoid publishing short-lived installation contracts.
+
+- [ ] Complete General-registry registration for the GUI package.
 - [ ] Evaluate a PackageCompiler desktop bundle for non-Julia GUI users.
-- [x] Publish a compact feature matrix covering CPU/KA/CUDA/AMDGPU and planar,
-  ensemble, stereo, PTV, uncertainty, and retained-plane support.
-- [ ] Add end-to-end real sequence examples once data download/caching can fit
-  the documentation CI budget.
-- [x] Add a public compatibility policy for saved results and external export
-  schemas before the first stable release.
 
 ## Reference expectations
 
@@ -188,6 +114,4 @@ convenient planar workflow without turning result arrays into unitful storage.
   line/area extraction, and image/video export.
 - [LaVision 2D and Stereo PIV](https://www.lavision.de/en/products/flowmaster/2d-stereo-piv/)
   provides the commercial reference for stereo self-calibration,
-  correlation-statistics uncertainty, and GPU processing. Hammerhead already
-  covers these core numerical capabilities; the backlog above focuses on the
-  surrounding workflow.
+  correlation-statistics uncertainty, and GPU processing.
