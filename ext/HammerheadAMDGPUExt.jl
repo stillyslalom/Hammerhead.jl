@@ -21,23 +21,24 @@ module HammerheadAMDGPUExt
 # `p * x` (they lack FFTW's 3-arg `mul!`), and masks must be materialized as
 # dense `Array{Bool}` before `copyto!` to the device.
 #
-# The explicit workgroup sizes and the 8192 sub-batch (below) were tuned on
-# NVIDIA (RTX 2000 Ada) after the RX 6800 XT validation above; they change no
-# results (pure launch tuning) but the perf figures in this STATUS predate them
-# — re-run bench/gpu_benchmarks.jl on the RX 6800 XT to refresh the numbers and
-# confirm the sizes are still optimal on RDNA2.
+# Batch buffers use a byte-budgeted workspace cache: configurations share the
+# available budget, retain buffers when they fit, and evict least-recently-used
+# buffers when they do not. Calls without a workspace release every stage at
+# pass completion. This policy is driven by FFT size, precision, free/total
+# VRAM, job count, and the discovered configuration count rather than a fixed
+# GPU model or pass schedule.
 
 using Hammerhead
 using AMDGPU
 # Strong deps of the core package, usable here without being ext triggers.
 using KernelAbstractions
-using AbstractFFTs: plan_fft!
+using AbstractFFTs: plan_fft!, plan_bfft!, ScaledPlan
 
 import Hammerhead: _AbstractHammerheadBackend, _resolve_backend, _check_backend_params,
     _engine_nchunks, piv_correlation_engines, pooled_engines, process_windows!,
     make_correlator, PIVParameters, _supports_fft, _supports_batched_fft,
     _supports_fp64, finalize_uncertainty, UQ_NSTATS, uncertainty_sweep!,
-    _correlation_apod
+    _correlation_apod, release_piv_engines!
 
 # Portable correlation kernels + scope guard from the core (src/ka_backend.jl).
 import Hammerhead: _ka_scope_check, _ka_window_means!, _ka_gather!,
@@ -63,17 +64,18 @@ _supports_fp64(::_AMDGPUBackend) = true
 _check_backend_params(b::_AMDGPUBackend, passes) =
     _ka_scope_check(passes, :amdgpu, _supports_fp64(b))
 
-# Windows per device sub-batch (bounds device-memory footprint). The analysis
-# kernel launches one workgroup per window, so the sub-batch size *is* that
-# kernel's launch parallelism (in workgroups): too small a tile starves the
-# device with many short sequential launches instead of one well-occupied
-# launch. 8192 gives near-peak occupancy while keeping the Float64 complex
-# buffers bounded
-# (~1.3 GB). NOTE: 8192 and the workgroup sizes below were tuned on an NVIDIA
-# RTX 2000 Ada (see the CUDA extension); the direction is portable and the
-# per-window analysis kernel was already known to be occupancy-sensitive here,
-# but re-confirm these values on the RX 6800 XT with bench/gpu_benchmarks.jl.
-const _AMDGPU_BATCH = 8192
+# Windows per device sub-batch. The analysis kernel launches one *workgroup*
+# per window, so the sub-batch size *is* that kernel's launch parallelism (in
+# workgroups): bigger is better for occupancy until the batch buffers spill
+# VRAM to shared/system memory. The spill driver is the correlation buffers at
+# the first pass's fft_size, not rocFFT workspace (zero bytes for the
+# power-of-two transforms used here). `_amdgpu_batch_cap` therefore sizes the
+# batch from the engine's exact per-window footprint and currently free VRAM,
+# preserving the occupancy-optimal default when it fits.
+const _AMDGPU_BATCH_DEFAULT = 8192
+const _AMDGPU_MEM_FRACTION = 0.7    # total VRAM available to cached batch buffers
+const _AMDGPU_MIN_BATCH = 256       # floor: keep enough windows for occupancy
+const _AMDGPU_BATCH_QUANTUM = 512   # avoid reallocations from free-VRAM wobble
 
 # KernelAbstractions' occupancy-based default workgroup size leaves the
 # elementwise cross-power off peak bandwidth. An explicit wavefront-multiple
@@ -88,7 +90,20 @@ const _WG_ELEMENTWISE = 256   # cross-power over the whole complex batch
 # compile-time `Val{TPW}`; the core sets `_KA_TPW = 128`.
 const _WG_ANALYZE = Hammerhead._KA_TPW
 
+# Batch buffers are the dominant allocation and differ by window configuration.
+# A workspace-level LRU lets configurations that fit coexist, while immediately
+# releasing cold buffers when the next stage needs their VRAM. Engine metadata,
+# fixed window arrays, and rocFFT handles remain cached.
+mutable struct _AMDGPUBatchCache
+    engines::Vector{Any}
+    clock::UInt64
+end
+
+_AMDGPUBatchCache() = _AMDGPUBatchCache(Any[], 0)
+
 mutable struct _AMDGPUCorrelationEngine{T}
+    cache::_AMDGPUBatchCache
+    stamp::UInt64
     wsize::NTuple{2,Int}
     fft_size::NTuple{2,Int}
     padded::Bool
@@ -125,7 +140,108 @@ end
 
 _correlation_apod(engine::_AMDGPUCorrelationEngine) = engine.apod_d
 
-function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
+# Exact dominant per-window device-byte footprint of the sub-batch buffers:
+# CA + CB (Complex{T}), Rt (T), and the UQ ΔC cache uqdcs (2·mm²·T, where mm
+# is the larger window side). Small per-window scalar buffers are covered by
+# the memory-fraction headroom.
+_amdgpu_bytes_per_window(engine::_AMDGPUCorrelationEngine{T}) where {T} =
+    prod(engine.fft_size) * (2 * sizeof(Complex{T}) + sizeof(T)) +
+    2 * max(engine.wsize...)^2 * sizeof(T)
+
+# Immediately release an engine's batch-dependent buffers. The fixed window
+# arrays and engine object stay cached, and AMDGPU's rocFFT handle cache can
+# reuse the released plans when this configuration becomes hot again.
+function _amdgpu_release_batch!(engine::_AMDGPUCorrelationEngine{T}) where {T}
+    engine.bs == 0 && return engine
+    for a in (engine.CA, engine.CB, engine.Rt, engine.meanA_d, engine.meanB_d,
+              engine.vals_d, engine.locs_d, engine.out_d, engine.uqstats_d,
+              engine.uqmeans_d, engine.uqdcs_d, engine.origins_d)
+        AMDGPU.unsafe_free!(a)
+    end
+    engine.fwd === nothing || AMDGPU.unsafe_free!(engine.fwd)
+    engine.bwd === nothing || AMDGPU.unsafe_free!(engine.bwd.p)
+    engine.CA = AMDGPU.zeros(Complex{T}, 0, 0, 0)
+    engine.CB = AMDGPU.zeros(Complex{T}, 0, 0, 0)
+    engine.Rt = AMDGPU.zeros(T, 0, 0, 0)
+    engine.meanA_d = AMDGPU.zeros(T, 0)
+    engine.meanB_d = AMDGPU.zeros(T, 0)
+    engine.vals_d = AMDGPU.zeros(T, 0, 0)
+    engine.locs_d = AMDGPU.zeros(Int32, 2, 0, 0)
+    engine.out_d = AMDGPU.zeros(T, 0, 0)
+    engine.out_host = Matrix{T}(undef, 0, 0)
+    engine.uqstats_d = AMDGPU.zeros(Float64, 0, 0, 0)
+    engine.uqmeans_d = AMDGPU.zeros(Float64, 0, 0)
+    engine.uqdcs_d = AMDGPU.zeros(T, 0, 0, 0, 0)
+    engine.uqstats_host = Array{Float64,3}(undef, 0, 0, 0)
+    engine.origins_host = Matrix{Int}(undef, 0, 2)
+    engine.origins_d = AMDGPU.zeros(Int, 0, 0)
+    engine.fwd = nothing
+    engine.bwd = nothing
+    engine.bs = 0
+    return engine
+end
+
+function release_piv_engines!(::_AMDGPUBackend, engines, workspace)
+    workspace === nothing || return nothing
+    AMDGPU.synchronize()
+    foreach(_amdgpu_release_batch!, engines)
+    AMDGPU.reclaim()
+    return nothing
+end
+
+# Size the current stage against one aggregate cache budget. Cached engines
+# count as reclaimable memory; least-recently-used batch buffers are evicted
+# until the requested stage fits. `HAMMERHEAD_AMDGPU_BATCH` still forces the
+# per-stage target for benchmarking, but does not disable eviction of cold
+# configurations. `njobs` avoids reserving buffers for windows that do not
+# exist in this stage.
+function _amdgpu_batch_cap(engine::_AMDGPUCorrelationEngine{T}, njobs::Int) where {T}
+    cache = engine.cache
+    bpw = _amdgpu_bytes_per_window(engine)
+    cached = sum((e.bs * _amdgpu_bytes_per_window(e) for e in cache.engines); init = 0)
+    reserve = (1 - _AMDGPU_MEM_FRACTION) * AMDGPU.total()
+    pool_budget = max(0, AMDGPU.free() + cached - reserve)
+    # After a workspace has discovered its window configurations, divide the
+    # aggregate pool fairly so cyclic multipass schedules can retain all of
+    # them instead of having LRU thrash the first (usually largest) stage.
+    # Single-pass workloads still receive the entire pool; stages whose job
+    # count/default ceiling needs less than their share leave unused headroom.
+    stage_budget = pool_budget / max(1, length(cache.engines))
+
+    ov = get(ENV, "HAMMERHEAD_AMDGPU_BATCH", "")
+    if isempty(ov)
+        cap = floor(Int, stage_budget / bpw)
+        cap = (cap ÷ _AMDGPU_BATCH_QUANTUM) * _AMDGPU_BATCH_QUANTUM
+        target = min(njobs, clamp(cap, _AMDGPU_MIN_BATCH, _AMDGPU_BATCH_DEFAULT))
+    else
+        target = min(njobs, parse(Int, ov))
+    end
+
+    target_bytes = target * bpw
+    others = [e for e in cache.engines if e !== engine && e.bs > 0]
+    active = sum((e.bs * _amdgpu_bytes_per_window(e) for e in others); init = 0)
+    to_evict = Any[]
+    for cold in sort(others; by = e -> e.stamp)
+        active + target_bytes <= pool_budget && break
+        active -= cold.bs * _amdgpu_bytes_per_window(cold)
+        push!(to_evict, cold)
+    end
+    replacing = engine.bs != 0 && engine.bs != target
+    if !isempty(to_evict) || replacing
+        AMDGPU.synchronize()
+        foreach(_amdgpu_release_batch!, to_evict)
+        replacing && _amdgpu_release_batch!(engine)
+        # Return evicted pool blocks to HIP so subsequent free-memory queries
+        # reflect them; the next allocation can still reuse cached rocFFT handles.
+        AMDGPU.reclaim()
+    end
+    cache.clock += 1
+    engine.stamp = cache.clock
+    return target
+end
+
+function _make_amdgpu_engine(params::PIVParameters, ::Type{T},
+                             cache::_AMDGPUBatchCache = _AMDGPUBatchCache()) where {T}
     # Reuse the CPU correlator's apodization window and overlap-gain plane so
     # those factors are bit-identical to the FFTW path, then upload them once.
     cpu = make_correlator(params, T)
@@ -135,8 +251,8 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
     gain_d = padded ? ROCArray{T}(Matrix{T}(cpu.gain)) : AMDGPU.zeros(T, 0, 0)
     phase_filter_d = params.correlation_method === :phase ?
         ROCArray{T}(Matrix{T}(cpu.W)) : AMDGPU.zeros(T, 0, 0)
-    return _AMDGPUCorrelationEngine{T}(
-        params.window_size, fft_size, padded, max(params.n_peaks, 2),
+    engine = _AMDGPUCorrelationEngine{T}(
+        cache, 0, params.window_size, fft_size, padded, max(params.n_peaks, 2),
         apod_d, gain_d, phase_filter_d, AMDGPU.zeros(Bool, 0, 0),
         (0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Bool, 0, 0),
         0, AMDGPU.zeros(Complex{T}, 0, 0, 0), AMDGPU.zeros(Complex{T}, 0, 0, 0),
@@ -146,16 +262,28 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T}) where {T}
         AMDGPU.zeros(Float64, 0, 0), AMDGPU.zeros(T, 0, 0, 0, 0),
         Array{Float64,3}(undef, 0, 0, 0),
         Matrix{Int}(undef, 0, 2), AMDGPU.zeros(Int, 0, 0), nothing, nothing)
+    push!(cache.engines, engine)
+    return engine
 end
 
 # Engines are pooled per window configuration via the workspace (see the core
 # `pooled_engines`), so device buffers and rocFFT plans are paid once per
 # configuration for a whole sequence/ensemble batch.
-piv_correlation_engines(::_AMDGPUBackend, workspace, params::PIVParameters,
-                        ::Type{T}, nchunks::Int) where {T} =
-    pooled_engines(() -> _make_amdgpu_engine(params, T), workspace,
-                   (:amdgpu, T, params.correlation_method, params.window_size, params.padding,
-                    params.apodization, max(params.n_peaks, 2)), nchunks)
+function piv_correlation_engines(::_AMDGPUBackend, workspace, params::PIVParameters,
+                                 ::Type{T}, nchunks::Int) where {T}
+    cachekey = (:amdgpu_batch_cache, T)
+    cache = if workspace === nothing
+        _AMDGPUBatchCache()
+    else
+        pool = get!(() -> Any[], workspace.engines, cachekey)
+        isempty(pool) && push!(pool, _AMDGPUBatchCache())
+        pool[1]
+    end
+    return pooled_engines(() -> _make_amdgpu_engine(params, T, cache), workspace,
+                          (:amdgpu, T, params.correlation_method, params.window_size,
+                           params.padding, params.apodization, max(params.n_peaks, 2)),
+                          nchunks)
+end
 
 function _device_spectrum!(engine::_AMDGPUCorrelationEngine, params::PIVParameters, ka)
     if params.correlation_method === :phase
@@ -193,7 +321,12 @@ function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
         engine.origins_host = Matrix{Int}(undef, bs, 2)
         engine.origins_d = AMDGPU.zeros(Int, bs, 2)
         engine.fwd = plan_fft!(engine.CA, (1, 2))
-        engine.bwd = inv(engine.fwd)
+        # AMDGPU's `inv(::cROCFFTPlan)` allocates a full-size temporary array
+        # only to compute this normalization. At production batch sizes that
+        # unreachable array can occupy several GiB until Julia GC runs. Build
+        # the backward plan directly and apply the known FFT scale instead.
+        engine.bwd = ScaledPlan(plan_bfft!(engine.CA, (1, 2)),
+                                inv(T(prod(engine.fft_size))))
         engine.bs = bs
     end
     return engine
@@ -278,7 +411,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     wr, wc = engine.wsize
     nr, nc = engine.fft_size
     sr, sc = nr ÷ 2, nc ÷ 2
-    bs = min(_AMDGPU_BATCH, njobs)
+    bs = _amdgpu_batch_cap(engine, njobs)
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = ROCBackend()
@@ -365,7 +498,7 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     isempty(jobvec) && return nothing
     wr, wc = engine.wsize
-    bs = min(_AMDGPU_BATCH, length(jobvec))
+    bs = _amdgpu_batch_cap(engine, length(jobvec))
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = ROCBackend()
@@ -436,7 +569,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     wr, wc = engine.wsize
     nr, nc = engine.fft_size
     sr, sc = nr ÷ 2, nc ÷ 2
-    bs = min(_AMDGPU_BATCH, njobs)
+    bs = _amdgpu_batch_cap(engine, njobs)
     _ensure_batch!(engine, bs)
     A_d, B_d, maskarg, hasmask = _stage_pair!(engine, imgA, imgB, mask)
     ka = ROCBackend()
@@ -496,7 +629,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_AMDGPUCorrelationE
     njobs = acc.njobs
     njobs == 0 && return nothing
     nr, nc = engine.fft_size
-    bs = min(_AMDGPU_BATCH, njobs)
+    bs = _amdgpu_batch_cap(engine, njobs)
     _ensure_batch!(engine, bs)
     ka = ROCBackend()
     use_regionalmax = params.peak_finder === :regionalmax

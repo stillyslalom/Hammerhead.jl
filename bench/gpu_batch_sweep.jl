@@ -4,17 +4,17 @@
 #
 #     julia --project=bench/CUDA -t auto bench/gpu_batch_sweep.jl \
 #         <cuda|amdgpu> [size=4096] [Float32|Float64=Float64] \
-#         [batches=8192,4096,2048,1024] [effort=high] [samples=3]
+#         [batches=8192,4096,2048,1024|auto] [effort=high] [samples=3]
 #
-# Background: the extensions size the batch to `_CUDA_MEM_FRACTION` of free VRAM
-# (computed exactly from each pass's fft_size + precision — cuFFT workspace is
-# ~0 for our power-of-two transforms), which eliminates the VRAM->shared-memory
+# Background: the extensions size batches from each pass's fft_size, precision,
+# and available VRAM (cuFFT/rocFFT workspace is ~0 for these power-of-two
+# transforms), which eliminates the VRAM->shared-memory
 # spill cliff (measured RTX 2000 Ada 4096^2 Float64 effort=:high: fixed bs=8192
 # spilled to 33 s; the memory cap runs ~10.5 s). A byte-budget alone cannot see
 # the *occupancy* plateau, though — the point past which a bigger batch stops
 # helping (that machine's Float64 optimum was ~1024, ~7.5 s). Use this sweep to
-# find that per-GPU optimum; set `HAMMERHEAD_CUDA_BATCH` (or the AMDGPU
-# equivalent) to pin a chosen value.
+# find that per-GPU optimum; include `auto` to measure the selected cap, or set
+# `HAMMERHEAD_CUDA_BATCH` (or the AMDGPU equivalent) to pin a chosen value.
 
 using Hammerhead
 using Hammerhead.SyntheticData
@@ -26,13 +26,15 @@ if backend === :cuda
     CUDA.functional() || error("CUDA is not functional")
     free_memory = CUDA.free_memory
     total_memory = CUDA.total_memory
+    reclaim_memory = CUDA.reclaim
     device_name = () -> CUDA.name(CUDA.device())
     batch_env = "HAMMERHEAD_CUDA_BATCH"
 elseif backend === :amdgpu
     @eval using AMDGPU
     AMDGPU.functional() || error("AMDGPU is not functional")
-    free_memory = AMDGPU.free_memory
-    total_memory = AMDGPU.total_memory
+    free_memory = AMDGPU.free
+    total_memory = AMDGPU.total
+    reclaim_memory = AMDGPU.reclaim
     device_name = () -> string(AMDGPU.device())
     batch_env = "HAMMERHEAD_AMDGPU_BATCH"
 else
@@ -41,7 +43,9 @@ end
 
 n = parse(Int, get(ARGS, 2, "4096"))
 T = get(ARGS, 3, "Float64") == "Float32" ? Float32 : Float64
-batches = parse.(Int, split(get(ARGS, 4, "8192,4096,2048,1024"), ","))
+batches = map(split(get(ARGS, 4, "8192,4096,2048,1024"), ",")) do s
+    lowercase(s) == "auto" ? nothing : parse(Int, s)
+end
 effort = Symbol(get(ARGS, 5, "high"))
 samples = parse(Int, get(ARGS, 6, "3"))
 
@@ -69,8 +73,8 @@ end
 println("cpu baseline: ", round(tcpu, digits = 3), " s")
 
 println("batch    seconds   speedup_vs_cpu   min_free_GiB")
-for bs in batches
-    ENV[batch_env] = string(bs)
+function measure_batch(bs)
+    bs === nothing ? delete!(ENV, batch_env) : (ENV[batch_env] = string(bs))
     ws = piv_workspace(; backend)
     run_piv(A, B, passes; backend, workspace = ws)   # warmup + allocate
     minfree = free_memory()
@@ -82,9 +86,16 @@ for bs in batches
         best = min(best, (time_ns() - t0) / 1e9)
         minfree = min(minfree, free_memory())
     end
-    println(rpad(bs, 9), lpad(round(best, digits = 3), 9),
+    return best, minfree
+end
+
+for bs in batches
+    best, minfree = measure_batch(bs)
+    label = bs === nothing ? "auto" : string(bs)
+    println(rpad(label, 9), lpad(round(best, digits = 3), 9),
             lpad(round(tcpu / best, digits = 2), 16),
             lpad(round(minfree / 2^30, digits = 3), 15))
+    GC.gc()
+    reclaim_memory()
 end
 delete!(ENV, batch_env)
-println("(unset $batch_env -> memory-aware auto cap)")

@@ -115,6 +115,10 @@ function pooled_engines(make, workspace, key, nchunks::Int)
     return pool[1:nchunks]
 end
 
+# Backend lifecycle hook for device engines whose large scratch should be
+# released at pass completion when no reusable workspace owns it.
+release_piv_engines!(::_AbstractHammerheadBackend, engines, workspace) = nothing
+
 # Build this pass's per-chunk correlation engines for the selected backend. The
 # CPU backend wraps pooled FFTW correlators (plans reused across pairs via the
 # workspace); other backends (loaded from an extension) add their own method
@@ -774,6 +778,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         result.u[result.outliers] = meas_u[result.outliers]
         result.v[result.outliers] = meas_v[result.outliers]
     end
+    release_piv_engines!(backend, engines, workspace)
     return result
 end
 

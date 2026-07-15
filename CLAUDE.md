@@ -260,7 +260,18 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   in-place plans apply via `p * x` (neither rocFFT nor
   cuFFT implements FFTW's 3-arg `mul!`). `:amdgpu` is hardware-validated +
   benched (`bench/gpu_validate.jl` / `bench/gpu_benchmarks.jl`; ROCm 6.4
-  required for RDNA2 on Windows — 7.1 dropped it); `:cuda` is also
+  required for RDNA2 on Windows — 7.1 dropped it). Its batch memory is managed
+  as one byte-budgeted workspace cache: discovered window configurations get
+  fair shares (bounded by their actual job counts), buffers coexist when they
+  fit, and cold configurations are released by LRU when they do not; without
+  a workspace, each pass releases its batch immediately. The AMDGPU
+  `inv(rocFFTPlan)` path is deliberately avoided because it allocates a full
+  batch-sized temporary just to compute normalization — Hammerhead builds a
+  direct `plan_bfft!` and applies the known scale. On the RX 6800 XT, 4096²
+  high-effort Float64 converges to 1024/4608/8192 batches, uses 7.99 GiB live,
+  leaves 7.80 GiB free, and runs in 4.99 s steady-state; Float32 runs in 3.29 s
+  with 6.62 GiB free. rocFFT work buffers themselves are zero bytes for the
+  production power-of-two plans. `:cuda` is also
   hardware-validated (RTX 2000 Ada, CUDA.jl 6.2, driver CUDA 12.8: all paths
   match `:cpu` to ~1e-15 (Float64), 1.4–2.3× threaded-CPU speed)
 
