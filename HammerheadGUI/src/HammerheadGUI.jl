@@ -31,6 +31,7 @@ include("controllers/preprocess_preview.jl")   # before batch_runner (set_prepro
 include("controllers/batch_runner.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
+include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -52,6 +53,7 @@ export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
+export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
 
 end # module Controllers
 
@@ -71,8 +73,10 @@ export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
        set_effort!, set_scale!, set_preprocess!, start!, cancel!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
-export CalibrationReview, calibration_review, selfcal_review,
-       nplanes, set_plane!
+export CalibrationReview, calibration_review, calibration_review!,
+       selfcal_review, nplanes, set_plane!
+export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
+       set_dewarpers!, build_dewarpers
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
@@ -81,6 +85,7 @@ include("views/preprocess_preview.jl")
 include("views/batch_runner.jl")
 include("views/scale_tool.jl")
 include("views/calibration_review.jl")
+include("views/stereo_batch.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload
 

@@ -301,6 +301,13 @@ end
     seq4 = run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
                                    progress = false)
     @test isequal(seq4[1].w, seq[1].w)
+    # on_result live hook mirrors run_piv_sequence's: in order, before progress.
+    events = []
+    run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
+                            on_result = (i, r) -> (push!(events, (:result, i));
+                                                   @test r isa StereoPIVResult),
+                            progress = (i, n) -> push!(events, (:progress, i)))
+    @test events == [(:result, 1), (:progress, 1)]
     @test isempty(run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
                                           progress = false, cancel = () -> true))
     @test_throws DimensionMismatch run_piv_stereo_sequence([(A1, B1)], [],

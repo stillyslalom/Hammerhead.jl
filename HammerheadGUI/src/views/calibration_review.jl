@@ -18,13 +18,27 @@ calibration_review(images, zs; model = :soloff, size = (1000, 720), detect_kwarg
 
 function calibration_review(cr::CalibrationReview; size = (1000, 720))
     fig = Figure(; size)
-    ax = Axis(fig[1, 1]; xlabel = "x (px)", ylabel = "y (px)",
+    calibration_review!(fig[1, 1], cr)
+    return fig
+end
+
+"""
+    calibration_review!(target, cr::CalibrationReview) -> GridLayout
+
+Build the calibration-review view into `target` (a `GridPosition`), for
+embedding in a larger layout — the embeddable form, like
+[`result_explorer!`](@ref) (used by [`stereo_calibration`](@ref) to show
+both cameras side by side).
+"""
+function calibration_review!(target, cr::CalibrationReview)
+    gl = GridLayout(target)
+    ax = Axis(gl[1, 1]; xlabel = "x (px)", ylabel = "y (px)",
               yreversed = true, aspect = DataAspect())
     crange = Observable((0.0, 1.0))
-    Colorbar(fig[1, 2]; colormap = :plasma, limits = crange,
+    Colorbar(gl[1, 2]; colormap = :plasma, limits = crange,
              label = "reprojection error (px)")
 
-    controls = GridLayout(fig[1, 3]; tellheight = false, valign = :top)
+    controls = GridLayout(gl[1, 3]; tellheight = false, valign = :top)
     Label(controls[1, 1], "camera model"; halign = :left, font = :bold)
     model_menu = Menu(controls[2, 1]; tellwidth = false,
                       options = [("soloff", :soloff), ("pinhole", :pinhole)])
@@ -34,12 +48,12 @@ function calibration_review(cr::CalibrationReview; size = (1000, 720))
     fit_info = lift(_ -> fit_summary(cr), cr.camera)
     Label(controls[4, 1], fit_info; halign = :left, justification = :left,
           word_wrap = true, width = 200)
-    colsize!(fig.layout, 3, Fixed(220))
+    colsize!(gl, 3, Fixed(220))
 
-    Label(fig[2, 1:3][1, 1], "plane")
-    plane_slider = Slider(fig[2, 1:3][1, 2]; range = 1:nplanes(cr),
+    Label(gl[2, 1:3][1, 1], "plane")
+    plane_slider = Slider(gl[2, 1:3][1, 2]; range = 1:nplanes(cr),
                           startvalue = cr.plane[])
-    Label(fig[2, 1:3][1, 3], lift(i -> "z = $(cr.zs[i])", cr.plane))
+    Label(gl[2, 1:3][1, 3], lift(i -> "z = $(cr.zs[i])", cr.plane))
 
     _sync_menu!(model_menu, cr.model)
     on(plane_slider.value) do i
@@ -83,7 +97,7 @@ function calibration_review(cr::CalibrationReview; size = (1000, 720))
     end
     onany((args...) -> refresh!(), cr.plane, cr.camera)
     refresh!()
-    return fig
+    return gl
 end
 
 """

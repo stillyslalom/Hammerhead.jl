@@ -796,6 +796,137 @@ const r_track = TrackingResult(
         @test occursin("shift 0.674", s)
     end
 
+    @testset "StereoBatchRunner controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # two-camera synthetic rig at ±20° (make_test_camera recipe)
+        function stereo_fixture(θdeg)
+            θ = deg2rad(θdeg)
+            R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
+            camC = R' * [0.0, 0.0, -500.0]
+            K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
+            cam = PinholeCamera(K, R, -R * camC)
+            zs = [-3.0, 0.0, 3.0]
+            plates = [render_calibration_target(cam, (512, 512); spacing = 15.0,
+                                                z = z,
+                                                marker_square = (-30.0, -7.5),
+                                                marker_triangle = (-15.0, -7.5))
+                      for z in zs]
+            return CalibrationReview(plates, zs;
+                                     spacing = 15.0, origin_offset = (30.0, 7.5)),
+                   plates
+        end
+        cr1, plates1 = stereo_fixture(20.0)
+        cr2, plates2 = stereo_fixture(-20.0)
+
+        # dewarper construction from the fitted reviews
+        dw1, dw2 = build_dewarpers(cr1, cr2)
+        @test dw1.grid == dw2.grid
+        @test !all(dw1.mask .| dw2.mask)          # a shared visible region exists
+        unfit = CalibrationReview(plates1[1:2], [-3.0, 0.0];
+                                  spacing = 15.0, origin_offset = (30.0, 7.5))
+        @test_throws ArgumentError build_dewarpers(unfit, cr2)
+
+        # validation walks the failure modes in order
+        sbc = StereoBatchRunner()
+        @test occursin("dewarpers", C.validate(sbc))
+        set_dewarpers!(sbc, dw1, dw2)
+        @test occursin("both cameras", C.validate(sbc))
+        add_files!(sbc, Any[plates1[2], plates1[2]]; camera = 1)
+        @test occursin("both cameras", C.validate(sbc))
+        add_files!(sbc, Any[plates2[2], plates2[2], plates2[2], plates2[2]]; camera = 2)
+        @test occursin("pairs", C.validate(sbc))
+        clear_files!(sbc)
+        @test_throws ArgumentError add_files!(sbc, Any[plates1[1]]; camera = 3)
+
+        # mismatched dewarp grids are rejected
+        othergrid = DewarpGrid(x = -8.0:0.5:8.0, y = 8.0:-0.5:-8.0)
+        dw_other = ImageDewarper(cr2.camera[], othergrid, (512, 512))
+        @test_throws ArgumentError set_dewarpers!(sbc, dw1, dw_other)
+
+        # synchronized run on identical frames (zero displacement), with a
+        # dt-only scale and live accumulation
+        out = joinpath(mktempdir(), "stereo_batch.jld2")
+        sbc2 = StereoBatchRunner(dewarpers = (dw1, dw2),
+                                 window_schedule = [32],
+                                 output_path = out,
+                                 dt = 0.01, length_unit = "mm", time_unit = "s")
+        add_files!(sbc2, Any[plates1[2], plates1[2]]; camera = 1)
+        add_files!(sbc2, Any[plates2[2], plates2[2]]; camera = 2)
+        @test C.validate(sbc2) === nothing
+        sc = C.build_scale(sbc2)
+        @test sc isa PhysicalScale && sc.pixel_size == 1.0 && sc.dt == 0.01
+        live = Int[]
+        on(v -> push!(live, length(v)), sbc2.completed)
+        start!(sbc2; async = false)
+        @test sbc2.results[] !== nothing && length(sbc2.results[]) == 1
+        r = sbc2.results[][1]
+        @test r isa StereoPIVResult
+        @test abs(median(filter(!isnan, r.u))) < 0.1   # identical frames
+        @test r.scale !== nothing && r.scale.time_unit == "s"
+        @test live == [0, 1]
+        @test length(load_results(out)) == 1
+        @test occursin("done", sbc2.status[])
+
+        # native between-acquisition cancellation keeps the prefix, no throw
+        sbc3 = StereoBatchRunner(dewarpers = (dw1, dw2), window_schedule = [32])
+        add_files!(sbc3, Any[plates1[2], plates1[2], plates1[2], plates1[2]]; camera = 1)
+        add_files!(sbc3, Any[plates2[2], plates2[2], plates2[2], plates2[2]]; camera = 2)
+        on(p -> p[1] == 1 && cancel!(sbc3), sbc3.progress)
+        start!(sbc3; async = false)
+        @test length(sbc3.results[]) == 1
+        @test occursin("cancelled after 1 of 2", sbc3.status[])
+
+        # the explorer browses the stereo batch output directly
+        exs = ResultExplorer(sbc2.results[])
+        @test current_result(exs) isa StereoPIVResult
+
+        @test_throws ArgumentError set_effort!(sbc2, :turbo)
+        @test_throws ArgumentError C.set_dt!(sbc2, "-2")
+        set_schedule!(sbc2, "48 24")
+        @test sbc2.window_schedule[] == [48, 24]
+    end
+
+    @testset "stereo batch & calibration views (offscreen)" begin
+        θ = deg2rad(20.0)
+        R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
+        camC = R' * [0.0, 0.0, -500.0]
+        K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
+        cam1 = PinholeCamera(K, R, -R * camC)
+        R2 = [cos(-θ) 0.0 -sin(-θ); 0.0 1.0 0.0; sin(-θ) 0.0 cos(-θ)]
+        cam2C = R2' * [0.0, 0.0, -500.0]
+        cam2 = PinholeCamera(K, R2, -R2 * cam2C)
+        zs = [-3.0, 0.0, 3.0]
+        mk = (; spacing = 15.0, marker_square = (-30.0, -7.5),
+              marker_triangle = (-15.0, -7.5))
+        plates1 = [render_calibration_target(cam1, (512, 512); z, mk...) for z in zs]
+        plates2 = [render_calibration_target(cam2, (512, 512); z, mk...) for z in zs]
+        cr1 = CalibrationReview(plates1, zs; spacing = 15.0, origin_offset = (30.0, 7.5))
+        cr2 = CalibrationReview(plates2, zs; spacing = 15.0, origin_offset = (30.0, 7.5))
+
+        # rig-setup workflow view: embedded reviews render, and the build
+        # path installs the dewarpers into a batch controller
+        sbc = StereoBatchRunner()
+        fig = stereo_calibration(cr1, cr2; batch = sbc)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (850, 1500)
+        set_dewarpers!(sbc, cr1, cr2)          # the button's code path
+        @test sbc.dewarpers[] !== nothing
+        set_plane!(cr1, 2)                     # embedded review stays live
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test img2 != img1
+
+        # batch form renders and reflects controller changes
+        figb = stereo_batch_runner(sbc)
+        imgb1 = copy(colorbuffer(figb; px_per_unit = 1))
+        @test size(imgb1) == (600, 960)
+        add_files!(sbc, Any[plates1[2], plates1[2]]; camera = 1)
+        add_files!(sbc, Any[plates2[2], plates2[2]]; camera = 2)
+        set_effort!(sbc, :low)
+        imgb2 = colorbuffer(figb; px_per_unit = 1)
+        @test imgb2 != imgb1
+    end
+
     @testset "calibration & selfcal views (offscreen)" begin
         θ = deg2rad(20.0)
         R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]

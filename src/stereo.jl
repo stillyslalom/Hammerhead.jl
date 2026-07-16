@@ -229,10 +229,12 @@ buffer pair, and one [`PIVWorkspace`](@ref) are reused for the whole sequence.
 `(preprocess1, preprocess2)`; each hook runs after loading and before
 dewarping. `output` is either one incrementally written JLD2 path or a
 function `(i, acquisition) -> path` for per-acquisition files. Four source
-paths are recorded when all four inputs are paths. `progress` has the same
-Boolean/callback contract as [`run_piv_sequence`](@ref). `cancel` may be a
-zero-argument predicate; when it becomes true, processing stops between
-acquisitions and the completed prefix is returned (and remains persisted).
+paths are recorded when all four inputs are paths. `progress` and
+`on_result` have the same callback contracts as [`run_piv_sequence`](@ref)
+(the latter receives each [`StereoPIVResult`](@ref) as it completes).
+`cancel` may be a zero-argument predicate; when it becomes true, processing
+stops between acquisitions and the completed prefix is returned (and remains
+persisted).
 The next synchronized acquisition is prefetched while the current one runs.
 Timestamped [`FramePair`](@ref)s attach their actual pair-specific `dt` to
 each result when `scale` is supplied; the two cameras' intervals must agree.
@@ -310,6 +312,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                                   preprocess = nothing,
                                   output::Union{Nothing,AbstractString,Function} = nothing,
                                   progress::Union{Bool,Function} = true,
+                                  on_result::Union{Nothing,Function} = nothing,
                                   cancel::Union{Nothing,Function} = nothing,
                                   image_type::Type{<:AbstractFloat} = Float64,
                                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
@@ -365,6 +368,10 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                 @error "Stereo PIV sequence failed on acquisition $i of $(length(acquisitions))"
                 rethrow()
             end
+            # Live-consumer hook, mirroring run_piv_sequence's on_result:
+            # called on the caller's task, in acquisition order, before the
+            # incremental write and the progress callback.
+            on_result === nothing || on_result(i, results[end])
             if file !== nothing
                 file[result_key(i)] = results[end]
                 all(x -> x isa AbstractString, acq) &&
