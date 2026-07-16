@@ -123,15 +123,44 @@ function result_explorer!(target, ex::ResultExplorer)
         return lo, hi
     end
 
+    # Quiver-style fast path: linesegments shafts + one rotated triangle
+    # marker per arrow head. arrows2d is a poly/mesh recipe whose pixel-space
+    # tip sizing recomputes per pan/zoom frame — interaction crawls with
+    # thousands of arrows — while these two primitive plots are static in
+    # data space and cheap to render.
     function _draw_arrows!(r)
         ex.show_vectors[] || return
         d = vector_data(r)
         isempty(d.x) && return
-        colors = ex.highlight_outliers[] ? [o ? :red : :black for o in d.outlier] : :black
-        a = arrows2d!(ax, Point2f.(d.x, d.y), Vec2f.(d.u, d.v);
-                      color = colors, lengthscale = auto_lengthscale(r, d))
-        translate!(a, 0, 0, 1)
-        push!(plots, a)
+        ls = auto_lengthscale(r, d)
+        n = length(d.x)
+        segs = Vector{Point2f}(undef, 2n)
+        tips = Vector{Point2f}(undef, n)
+        rots = Vector{Float32}(undef, n)
+        for k in 1:n
+            tip = Point2f(d.x[k] + ls * d.u[k], d.y[k] + ls * d.v[k])
+            segs[2k - 1] = Point2f(d.x[k], d.y[k])
+            segs[2k] = tip
+            tips[k] = tip
+            # marker rotation is screen-space CCW and the axis is yreversed,
+            # so (du, dv) points along (du, -dv) on screen; :utriangle points
+            # up (screen +y), hence the -π/2 offset.
+            rots[k] = Float32(atan(-d.v[k], d.u[k]) - π / 2)
+        end
+        if ex.highlight_outliers[] && any(d.outlier)
+            cols = [o ? :red : :black for o in d.outlier]
+            shafts = linesegments!(ax, segs; color = repeat(cols, inner = 2),
+                                   linewidth = 1.5)
+            heads = scatter!(ax, tips; marker = :utriangle, rotation = rots,
+                             markersize = 9, color = cols)
+        else
+            shafts = linesegments!(ax, segs; color = :black, linewidth = 1.5)
+            heads = scatter!(ax, tips; marker = :utriangle, rotation = rots,
+                             markersize = 9, color = :black)
+        end
+        translate!(shafts, 0, 0, 1)
+        translate!(heads, 0, 0, 1)
+        push!(plots, shafts, heads)
         return
     end
 
