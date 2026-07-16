@@ -29,6 +29,7 @@ include("controllers/result_explorer.jl")
 include("controllers/mask_editor.jl")
 include("controllers/preprocess_preview.jl")   # before batch_runner (set_preprocess! signature)
 include("controllers/batch_runner.jl")
+include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
@@ -47,6 +48,8 @@ export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
        parse_schedule, set_schedule!, set_effort!, set_pixel_size!, set_dt!,
        set_scale!, set_preprocess!, build_parameters, build_scale, validate,
        start!, cancel!
+export ScaleTool, clear_points!, set_separation!, pixel_distance,
+       pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 
@@ -66,6 +69,8 @@ export PreprocessPreview, preprocess_preview, preprocess_preview!,
        move_step!, apply_pipeline, build_preprocess
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
        set_effort!, set_scale!, set_preprocess!, start!, cancel!
+export ScaleTool, scale_tool, clear_points!, set_separation!,
+       pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, selfcal_review,
        nplanes, set_plane!
 
@@ -74,6 +79,7 @@ include("views/result_explorer.jl")
 include("views/mask_editor.jl")
 include("views/preprocess_preview.jl")
 include("views/batch_runner.jl")
+include("views/scale_tool.jl")
 include("views/calibration_review.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload

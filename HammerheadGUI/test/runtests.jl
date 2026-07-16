@@ -672,6 +672,70 @@ const r_track = TrackingResult(
         @test size(img2) == size(img1)
     end
 
+    @testset "ScaleTool controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        st = ScaleTool(imgA)
+        @test C.pixel_distance(st) === nothing
+        @test pixel_size(st) === nothing
+        @test physical_scale(st) === nothing
+        @test occursin("click two points", C.scale_summary(st))
+
+        # two clicks define the line; a third starts a new one
+        C.click!(st, 10.0, 20.0)
+        @test pixel_size(st) === nothing
+        C.click!(st, 10.0, 70.0)                  # 50 px vertical line
+        @test C.pixel_distance(st) ≈ 50.0
+        set_separation!(st, "25")                 # 25 mm over 50 px
+        st.dt[] = 0.002
+        st.time_unit[] = "s"
+        @test pixel_size(st) ≈ 0.5
+        sc = physical_scale(st)
+        @test sc isa PhysicalScale
+        @test sc.pixel_size ≈ 0.5 && sc.dt == 0.002
+        @test sc.length_unit == "mm" && sc.time_unit == "s"
+        @test occursin("mm/px", C.scale_summary(st))
+        C.click!(st, 1.0, 1.0)                    # restart
+        @test length(st.points[]) == 1
+        C.clear_points!(st)
+        @test isempty(st.points[])
+
+        # validation
+        @test_throws ArgumentError set_separation!(st, -1.0)
+        @test_throws ArgumentError set_separation!(st, "nope")
+        @test_throws ArgumentError C.set_dt!(st, 0.0)
+        # coincident points define no scale
+        C.click!(st, 5.0, 5.0); C.click!(st, 5.0, 5.0)
+        @test pixel_size(st) === nothing
+
+        # hand-off into the batch form
+        st2 = ScaleTool(imgA)
+        C.click!(st2, 0.0, 0.0); C.click!(st2, 30.0, 40.0)   # 50 px diagonal
+        set_separation!(st2, 5.0)                            # 0.1 mm/px
+        st2.dt[] = 0.01
+        st2.time_unit[] = "s"
+        bc = BatchRunner()
+        @test_throws ArgumentError apply_scale!(bc, ScaleTool(imgA))
+        apply_scale!(bc, st2)
+        @test bc.pixel_size[] ≈ 0.1
+        @test bc.dt[] == 0.01
+        @test bc.length_unit[] == "mm" && bc.time_unit[] == "s"
+        @test C.build_scale(bc) isa PhysicalScale
+    end
+
+    @testset "scale_tool view (offscreen)" begin
+        st = ScaleTool(imgA)
+        bc = BatchRunner()
+        fig = scale_tool(st; batch = bc)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (560, 900)
+        HammerheadGUI.Controllers.click!(st, 20.0, 20.0)
+        HammerheadGUI.Controllers.click!(st, 100.0, 20.0)
+        set_separation!(st, 8.0)
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test img2 != img1
+    end
+
     @testset "CalibrationReview controller (no GL)" begin
         C = HammerheadGUI.Controllers
 

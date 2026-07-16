@@ -53,8 +53,11 @@ Reuse the existing `ROI` and `PlanarTransform` core APIs so GUI selections and
 exports share exactly the same coordinate semantics.
 
 - [ ] Make ROI selection editable in the GUI.
-- [ ] Provide a GUI calibration-line tool and make the resulting planar
-  coordinate transform explicit in table and VTK exports.
+- [x] Provide a GUI calibration-line tool (`ScaleTool`/`scale_tool`: two
+  clicked points + known separation → `PhysicalScale`, with a `BatchRunner`
+  hand-off).
+- [ ] Make the resulting planar coordinate transform explicit in table and
+  VTK exports (the `PlanarTransform` half of the original line-tool item).
 
 ## Step 4: harden rotated-target calibration
 
