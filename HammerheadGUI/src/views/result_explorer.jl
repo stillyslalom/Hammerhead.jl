@@ -10,10 +10,14 @@ vector of them, a results-file path (read with `Hammerhead.load_results`),
 or a prebuilt [`ResultExplorer`](@ref) controller (pass the controller when
 you want to drive the view programmatically — its observables stay live).
 
-The view shows a scalar field (menu: displacement magnitude, components,
-diagnostics, uncertainty when present) as a heatmap in image orientation
-(y down), the vector field as arrows (outliers red), a frame slider for
-sequences, and a click-to-inspect panel for individual vectors.
+For a gridded (`PIVResult` / `StereoPIVResult`) result the view shows a
+scalar field (menu: displacement magnitude, components, diagnostics,
+uncertainty when present) as a heatmap in image orientation (y down) with
+the vector field as arrows (outliers red). A `PTVResult` is drawn as a
+colored particle scatter with optional displacement arrows, and a
+`TrackingResult` as trajectory polylines colored by mean speed (breaks at
+frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel
+summarizes the selected item in physical units when a scale is attached.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
 
@@ -89,9 +93,8 @@ function result_explorer!(target, ex::ResultExplorer)
                         strokecolor = :cyan, strokewidth = 2.5, markersize = 16)
     translate!(sel_plot, 0, 0, 2)
     onany(ex.selection, ex.frame) do sel, _
-        r = current_result(ex)
-        sel_points[] = (sel === nothing || !checkbounds(Bool, r.u, sel)) ?
-            Point2f[] : [Point2f(r.x[sel[2]], r.y[sel[1]])]
+        pt = selection_point(current_result(ex), sel)
+        sel_points[] = pt === nothing ? Point2f[] : [Point2f(pt[1], pt[2])]
         info.text[] = describe_selection(ex)
     end
 
@@ -105,43 +108,90 @@ function result_explorer!(target, ex::ResultExplorer)
     on(_ -> refresh_menu!(), ex.frame)
     on(_ -> refresh_menu!(), ex.field) # sync the menu on programmatic set_field!
 
-    # The heatmap and arrows are recreated per refresh rather than driven by
-    # per-argument observables: grid sizes can change between frames, and
-    # sequential x/y/data updates would render transiently mismatched args.
-    heat = Ref{Any}(nothing)
-    arrows = Ref{Any}(nothing)
+    # The plots are recreated per refresh rather than driven by per-argument
+    # observables: grid sizes (and the plot type itself, across a mixed
+    # sequence) can change between frames, and sequential x/y/data updates
+    # would render transiently mismatched args.
+    plots = Any[]
     has_drawn = Ref(false)
-    function refresh_plots!()
-        r = current_result(ex)
-        data = field_values(r, ex.field[])
-        vals = [v for v in data if isfinite(v)]
-        lo, hi = isempty(vals) ? (0.0, 1.0) : Float64.(extrema(vals))
+
+    # Colour range of the current field, padded when degenerate.
+    function _crange(data)
+        vals = [Float64(v) for v in data if isfinite(v)]
+        lo, hi = isempty(vals) ? (0.0, 1.0) : extrema(vals)
         lo == hi && ((lo, hi) = (lo - 0.5, hi + 0.5))
+        return lo, hi
+    end
+
+    function _draw_arrows!(r)
+        ex.show_vectors[] || return
+        d = vector_data(r)
+        isempty(d.x) && return
+        colors = ex.highlight_outliers[] ? [o ? :red : :black for o in d.outlier] : :black
+        a = arrows2d!(ax, Point2f.(d.x, d.y), Vec2f.(d.u, d.v);
+                      color = colors, lengthscale = auto_lengthscale(r, d))
+        translate!(a, 0, 0, 1)
+        push!(plots, a)
+        return
+    end
+
+    function _draw!(r::Union{PIVResult,StereoPIVResult})
+        data = field_values(r, ex.field[])
+        lo, hi = _crange(data)
         crange[] = (lo, hi)
         clabel[] = field_label(r, ex.field[])
+        h = heatmap!(ax, collect(r.x), collect(r.y), permutedims(data);
+                     colormap = :viridis, colorrange = (lo, hi),
+                     nan_color = :transparent)
+        translate!(h, 0, 0, -1)
+        push!(plots, h)
+        _draw_arrows!(r)
+        return
+    end
+
+    function _draw!(r::PTVResult)
+        data = field_values(r, ex.field[])
+        lo, hi = _crange(data)
+        crange[] = (lo, hi)
+        clabel[] = field_label(r, ex.field[])
+        if !isempty(r.x)
+            sc = scatter!(ax, Point2f.(r.x, r.y); color = Float64.(data),
+                          colormap = :viridis, colorrange = (lo, hi), markersize = 9)
+            translate!(sc, 0, 0, -1)
+            push!(plots, sc)
+        end
+        _draw_arrows!(r)
+        return
+    end
+
+    function _draw!(r::TrackingResult)
+        speeds = field_values(r, :speed)
+        lo, hi = _crange(speeds)
+        crange[] = (lo, hi)
+        clabel[] = field_label(r, :speed)
+        for (k, t) in pairs(r.trajectories)
+            xs, ys = trajectory_points(t)
+            length(xs) >= 2 || continue
+            col = isfinite(speeds[k]) ? speeds[k] : lo
+            ln = lines!(ax, Point2f.(xs, ys); color = Float64(col),
+                        colormap = :viridis, colorrange = (lo, hi))
+            push!(plots, ln)
+        end
+        return
+    end
+
+    function refresh_plots!()
+        r = current_result(ex)
+        ax.xlabel[], ax.ylabel[] = Hammerhead.plot_axis_labels(r.scale)
 
         # capture/restore targetlimits (not limits!): the pre-reversal rect,
         # so the image-orientation yreversed flip survives the restore
         limits = ax.targetlimits[]
-        for p in (heat, arrows)
-            p[] === nothing || delete!(ax, p[])
-            p[] = nothing
+        for p in plots
+            delete!(ax, p)
         end
-        heat[] = heatmap!(ax, collect(r.x), collect(r.y), permutedims(data);
-                          colormap = :viridis, colorrange = (lo, hi),
-                          nan_color = :transparent)
-        translate!(heat[], 0, 0, -1)
-        if ex.show_vectors[]
-            d = vector_data(r)
-            if !isempty(d.x)
-                colors = ex.highlight_outliers[] ?
-                    [o ? :red : :black for o in d.outlier] : :black
-                arrows[] = arrows2d!(ax, Point2f.(d.x, d.y), Vec2f.(d.u, d.v);
-                                     color = colors,
-                                     lengthscale = auto_lengthscale(r, d))
-                translate!(arrows[], 0, 0, 1)
-            end
-        end
+        empty!(plots)
+        _draw!(r)
         has_drawn[] && (ax.targetlimits[] = limits) # keep the user's zoom across refreshes
         has_drawn[] = true
         return

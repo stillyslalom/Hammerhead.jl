@@ -3,23 +3,36 @@
 # mutate them through the API below, so everything here runs without a GL
 # context.
 
-const AnyResult = Union{PIVResult,StereoPIVResult}
+# The explorer browses all four persisted result types. Gridded results
+# (PIV/stereo) select a window by CartesianIndex; scattered results (PTV
+# particles, tracking trajectories) select by linear index.
+const GridResult = Union{PIVResult,StereoPIVResult}
+const ScatteredResult = Union{PTVResult,TrackingResult}
+const AnyResult = Union{GridResult,ScatteredResult}
+const Selection = Union{Nothing,CartesianIndex{2},Int}
 
 """
     ResultExplorer(results; path = nothing)
     ResultExplorer(result)
     ResultExplorer(path::AbstractString)
 
-Controller for the result explorer: a loaded sequence of `PIVResult` /
-`StereoPIVResult` entries (mixed files are allowed) plus the view state as
-`Observables` — `frame` (1-based index into the sequence), `field` (the
-displayed scalar field, see [`available_fields`](@ref)), `show_vectors` /
-`highlight_outliers` (overlay toggles), and `selection` (the inspected
-vector's `CartesianIndex`, or `nothing`).
+Controller for the result explorer: a loaded sequence of `PIVResult`,
+`StereoPIVResult`, `PTVResult`, or `TrackingResult` entries (mixed files are
+allowed) plus the view state as `Observables` — `frame` (1-based index into
+the sequence), `field` (the displayed scalar field, see
+[`available_fields`](@ref)), `show_vectors` / `highlight_outliers` (overlay
+toggles), and `selection` (the inspected item: a `CartesianIndex` for a
+gridded window, a linear `Int` index for a scattered particle/trajectory, or
+`nothing`).
+
+Each entry is routed through [`physical`](@ref) at construction, so loaded
+results carrying a [`PhysicalScale`](@ref) display in physical units with
+labelled axes (`physical` is idempotent and identity-safe, so unscaled
+results are untouched).
 
 The string form loads the sequence with `Hammerhead.load_results`. Changing
-frames resets `field` to `:magnitude` when the new result lacks the current
-field, and drops `selection` when it falls outside the new grid.
+frames resets `field` to the new result's default when the current field is
+unavailable, and drops `selection` when it no longer refers to a valid item.
 """
 struct ResultExplorer
     results::Vector{AnyResult}
@@ -28,23 +41,23 @@ struct ResultExplorer
     field::Observable{Symbol}
     show_vectors::Observable{Bool}
     highlight_outliers::Observable{Bool}
-    selection::Observable{Union{Nothing,CartesianIndex{2}}}
+    selection::Observable{Selection}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
     isempty(results) && throw(ArgumentError("no results to explore"))
     all(r -> r isa AnyResult, results) ||
-        throw(ArgumentError("results must be PIVResult or StereoPIVResult entries"))
-    ex = ResultExplorer(collect(AnyResult, results),
+        throw(ArgumentError("results must be PIVResult, StereoPIVResult, PTVResult, or TrackingResult entries"))
+    conv = AnyResult[physical(r) for r in results]
+    ex = ResultExplorer(conv,
                         path === nothing ? nothing : String(path),
-                        Observable(1), Observable(:magnitude),
+                        Observable(1), Observable(first(available_fields(conv[1]))),
                         Observable(true), Observable(true),
-                        Observable{Union{Nothing,CartesianIndex{2}}}(nothing))
+                        Observable{Selection}(nothing))
     on(ex.frame) do _
         r = current_result(ex)
-        ex.field[] in available_fields(r) || (ex.field[] = :magnitude)
-        sel = ex.selection[]
-        sel === nothing || checkbounds(Bool, r.u, sel) || (ex.selection[] = nothing)
+        ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
+        ex.selection[] = _valid_selection(r, ex.selection[])
     end
     return ex
 end
@@ -66,9 +79,10 @@ Number of results in the explored sequence.
 nframes(ex::ResultExplorer) = length(ex.results)
 
 """
-    current_result(ex::ResultExplorer) -> Union{PIVResult,StereoPIVResult}
+    current_result(ex::ResultExplorer)
 
-The result at the current frame.
+The result at the current frame (one of `PIVResult`, `StereoPIVResult`,
+`PTVResult`, `TrackingResult`).
 """
 current_result(ex::ResultExplorer) = ex.results[ex.frame[]]
 
@@ -79,13 +93,28 @@ Move to frame `i`, clamped to `1:nframes(ex)`.
 """
 set_frame!(ex::ResultExplorer, i::Integer) = ex.frame[] = clamp(i, 1, nframes(ex))
 
+# Whether a stored selection still refers to a valid item of the given result
+# (a gridded window index for grids, a linear index for scattered results).
+function _valid_selection(r, sel)
+    sel === nothing && return nothing
+    if r isa GridResult
+        return (sel isa CartesianIndex{2} && checkbounds(Bool, r.u, sel)) ? sel : nothing
+    elseif r isa PTVResult
+        return (sel isa Int && 1 <= sel <= length(r.x)) ? sel : nothing
+    else # TrackingResult
+        return (sel isa Int && 1 <= sel <= length(r.trajectories)) ? sel : nothing
+    end
+end
+
 """
     available_fields(result) -> Vector{Symbol}
 
-Scalar fields displayable for a `PIVResult` or `StereoPIVResult`:
-`:magnitude` (in-plane, or 3-component for stereo, displacement magnitude)
-and the per-vector component/diagnostic fields. Uncertainty fields are
-included only when the result carries estimates (any finite value).
+Scalar fields displayable for a result. Gridded results (`PIVResult` /
+`StereoPIVResult`) offer `:magnitude` (in-plane, or 3-component for stereo,
+displacement magnitude) plus the per-vector component/diagnostic fields, with
+uncertainty fields included only when estimates are present. A `PTVResult`
+offers `[:magnitude, :u, :v, :match_residual]`; a `TrackingResult` offers
+`[:speed]` (per-trajectory mean speed).
 """
 function available_fields(r::PIVResult)
     fields = [:magnitude, :u, :v, :peak_ratio, :correlation_moment]
@@ -101,13 +130,19 @@ function available_fields(r::StereoPIVResult)
     return fields
 end
 
-"""
-    field_values(result, field::Symbol) -> Matrix
+available_fields(::PTVResult) = [:magnitude, :u, :v, :match_residual]
+available_fields(::TrackingResult) = [:speed]
 
-The scalar field to display: `:magnitude` is computed (`hypot` of the
-displacement components), everything else is the result's own matrix.
 """
-function field_values(r::AnyResult, field::Symbol)
+    field_values(result, field::Symbol)
+
+The scalar field to display. For gridded results this is a `Matrix`
+(`:magnitude` is `hypot` of the displacement components, everything else the
+result's own matrix). For a `PTVResult` it is a per-particle `Vector`
+(`:magnitude`, `:u`, `:v`, `:match_residual`). For a `TrackingResult` it is a
+per-trajectory `Vector` of mean speeds (`:speed`).
+"""
+function field_values(r::GridResult, field::Symbol)
     field === :magnitude &&
         return r isa StereoPIVResult ? hypot.(r.u, r.v, r.w) : hypot.(r.u, r.v)
     field in available_fields(r) ||
@@ -115,11 +150,26 @@ function field_values(r::AnyResult, field::Symbol)
     return getproperty(r, field)
 end
 
+function field_values(r::PTVResult, field::Symbol)
+    field === :magnitude && return hypot.(r.u, r.v)
+    field in available_fields(r) ||
+        throw(ArgumentError("field :$field is not available for this result"))
+    return getproperty(r, field)
+end
+
+function field_values(r::TrackingResult, field::Symbol)
+    field === :speed ||
+        throw(ArgumentError("field :$field is not available for this result"))
+    return [_mean_speed(t, r.scale) for t in r.trajectories]
+end
+
 const FIELD_NAMES = Dict(
     :magnitude => "|displacement|",
     :u => "u", :v => "v", :w => "w",
     :peak_ratio => "peak ratio",
     :correlation_moment => "correlation moment",
+    :match_residual => "match residual",
+    :speed => "speed",
     :uncertainty_u => "σu", :uncertainty_v => "σv", :uncertainty_w => "σw",
 )
 
@@ -130,18 +180,31 @@ Short display name of a scalar field (menu entries).
 """
 field_name(field::Symbol) = FIELD_NAMES[field]
 
-units(::PIVResult) = "px"
-units(::StereoPIVResult) = "world units"
+# Fallback units when no PhysicalScale is attached: pixels for planar / PTV /
+# tracking, "world units" for stereo (world coordinates are already physical).
+_fallback_unit(::StereoPIVResult) = "world units"
+_fallback_unit(::AnyResult) = "px"
+
+# Position (length) unit and displacement/velocity unit. After `physical`
+# conversion a real attached scale leaves labelled unit strings; `nothing`
+# means unscaled, so we use the type's fallback.
+_length_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) : r.scale.length_unit
+_field_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) :
+    string(r.scale.length_unit, "/", r.scale.time_unit)
 
 """
     field_label(result, field::Symbol) -> String
 
-Display name of a scalar field with the result's units appended
-(colorbar label). Dimensionless diagnostics carry no unit.
+Display name of a scalar field with the result's units appended (colorbar
+label). Displacement/velocity fields and their uncertainties carry the
+velocity unit (`length_unit/time_unit`, e.g. `mm/s`, or the `px`/`world units`
+fallback when unscaled); a `PTVResult`'s `match_residual` carries the length
+unit; dimensionless diagnostics carry no unit.
 """
 function field_label(r::AnyResult, field::Symbol)
     field in (:peak_ratio, :correlation_moment) && return field_name(field)
-    return string(field_name(field), " (", units(r), ")")
+    field === :match_residual && return string(field_name(field), " (", _length_unit(r), ")")
+    return string(field_name(field), " (", _field_unit(r), ")")
 end
 
 """
@@ -159,52 +222,87 @@ end
 """
     select_nearest!(ex::ResultExplorer, x::Real, y::Real)
 
-Select the vector whose grid node is nearest to the data-space point
-`(x, y)` (e.g. a mouse click) for inspection.
+Select the item nearest to the data-space point `(x, y)` (e.g. a mouse
+click) for inspection: the nearest grid node for a gridded result, the
+nearest particle for a `PTVResult`, or the nearest trajectory (by vertex) for
+a `TrackingResult`.
 """
 function select_nearest!(ex::ResultExplorer, x::Real, y::Real)
-    r = current_result(ex)
-    j = argmin(j -> abs(r.x[j] - x), eachindex(r.x))
-    i = argmin(i -> abs(r.y[i] - y), eachindex(r.y))
-    ex.selection[] = CartesianIndex(i, j)
+    ex.selection[] = _nearest(current_result(ex), x, y)
     return ex
+end
+
+_nearest(r::GridResult, x, y) =
+    CartesianIndex(argmin(i -> abs(r.y[i] - y), eachindex(r.y)),
+                   argmin(j -> abs(r.x[j] - x), eachindex(r.x)))
+
+function _nearest(r::PTVResult, x, y)
+    isempty(r.x) && return nothing
+    return argmin(k -> abs2(r.x[k] - x) + abs2(r.y[k] - y), eachindex(r.x))
+end
+
+function _nearest(r::TrackingResult, x, y)
+    isempty(r.trajectories) && return nothing
+    best, bestd = 1, Inf
+    for (k, t) in pairs(r.trajectories), p in eachindex(t.x)
+        d = abs2(t.x[p] - x) + abs2(t.y[p] - y)
+        d < bestd && ((best, bestd) = (k, d))
+    end
+    return best
 end
 
 """
     clear_selection!(ex::ResultExplorer)
 
-Drop the vector selection.
+Drop the current selection.
 """
 clear_selection!(ex::ResultExplorer) = (ex.selection[] = nothing; ex)
 
+# Data-space point (x, y) marking the current selection, or `nothing` when the
+# selection is empty or stale — the view draws a marker there.
+function selection_point(r, sel)
+    sel = _valid_selection(r, sel)
+    sel === nothing && return nothing
+    if r isa GridResult
+        return (r.x[sel[2]], r.y[sel[1]])
+    elseif r isa PTVResult
+        return (r.x[sel], r.y[sel])
+    else # TrackingResult: mark the trajectory's first point
+        t = r.trajectories[sel]
+        return (t.x[1], t.y[1])
+    end
+end
+
 _fmt(v::Real) = isfinite(v) ? @sprintf("%.4g", v) : "—"
 
-_status(r::AnyResult, idx) = r.mask[idx]     ? "masked (no measurement)" :
-                             r.outliers[idx] ? "outlier (replaced)" : "valid"
+_status(r::GridResult, idx) = r.mask[idx]     ? "masked (no measurement)" :
+                              r.outliers[idx] ? "outlier (replaced)" : "valid"
 
 """
     describe_selection(ex::ResultExplorer) -> String
 
-Multi-line summary of the selected vector (empty string when nothing is
-selected): grid position, displacement components, diagnostics, uncertainty
-(when finite), and validation status.
+Multi-line summary of the selected item (empty string when nothing is
+selected): position, displacement/velocity, diagnostics/uncertainty, and
+validation status, all with units.
 """
 function describe_selection(ex::ResultExplorer)
-    idx = ex.selection[]
-    idx === nothing && return ""
-    return vector_summary(current_result(ex), idx)
+    r = current_result(ex)
+    sel = _valid_selection(r, ex.selection[])
+    sel === nothing && return ""
+    return vector_summary(r, sel)
 end
 
 function vector_summary(r::PIVResult, idx::CartesianIndex{2})
     i, j = Tuple(idx)
+    lu, vu = _length_unit(r), _field_unit(r)
     lines = ["window ($i, $j)",
-             "x = $(_fmt(r.x[j])) px, y = $(_fmt(r.y[i])) px",
-             "u = $(_fmt(r.u[idx])) px",
-             "v = $(_fmt(r.v[idx])) px",
+             "x = $(_fmt(r.x[j])) $lu, y = $(_fmt(r.y[i])) $lu",
+             "u = $(_fmt(r.u[idx])) $vu",
+             "v = $(_fmt(r.v[idx])) $vu",
              "peak ratio = $(_fmt(r.peak_ratio[idx]))",
              "corr. moment = $(_fmt(r.correlation_moment[idx]))"]
     if isfinite(r.uncertainty_u[idx]) || isfinite(r.uncertainty_v[idx])
-        push!(lines, "σu = $(_fmt(r.uncertainty_u[idx])) px, σv = $(_fmt(r.uncertainty_v[idx])) px")
+        push!(lines, "σu = $(_fmt(r.uncertainty_u[idx])) $vu, σv = $(_fmt(r.uncertainty_v[idx])) $vu")
     end
     push!(lines, "status: $(_status(r, idx))")
     return join(lines, "\n")
@@ -212,28 +310,91 @@ end
 
 function vector_summary(r::StereoPIVResult, idx::CartesianIndex{2})
     i, j = Tuple(idx)
-    un = units(r)
+    lu, vu = _length_unit(r), _field_unit(r)
     lines = ["node ($i, $j)",
-             "x = $(_fmt(r.x[j])), y = $(_fmt(r.y[i])), z = $(_fmt(r.z)) ($un)",
-             "u = $(_fmt(r.u[idx])) $un",
-             "v = $(_fmt(r.v[idx])) $un",
-             "w = $(_fmt(r.w[idx])) $un"]
+             "x = $(_fmt(r.x[j])), y = $(_fmt(r.y[i])), z = $(_fmt(r.z)) ($lu)",
+             "u = $(_fmt(r.u[idx])) $vu",
+             "v = $(_fmt(r.v[idx])) $vu",
+             "w = $(_fmt(r.w[idx])) $vu"]
     if isfinite(r.uncertainty_u[idx]) || isfinite(r.uncertainty_w[idx])
-        push!(lines, "σu = $(_fmt(r.uncertainty_u[idx])), σv = $(_fmt(r.uncertainty_v[idx])), σw = $(_fmt(r.uncertainty_w[idx])) ($un)")
+        push!(lines, "σu = $(_fmt(r.uncertainty_u[idx])), σv = $(_fmt(r.uncertainty_v[idx])), σw = $(_fmt(r.uncertainty_w[idx])) ($vu)")
     end
     push!(lines, "cam peak ratios: $(_fmt(r.cam1.peak_ratio[idx])) / $(_fmt(r.cam2.peak_ratio[idx]))")
     push!(lines, "status: $(_status(r, idx))")
     return join(lines, "\n")
 end
 
+function vector_summary(r::PTVResult, k::Int)
+    lu, vu = _length_unit(r), _field_unit(r)
+    lines = ["particle $k",
+             "x = $(_fmt(r.x[k])) $lu, y = $(_fmt(r.y[k])) $lu",
+             "u = $(_fmt(r.u[k])) $vu",
+             "v = $(_fmt(r.v[k])) $vu",
+             "match residual = $(_fmt(r.match_residual[k])) $lu",
+             "status: $(r.outliers[k] ? "flagged (scattered UOD)" : "valid")"]
+    return join(lines, "\n")
+end
+
+function vector_summary(r::TrackingResult, k::Int)
+    t = r.trajectories[k]
+    vu = _field_unit(r)
+    n = length(t)
+    spd = n >= 2 ? "$(_fmt(_mean_speed(t, r.scale))) $vu" : "—"
+    lines = ["trajectory $k",
+             "start frame $(t.start_frame)",
+             "$n point" * (n == 1 ? "" : "s") * ", frames $(first(t.frames))–$(last(t.frames))",
+             "gaps: $(trajectory_gap_count(t))",
+             "mean speed = $spd"]
+    return join(lines, "\n")
+end
+
+# Mean speed along a trajectory (physical when `scale` is attached). Zero for
+# a single-point track (trajectory_velocities needs ≥ 2 points).
+function _mean_speed(t, scale)
+    length(t) < 2 && return 0.0
+    u, v = trajectory_velocities(t, scale)
+    s = 0.0
+    for k in eachindex(u)
+        s += hypot(u[k], v[k])
+    end
+    return s / length(u)
+end
+
+"""
+    trajectory_gap_count(t) -> Int
+
+Number of bridged frame gaps in a trajectory: steps where `t.frames`
+increases by more than one (nonconsecutive frames linked across a gap).
+"""
+trajectory_gap_count(t) = count(>(1), diff(t.frames))
+
+"""
+    trajectory_points(t) -> (xs, ys)
+
+Flat polyline coordinates for a trajectory with `NaN` breaks inserted at
+frame gaps, so a single `lines!` call renders one polyline per continuous run
+(the standard Makie NaN-separation approach).
+"""
+function trajectory_points(t)
+    xs = Float64[]; ys = Float64[]
+    for p in eachindex(t.x)
+        if p > 1 && t.frames[p] - t.frames[p - 1] > 1
+            push!(xs, NaN); push!(ys, NaN)
+        end
+        push!(xs, t.x[p]); push!(ys, t.y[p])
+    end
+    return (xs, ys)
+end
+
 """
     vector_data(result) -> NamedTuple
 
 Displayable vectors of the result as flat, NaN-free arrays
-`(; x, y, u, v, outlier)` — the arrow-overlay input (masked and
-out-of-view nodes are skipped).
+`(; x, y, u, v, outlier)` — the arrow-overlay input. Gridded results skip
+masked and out-of-view nodes; a `PTVResult` returns one entry per matched
+particle.
 """
-function vector_data(r::AnyResult)
+function vector_data(r::GridResult)
     x = Float64[]; y = Float64[]; u = Float64[]; v = Float64[]; outlier = Bool[]
     for j in eachindex(r.x), i in eachindex(r.y)
         (isnan(r.u[i, j]) || isnan(r.v[i, j])) && continue
@@ -244,13 +405,21 @@ function vector_data(r::AnyResult)
     return (; x, y, u, v, outlier)
 end
 
+function vector_data(r::PTVResult)
+    keep = findall(k -> isfinite(r.u[k]) && isfinite(r.v[k]), eachindex(r.u))
+    return (; x = Float64.(r.x[keep]), y = Float64.(r.y[keep]),
+            u = Float64.(r.u[keep]), v = Float64.(r.v[keep]),
+            outlier = collect(Bool, r.outliers[keep]))
+end
+
 """
     auto_lengthscale(result, data = vector_data(result)) -> Float64
 
 Arrow length scale that keeps the longest displayed vector at ~85% of the
-grid spacing.
+vector spacing. Gridded results use the grid step; scattered (`PTVResult`)
+data uses a robust `sqrt(area / n)` spacing proxy.
 """
-function auto_lengthscale(r::AnyResult, data = vector_data(r))
+function auto_lengthscale(r::GridResult, data = vector_data(r))
     dmax = 0.0
     for k in eachindex(data.u)
         dmax = max(dmax, hypot(data.u[k], data.v[k]))
@@ -258,5 +427,19 @@ function auto_lengthscale(r::AnyResult, data = vector_data(r))
     spacing = min(minimum(abs.(diff(r.x)); init = Inf),
                   minimum(abs.(diff(r.y)); init = Inf))
     (isfinite(spacing) && dmax > 0) || return 1.0
+    return 0.85 * spacing / dmax
+end
+
+function auto_lengthscale(r::PTVResult, data = vector_data(r))
+    n = length(data.x)
+    n == 0 && return 1.0
+    dmax = 0.0
+    for k in eachindex(data.u)
+        dmax = max(dmax, hypot(data.u[k], data.v[k]))
+    end
+    dmax > 0 || return 1.0
+    xspan = maximum(data.x) - minimum(data.x)
+    yspan = maximum(data.y) - minimum(data.y)
+    spacing = sqrt(max(xspan * yspan, 1.0) / n)
     return 0.85 * spacing / dmax
 end

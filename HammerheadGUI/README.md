@@ -12,17 +12,21 @@ this package is where the GLMakie hard dependency lives.
 Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
 
 - **Result explorer** (done) — `result_explorer(results_or_path)` opens a
-  read-only viewer for `PIVResult` / `StereoPIVResult` sequences: scalar
-  field heatmap (magnitude, components, diagnostics, uncertainty), vector
-  arrows with outliers flagged, frame scrubbing, click-to-inspect
+  read-only viewer for all four persisted result types (`PIVResult`,
+  `StereoPIVResult`, `PTVResult`, `TrackingResult`), mixed sequences
+  included: gridded scalar-field heatmap (magnitude, components,
+  diagnostics, uncertainty) with vector arrows, PTV particle scatter with
+  displacement arrows, tracking polylines colored by mean speed (gap-aware),
+  frame scrubbing, click-to-inspect, and physical-unit labels when a
+  `PhysicalScale` is attached
 - **Mask editor** (done) — `mask_editor(image_or_path)` draws exclusion
   polygons over the image (left-click add/select, right-click close);
   `polygon_mask(editor)` exports the package mask convention and
   "save mask…" writes a mask image `load_mask` reads back
 - **Parameter form + batch runner** (done) — `batch_runner()` picks frames,
-  edits the multi-pass `PIVParameters` schedule, runs `run_piv_sequence`
-  with live progress, cancellation, incremental JLD2 output, and an
-  "explore results" hand-off
+  edits the multi-pass `PIVParameters` schedule (or an effort preset), sets
+  an optional physical scale, runs `run_piv_sequence` with live progress,
+  cancellation, incremental JLD2 output, and an "explore results" hand-off
 - **Fast startup** (done) — a PrecompileTools workload brings
   time-to-first-window to ~1 s after loading; a PackageCompiler app bundle
   for non-Julia users is still to be evaluated

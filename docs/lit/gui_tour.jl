@@ -77,6 +77,32 @@ fig
 
 describe_selection(ex)
 
+# The explorer browses all four persisted result types — planar,
+# [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
+# [`TrackingResult`](@ref) — including mixed sequences from
+# [`load_results`](@ref). A [`PTVResult`](@ref) draws as a colored particle
+# scatter (with optional displacement arrows), and its
+# [`available_fields`](@ref) are the scattered analogues:
+
+ptv = run_ptv(imgA, imgB)
+pex = ResultExplorer(ptv)
+available_fields(ptv)
+
+#-
+
+pfig = result_explorer(pex)
+
+# ## Physical units follow the result
+#
+# When a result carries a [`PhysicalScale`](@ref) (attached at analysis time
+# or with [`with_scale`](@ref)), the explorer routes it through
+# [`physical`](@ref) and every label, colorbar, and inspection panel reads in
+# physical units — millimetres per second here rather than pixels per frame:
+
+scaled = ResultExplorer(with_scale(result, PhysicalScale(50.0, 0.001, "mm", "s")))
+select_nearest!(scaled, 128, 128)
+describe_selection(scaled)
+
 # ## The mask editor
 #
 # [`mask_editor`](@ref) opens an image (a matrix or a file path) and lets
@@ -131,6 +157,12 @@ fig
 # "explore results" button opens them in the result explorer:
 
 bc.results[]
+
+# The form also carries an *effort* menu — pick `:low`/`:medium`/`:high`
+# with [`set_effort!`](@ref) to use [`run_piv_sequence`](@ref)'s presets
+# instead of the manual schedule — and a *physical scale* group
+# ([`set_scale!`](@ref)) that attaches a [`PhysicalScale`](@ref) to every
+# output, so the explorer hand-off already reads in physical units.
 
 # ## Calibration diagnostics on a real plate
 #

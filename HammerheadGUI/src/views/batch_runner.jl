@@ -17,7 +17,7 @@ frames) or to drive it programmatically.
 """
 batch_runner(; kwargs...) = batch_runner(BatchRunner(); kwargs...)
 
-function batch_runner(bc::BatchRunner; size = (900, 520))
+function batch_runner(bc::BatchRunner; size = (960, 640))
     fig = Figure(; size)
 
     # -- frames column ------------------------------------------------------
@@ -41,31 +41,48 @@ function batch_runner(bc::BatchRunner; size = (900, 520))
     # -- parameters column --------------------------------------------------
     form = GridLayout(fig[1, 2]; tellheight = false, valign = :top)
     Label(form[1, 1:2], "parameters"; halign = :left, font = :bold)
-    Label(form[2, 1], "windows"; halign = :left)
-    schedule_box = Textbox(form[2, 2];
+    Label(form[2, 1], "effort"; halign = :left)
+    effort_menu = Menu(form[2, 2]; tellwidth = false,
+                       options = [("custom", :custom), ("low", :low),
+                                  ("medium", :medium), ("high", :high)])
+    Label(form[3, 1], "windows"; halign = :left)
+    schedule_box = Textbox(form[3, 2];
                            placeholder = join(bc.window_schedule[], ", "),
                            width = 110)
-    Label(form[3, 1], "overlap"; halign = :left)
-    overlap_slider = Slider(form[3, 2]; range = 0.0:0.05:0.75,
+    Label(form[4, 1], "overlap"; halign = :left)
+    overlap_slider = Slider(form[4, 2]; range = 0.0:0.05:0.75,
                             startvalue = bc.overlap_fraction[])
-    Label(form[4, 1], "correlation"; halign = :left)
-    corr_menu = Menu(form[4, 2]; tellwidth = false,
+    Label(form[5, 1], "correlation"; halign = :left)
+    corr_menu = Menu(form[5, 2]; tellwidth = false,
                      options = [("cross", :cross), ("phase", :phase)])
-    Label(form[5, 1], "apodization"; halign = :left)
-    apod_menu = Menu(form[5, 2]; options = [("none", :none), ("gauss", :gauss)])
-    Label(form[6, 1], "subpixel"; halign = :left)
-    subpx_menu = Menu(form[6, 2]; options = [("gauss3", :gauss3),
+    Label(form[6, 1], "apodization"; halign = :left)
+    apod_menu = Menu(form[6, 2]; options = [("none", :none), ("gauss", :gauss)])
+    Label(form[7, 1], "subpixel"; halign = :left)
+    subpx_menu = Menu(form[7, 2]; options = [("gauss3", :gauss3),
                                              ("gauss9", :gauss9),
                                              ("gauss2d", :gauss2d)])
-    pad_toggle = Toggle(form[7, 1]; active = bc.padding[], halign = :right)
-    Label(form[7, 2], "padding"; halign = :left)
-    unc_toggle = Toggle(form[8, 1]; active = bc.uncertainty[], halign = :right)
-    Label(form[8, 2], "uncertainty"; halign = :left)
-    summary_obs = lift((args...) -> _form_summary(bc), bc.window_schedule,
-                       bc.overlap_fraction, bc.correlation_method, bc.padding,
-                       bc.apodization, bc.subpixel_method, bc.uncertainty)
-    Label(form[9, 1:2], summary_obs; halign = :left, justification = :left,
+    pad_toggle = Toggle(form[8, 1]; active = bc.padding[], halign = :right)
+    Label(form[8, 2], "padding"; halign = :left)
+    unc_toggle = Toggle(form[9, 1]; active = bc.uncertainty[], halign = :right)
+    Label(form[9, 2], "uncertainty"; halign = :left)
+    summary_obs = lift((args...) -> _form_summary(bc), bc.effort,
+                       bc.window_schedule, bc.overlap_fraction,
+                       bc.correlation_method, bc.padding, bc.apodization,
+                       bc.subpixel_method, bc.uncertainty, bc.pixel_size,
+                       bc.dt, bc.length_unit, bc.time_unit)
+    Label(form[10, 1:2], summary_obs; halign = :left, justification = :left,
           word_wrap = true, width = 230)
+
+    # physical scale (attached to the outputs only when non-default)
+    Label(form[11, 1:2], "physical scale"; halign = :left, font = :bold)
+    Label(form[12, 1], "pixel size"; halign = :left)
+    px_box = Textbox(form[12, 2]; placeholder = string(bc.pixel_size[]), width = 110)
+    Label(form[13, 1], "dt"; halign = :left)
+    dt_box = Textbox(form[13, 2]; placeholder = string(bc.dt[]), width = 110)
+    Label(form[14, 1], "length unit"; halign = :left)
+    lu_box = Textbox(form[14, 2]; placeholder = bc.length_unit[], width = 110)
+    Label(form[15, 1], "time unit"; halign = :left)
+    tu_box = Textbox(form[15, 2]; placeholder = bc.time_unit[], width = 110)
 
     # -- run column ----------------------------------------------------------
     run_col = GridLayout(fig[1, 3]; tellheight = false, valign = :top)
@@ -93,6 +110,7 @@ function batch_runner(bc::BatchRunner; size = (900, 520))
 
     # -- widget <-> controller wiring (guards break notification cycles) ----
     _sync_menu!(mode_menu, bc.pair_mode)
+    _sync_menu!(effort_menu, bc.effort)
     _sync_menu!(corr_menu, bc.correlation_method)
     _sync_menu!(apod_menu, bc.apodization)
     _sync_menu!(subpx_menu, bc.subpixel_method)
@@ -111,6 +129,28 @@ function batch_runner(bc::BatchRunner; size = (900, 520))
         catch err
             bc.status[] = Controllers._errmsg(err)
         end
+    end
+    on(px_box.stored_string) do s
+        s === nothing && return
+        try
+            set_pixel_size!(bc, s)
+        catch err
+            bc.status[] = Controllers._errmsg(err)
+        end
+    end
+    on(dt_box.stored_string) do s
+        s === nothing && return
+        try
+            set_dt!(bc, s)
+        catch err
+            bc.status[] = Controllers._errmsg(err)
+        end
+    end
+    on(lu_box.stored_string) do s
+        s === nothing || (bc.length_unit[] = s)
+    end
+    on(tu_box.stored_string) do s
+        s === nothing || (bc.time_unit[] = s)
     end
 
     on(add_btn.clicks) do _
@@ -143,11 +183,23 @@ function batch_runner(bc::BatchRunner; size = (900, 520))
 end
 
 function _form_summary(bc::BatchRunner)
-    return string(join(bc.window_schedule[], "/"), " px, ",
-                  round(Int, 100 * bc.overlap_fraction[]), "% overlap, ",
-                  bc.correlation_method[],
-                  bc.padding[] ? ", padded" : "",
-                  bc.apodization[] === :none ? "" : ", $(bc.apodization[])",
-                  ", ", bc.subpixel_method[],
-                  bc.uncertainty[] ? ", uncertainty" : "")
+    base = if bc.effort[] === :custom
+        string(join(bc.window_schedule[], "/"), " px, ",
+               round(Int, 100 * bc.overlap_fraction[]), "% overlap, ",
+               bc.correlation_method[],
+               bc.padding[] ? ", padded" : "",
+               bc.apodization[] === :none ? "" : ", $(bc.apodization[])",
+               ", ", bc.subpixel_method[],
+               bc.uncertainty[] ? ", uncertainty" : "")
+    else
+        "effort: $(bc.effort[]) preset (manual schedule inactive)"
+    end
+    sc = try
+        build_scale(bc)
+    catch
+        nothing
+    end
+    sc === nothing && return base
+    return string(base, "\nscale: ", bc.pixel_size[], " ", bc.length_unit[],
+                  "/px, ", bc.dt[], " ", bc.time_unit[], "/frame")
 end

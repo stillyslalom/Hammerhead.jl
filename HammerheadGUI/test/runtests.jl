@@ -21,6 +21,21 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
                                  r_unc.outliers, r_unc.mask,
                                  r_unc, r_plain, r_unc.parameters)
 
+# Scattered-result fixtures constructed directly for determinism (one flagged
+# PTV particle; one trajectory with a bridged frame gap). Same caveat as the
+# StereoPIVResult above: positional constructors break when fields are added.
+const px_a = Particles([10.0, 20.0, 30.0, 40.0], [10.0, 20.0, 30.0, 40.0],
+                       [1.0, 1.0, 1.0, 1.0], [3.0, 3.0, 3.0, 3.0])
+const r_ptv = PTVResult([10.0, 20.0, 30.0, 40.0], [10.0, 20.0, 30.0, 40.0],
+                        [2.0, 2.0, 2.0, 2.0], [1.0, 1.0, 1.0, 1.0],
+                        [0.2, 0.1, 0.3, 5.0],
+                        BitVector([false, false, false, true]),
+                        [1, 2, 3, 4], [1, 2, 3, 4], px_a, px_a, PTVParameters())
+const r_track = TrackingResult(
+    [Trajectory{Float64}(1, [10.0, 12.0, 14.0, 16.0], [10.0, 11.0, 12.0, 13.0], [1, 2, 3, 4]),
+     Trajectory{Float64}(1, [50.0, 52.0, 54.0], [50.0, 51.0, 52.0], [1, 2, 4])],
+    4, PTVParameters())
+
 @testset "HammerheadGUI.jl" begin
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()
@@ -109,6 +124,109 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         @test_throws ArgumentError ResultExplorer(PIVResult[])
     end
 
+    @testset "ResultExplorer physical units (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # unscaled fallbacks: px for planar, world units for stereo
+        @test C.field_label(r_plain, :u) == "u (px)"
+        @test C.field_label(r_plain, :peak_ratio) == "peak ratio"
+        @test C.field_label(r_stereo, :w) == "w (world units)"
+
+        # a real scale attached -> physical units in every label + summary
+        scale = PhysicalScale(20.0, 0.5, "mm", "s")
+        exs = ResultExplorer(with_scale(r_unc, scale))
+        rs = current_result(exs)
+        @test rs.scale !== nothing
+        @test C.field_label(rs, :u) == "u (mm/s)"
+        @test C.field_label(rs, :magnitude) == "|displacement| (mm/s)"
+        @test C.field_label(rs, :uncertainty_u) == "σu (mm/s)"
+        @test C.field_label(rs, :peak_ratio) == "peak ratio"
+        select_nearest!(exs, rs.x[3], rs.y[3])
+        info = describe_selection(exs)
+        @test occursin("mm/s", info) && occursin("mm", info)
+
+        # PTV match_residual is a length; velocity fields carry the velocity unit
+        exp = ResultExplorer(with_scale(r_ptv, scale))
+        rp = current_result(exp)
+        @test C.field_label(rp, :match_residual) == "match residual (mm)"
+        @test C.field_label(rp, :u) == "u (mm/s)"
+
+        # tracking keeps dt through physical; speed carries the velocity unit
+        ext = ResultExplorer(with_scale(r_track, scale))
+        rt = current_result(ext)
+        @test C.field_label(rt, :speed) == "speed (mm/s)"
+        select_nearest!(ext, rt.trajectories[1].x[1], rt.trajectories[1].y[1])
+        @test occursin("mm/s", describe_selection(ext))
+    end
+
+    @testset "ResultExplorer PTV + tracking (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        exp = ResultExplorer(r_ptv)
+        @test nframes(exp) == 1
+        @test exp.field[] == :magnitude
+        @test available_fields(r_ptv) == [:magnitude, :u, :v, :match_residual]
+        @test field_values(r_ptv, :magnitude) ≈ hypot.(r_ptv.u, r_ptv.v)
+        @test field_values(r_ptv, :u) === r_ptv.u
+        @test_throws ArgumentError field_values(r_ptv, :peak_ratio)
+
+        # 2-D nearest particle (not per-axis), inspection wording is "flagged"
+        select_nearest!(exp, 21.0, 19.0)
+        @test exp.selection[] == 2
+        select_nearest!(exp, 41.0, 39.0)
+        @test exp.selection[] == 4
+        info = describe_selection(exp)
+        @test occursin("particle 4", info) && occursin("flagged", info)
+        @test !occursin("replaced", info)
+
+        # vector_data flat + finite; scattered auto_lengthscale positive
+        d = C.vector_data(r_ptv)
+        @test length(d.x) == length(d.u) == length(d.outlier) == 4
+        @test all(isfinite, d.u) && all(isfinite, d.v)
+        @test C.auto_lengthscale(r_ptv) > 0
+
+        # tracking: fields, gap counting, NaN-separated polylines, selection
+        ext = ResultExplorer(r_track)
+        @test available_fields(r_track) == [:speed]
+        @test C.trajectory_gap_count(r_track.trajectories[1]) == 0
+        @test C.trajectory_gap_count(r_track.trajectories[2]) == 1
+        xs, ys = C.trajectory_points(r_track.trajectories[2])
+        @test count(isnan, xs) == 1 && length(xs) == 4   # 3 points + 1 gap break
+        speeds = field_values(r_track, :speed)
+        @test length(speeds) == 2 && all(>(0), speeds)
+        select_nearest!(ext, 51.0, 50.0)
+        @test ext.selection[] == 2
+        s = describe_selection(ext)
+        @test occursin("trajectory 2", s) && occursin("gaps: 1", s)
+
+        # selection type follows the result: a stale CartesianIndex is dropped
+        # for scattered, and a stale Int for grid, on a mixed sequence
+        exm = ResultExplorer([r_unc, r_ptv])
+        select_nearest!(exm, r_unc.x[1], r_unc.y[1])
+        @test exm.selection[] isa CartesianIndex
+        set_frame!(exm, 2)
+        @test exm.selection[] === nothing
+        select_nearest!(exm, 10.0, 10.0)
+        @test exm.selection[] isa Int
+        set_frame!(exm, 1)
+        @test exm.selection[] === nothing
+    end
+
+    @testset "mixed-type JLD2 round-trip" begin
+        path = joinpath(mktempdir(), "mixed.jld2")
+        entries = Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}[
+            r_unc, r_stereo, r_ptv, r_track]
+        save_results(path, entries)
+        loaded = load_results(path)
+        @test length(loaded) == 4
+        ex = ResultExplorer(path)
+        @test nframes(ex) == 4
+        @test current_result(ex) isa PIVResult
+        set_frame!(ex, 2); @test current_result(ex) isa StereoPIVResult
+        set_frame!(ex, 3); @test current_result(ex) isa PTVResult
+        set_frame!(ex, 4); @test current_result(ex) isa TrackingResult
+    end
+
     @testset "result_explorer view (offscreen)" begin
         ex = ResultExplorer([r_unc, r_plain])
         fig = result_explorer(ex; size = (900, 650))
@@ -128,6 +246,24 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
         # stereo view renders too
         figs = result_explorer(r_stereo)
         @test !isempty(colorbuffer(figs; px_per_unit = 1))
+
+        # PTV explorer: renders and re-renders on a field/toggle change
+        exp = ResultExplorer(r_ptv)
+        figp = result_explorer(exp; size = (900, 650))
+        imgp1 = copy(colorbuffer(figp; px_per_unit = 1))
+        @test size(imgp1) == (650, 900)
+        set_field!(exp, :match_residual)
+        exp.show_vectors[] = false
+        imgp2 = colorbuffer(figp; px_per_unit = 1)
+        @test imgp2 != imgp1
+
+        # tracking explorer: polylines render and re-render on selection
+        ext = ResultExplorer(r_track)
+        figt = result_explorer(ext; size = (900, 650))
+        imgt1 = copy(colorbuffer(figt; px_per_unit = 1))
+        @test size(imgt1) == (650, 900)
+        select_nearest!(ext, 51.0, 50.0)
+        @test colorbuffer(figt; px_per_unit = 1) != imgt1
     end
 
     @testset "MaskEditor controller (no GL)" begin
@@ -280,6 +416,28 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
                           mask = m, padding = false, apodization = :none)
         start!(bc4; async = false)
         @test any(bc4.results[][1].mask)
+
+        # effort presets bypass the manual schedule
+        @test_throws ArgumentError set_effort!(BatchRunner(), :turbo)
+        bce = BatchRunner(files = Any[imgA, imgB], effort = :low)
+        @test C.validate(bce) === nothing
+        start!(bce; async = false)
+        @test bce.results[] !== nothing && length(bce.results[]) == 1
+        @test occursin("done", bce.status[])
+
+        # physical scale plumbs into the outputs; default is no scale
+        @test C.build_scale(BatchRunner(files = Any[imgA, imgB])) === nothing
+        @test_throws ArgumentError C.set_pixel_size!(BatchRunner(), "-1")
+        @test_throws ArgumentError C.set_pixel_size!(BatchRunner(), "abc")
+        bcs = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
+                          padding = false, apodization = :none,
+                          pixel_size = 20.0, dt = 0.5,
+                          length_unit = "mm", time_unit = "s")
+        @test C.build_scale(bcs) isa PhysicalScale
+        start!(bcs; async = false)
+        sc = bcs.results[][1].scale
+        @test sc !== nothing && sc.length_unit == "mm" && sc.time_unit == "s"
+        @test sc.pixel_size == 20.0 && sc.dt == 0.5
     end
 
     @testset "batch_runner view (offscreen)" begin
@@ -288,10 +446,12 @@ const r_stereo = StereoPIVResult(collect(r_unc.x), collect(r_unc.y), 0.0,
                          padding = false, apodization = :none)
         fig = batch_runner(bc)
         img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (520, 900)
+        @test size(img1) == (640, 960)
 
         set_schedule!(bc, "64 32")   # form summary label updates
         bc.uncertainty[] = true      # toggle syncs back into the widget
+        set_effort!(bc, :medium)     # effort menu + inactive-schedule summary
+        set_scale!(bc; pixel_size = 5.0, length_unit = "mm")  # scale summary line
         start!(bc; async = false)    # status + progress labels update
         @test occursin("done", bc.status[])
         img2 = colorbuffer(fig; px_per_unit = 1)

@@ -12,19 +12,30 @@ below opens a window.
 ## Explore a results file
 
 [`result_explorer`](@ref) takes anything [`load_results`](@ref) produces —
-planar and stereo entries, mixed files included — or in-memory results:
+planar, stereo, PTV, and tracking entries, mixed files included — or
+in-memory results:
 
 ```julia
 using HammerheadGUI
 
 result_explorer("run_042.jld2")
 result_explorer(result)              # a PIVResult / StereoPIVResult
+result_explorer(ptv_result)          # a PTVResult / TrackingResult
 result_explorer([r1, r2, r3])        # a sequence — the slider scrubs frames
 ```
 
-The field menu lists displacement magnitude, components, the validation
-diagnostics, and per-vector σ when the analysis ran with
-`uncertainty = true`; click any vector to inspect its numbers.
+For gridded results the field menu lists displacement magnitude, components,
+the validation diagnostics, and per-vector σ when the analysis ran with
+`uncertainty = true`; click any vector to inspect its numbers. A
+[`PTVResult`](@ref) is drawn as a colored particle scatter with optional
+displacement arrows (flagged particles in red), and a
+[`TrackingResult`](@ref) as trajectory polylines colored by mean speed, with
+breaks at bridged frame gaps.
+
+When a result carries a [`PhysicalScale`](@ref) — attached at analysis time
+or with [`with_scale`](@ref) — the explorer displays in physical units:
+axis labels, the colorbar, and the inspection panel all read `mm`, `mm/s`,
+and so on instead of `px` / `px/frame`.
 
 ## Draw a mask and use it
 
@@ -65,6 +76,18 @@ or chained (`1-2, 2-3`) pairing, the windows textbox takes a schedule like
 pair by pair; read it with [`load_results`](@ref)). "Cancel" stops after
 the pair in flight and keeps every finished pair. "Explore results" opens
 the batch in the result explorer.
+
+The *effort* menu switches between the manual schedule (`:custom`) and
+[`run_piv_sequence`](@ref)'s `:low` / `:medium` / `:high` presets — when a
+preset is active the manual schedule is ignored (the summary says so). The
+*physical scale* group (pixel size, dt, and unit labels) attaches a
+[`PhysicalScale`](@ref) to every output when any field is non-default, so the
+batch results carry units straight into the explorer. From code:
+
+```julia
+set_effort!(bc, :high)
+set_scale!(bc; pixel_size = 50.0, dt = 0.001, length_unit = "mm", time_unit = "s")
+```
 
 Seed the form from code with a [`BatchRunner`](@ref) — every form field is
 an observable on the controller:

@@ -21,22 +21,29 @@ run state — all as `Observables`.
 
 # Keyword defaults
 - `files = Any[]` (frame paths and/or in-memory matrices), `pair_mode = :paired`
+- `effort = :custom` — `:custom` runs the manual window schedule below;
+  `:low` / `:medium` / `:high` use [`run_piv_sequence`](@ref)'s effort presets
+  and ignore the schedule/option widgets.
 - `window_schedule = [64, 32, 32]`, `overlap_fraction = 0.5`
 - `correlation_method = :cross`, `padding = true`, `apodization = :gauss`
   (the accuracy configuration), `subpixel_method = :gauss3`,
   `uncertainty = false`
+- `pixel_size = 1.0`, `dt = 1.0`, `length_unit = "px"`, `time_unit = "frame"` —
+  a [`PhysicalScale`](@ref) is attached to the outputs only when any of these
+  differs from its default.
 - `output_path = ""` (empty = keep results in memory only), `mask = nothing`
 
 Drive it with [`add_files!`](@ref), [`set_schedule!`](@ref),
-[`start!`](@ref) and [`cancel!`](@ref); watch `progress` (`(done, total)`),
-`status`, `running`, and `results` (a `Vector{PIVResult}` after a completed
-run, `nothing` before).
+[`set_effort!`](@ref), [`start!`](@ref) and [`cancel!`](@ref); watch
+`progress` (`(done, total)`), `status`, `running`, and `results` (a
+`Vector{PIVResult}` after a completed run, `nothing` before).
 """
 struct BatchRunner
     files::Observable{Vector{Any}}
     pair_mode::Observable{Symbol}
     output_path::Observable{String}
     mask::Observable{Union{Nothing,BitMatrix}}
+    effort::Observable{Symbol}
     window_schedule::Observable{Vector{Int}}
     overlap_fraction::Observable{Float64}
     correlation_method::Observable{Symbol}
@@ -44,6 +51,10 @@ struct BatchRunner
     apodization::Observable{Symbol}
     subpixel_method::Observable{Symbol}
     uncertainty::Observable{Bool}
+    pixel_size::Observable{Float64}
+    dt::Observable{Float64}
+    length_unit::Observable{String}
+    time_unit::Observable{String}
     running::Observable{Bool}
     cancel::Observable{Bool}
     progress::Observable{Tuple{Int,Int}}
@@ -53,20 +64,27 @@ end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
                      output_path::AbstractString = "", mask = nothing,
+                     effort::Symbol = :custom,
                      window_schedule::AbstractVector{<:Integer} = [64, 32, 32],
                      overlap_fraction::Real = 0.5,
                      correlation_method::Symbol = :cross,
                      padding::Bool = true, apodization::Symbol = :gauss,
                      subpixel_method::Symbol = :gauss3,
-                     uncertainty::Bool = false)
+                     uncertainty::Bool = false,
+                     pixel_size::Real = 1.0, dt::Real = 1.0,
+                     length_unit::AbstractString = "px",
+                     time_unit::AbstractString = "frame")
     return BatchRunner(Observable{Vector{Any}}(collect(Any, files)),
                        Observable(pair_mode), Observable(String(output_path)),
                        Observable{Union{Nothing,BitMatrix}}(mask === nothing ? nothing : BitMatrix(mask)),
+                       Observable(effort),
                        Observable(collect(Int, window_schedule)),
                        Observable(Float64(overlap_fraction)),
                        Observable(correlation_method), Observable(padding),
                        Observable(apodization), Observable(subpixel_method),
                        Observable(uncertainty),
+                       Observable(Float64(pixel_size)), Observable(Float64(dt)),
+                       Observable(String(length_unit)), Observable(String(time_unit)),
                        Observable(false), Observable(false),
                        Observable((0, 0)), Observable(""),
                        Observable{Union{Nothing,Vector{PIVResult}}}(nothing))
@@ -135,12 +153,80 @@ function set_schedule!(bc::BatchRunner, s::AbstractVector{<:Integer})
     return bc
 end
 
+const EFFORT_LEVELS = (:custom, :low, :medium, :high)
+
+"""
+    set_effort!(bc::BatchRunner, effort::Symbol)
+
+Set the analysis effort. `:custom` uses the manual window schedule and
+option widgets; `:low` / `:medium` / `:high` use [`run_piv_sequence`](@ref)'s
+effort presets and ignore the manual schedule.
+"""
+function set_effort!(bc::BatchRunner, effort::Symbol)
+    effort in EFFORT_LEVELS ||
+        throw(ArgumentError("effort must be one of $(EFFORT_LEVELS), got :$effort"))
+    bc.effort[] = effort
+    return bc
+end
+
+# Parse a positive-number textbox entry (pixel size / dt).
+function _parse_positive(str::AbstractString, what::AbstractString)
+    v = tryparse(Float64, strip(str))
+    (v === nothing || !(isfinite(v) && v > 0)) &&
+        throw(ArgumentError("$what must be a positive number, got \"$str\""))
+    return v
+end
+
+"""
+    set_pixel_size!(bc::BatchRunner, value)
+    set_dt!(bc::BatchRunner, value)
+
+Set the physical `pixel_size` / frame interval `dt` from a positive number or
+its string form (see [`set_scale!`](@ref)).
+"""
+set_pixel_size!(bc::BatchRunner, v::Real) =
+    (v > 0 || throw(ArgumentError("pixel_size must be positive")); bc.pixel_size[] = Float64(v); bc)
+set_pixel_size!(bc::BatchRunner, s::AbstractString) =
+    (bc.pixel_size[] = _parse_positive(s, "pixel size"); bc)
+set_dt!(bc::BatchRunner, v::Real) =
+    (v > 0 || throw(ArgumentError("dt must be positive")); bc.dt[] = Float64(v); bc)
+set_dt!(bc::BatchRunner, s::AbstractString) =
+    (bc.dt[] = _parse_positive(s, "dt"); bc)
+
+"""
+    set_scale!(bc::BatchRunner; pixel_size, dt, length_unit, time_unit)
+
+Set any of the physical-scale form fields at once; omitted fields are left
+unchanged. Positive numbers are required for `pixel_size`/`dt`.
+"""
+function set_scale!(bc::BatchRunner; pixel_size = nothing, dt = nothing,
+                    length_unit = nothing, time_unit = nothing)
+    pixel_size === nothing || set_pixel_size!(bc, pixel_size)
+    dt === nothing || set_dt!(bc, dt)
+    length_unit === nothing || (bc.length_unit[] = String(length_unit))
+    time_unit === nothing || (bc.time_unit[] = String(time_unit))
+    return bc
+end
+
+"""
+    build_scale(bc::BatchRunner) -> Union{Nothing,PhysicalScale}
+
+The [`PhysicalScale`](@ref) attached to the batch outputs, or `nothing` when
+every scale field is at its default (`pixel_size = dt = 1`, units `px`/`frame`)
+so the results stay in pixel/frame units.
+"""
+function build_scale(bc::BatchRunner)
+    (bc.pixel_size[] == 1.0 && bc.dt[] == 1.0 &&
+     bc.length_unit[] == "px" && bc.time_unit[] == "frame") && return nothing
+    return PhysicalScale(bc.pixel_size[], bc.dt[], bc.length_unit[], bc.time_unit[])
+end
+
 """
     build_parameters(bc::BatchRunner) -> Vector{PIVParameters}
 
 The multi-pass schedule for the current form state
 (`Hammerhead.multipass_parameters`; propagates `PIVParameters` validation
-errors).
+errors). Only relevant when `effort == :custom`.
 """
 build_parameters(bc::BatchRunner) =
     multipass_parameters(bc.window_schedule[];
@@ -154,7 +240,8 @@ build_parameters(bc::BatchRunner) =
 """
     validate(bc::BatchRunner) -> Union{Nothing,String}
 
-`nothing` when the batch can start, otherwise a human-readable reason.
+`nothing` when the batch can start, otherwise a human-readable reason. With a
+non-`:custom` effort the manual schedule is not consulted.
 """
 function validate(bc::BatchRunner)
     isempty(bc.files[]) && return "add frames first"
@@ -164,8 +251,17 @@ function validate(bc::BatchRunner)
         return _errmsg(err)
     end
     isempty(prs) && return "no pairs to process"
+    if bc.effort[] === :custom
+        try
+            build_parameters(bc)
+        catch err
+            return _errmsg(err)
+        end
+    elseif !(bc.effort[] in EFFORT_LEVELS)
+        return "unknown effort :$(bc.effort[])"
+    end
     try
-        build_parameters(bc)
+        build_scale(bc)
     catch err
         return _errmsg(err)
     end
@@ -205,7 +301,6 @@ cancel!(bc::BatchRunner) = (bc.cancel[] = true; bc)
 function _run!(bc::BatchRunner)
     try
         prs = frame_pairs(bc)
-        params = build_parameters(bc)
         bc.progress[] = (0, length(prs))
         bc.status[] = "running…"
         callback = (i, n) -> begin
@@ -213,8 +308,15 @@ function _run!(bc::BatchRunner)
             bc.cancel[] && throw(BatchCancelled())
         end
         output = isempty(bc.output_path[]) ? nothing : bc.output_path[]
-        kwargs = bc.mask[] === nothing ? (;) : (; mask = bc.mask[])
-        results = run_piv_sequence(prs, params; progress = callback, output, kwargs...)
+        scale = build_scale(bc)
+        maskkw = bc.mask[] === nothing ? (;) : (; mask = bc.mask[])
+        results = if bc.effort[] === :custom
+            run_piv_sequence(prs, build_parameters(bc);
+                             progress = callback, output, scale, maskkw...)
+        else
+            run_piv_sequence(prs; effort = bc.effort[],
+                             progress = callback, output, scale, maskkw...)
+        end
         bc.results[] = results
         bc.status[] = "done: $(length(results)) pairs" *
                       (output === nothing ? "" : " → $(basename(output))")

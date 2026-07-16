@@ -314,7 +314,13 @@ Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
 (only Hammerhead + Observables + Printf in scope — the module boundary
 enforces the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
 GLMakie shells. Components so far (each = controller + view pair, same
-naming): `ResultExplorer`/`result_explorer`; `MaskEditor`/`mask_editor`
+naming): `ResultExplorer`/`result_explorer` (browses all four persisted
+result types — `PIVResult`/`StereoPIVResult` grids, `PTVResult` particle
+scatter, `TrackingResult` gap-aware polylines colored by mean speed — mixed
+sequences included; routes each entry through `physical` at construction so a
+`PhysicalScale` gives physical-unit axis/colorbar/inspection labels;
+selection is a `CartesianIndex` for grids, a linear `Int` for scattered
+types); `MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
 the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
@@ -322,7 +328,10 @@ the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
 callback inside `@async` — cooperative, so GL renders keep happening off
 `run_piv`'s internal thread-spawn yields while observables stay on the
 primary thread; cancel = throw `BatchCancelled` from the callback, which
-keeps finished pairs in the incremental output); `CalibrationReview`/
+keeps finished pairs in the incremental output; an `effort` menu
+(`:custom` manual schedule vs `:low`/`:medium`/`:high` presets) and a
+physical-scale form group attach a `PhysicalScale` to the outputs);
+`CalibrationReview`/
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an
 embedded explorer via `result_explorer!(gridposition, ex)`, the embeddable

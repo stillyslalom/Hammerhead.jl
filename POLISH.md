@@ -42,7 +42,7 @@ first. Uncertainty overlays should follow only after particle-fit and match
 uncertainty have defensible semantics. The GUI should consume the existing
 package-native persistence rather than inventing a GUI-only representation.
 
-- [ ] Load and visualize persisted `PTVResult` and `TrackingResult` values in
+- [x] Load and visualize persisted `PTVResult` and `TrackingResult` values in
   the GUI, including attached-scale axis labels and trajectory gaps.
 - [ ] Add per-particle position and displacement uncertainty.
 - [ ] Add particle/displacement uncertainty overlays to the GUI.

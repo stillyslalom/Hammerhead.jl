@@ -33,12 +33,14 @@ include("controllers/calibration_review.jl")
 export ResultExplorer, nframes, current_result, set_frame!,
        available_fields, field_values, field_name, field_label, set_field!,
        select_nearest!, clear_selection!, describe_selection,
-       vector_data, auto_lengthscale
+       vector_data, auto_lengthscale, selection_point,
+       trajectory_points, trajectory_gap_count
 export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
 export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
-       parse_schedule, set_schedule!, build_parameters, validate,
+       parse_schedule, set_schedule!, set_effort!, set_pixel_size!, set_dt!,
+       set_scale!, build_parameters, build_scale, validate,
        start!, cancel!
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
@@ -54,7 +56,7 @@ export ResultExplorer, result_explorer, result_explorer!,
 export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
-       start!, cancel!
+       set_effort!, set_scale!, start!, cancel!
 export CalibrationReview, calibration_review, selfcal_review,
        nplanes, set_plane!
 
@@ -79,6 +81,23 @@ using PrecompileTools: @setup_workload, @compile_workload
         set_field!(ex, :peak_ratio)
         select_nearest!(ex, r.x[1], r.y[1])
         describe_selection(ex)
+
+        # Scattered-result explorer paths (PTV particles + trajectories),
+        # built from tiny constructed results so the first window on those
+        # paths is warm too. Figure construction only — no GL context here.
+        pts = Particles([10.0, 20.0, 30.0], [10.0, 20.0, 30.0],
+                        [1.0, 1.0, 1.0], [3.0, 3.0, 3.0])
+        ptv = PTVResult([10.0, 20.0, 30.0], [10.0, 20.0, 30.0],
+                        [1.0, 1.0, 1.0], [0.5, 0.5, 0.5], [0.1, 0.1, 0.1],
+                        falses(3), [1, 2, 3], [1, 2, 3], pts, pts, PTVParameters())
+        exp = ResultExplorer(ptv)
+        result_explorer(exp)
+        select_nearest!(exp, 10.0, 10.0)
+        describe_selection(exp)
+
+        tr = TrackingResult([Trajectory(1, [10.0, 11.0, 12.0], [10.0, 10.5, 11.0])],
+                            3, PTVParameters())
+        result_explorer(ResultExplorer(tr))
 
         me = MaskEditor(imgA)
         mask_editor(me)
