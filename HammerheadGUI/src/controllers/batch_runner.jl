@@ -35,8 +35,11 @@ run state — all as `Observables`.
 
 Drive it with [`add_files!`](@ref), [`set_schedule!`](@ref),
 [`set_effort!`](@ref), [`start!`](@ref) and [`cancel!`](@ref); watch
-`progress` (`(done, total)`), `status`, `running`, and `results` (a
-`Vector{PIVResult}` after a completed run, `nothing` before).
+`progress` (`(done, total)`), `status`, `running`, `results` (a
+`Vector{PIVResult}` after a completed run, `nothing` before), and
+`completed` (the finished pairs' results so far, appended and notified
+live while the batch runs — feed them to a [`ResultExplorer`](@ref) via
+[`push_result!`](@ref) to browse a batch in progress).
 """
 struct BatchRunner
     files::Observable{Vector{Any}}
@@ -60,6 +63,7 @@ struct BatchRunner
     progress::Observable{Tuple{Int,Int}}
     status::Observable{String}
     results::Observable{Union{Nothing,Vector{PIVResult}}}
+    completed::Observable{Vector{PIVResult}}
 end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
@@ -87,7 +91,8 @@ function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
                        Observable(String(length_unit)), Observable(String(time_unit)),
                        Observable(false), Observable(false),
                        Observable((0, 0)), Observable(""),
-                       Observable{Union{Nothing,Vector{PIVResult}}}(nothing))
+                       Observable{Union{Nothing,Vector{PIVResult}}}(nothing),
+                       Observable(PIVResult[]))
 end
 
 function Base.show(io::IO, bc::BatchRunner)
@@ -303,19 +308,24 @@ function _run!(bc::BatchRunner)
         prs = frame_pairs(bc)
         bc.progress[] = (0, length(prs))
         bc.status[] = "running…"
+        bc.completed[] = PIVResult[]   # fresh accumulator for this run
         callback = (i, n) -> begin
             bc.progress[] = (i, n)
             bc.cancel[] && throw(BatchCancelled())
         end
+        # Live accumulator: run_piv_sequence stores results on this (serial)
+        # task, so the push happens on the task driving the batch and open
+        # views can follow along.
+        on_result = (i, r) -> (push!(bc.completed[], r); notify(bc.completed))
         output = isempty(bc.output_path[]) ? nothing : bc.output_path[]
         scale = build_scale(bc)
         maskkw = bc.mask[] === nothing ? (;) : (; mask = bc.mask[])
         results = if bc.effort[] === :custom
             run_piv_sequence(prs, build_parameters(bc);
-                             progress = callback, output, scale, maskkw...)
+                             progress = callback, on_result, output, scale, maskkw...)
         else
             run_piv_sequence(prs; effort = bc.effort[],
-                             progress = callback, output, scale, maskkw...)
+                             progress = callback, on_result, output, scale, maskkw...)
         end
         bc.results[] = results
         bc.status[] = "done: $(length(results)) pairs" *

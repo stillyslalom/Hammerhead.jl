@@ -30,7 +30,7 @@ include("controllers/mask_editor.jl")
 include("controllers/batch_runner.jl")
 include("controllers/calibration_review.jl")
 
-export ResultExplorer, nframes, current_result, set_frame!,
+export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
        select_nearest!, clear_selection!, describe_selection,
        vector_data, auto_lengthscale, selection_point,
@@ -51,7 +51,7 @@ end # module Controllers
 using .Controllers
 
 export ResultExplorer, result_explorer, result_explorer!,
-       nframes, current_result, set_frame!,
+       nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, set_field!,
        select_nearest!, clear_selection!, describe_selection,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits

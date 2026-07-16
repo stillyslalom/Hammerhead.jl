@@ -95,6 +95,31 @@ using Statistics
                          progress = (i, n) -> push!(calls, (i, n)))
         @test calls == [(1, 2), (2, 2)]
 
+        # on_result live-consumer hook: sees every result in order, before
+        # the matching progress call, and the results are the stored ones.
+        events = []
+        seen = PIVResult[]
+        res_live = run_piv_sequence([(imgA, imgB), (imgA, imgB)], params;
+                                    on_result = (i, r) -> (push!(events, (:result, i)); push!(seen, r)),
+                                    progress = (i, n) -> push!(events, (:progress, i)))
+        @test events == [(:result, 1), (:progress, 1), (:result, 2), (:progress, 2)]
+        @test seen[1] === res_live[1] && seen[2] === res_live[2]
+
+        # A throwing on_result aborts the batch like the progress contract.
+        @test_throws ErrorException run_piv_sequence(
+            [(imgA, imgB), (imgA, imgB)], params; progress = false,
+            on_result = (i, r) -> i == 1 && error("stop"))
+
+        # The no-params (effort) method and run_ptv_sequence thread the same hook.
+        live_effort = Int[]
+        run_piv_sequence([(imgA, imgB)]; effort = :low, progress = false,
+                         on_result = (i, r) -> push!(live_effort, i))
+        @test live_effort == [1]
+        ptv_idx = Int[]
+        run_ptv_sequence([(imgA, imgB)]; progress = false,
+                         on_result = (i, r) -> (push!(ptv_idx, i); @test r isa PTVResult))
+        @test ptv_idx == [1]
+
         # Throwing from the callback aborts the batch but keeps the pairs
         # finished before the abort in the incremental output.
         mktempdir() do dir

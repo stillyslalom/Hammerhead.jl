@@ -486,6 +486,25 @@ const r_track = TrackingResult(
         @test bce.results[] !== nothing && length(bce.results[]) == 1
         @test occursin("done", bce.status[])
 
+        # completed accumulates live during the run, in order
+        bcl = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                          window_schedule = [32],
+                          padding = false, apodization = :none)
+        live_counts = Int[]
+        on(v -> push!(live_counts, length(v)), bcl.completed)
+        start!(bcl; async = false)
+        @test live_counts == [0, 1, 2]   # reset, then one per finished pair
+        @test length(bcl.completed[]) == 2
+        @test bcl.completed[] == bcl.results[]
+
+        # cancellation keeps the completed prefix
+        bcc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                          window_schedule = [32],
+                          padding = false, apodization = :none)
+        on(p -> p[1] == 1 && cancel!(bcc), bcc.progress)
+        start!(bcc; async = false)
+        @test length(bcc.completed[]) == 1
+
         # physical scale plumbs into the outputs; default is no scale
         @test C.build_scale(BatchRunner(files = Any[imgA, imgB])) === nothing
         @test_throws ArgumentError C.set_pixel_size!(BatchRunner(), "-1")
@@ -518,6 +537,55 @@ const r_track = TrackingResult(
         img2 = colorbuffer(fig; px_per_unit = 1)
         @test size(img2) == size(img1)
         @test img2 != img1
+    end
+
+    @testset "live results during a batch (offscreen)" begin
+        # push_result! grows the sequence (through physical) and notifies count
+        scale = PhysicalScale(2.0, 1.0, "mm", "frame")
+        exg = ResultExplorer(r_plain)
+        counts = Int[]
+        on(n -> push!(counts, n), exg.count)
+        push_result!(exg, with_scale(r_plain, scale))
+        @test nframes(exg) == 2 && counts == [2]
+        @test current_result(exg) === r_plain            # frame unchanged
+        set_frame!(exg, 2)
+        @test current_result(exg).scale !== nothing      # converted on append
+        @test current_result(exg).x[1] == 2.0 * r_plain.x[1]
+
+        # open an explorer mid-run from the live `completed` accumulator and
+        # follow the rest of the batch as it appends
+        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB, imgA, imgB],
+                         window_schedule = [32],
+                         padding = false, apodization = :none)
+        live = Ref{Any}(nothing)
+        opened_at = Ref(0)
+        on(bc.completed) do v
+            if live[] === nothing && !isempty(v)
+                live[] = ResultExplorer(copy(v))        # opened mid-run
+                opened_at[] = length(v)
+            elseif live[] !== nothing
+                while nframes(live[]) < length(v)       # live append
+                    push_result!(live[], v[nframes(live[]) + 1])
+                end
+            end
+        end
+        start!(bc; async = true)
+        t0 = time()
+        while bc.running[] && time() - t0 < 60
+            sleep(0.02)
+        end
+        @test !bc.running[]
+        @test opened_at[] == 1                           # opened after pair 1
+        @test nframes(live[]) == 3                       # followed to the end
+
+        # the view's frame slider grows with the appends
+        fig = result_explorer(live[])
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        push_result!(live[], r_plain)
+        set_frame!(live[], nframes(live[]))
+        @test live[].frame[] == 4
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test size(img2) == size(img1)
     end
 
     @testset "CalibrationReview controller (no GL)" begin

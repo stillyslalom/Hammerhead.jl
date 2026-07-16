@@ -23,9 +23,11 @@ the sequence), `field` (the displayed scalar field, see
 [`available_fields`](@ref)), `show_vectors` / `highlight_outliers` (overlay
 toggles), `selection` (the inspected item: a `CartesianIndex` for a
 gridded window, a linear `Int` index for a scattered particle/trajectory, or
-`nothing`), and the colorbar-limit state `color_mode` / `color_min` /
+`nothing`), the colorbar-limit state `color_mode` / `color_min` /
 `color_max` (see [`color_limits`](@ref) and [`set_color_limits!`](@ref);
-manual overrides persist across frame/field switches until cleared).
+manual overrides persist across frame/field switches until cleared), and
+`count` (the current sequence length, notified by [`push_result!`](@ref) so
+views can grow their frame slider while a batch appends live).
 
 Each entry is routed through [`physical`](@ref) at construction, so loaded
 results carrying a [`PhysicalScale`](@ref) display in physical units with
@@ -47,6 +49,7 @@ struct ResultExplorer
     color_mode::Observable{Symbol}
     color_min::Observable{Union{Nothing,Float64}}
     color_max::Observable{Union{Nothing,Float64}}
+    count::Observable{Int}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -61,7 +64,8 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
                         Observable{Selection}(nothing),
                         Observable(:robust),
                         Observable{Union{Nothing,Float64}}(nothing),
-                        Observable{Union{Nothing,Float64}}(nothing))
+                        Observable{Union{Nothing,Float64}}(nothing),
+                        Observable(length(conv)))
     on(ex.frame) do _
         r = current_result(ex)
         ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
@@ -100,6 +104,20 @@ current_result(ex::ResultExplorer) = ex.results[ex.frame[]]
 Move to frame `i`, clamped to `1:nframes(ex)`.
 """
 set_frame!(ex::ResultExplorer, i::Integer) = ex.frame[] = clamp(i, 1, nframes(ex))
+
+"""
+    push_result!(ex::ResultExplorer, r)
+
+Append a result to the explored sequence (routed through [`physical`](@ref)
+like the constructor) and notify `ex.count`, so open views extend their frame
+slider — this is how a live explorer follows a still-running batch. The
+current frame is left unchanged.
+"""
+function push_result!(ex::ResultExplorer, r::AnyResult)
+    push!(ex.results, physical(r))
+    ex.count[] = length(ex.results)
+    return ex
+end
 
 # Whether a stored selection still refers to a valid item of the given result
 # (a gridded window index for grids, a linear index for scattered results).

@@ -207,6 +207,12 @@ forwarded to [`run_piv`](@ref).
   `(i, n) -> nothing` called after each completed pair (for driving an
   external progress display). Throwing from the callback aborts the batch;
   pairs finished before the abort stay in `output`.
+- `on_result`: optional function `(i, result) -> nothing` called with each
+  pair's result immediately after it completes (before the incremental
+  `output` write and the `progress` callback) — for consuming results live,
+  e.g. streaming them into a viewer while the batch runs. Runs on the calling
+  task, in pair order. Throwing aborts the batch like a throwing `progress`
+  callback; pairs already persisted stay in `output`.
 - `backend`: execution backend selector. The core package provides `:cpu`;
   package extensions add device selectors (see [Run PIV on a GPU](@ref)).
 - `image_type`: element type frames are loaded as (default `Float64`);
@@ -227,6 +233,7 @@ function run_piv_sequence(pairs::AbstractVector,
                           preprocess = nothing,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
+                          on_result::Union{Nothing,Function} = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
@@ -236,7 +243,7 @@ function run_piv_sequence(pairs::AbstractVector,
     workspace = piv_workspace(; backend)
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, kwargs...),
                   PIVResult, pairs;
-                  preprocess, output, progress, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PIV")
 end
 
 function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -244,6 +251,7 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           preprocess = nothing,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
+                          on_result::Union{Nothing,Function} = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
@@ -253,7 +261,7 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
         ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, kwargs...)) :
         ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, kwargs...))
     _run_sequence(process, PIVResult, pairs;
-                  preprocess, output, progress, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PIV")
 end
 
 """
@@ -264,8 +272,8 @@ end
 Run PTV over a sequence of image pairs, mirroring [`run_piv_sequence`](@ref):
 `pairs` entries are file paths (loaded with [`load_image`](@ref)) and/or
 real-valued matrices, `params` is a [`PTVParameters`](@ref), and the same
-`preprocess`, `output` (incremental JLD2), `progress`, and `image_type`
-options apply. Remaining `kwargs` (e.g. `predictor`, `mask`, or `scale`) are
+`preprocess`, `output` (incremental JLD2), `progress`, `on_result`, and
+`image_type` options apply. Remaining `kwargs` (e.g. `predictor`, `mask`, or `scale`) are
 forwarded to [`run_ptv`](@ref). Results are [`PTVResult`](@ref)s; when `output` is a path
 they are persisted incrementally as they complete (with source paths for
 file-path pairs), readable with [`load_results`](@ref).
@@ -274,12 +282,13 @@ function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVPara
                           preprocess = nothing,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
+                          on_result::Union{Nothing,Function} = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_ptv(imgA, imgB, params; mask, scale, kwargs...), PTVResult, pairs;
-                  preprocess, output, progress, image_type, mask, scale, label = "PTV")
+                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PTV")
 end
 
 # Shared sequence driver: iterate `pairs`, load/preprocess each frame, run
@@ -299,6 +308,7 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        preprocess = nothing,
                        output::Union{Nothing,AbstractString,Function} = nothing,
                        progress::Union{Bool,Function} = true,
+                       on_result::Union{Nothing,Function} = nothing,
                        image_type::Type{<:AbstractFloat} = Float64,
                        label::AbstractString = "PIV",
                        mask = nothing,
@@ -326,6 +336,10 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
                 rethrow()
             end
+            # Live-consumer hook. `results[i]` is stored on this (serial)
+            # task — the prefetch task only loads frames — so the callback
+            # runs on the caller's task, in pair order.
+            on_result === nothing || on_result(i, results[i])
             if file !== nothing
                 file[result_key(i)] = results[i]
                 labels = pair_source_labels(frameA, frameB)

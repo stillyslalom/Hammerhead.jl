@@ -67,7 +67,12 @@ function result_explorer!(target, ex::ResultExplorer)
 
     Label(gl[2, 1:3][1, 1], "frame")
     slider = Slider(gl[2, 1:3][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
-    Label(gl[2, 1:3][1, 3], lift(i -> "$i / $n", ex.frame))
+    Label(gl[2, 1:3][1, 3], lift((i, m) -> "$i / $m", ex.frame, ex.count))
+    # Grow the slider range as a live batch appends results (push_result!).
+    on(ex.count) do m
+        rng = 1:max(m, 1)
+        rng == slider.range[] || (slider.range[] = rng)
+    end
 
     # Widget -> controller (equality guards break the notification cycles;
     # Observables notify even when the value is unchanged).

@@ -9,8 +9,10 @@ Open the parameter form + batch runner. Pick frames ("add frames…") and the
 pairing mode, edit the multi-pass window schedule ("64, 32, 32" style) and
 the correlation/validation options, optionally choose an incremental JLD2
 output file and an analysis mask image, then run — progress and status
-update live, "cancel" stops after the pair in flight, and "explore results"
-opens the finished batch in [`result_explorer`](@ref).
+update live, "cancel" stops after the pair in flight, and "view results"
+opens the batch in [`result_explorer`](@ref) as soon as the first pair is
+done: pairs finishing later append into the open explorer live (the frame
+slider grows with the run).
 
 Pass a prebuilt [`BatchRunner`](@ref) to seed the form (e.g. with in-memory
 frames) or to drive it programmatically.
@@ -102,7 +104,9 @@ function batch_runner(bc::BatchRunner; size = (960, 640))
     Label(run_col[8, 1], progress_obs; halign = :left)
     Label(run_col[9, 1], bc.status; halign = :left, justification = :left,
           word_wrap = true, width = 160)
-    explore_btn = Button(run_col[10, 1]; label = "explore results", tellwidth = false)
+    explore_label = lift(v -> isempty(v) ? "view results" :
+                              "view results ($(length(v)))", bc.completed)
+    explore_btn = Button(run_col[10, 1]; label = explore_label, tellwidth = false)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -173,10 +177,25 @@ function batch_runner(bc::BatchRunner; size = (960, 640))
     end
     on(_ -> start!(bc), run_btn.clicks)
     on(_ -> cancel!(bc), cancel_btn.clicks)
+    # Live results hand-off: available as soon as one pair is done, opening
+    # the explorer on the completed prefix; results finishing later append
+    # into the open explorer (its frame slider grows). Starting a new run
+    # resets bc.completed to empty, which drops the stale explorer reference.
+    live_ex = Ref{Union{Nothing,ResultExplorer}}(nothing)
+    on(bc.completed) do v
+        isempty(v) && (live_ex[] = nothing; return)
+        ex = live_ex[]
+        ex === nothing && return
+        while nframes(ex) < length(v)
+            push_result!(ex, v[nframes(ex) + 1])
+        end
+    end
     on(explore_btn.clicks) do _
-        results = bc.results[]
-        results === nothing && return
-        display(GLMakie.Screen(), result_explorer(ResultExplorer(results)))
+        v = bc.completed[]
+        isempty(v) && return
+        ex = ResultExplorer(copy(v))
+        live_ex[] = ex
+        display(GLMakie.Screen(), result_explorer(ex))
     end
 
     return fig
