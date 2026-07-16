@@ -159,6 +159,60 @@ const r_track = TrackingResult(
         @test occursin("mm/s", describe_selection(ext))
     end
 
+    @testset "ResultExplorer color limits (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # 5x5 grid with a huge injected outlier and one masked NaN cell
+        u = Float64.(reshape(1:25, 5, 5))
+        outl = falses(5, 5); outl[3, 3] = true; u[3, 3] = 1000.0
+        mask = falses(5, 5); mask[1, 1] = true
+        u[1, 1] = NaN
+        rz = PIVResult(collect(1.0:5.0), collect(1.0:5.0), u, zeros(5, 5),
+                       ones(5, 5), ones(5, 5), fill(NaN, 5, 5), fill(NaN, 5, 5),
+                       outl, mask, PIVParameters(window_size = 16, overlap = (8, 8)))
+
+        # robust excludes the flagged outlier (and the masked cell); full keeps it
+        lo, hi = C.color_limits(rz, :u)
+        @test hi < 1000.0 && lo >= 2.0
+        @test C.color_limits(rz, :u, :full)[2] == 1000.0
+        @test_throws ArgumentError C.color_limits(rz, :u, :nope)
+
+        # all-flagged fallback: percentiles over all finite values
+        rf = PIVResult(collect(1.0:5.0), collect(1.0:5.0), u, zeros(5, 5),
+                       ones(5, 5), ones(5, 5), fill(NaN, 5, 5), fill(NaN, 5, 5),
+                       trues(5, 5), falses(5, 5),
+                       PIVParameters(window_size = 16, overlap = (8, 8)))
+        lof, hif = C.color_limits(rf, :u)
+        @test isfinite(lof) && isfinite(hif) && lof < hif
+
+        # PTV: the flagged particle's huge residual is excluded under :robust
+        @test C.color_limits(r_ptv, :match_residual)[2] < 5.0
+        @test C.color_limits(r_ptv, :match_residual, :full)[2] == 5.0
+
+        # manual overrides win bound-wise and persist across frame changes
+        ex = ResultExplorer([rz, rz])
+        @test current_color_limits(ex) == C.color_limits(rz, :u, :robust)
+        set_color_limits!(ex; min = "0", max = 10.0)
+        @test current_color_limits(ex) == (0.0, 10.0)
+        set_frame!(ex, 2)
+        set_field!(ex, :v)
+        @test current_color_limits(ex) == (0.0, 10.0)
+        set_color_limits!(ex; max = "auto")   # clear one bound
+        @test current_color_limits(ex)[1] == 0.0
+        @test current_color_limits(ex)[2] != 10.0
+        set_color_limits!(ex; min = nothing)
+        set_color_mode!(ex, :full)
+        @test ex.color_mode[] == :full
+        @test_throws ArgumentError set_color_mode!(ex, :nope)
+        @test_throws ArgumentError set_color_limits!(ex; min = "junk")
+        @test_throws ArgumentError set_color_limits!(ex; max = NaN)
+
+        # inverted manual pair is padded to a valid range
+        set_color_limits!(ex; min = 5.0, max = 1.0)
+        loi, hii = current_color_limits(ex)
+        @test loi < hii
+    end
+
     @testset "ResultExplorer PTV + tracking (no GL)" begin
         C = HammerheadGUI.Controllers
 
@@ -242,6 +296,13 @@ const r_track = TrackingResult(
         img2 = colorbuffer(fig; px_per_unit = 1)
         @test size(img2) == size(img1)
         @test img2 != img1
+
+        # color-range controls re-render too (mode switch + manual bound)
+        img3 = copy(img2)
+        set_color_mode!(ex, :full)
+        set_color_limits!(ex; max = 0.5)
+        img4 = colorbuffer(fig; px_per_unit = 1)
+        @test img4 != img3
 
         # stereo view renders too
         figs = result_explorer(r_stereo)

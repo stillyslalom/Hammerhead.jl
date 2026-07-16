@@ -21,9 +21,11 @@ Controller for the result explorer: a loaded sequence of `PIVResult`,
 allowed) plus the view state as `Observables` — `frame` (1-based index into
 the sequence), `field` (the displayed scalar field, see
 [`available_fields`](@ref)), `show_vectors` / `highlight_outliers` (overlay
-toggles), and `selection` (the inspected item: a `CartesianIndex` for a
+toggles), `selection` (the inspected item: a `CartesianIndex` for a
 gridded window, a linear `Int` index for a scattered particle/trajectory, or
-`nothing`).
+`nothing`), and the colorbar-limit state `color_mode` / `color_min` /
+`color_max` (see [`color_limits`](@ref) and [`set_color_limits!`](@ref);
+manual overrides persist across frame/field switches until cleared).
 
 Each entry is routed through [`physical`](@ref) at construction, so loaded
 results carrying a [`PhysicalScale`](@ref) display in physical units with
@@ -42,6 +44,9 @@ struct ResultExplorer
     show_vectors::Observable{Bool}
     highlight_outliers::Observable{Bool}
     selection::Observable{Selection}
+    color_mode::Observable{Symbol}
+    color_min::Observable{Union{Nothing,Float64}}
+    color_max::Observable{Union{Nothing,Float64}}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -53,7 +58,10 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
                         path === nothing ? nothing : String(path),
                         Observable(1), Observable(first(available_fields(conv[1]))),
                         Observable(true), Observable(true),
-                        Observable{Selection}(nothing))
+                        Observable{Selection}(nothing),
+                        Observable(:robust),
+                        Observable{Union{Nothing,Float64}}(nothing),
+                        Observable{Union{Nothing,Float64}}(nothing))
     on(ex.frame) do _
         r = current_result(ex)
         ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
@@ -217,6 +225,111 @@ function set_field!(ex::ResultExplorer, field::Symbol)
         throw(ArgumentError("field :$field is not available for the current result"))
     ex.field[] = field
     return ex
+end
+
+# Item validity for the colorbar statistics: masked/outlier grid cells and
+# flagged PTV particles are excluded from the robust range (they are exactly
+# the values that stretch it); tracking speeds carry no flags.
+_flagged(r::GridResult, i) = r.mask[i] || r.outliers[i]
+_flagged(r::PTVResult, i) = r.outliers[i]
+_flagged(::TrackingResult, i) = false
+
+# Nearest-rank percentile band of (unsorted) values; mutates `vals` by sorting.
+function _percentile_band(vals::Vector{Float64}, plo::Real, phi::Real)
+    sort!(vals)
+    n = length(vals)
+    lo = vals[clamp(round(Int, plo * (n - 1)) + 1, 1, n)]
+    hi = vals[clamp(round(Int, phi * (n - 1)) + 1, 1, n)]
+    return (lo, hi)
+end
+
+"""
+    color_limits(result, field::Symbol, mode::Symbol = :robust) -> (lo, hi)
+
+Automatic colorbar limits for a displayed field. `:full` is the extrema of
+all finite values. `:robust` (the default) is the 2–98% percentile band over
+finite values at *valid* items (non-masked, non-outlier grid cells;
+non-flagged PTV particles) so a few outliers cannot stretch the color range;
+when no valid values exist it falls back to all finite values. A degenerate
+range is padded by ±0.5.
+"""
+function color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust)
+    mode in (:robust, :full) ||
+        throw(ArgumentError("mode must be :robust or :full, got :$mode"))
+    data = field_values(r, field)
+    vals = Float64[]
+    if mode === :robust
+        for i in eachindex(data)
+            (isfinite(data[i]) && !_flagged(r, i)) || continue
+            push!(vals, Float64(data[i]))
+        end
+    end
+    isempty(vals) && (vals = [Float64(v) for v in data if isfinite(v)])
+    isempty(vals) && return (0.0, 1.0)
+    lo, hi = mode === :robust ? _percentile_band(vals, 0.02, 0.98) : extrema(vals)
+    lo == hi && ((lo, hi) = (lo - 0.5, hi + 0.5))
+    return (lo, hi)
+end
+
+"""
+    set_color_mode!(ex::ResultExplorer, mode::Symbol)
+
+Set the automatic colorbar-limit mode: `:robust` (2–98% percentile band over
+valid values, the default) or `:full` (extrema). See [`color_limits`](@ref).
+"""
+function set_color_mode!(ex::ResultExplorer, mode::Symbol)
+    mode in (:robust, :full) ||
+        throw(ArgumentError("mode must be :robust or :full, got :$mode"))
+    ex.color_mode[] = mode
+    return ex
+end
+
+# One manual colorbar bound: `nothing`, "", or "auto" clears the override;
+# numbers and their string forms set it. Throws ArgumentError on junk.
+_parse_limit(::Nothing) = nothing
+_parse_limit(v::Real) =
+    (isfinite(v) || throw(ArgumentError("color limit must be finite, got $v")); Float64(v))
+function _parse_limit(s::AbstractString)
+    t = strip(s)
+    (isempty(t) || lowercase(t) == "auto") && return nothing
+    v = tryparse(Float64, t)
+    (v === nothing || !isfinite(v)) &&
+        throw(ArgumentError("color limit must be a number or \"auto\", got \"$s\""))
+    return v
+end
+
+"""
+    set_color_limits!(ex::ResultExplorer; min = missing, max = missing)
+
+Manually override the colorbar limits, bound by bound. Each keyword accepts a
+number (or its string form) to pin that bound, and `nothing` / `""` /
+`"auto"` to clear it back to the automatic [`color_limits`](@ref); `missing`
+leaves it unchanged. Manual bounds persist across frame and field switches
+until cleared.
+"""
+function set_color_limits!(ex::ResultExplorer; min = missing, max = missing)
+    min === missing || (ex.color_min[] = _parse_limit(min))
+    max === missing || (ex.color_max[] = _parse_limit(max))
+    return ex
+end
+
+"""
+    current_color_limits(ex::ResultExplorer) -> (lo, hi)
+
+The colorbar limits in effect for the current frame and field: the automatic
+[`color_limits`](@ref) under `ex.color_mode`, with any manual
+[`set_color_limits!`](@ref) overrides applied bound-wise (an inverted or
+degenerate manual pair is padded to a valid range).
+"""
+function current_color_limits(ex::ResultExplorer)
+    lo, hi = color_limits(current_result(ex), ex.field[], ex.color_mode[])
+    ex.color_min[] === nothing || (lo = ex.color_min[])
+    ex.color_max[] === nothing || (hi = ex.color_max[])
+    if !(lo < hi)
+        mid = (lo + hi) / 2
+        lo, hi = mid - 0.5, mid + 0.5
+    end
+    return (lo, hi)
 end
 
 """

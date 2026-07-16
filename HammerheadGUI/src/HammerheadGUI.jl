@@ -34,7 +34,8 @@ export ResultExplorer, nframes, current_result, set_frame!,
        available_fields, field_values, field_name, field_label, set_field!,
        select_nearest!, clear_selection!, describe_selection,
        vector_data, auto_lengthscale, selection_point,
-       trajectory_points, trajectory_gap_count
+       trajectory_points, trajectory_gap_count,
+       color_limits, set_color_mode!, set_color_limits!, current_color_limits
 export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
@@ -52,7 +53,8 @@ using .Controllers
 export ResultExplorer, result_explorer, result_explorer!,
        nframes, current_result, set_frame!,
        available_fields, field_values, set_field!,
-       select_nearest!, clear_selection!, describe_selection
+       select_nearest!, clear_selection!, describe_selection,
+       color_limits, set_color_mode!, set_color_limits!, current_color_limits
 export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,

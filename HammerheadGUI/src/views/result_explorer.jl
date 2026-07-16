@@ -55,8 +55,14 @@ function result_explorer!(target, ex::ResultExplorer)
     Label(toggles[1, 2], "vectors"; halign = :left)
     out_toggle = Toggle(toggles[2, 1]; active = ex.highlight_outliers[])
     Label(toggles[2, 2], "flag outliers"; halign = :left)
-    Label(controls[4, 1], "click a vector to inspect"; halign = :left, font = :bold)
-    info = Label(controls[5, 1], ""; halign = :left, justification = :left)
+    Label(controls[4, 1], "color range"; halign = :left, font = :bold)
+    cgrid = GridLayout(controls[5, 1]; halign = :left)
+    cmode_menu = Menu(cgrid[1, 1:2]; tellwidth = false,
+                      options = [("robust (2–98%)", :robust), ("full range", :full)])
+    cmin_box = Textbox(cgrid[2, 1]; placeholder = "min: auto", width = 100)
+    cmax_box = Textbox(cgrid[2, 2]; placeholder = "max: auto", width = 100)
+    Label(controls[6, 1], "click a vector to inspect"; halign = :left, font = :bold)
+    info = Label(controls[7, 1], ""; halign = :left, justification = :left)
     colsize!(gl, 3, Fixed(230))
 
     Label(gl[2, 1:3][1, 1], "frame")
@@ -75,6 +81,23 @@ function result_explorer!(target, ex::ResultExplorer)
     end
     on(menu.selection) do f
         f === nothing || f == ex.field[] || set_field!(ex, f)
+    end
+    _sync_menu!(cmode_menu, ex.color_mode)
+    # Manual colorbar bounds: one-way widget -> controller (the box's
+    # placeholder documents the cleared state); junk entries are ignored.
+    on(cmin_box.stored_string) do s
+        s === nothing && return
+        try
+            set_color_limits!(ex; min = s)
+        catch
+        end
+    end
+    on(cmax_box.stored_string) do s
+        s === nothing && return
+        try
+            set_color_limits!(ex; max = s)
+        catch
+        end
     end
 
     # Click to inspect (left press inside the axis).
@@ -114,14 +137,6 @@ function result_explorer!(target, ex::ResultExplorer)
     # would render transiently mismatched args.
     plots = Any[]
     has_drawn = Ref(false)
-
-    # Colour range of the current field, padded when degenerate.
-    function _crange(data)
-        vals = [Float64(v) for v in data if isfinite(v)]
-        lo, hi = isempty(vals) ? (0.0, 1.0) : extrema(vals)
-        lo == hi && ((lo, hi) = (lo - 0.5, hi + 0.5))
-        return lo, hi
-    end
 
     # Quiver-style fast path: linesegments shafts + one rotated triangle
     # marker per arrow head. arrows2d is a poly/mesh recipe whose pixel-space
@@ -166,7 +181,7 @@ function result_explorer!(target, ex::ResultExplorer)
 
     function _draw!(r::Union{PIVResult,StereoPIVResult})
         data = field_values(r, ex.field[])
-        lo, hi = _crange(data)
+        lo, hi = current_color_limits(ex)
         crange[] = (lo, hi)
         clabel[] = field_label(r, ex.field[])
         h = heatmap!(ax, collect(r.x), collect(r.y), permutedims(data);
@@ -180,7 +195,7 @@ function result_explorer!(target, ex::ResultExplorer)
 
     function _draw!(r::PTVResult)
         data = field_values(r, ex.field[])
-        lo, hi = _crange(data)
+        lo, hi = current_color_limits(ex)
         crange[] = (lo, hi)
         clabel[] = field_label(r, ex.field[])
         if !isempty(r.x)
@@ -195,7 +210,7 @@ function result_explorer!(target, ex::ResultExplorer)
 
     function _draw!(r::TrackingResult)
         speeds = field_values(r, :speed)
-        lo, hi = _crange(speeds)
+        lo, hi = current_color_limits(ex)
         crange[] = (lo, hi)
         clabel[] = field_label(r, :speed)
         for (k, t) in pairs(r.trajectories)
@@ -226,7 +241,8 @@ function result_explorer!(target, ex::ResultExplorer)
         return
     end
     onany((args...) -> refresh_plots!(),
-          ex.frame, ex.field, ex.show_vectors, ex.highlight_outliers)
+          ex.frame, ex.field, ex.show_vectors, ex.highlight_outliers,
+          ex.color_mode, ex.color_min, ex.color_max)
 
     refresh_menu!()
     refresh_plots!()
