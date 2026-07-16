@@ -70,7 +70,8 @@ export PreprocessPreview, preprocess_preview, preprocess_preview!,
        set_image!, set_background!, enable_step!, set_step_param!,
        move_step!, apply_pipeline, build_preprocess
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
-       set_effort!, set_scale!, set_preprocess!, start!, cancel!
+       set_effort!, set_scale!, set_pixel_size!, set_dt!, set_preprocess!,
+       start!, cancel!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,

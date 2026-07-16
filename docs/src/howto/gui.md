@@ -37,6 +37,18 @@ or with [`with_scale`](@ref) — the explorer displays in physical units:
 axis labels, the colorbar, and the inspection panel all read `mm`, `mm/s`,
 and so on instead of `px` / `px/frame`.
 
+The colorbar defaults to a robust 2–98% percentile range over the valid
+(non-masked, non-flagged) vectors ([`color_limits`](@ref)), so outliers
+cannot wash out the display. The "color range" group switches to the full
+extrema or pins either bound; manual bounds persist across frame/field
+switches until cleared:
+
+```julia
+set_color_mode!(ex, :full)             # extrema instead of percentiles
+set_color_limits!(ex; min = 0, max = 5)
+set_color_limits!(ex; max = "auto")    # clear one bound
+```
+
 ## Draw a mask and use it
 
 ```julia
@@ -74,8 +86,13 @@ batch_runner()
 or chained (`1-2, 2-3`) pairing, the windows textbox takes a schedule like
 `64, 32, 32`, and "choose output…" sets an incremental JLD2 file (written
 pair by pair; read it with [`load_results`](@ref)). "Cancel" stops after
-the pair in flight and keeps every finished pair. "Explore results" opens
-the batch in the result explorer.
+the pair in flight and keeps every finished pair. "View results" activates
+as soon as the first pair completes: it opens the finished prefix in the
+result explorer and appends later pairs live, so you can inspect a long
+batch while it runs (the mechanism is the `completed` observable plus
+[`push_result!`](@ref) — available for your own live consumers too, and
+scripted runs get the same stream through `run_piv_sequence`'s `on_result`
+callback).
 
 The *effort* menu switches between the manual schedule (`:custom`) and
 [`run_piv_sequence`](@ref)'s `:low` / `:medium` / `:high` presets — when a
@@ -88,6 +105,31 @@ batch results carry units straight into the explorer. From code:
 set_effort!(bc, :high)
 set_scale!(bc; pixel_size = 50.0, dt = 0.001, length_unit = "mm", time_unit = "s")
 ```
+
+Instead of typing the pixel size, derive it from the image with the scale
+tool — click the two endpoints of a feature of known physical size and
+apply the result to the form:
+
+```julia
+st = ScaleTool("frame_0001.tif")
+scale_tool(st; batch = bc)     # click two points, enter the separation…
+apply_scale!(bc, st)           # …or do the hand-off from code
+```
+
+"Preprocess…" opens a [`preprocess_preview`](@ref) on the first frame: an
+ordered, toggleable pipeline over the core preprocessing set (background
+subtraction, intensity cap, highpass, CLAHE, percentile stretch, inversion,
+local-variance normalization) with a live raw/processed comparison; "use in
+batch" installs it. From code, build the pipeline yourself:
+
+```julia
+pp = PreprocessPreview(first_frame; enabled = [:highpass_filter, :clahe])
+set_step_param!(pp, :highpass_filter, :sigma, 5)
+set_preprocess!(bc, pp)        # snapshot: later edits don't affect the run
+```
+
+The exported closure copies each frame before its in-place steps, so
+in-memory arrays are never mutated.
 
 Seed the form from code with a [`BatchRunner`](@ref) — every form field is
 an observable on the controller:
@@ -125,6 +167,40 @@ embedded explorer:
 dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2;
                                     keep_disparity_maps = true)
 selfcal_review(report)
+```
+
+## Run a stereo batch
+
+[`stereo_calibration`](@ref) sets the rig up: both cameras'
+[`CalibrationReview`](@ref)s embedded side by side, the dewarp-grid options
+(coverage, spacing), and a "build dewarpers" button running
+[`build_dewarpers`](@ref) over the two fitted cameras:
+
+```julia
+cr1 = CalibrationReview(plates_cam1, zs; spacing = 15.0, ...)
+cr2 = CalibrationReview(plates_cam2, zs; spacing = 15.0, ...)
+sbc = StereoBatchRunner()
+stereo_calibration(cr1, cr2; batch = sbc)   # …or from code:
+set_dewarpers!(sbc, cr1, cr2)               # build_dewarpers + install
+```
+
+Dewarpers you built at the REPL (e.g. after [`self_calibrate`](@ref)) go
+straight in with `set_dewarpers!(sbc, dw1, dw2)`. Then
+[`stereo_batch_runner`](@ref) is the stereo form: each camera's frame list,
+the effort/schedule form, a dt-only physical scale (stereo results are
+already in world units), and incremental output —
+[`run_piv_stereo_sequence`](@ref) underneath. Cancellation uses the
+driver's native between-acquisition predicate, so the completed prefix
+always lands in `results`, and "view results" opens the
+[`StereoPIVResult`](@ref)s in the explorer live, exactly like the planar
+batch:
+
+```julia
+add_files!(sbc, cam1_paths; camera = 1)
+add_files!(sbc, cam2_paths; camera = 2)
+set_effort!(sbc, :medium)
+set_dt!(sbc, 0.001); sbc.time_unit[] = "s"; sbc.length_unit[] = "mm"
+stereo_batch_runner(sbc)     # or start!(sbc; async = false) headless
 ```
 
 ## Embed a view in your own figure

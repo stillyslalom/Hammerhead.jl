@@ -77,6 +77,19 @@ fig
 
 describe_selection(ex)
 
+# The colorbar range defaults to a robust 2–98% percentile band over the
+# valid vectors ([`color_limits`](@ref)), so a few outliers cannot wash out
+# the display; the "color range" group switches to the full extrema or pins
+# either bound manually ([`set_color_limits!`](@ref)) — manual bounds
+# persist while you scrub frames and fields until cleared:
+
+set_color_limits!(ex; max = 0.05)
+current_color_limits(ex)
+
+#-
+
+set_color_limits!(ex; max = nothing)   # back to automatic
+
 # The explorer browses all four persisted result types — planar,
 # [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
 # [`TrackingResult`](@ref) — including mixed sequences from
@@ -133,6 +146,44 @@ count(masked.mask)
 # [`load_mask`](@ref) reads back; see the
 # [masking how-to](../howto/masking.md) for the semantics downstream.)
 #
+# ## The preprocessing preview
+#
+# [`preprocess_preview`](@ref) builds the `preprocess` pipeline the batch
+# drivers take, interactively: every step of the
+# [core preprocessing set](../howto/preprocessing.md) with a toggle and its
+# parameters, applied live to a representative image (raw left, processed
+# right). The [`PreprocessPreview`](@ref) controller is the state:
+
+pp = PreprocessPreview(imgA; enabled = [:highpass_filter, :percentile_stretch])
+set_step_param!(pp, :highpass_filter, :sigma, 5)
+preprocess_preview(pp)
+
+# [`build_preprocess`](@ref) exports the composed closure — it copies each
+# frame before the in-place steps, so your arrays are never mutated, and it
+# snapshots the pipeline so later edits cannot affect a running batch:
+
+pipeline = build_preprocess(pp)
+run_piv(pipeline(imgA), pipeline(imgB), passes)
+
+# ## The scale tool
+#
+# [`scale_tool`](@ref) turns a calibration line into a
+# [`PhysicalScale`](@ref): click the two endpoints of a feature of known
+# size (here placed programmatically through the [`ScaleTool`](@ref)
+# controller), enter the separation and units, and the derived pixel size
+# updates live — "apply to batch" copies it into a batch form
+# ([`apply_scale!`](@ref)):
+
+st = ScaleTool(imgA)
+HammerheadGUI.Controllers.click!(st, 28.0, 128.0)
+HammerheadGUI.Controllers.click!(st, 228.0, 128.0)   # a 200 px line
+set_separation!(st, 10.0)                            # ... spanning 10 mm
+scale_tool(st)
+
+#-
+
+physical_scale(st)
+
 # ## The batch runner
 #
 # [`batch_runner`](@ref) is a parameter form around
@@ -153,16 +204,28 @@ start!(bc; async = false)
 fig
 
 # The progress and status panels have updated, and the results are the
-# plain `Vector` of [`PIVResult`](@ref)s any script would produce — the
-# "explore results" button opens them in the result explorer:
+# plain `Vector` of [`PIVResult`](@ref)s any script would produce. You do
+# not have to wait for the batch: "view results" activates as soon as the
+# first pair finishes, opening the completed prefix in the explorer and
+# appending later pairs live (the frame slider grows with the run — the
+# `completed` observable and [`push_result!`](@ref) are the mechanism):
 
-bc.results[]
+bc.completed[]
 
 # The form also carries an *effort* menu — pick `:low`/`:medium`/`:high`
 # with [`set_effort!`](@ref) to use [`run_piv_sequence`](@ref)'s presets
-# instead of the manual schedule — and a *physical scale* group
-# ([`set_scale!`](@ref)) that attaches a [`PhysicalScale`](@ref) to every
-# output, so the explorer hand-off already reads in physical units.
+# instead of the manual schedule — a *physical scale* group
+# ([`set_scale!`](@ref), fed directly by the scale tool's
+# [`apply_scale!`](@ref)) that attaches a [`PhysicalScale`](@ref) to every
+# output, and a "preprocess…" window that installs a
+# [`PreprocessPreview`](@ref) pipeline ([`set_preprocess!`](@ref)).
+#
+# Stereo recordings have their own form: [`stereo_batch_runner`](@ref)
+# drives [`run_piv_stereo_sequence`](@ref) over two synchronized camera
+# frame lists, with the dewarpers built from two fitted calibrations in
+# [`stereo_calibration`](@ref) (both cameras' reviews embedded side by
+# side, plus the dewarp-grid options) — see the
+# [GUI how-to](../howto/gui.md) for the workflow.
 
 # ## Calibration diagnostics on a real plate
 #

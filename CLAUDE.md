@@ -320,7 +320,13 @@ scatter, `TrackingResult` gap-aware polylines colored by mean speed — mixed
 sequences included; routes each entry through `physical` at construction so a
 `PhysicalScale` gives physical-unit axis/colorbar/inspection labels;
 selection is a `CartesianIndex` for grids, a linear `Int` for scattered
-types); `MaskEditor`/`mask_editor`
+types; the vector overlay is quiver-style linesegments + rotated-triangle
+scatter heads, NOT arrows2d — arrows2d's per-frame pixel-space tip sizing
+made pan/zoom crawl at thousands of arrows; colorbar limits default to a
+robust 2–98% percentile band over valid vectors (`color_limits`) with
+bound-wise manual overrides persisting across frames; `push_result!`
+appends live and grows the view's slider via the `count` observable);
+`MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
 the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
@@ -330,7 +336,24 @@ callback inside `@async` — cooperative, so GL renders keep happening off
 primary thread; cancel = throw `BatchCancelled` from the callback, which
 keeps finished pairs in the incremental output; an `effort` menu
 (`:custom` manual schedule vs `:low`/`:medium`/`:high` presets) and a
-physical-scale form group attach a `PhysicalScale` to the outputs);
+physical-scale form group attach a `PhysicalScale` to the outputs; the
+core drivers' `on_result` hook (all sequence drivers incl. stereo: called
+`(i, result)` on the caller's task right after storage, before persist and
+progress; throwing aborts like progress) feeds the live `completed`
+observable, and "view results" opens an explorer mid-run that follows the
+batch; `set_preprocess!` attaches a per-frame pipeline);
+`PreprocessPreview`/`preprocess_preview` (ordered toggleable pipeline over
+the core preprocessing set with live raw/processed preview;
+`build_preprocess` exports a frame-copying, snapshot-semantics closure for
+the batch drivers); `ScaleTool`/`scale_tool` (two clicked points + known
+separation → `PhysicalScale`; `apply_scale!` into a batch form);
+`StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two
+synchronized frame lists + an `ImageDewarper` pair —
+`build_dewarpers(cr1, cr2)` composes `common_dewarp_grid` from two fitted
+`CalibrationReview`s, and the workflow view embeds both reviews via the
+embeddable `calibration_review!`; runs `run_piv_stereo_sequence` with its
+NATIVE zero-arg `cancel` predicate — no exception, completed prefix
+returned — and a dt-only stereo scale);
 `CalibrationReview`/
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an

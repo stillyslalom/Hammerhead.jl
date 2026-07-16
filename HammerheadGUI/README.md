@@ -15,9 +15,11 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   read-only viewer for all four persisted result types (`PIVResult`,
   `StereoPIVResult`, `PTVResult`, `TrackingResult`), mixed sequences
   included: gridded scalar-field heatmap (magnitude, components,
-  diagnostics, uncertainty) with vector arrows, PTV particle scatter with
-  displacement arrows, tracking polylines colored by mean speed (gap-aware),
-  frame scrubbing, click-to-inspect, and physical-unit labels when a
+  diagnostics, uncertainty) with a fast quiver-style vector overlay, PTV
+  particle scatter with displacement arrows, tracking polylines colored by
+  mean speed (gap-aware), robust percentile color limits with manual
+  override, frame scrubbing, click-to-inspect, live appending
+  (`push_result!`) while a batch runs, and physical-unit labels when a
   `PhysicalScale` is attached
 - **Mask editor** (done) — `mask_editor(image_or_path)` draws exclusion
   polygons over the image (left-click add/select, right-click close);
@@ -25,8 +27,23 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   "save mask…" writes a mask image `load_mask` reads back
 - **Parameter form + batch runner** (done) — `batch_runner()` picks frames,
   edits the multi-pass `PIVParameters` schedule (or an effort preset), sets
-  an optional physical scale, runs `run_piv_sequence` with live progress,
-  cancellation, incremental JLD2 output, and an "explore results" hand-off
+  an optional physical scale and preprocessing pipeline, runs
+  `run_piv_sequence` with live progress, cancellation, incremental JLD2
+  output, and a "view results" hand-off that opens mid-run and follows the
+  batch live
+- **Preprocessing preview** (done) — `preprocess_preview(image_or_path)`
+  composes the core preprocessing set into an ordered, toggleable pipeline
+  with a live raw/processed comparison; `build_preprocess` exports the
+  batch-driver closure (frame-copying, snapshot semantics)
+- **Scale tool** (done) — `scale_tool(image_or_path)` derives a
+  `PhysicalScale` from a two-point calibration line of known separation;
+  `apply_scale!` hands it into a batch form
+- **Stereo batch** (done) — `stereo_calibration(cr1, cr2)` builds the
+  dewarper pair from two fitted calibration reviews (embedded side by side
+  via `calibration_review!`); `stereo_batch_runner()` runs
+  `run_piv_stereo_sequence` over two synchronized frame lists with native
+  between-acquisition cancellation, a dt-only scale, incremental output,
+  and the live explorer hand-off
 - **Fast startup** (done) — a PrecompileTools workload brings
   time-to-first-window to ~1 s after loading; a PackageCompiler app bundle
   for non-Julia users is still to be evaluated
