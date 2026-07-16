@@ -96,17 +96,21 @@ function batch_runner(bc::BatchRunner; size = (960, 640))
                          "mask: $(count(m)) px excluded", bc.mask)
     Label(run_col[4, 1], mask_obs; halign = :left, word_wrap = true, width = 160)
     mask_btn = Button(run_col[5, 1]; label = "load mask…", tellwidth = false)
-    run_btn = Button(run_col[6, 1]; label = "run", tellwidth = false)
-    cancel_btn = Button(run_col[7, 1]; label = "cancel", tellwidth = false)
+    pp_obs = lift(p -> p === nothing ? "preprocess: none" : "preprocess: set",
+                  bc.preprocess)
+    Label(run_col[6, 1], pp_obs; halign = :left, word_wrap = true, width = 160)
+    pp_btn = Button(run_col[7, 1]; label = "preprocess…", tellwidth = false)
+    run_btn = Button(run_col[8, 1]; label = "run", tellwidth = false)
+    cancel_btn = Button(run_col[9, 1]; label = "cancel", tellwidth = false)
     progress_obs = lift(bc.progress, bc.running) do (done, total), running
         total == 0 ? "" : "$done / $total pairs" * (running ? "…" : "")
     end
-    Label(run_col[8, 1], progress_obs; halign = :left)
-    Label(run_col[9, 1], bc.status; halign = :left, justification = :left,
+    Label(run_col[10, 1], progress_obs; halign = :left)
+    Label(run_col[11, 1], bc.status; halign = :left, justification = :left,
           word_wrap = true, width = 160)
     explore_label = lift(v -> isempty(v) ? "view results" :
                               "view results ($(length(v)))", bc.completed)
-    explore_btn = Button(run_col[10, 1]; label = explore_label, tellwidth = false)
+    explore_btn = Button(run_col[12, 1]; label = explore_label, tellwidth = false)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -174,6 +178,20 @@ function batch_runner(bc::BatchRunner; size = (960, 640))
         catch err
             bc.status[] = Controllers._errmsg(err)
         end
+    end
+    # Preprocessing preview in its own window, seeded from the first frame,
+    # with a "use in batch" hand-off that snapshots the pipeline into bc.
+    on(pp_btn.clicks) do _
+        isempty(bc.files[]) && (bc.status[] = "add frames first"; return)
+        pp = PreprocessPreview(bc.files[][1])
+        ppfig = Figure(size = (1100, 620))
+        preprocess_preview!(ppfig[1, 1], pp)
+        apply_btn = Button(ppfig[2, 1]; label = "use in batch", tellwidth = false)
+        on(apply_btn.clicks) do _
+            set_preprocess!(bc, pp)
+            bc.status[] = "preprocess: " * Controllers.pipeline_summary(pp)
+        end
+        display(GLMakie.Screen(), ppfig)
     end
     on(_ -> start!(bc), run_btn.clicks)
     on(_ -> cancel!(bc), cancel_btn.clicks)

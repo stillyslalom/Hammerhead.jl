@@ -27,6 +27,7 @@ using ImageCore: Gray
 
 include("controllers/result_explorer.jl")
 include("controllers/mask_editor.jl")
+include("controllers/preprocess_preview.jl")   # before batch_runner (set_preprocess! signature)
 include("controllers/batch_runner.jl")
 include("controllers/calibration_review.jl")
 
@@ -39,9 +40,12 @@ export ResultExplorer, nframes, current_result, set_frame!, push_result!,
 export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
+export PreprocessPreview, PreprocStep, set_image!, set_background!,
+       enable_step!, set_step_param!, move_step!, apply_pipeline,
+       build_preprocess, pipeline_summary
 export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
        parse_schedule, set_schedule!, set_effort!, set_pixel_size!, set_dt!,
-       set_scale!, build_parameters, build_scale, validate,
+       set_scale!, set_preprocess!, build_parameters, build_scale, validate,
        start!, cancel!
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
@@ -57,14 +61,18 @@ export ResultExplorer, result_explorer, result_explorer!,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits
 export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
+export PreprocessPreview, preprocess_preview, preprocess_preview!,
+       set_image!, set_background!, enable_step!, set_step_param!,
+       move_step!, apply_pipeline, build_preprocess
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
-       set_effort!, set_scale!, start!, cancel!
+       set_effort!, set_scale!, set_preprocess!, start!, cancel!
 export CalibrationReview, calibration_review, selfcal_review,
        nplanes, set_plane!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
 include("views/mask_editor.jl")
+include("views/preprocess_preview.jl")
 include("views/batch_runner.jl")
 include("views/calibration_review.jl")
 
@@ -108,6 +116,11 @@ using PrecompileTools: @setup_workload, @compile_workload
         Controllers.click!(me, 20.0, 20.0)
         close_active!(me)
         polygon_mask(me)
+
+        pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
+        preprocess_preview(pp)
+        enable_step!(pp, :invert_image)
+        build_preprocess(pp)
 
         bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
                          padding = false, apodization = :none)

@@ -539,6 +539,90 @@ const r_track = TrackingResult(
         @test img2 != img1
     end
 
+    @testset "PreprocessPreview controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        pp = PreprocessPreview(imgA)
+        @test all(s -> !s.enabled, pp.steps[])
+        @test C.pipeline_summary(pp) == "no preprocessing"
+        @test build_preprocess(pp) === nothing
+        @test pp.processed[] == imgA              # identity pipeline
+
+        # composition matches the direct core calls, in order
+        enable_step!(pp, :intensity_cap)
+        set_step_param!(pp, :intensity_cap, :n_sigma, "1.5")
+        enable_step!(pp, :highpass_filter)
+        direct = highpass_filter!(intensity_cap!(copy(imgA); n_sigma = 1.5); sigma = 3.0)
+        @test pp.processed[] == direct
+        @test apply_pipeline(pp, imgA) == direct
+        f = build_preprocess(pp)
+        @test f(imgA) == direct
+        @test pp.processed[] == direct            # inputs never mutated
+        keep = copy(imgA); f(keep); @test keep == imgA
+
+        # snapshot semantics: editing after build does not change the closure
+        set_step_param!(pp, :intensity_cap, :n_sigma, 3.0)
+        @test f(imgA) == direct
+
+        # toggling off restores the shorter pipeline
+        enable_step!(pp, :intensity_cap, false)
+        @test pp.processed[] == highpass_filter(imgA)
+
+        # reordering matters and is clamped at the ends
+        pp2 = PreprocessPreview(imgA; enabled = [:invert_image, :percentile_stretch])
+        before = copy(pp2.processed[])
+        move_step!(pp2, :invert_image, -5)        # invert now runs first
+        @test pp2.processed[] != before
+        @test first(filter(s -> s.enabled, pp2.steps[])).name == :invert_image
+        move_step!(pp2, :invert_image, -1)        # already first: no-op
+        @test first(pp2.steps[]).name == :invert_image
+
+        # invalid parameters revert instead of wedging the pipeline
+        @test_throws ArgumentError set_step_param!(pp2, :percentile_stretch, :low, 120.0)
+        @test pp2.processed[] == apply_pipeline(pp2, imgA)   # still consistent
+        @test_throws ArgumentError set_step_param!(pp2, :percentile_stretch, :low, "junk")
+        @test_throws ArgumentError set_step_param!(pp2, :clahe, :nope, 1.0)
+        @test_throws ArgumentError enable_step!(pp2, :nope)
+
+        # background subtraction needs a computed background
+        @test_throws ArgumentError enable_step!(pp2, :subtract_background)
+        set_background!(pp2, [imgA, imgB])
+        enable_step!(pp2, :subtract_background)
+        @test pp2.background[] == min.(imgA, imgB)
+        set_background!(pp2, nothing)             # clears and disables
+        @test !C._step(pp2, :subtract_background).enabled
+
+        # batch integration: the pipeline forwards into run_piv_sequence
+        pp3 = PreprocessPreview(imgA; enabled = [:intensity_cap])
+        bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
+                         padding = false, apodization = :none)
+        set_preprocess!(bc, pp3)
+        @test bc.preprocess[] isa Function
+        start!(bc; async = false)
+        g = build_preprocess(pp3)
+        direct_pp = run_piv(g(imgA), g(imgB),
+                            multipass_parameters([32]; padding = false,
+                                                 apodization = :none))
+        @test bc.results[][1].u == direct_pp.u
+        @test imgA == pp3.image[]                 # batch never mutated the frames
+        set_preprocess!(bc, nothing)
+        @test bc.preprocess[] === nothing
+    end
+
+    @testset "preprocess_preview view (offscreen)" begin
+        pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
+        fig = preprocess_preview(pp)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (560, 1100)
+
+        # drive through the controller: preview and summary refresh
+        enable_step!(pp, :invert_image)
+        move_step!(pp, :invert_image, -10)
+        img2 = colorbuffer(fig; px_per_unit = 1)
+        @test size(img2) == size(img1)
+        @test img2 != img1
+    end
+
     @testset "live results during a batch (offscreen)" begin
         # push_result! grows the sequence (through physical) and notifies count
         scale = PhysicalScale(2.0, 1.0, "mm", "frame")

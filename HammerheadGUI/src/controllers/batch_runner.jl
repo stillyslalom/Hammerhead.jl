@@ -34,7 +34,9 @@ run state — all as `Observables`.
 - `output_path = ""` (empty = keep results in memory only), `mask = nothing`
 
 Drive it with [`add_files!`](@ref), [`set_schedule!`](@ref),
-[`set_effort!`](@ref), [`start!`](@ref) and [`cancel!`](@ref); watch
+[`set_effort!`](@ref), [`set_preprocess!`](@ref) (an optional per-frame
+preprocessing pipeline, e.g. from a [`PreprocessPreview`](@ref)),
+[`start!`](@ref) and [`cancel!`](@ref); watch
 `progress` (`(done, total)`), `status`, `running`, `results` (a
 `Vector{PIVResult}` after a completed run, `nothing` before), and
 `completed` (the finished pairs' results so far, appended and notified
@@ -64,6 +66,7 @@ struct BatchRunner
     status::Observable{String}
     results::Observable{Union{Nothing,Vector{PIVResult}}}
     completed::Observable{Vector{PIVResult}}
+    preprocess::Observable{Union{Nothing,Function}}
 end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
@@ -92,7 +95,8 @@ function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
                        Observable(false), Observable(false),
                        Observable((0, 0)), Observable(""),
                        Observable{Union{Nothing,Vector{PIVResult}}}(nothing),
-                       Observable(PIVResult[]))
+                       Observable(PIVResult[]),
+                       Observable{Union{Nothing,Function}}(nothing))
 end
 
 function Base.show(io::IO, bc::BatchRunner)
@@ -214,6 +218,19 @@ function set_scale!(bc::BatchRunner; pixel_size = nothing, dt = nothing,
 end
 
 """
+    set_preprocess!(bc::BatchRunner, pp)
+
+Attach a preprocessing pipeline applied to every frame of the batch: a
+[`PreprocessPreview`](@ref) controller (its [`build_preprocess`](@ref)
+closure is snapshotted now), a bare function `img -> img′`, or `nothing` to
+clear.
+"""
+set_preprocess!(bc::BatchRunner, ::Nothing) = (bc.preprocess[] = nothing; bc)
+set_preprocess!(bc::BatchRunner, f::Function) = (bc.preprocess[] = f; bc)
+set_preprocess!(bc::BatchRunner, pp::PreprocessPreview) =
+    (bc.preprocess[] = build_preprocess(pp); bc)
+
+"""
     build_scale(bc::BatchRunner) -> Union{Nothing,PhysicalScale}
 
 The [`PhysicalScale`](@ref) attached to the batch outputs, or `nothing` when
@@ -319,13 +336,16 @@ function _run!(bc::BatchRunner)
         on_result = (i, r) -> (push!(bc.completed[], r); notify(bc.completed))
         output = isempty(bc.output_path[]) ? nothing : bc.output_path[]
         scale = build_scale(bc)
+        preprocess = bc.preprocess[]
         maskkw = bc.mask[] === nothing ? (;) : (; mask = bc.mask[])
         results = if bc.effort[] === :custom
             run_piv_sequence(prs, build_parameters(bc);
-                             progress = callback, on_result, output, scale, maskkw...)
+                             progress = callback, on_result, output, scale,
+                             preprocess, maskkw...)
         else
             run_piv_sequence(prs; effort = bc.effort[],
-                             progress = callback, on_result, output, scale, maskkw...)
+                             progress = callback, on_result, output, scale,
+                             preprocess, maskkw...)
         end
         bc.results[] = results
         bc.status[] = "done: $(length(results)) pairs" *
