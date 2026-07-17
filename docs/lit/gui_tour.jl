@@ -1,9 +1,7 @@
 # # A tour of the graphical user interface (GUI)
 #
 # Hammerhead's interactive tools live in a companion package,
-# **HammerheadGUI**: a result explorer, a polygon mask editor, a batch
-# runner, and calibration diagnostics. Two design facts shape how you use
-# them:
+# **HammerheadGUI**. Two design facts shape how you use them:
 #
 # - Every tool is a thin shell over the same API this manual documents.
 #   What you click is what you would have typed: the mask editor produces
@@ -15,15 +13,16 @@
 #   drive it from the REPL, and any open view follows live. (Why it is
 #   built this way: [the controller–view split](../explanation/gui.md).)
 #
-# This tutorial drives each tool through its controller, which is how the
-# docs build renders real figures; at your REPL, each `Figure` below opens
-# as an interactive window instead.
+# This tutorial walks one planar workflow end to end — set a scale, mask,
+# choose preprocessing, run, explore — driving each tool through its
+# controller, which is how the docs build renders real figures; at your
+# REPL each `Figure` below opens as an interactive window instead. The
+# remaining tools (calibration review, stereo, PTV browsing) follow after
+# the walkthrough.
 #
-# ## An analysis to explore
+# ## A recording to process
 #
-# The same Lamb–Oseen vortex as [the first tutorial](first_vector_field.md),
-# analyzed with uncertainty enabled so the explorer has diagnostic fields
-# to show:
+# The same Lamb–Oseen vortex as [the first tutorial](first_vector_field.md):
 
 using Hammerhead
 using Hammerhead.SyntheticData
@@ -42,199 +41,185 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(flow, (256, 256), 1.0;
     particle_density = 0.05, background_noise = 0.03,
     z_range = (-1.0, 1.0), rng)
 
-passes = multipass_parameters([64, 32, 32];
-    padding = true, apodization = :gauss, uncertainty = true)
-result = run_piv(imgA, imgB, passes)
-
-# ## The result explorer
-#
-# [`result_explorer`](@ref) accepts a `PIVResult` (or `StereoPIVResult`),
-# a vector of them, a results-file path, or a prebuilt
-# [`ResultExplorer`](@ref) controller. Pass the controller when you want
-# to keep a programmatic handle on the view:
+# The workflow revolves around the batch runner — a parameter form around
+# [`run_piv_sequence`](@ref). Seed the [`BatchRunner`](@ref) controller with
+# the frames (normally file paths picked with "add frames…"; here our
+# in-memory pair) and keep a handle on it — each of the following steps
+# hands its output to this form:
 
 using HammerheadGUI
 
-ex = ResultExplorer(result)
-fig = result_explorer(ex)
+bc = BatchRunner(files = Any[imgA, imgB], uncertainty = true)
 
-# The scalar field is a heatmap in image orientation (y down), the vectors
-# are arrows with outliers flagged red, and for a sequence the slider at
-# the bottom scrubs through frames. The menu on the right lists what
-# [`available_fields`](@ref) reports for the current result — components,
-# the peak-ratio and correlation-moment diagnostics, and the per-vector σ
-# when the analysis carried `uncertainty = true`.
+# ## Step 1: set the physical scale
 #
-# Everything the widgets do is a controller call, so we can do the same
-# from code — switch to the u-uncertainty field and inspect the vector
-# nearest a point in the vortex core — and the figure follows:
+# [`scale_tool`](@ref) turns a calibration image into a
+# [`PhysicalScale`](@ref): click the two endpoints of a feature of known
+# physical size and enter the separation. Here the calibration image is a
+# synthetic dot grid rendered with [`render_calibration_target`](@ref) — a
+# plate of dots at exactly 15 mm spacing seen through a known camera — and
+# we "click" the centres of two neighbouring dots through the
+# [`ScaleTool`](@ref) controller, exactly what a mouse click does:
 
-set_field!(ex, :uncertainty_u)
-select_nearest!(ex, 128, 128)
-fig
+θ = deg2rad(10.0)
+R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
+camC = R' * [0.0, 0.0, -500.0]
+K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
+cam = PinholeCamera(K, R, -R * camC)
+plate = render_calibration_target(cam, (512, 512); spacing = 15.0)
 
-#-
+st = ScaleTool(plate)
+dot1 = world_to_pixel(cam, (0.0, 0.0, 0.0))     # two neighbouring dots,
+dot2 = world_to_pixel(cam, (15.0, 0.0, 0.0))    # 15 mm apart in the world
+HammerheadGUI.Controllers.click!(st, dot1[1], dot1[2])
+HammerheadGUI.Controllers.click!(st, dot2[1], dot2[2])
+set_separation!(st, 15.0)                        # mm between the clicks
+st.dt[] = 0.001                                  # 1 ms between frames
+st.time_unit[] = "s"
+scale_tool(st)
 
-describe_selection(ex)
+# The status line reports the derived pixel size, and "apply to batch"
+# copies the whole scale — pixel size, dt, and unit labels — into the batch
+# form ([`apply_scale!`](@ref)); every result the batch produces will carry
+# it:
 
-# The colorbar range defaults to a robust 2–98% percentile band over the
-# valid vectors ([`color_limits`](@ref)), so a few outliers cannot wash out
-# the display; the "color range" group switches to the full extrema or pins
-# either bound manually ([`set_color_limits!`](@ref)) — manual bounds
-# persist while you scrub frames and fields until cleared:
+apply_scale!(bc, st)
+physical_scale(st)
 
-set_color_limits!(ex; max = 0.05)
-current_color_limits(ex)
-
-#-
-
-set_color_limits!(ex; max = nothing)   # back to automatic
-
-# The explorer browses all four persisted result types — planar,
-# [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
-# [`TrackingResult`](@ref) — including mixed sequences from
-# [`load_results`](@ref). A [`PTVResult`](@ref) draws as a colored particle
-# scatter (with optional displacement arrows), and its
-# [`available_fields`](@ref) are the scattered analogues:
-
-ptv = run_ptv(imgA, imgB)
-pex = ResultExplorer(ptv)
-available_fields(ptv)
-
-#-
-
-pfig = result_explorer(pex)
-
-# ## Physical units follow the result
+# ## Step 2: mask what should not correlate
 #
-# When a result carries a [`PhysicalScale`](@ref) (attached at analysis time
-# or with [`with_scale`](@ref)), the explorer routes it through
-# [`physical`](@ref) and every label, colorbar, and inspection panel reads in
-# physical units — millimetres per second here rather than pixels per frame:
-
-scaled = ResultExplorer(with_scale(result, PhysicalScale(50.0, 0.001, "mm", "s")))
-select_nearest!(scaled, 128, 128)
-describe_selection(scaled)
-
-# ## The mask editor
-#
-# [`mask_editor`](@ref) opens an image (a matrix or a file path) and lets
-# you draw exclusion polygons over it: left-click adds vertices, right-click
-# closes the polygon, Backspace/Delete undo and remove. Here we hold the
-# [`MaskEditor`](@ref) controller and draw a polygon with its own API —
-# [`add_vertex!`](@ref) and [`close_active!`](@ref) are exactly what the
-# view calls when you click:
+# [`mask_editor`](@ref) draws exclusion polygons over a frame: left-click
+# adds vertices (inside a polygon it selects instead), right-click closes,
+# Backspace/Delete undo and remove. [`add_vertex!`](@ref) and
+# [`close_active!`](@ref) are exactly what the view calls when you click:
 
 me = MaskEditor(imgA)
 fig = mask_editor(me)
-for (x, y) in ((80, 80), (176, 80), (176, 176), (80, 176))
+for (x, y) in ((10, 10), (60, 10), (60, 60), (10, 60))
     add_vertex!(me, x, y)
 end
 close_active!(me)
 me.show_mask[] = true   # the "show mask" toggle
 fig
 
-# The committed polygon fills red and the mask overlay shades every
-# excluded pixel. The editor exports the package's mask convention —
-# image-sized `Bool`, `true` = excluded — directly into an analysis:
+# The editor exports the package's mask convention — image-sized `Bool`,
+# `true` = excluded ([the masking model](../explanation/masking.md)) — and
+# the batch form takes it directly ("load mask…" reads a saved mask image
+# instead):
 
-mask = polygon_mask(me)
-masked = run_piv(imgA, imgB, passes; mask)
-count(masked.mask)
+bc.mask[] = polygon_mask(me)
+count(bc.mask[])
 
-# ("Save mask…" instead writes the white-=-excluded image that
-# [`load_mask`](@ref) reads back; see the
-# [masking how-to](../howto/masking.md) for the semantics downstream.)
+# ## Step 3: choose preprocessing, with a correlation probe
 #
-# ## The preprocessing preview
-#
-# [`preprocess_preview`](@ref) builds the `preprocess` pipeline the batch
-# drivers take, interactively: every step of the
-# [core preprocessing set](../howto/preprocessing.md) with a toggle and its
-# parameters, applied live to a representative image (raw left, processed
-# right). The [`PreprocessPreview`](@ref) controller is the state:
+# [`preprocess_preview`](@ref) composes the
+# [core preprocessing set](../howto/preprocessing.md) into an ordered,
+# toggleable pipeline with a live raw/processed comparison. Give the
+# [`PreprocessPreview`](@ref) controller the frame's pair partner and it
+# also runs a *single-window correlation probe*: click a location on the
+# processed image and that window's displacement and peak ratio update live
+# as you toggle and tune steps — a direct readout of what each
+# preprocessing choice does to the correlation:
 
-pp = PreprocessPreview(imgA; enabled = [:highpass_filter, :percentile_stretch])
+pp = PreprocessPreview(imgA; pair = imgB, enabled = [:highpass_filter])
 set_step_param!(pp, :highpass_filter, :sigma, 5)
+HammerheadGUI.Controllers.click!(pp, 190.0, 128.0)   # probe off the vortex core
 preprocess_preview(pp)
-
-# [`build_preprocess`](@ref) exports the composed closure — it copies each
-# frame before the in-place steps, so your arrays are never mutated, and it
-# snapshots the pipeline so later edits cannot affect a running batch:
-
-pipeline = build_preprocess(pp)
-run_piv(pipeline(imgA), pipeline(imgB), passes)
-
-# ## The scale tool
-#
-# [`scale_tool`](@ref) turns a calibration line into a
-# [`PhysicalScale`](@ref): click the two endpoints of a feature of known
-# size (here placed programmatically through the [`ScaleTool`](@ref)
-# controller), enter the separation and units, and the derived pixel size
-# updates live — "apply to batch" copies it into a batch form
-# ([`apply_scale!`](@ref)):
-
-st = ScaleTool(imgA)
-HammerheadGUI.Controllers.click!(st, 28.0, 128.0)
-HammerheadGUI.Controllers.click!(st, 228.0, 128.0)   # a 200 px line
-set_separation!(st, 10.0)                            # ... spanning 10 mm
-scale_tool(st)
 
 #-
 
-physical_scale(st)
+probe_summary(pp)
 
-# ## The batch runner
+# Toggle a step and the probe recomputes — the displacement barely moves
+# but the peak ratio shifts, which is exactly the comparison the probe
+# exists for:
+
+enable_step!(pp, :percentile_stretch)
+probe_summary(pp)
+
+#-
+
+enable_step!(pp, :percentile_stretch, false)
+
+# "Use in batch" installs the pipeline; from code that is
+# [`set_preprocess!`](@ref), which snapshots the steps so later form edits
+# cannot affect a running batch:
+
+set_preprocess!(bc, pp)
+
+# ## Step 4: run
 #
-# [`batch_runner`](@ref) is a parameter form around
-# [`run_piv_sequence`](@ref): pick frames and the pairing mode, edit the
-# window schedule and the accuracy options, optionally choose an
-# incremental JLD2 output file and a mask, and run. The
-# [`BatchRunner`](@ref) controller seeds the form — here with our
-# in-memory pair; normally `files` would be image paths:
+# The parameter form holds the multi-pass window schedule and the accuracy
+# options, or an *effort* preset (`:low`/`:medium`/`:high` — see
+# [Choose an effort level](../howto/effort.md)) that replaces the manual
+# schedule. [`start!`](@ref) is the run button; in the GUI it runs as a
+# cooperative background task so the window stays live, "cancel" stops
+# after the pair in flight, and "view results" opens the explorer as soon
+# as the first pair finishes, appending later pairs live. Here we run
+# synchronously:
 
-bc = BatchRunner(files = Any[imgA, imgB], uncertainty = true)
 fig = batch_runner(bc)
-
-# [`start!`](@ref) is the run button. In the GUI it runs as a cooperative
-# background task so the window stays live (and "cancel" stops after the
-# pair in flight, keeping the finished pairs); here we run synchronously:
-
 start!(bc; async = false)
 fig
 
-# The progress and status panels have updated, and the results are the
-# plain `Vector` of [`PIVResult`](@ref)s any script would produce. You do
-# not have to wait for the batch: "view results" activates as soon as the
-# first pair finishes, opening the completed prefix in the explorer and
-# appending later pairs live (the frame slider grows with the run — the
-# `completed` observable and [`push_result!`](@ref) are the mechanism):
+# The results are the plain `Vector` of [`PIVResult`](@ref)s any script
+# would produce, each carrying the scale from step 1:
 
-bc.completed[]
+bc.results[]
 
-# The form also carries an *effort* menu — pick `:low`/`:medium`/`:high`
-# with [`set_effort!`](@ref) to use [`run_piv_sequence`](@ref)'s presets
-# instead of the manual schedule — a *physical scale* group
-# ([`set_scale!`](@ref), fed directly by the scale tool's
-# [`apply_scale!`](@ref)) that attaches a [`PhysicalScale`](@ref) to every
-# output, and a "preprocess…" window that installs a
-# [`PreprocessPreview`](@ref) pipeline ([`set_preprocess!`](@ref)).
+# ## Step 5: explore the results
 #
-# Stereo recordings have their own form: [`stereo_batch_runner`](@ref)
-# drives [`run_piv_stereo_sequence`](@ref) over two synchronized camera
-# frame lists, with the dewarpers built from two fitted calibrations in
-# [`stereo_calibration`](@ref) (both cameras' reviews embedded side by
-# side, plus the dewarp-grid options) — see the
-# [GUI how-to](../howto/gui.md) for the workflow.
+# [`result_explorer`](@ref) browses the batch output — the "view results"
+# button opens exactly this. Because the results carry a scale, every
+# label, colorbar, and inspection panel reads in physical units:
 
-# ## Calibration diagnostics on a real plate
+ex = ResultExplorer(bc.results[])
+fig = result_explorer(ex)
+
+# The field menu holds the components and diagnostics *plus the derived
+# fields* — vorticity, divergence, strain rate, swirling strength, and Q,
+# computed via [`flow_derivatives`](@ref) and labelled `1/s` here. The
+# colorbar range defaults to a robust 2–98% percentile band over the valid
+# vectors ([`color_limits`](@ref)) so outliers cannot wash it out, with
+# manual overrides in the "color range" group. Switch to vorticity and
+# inspect a vector near the core (the axes are in millimetres now):
+
+set_field!(ex, :vorticity)
+w = last(current_result(ex).x)      # field extent, mm
+select_nearest!(ex, w / 2, w / 2)
+describe_selection(ex)
+
+#-
+
+fig
+
+# The *tool* menu adds interactive analysis on planar results. `profile`
+# samples u, v, and |V| along a two-click line ([`extract_profile`](@ref)),
+# drawn in a side panel; `circulation` accumulates a contour (right-click
+# closes it) and evaluates [`circulation`](@ref) with both the
+# line-integral and vorticity-area estimators:
+
+set_tool!(ex, :profile)
+HammerheadGUI.Controllers.click!(ex, 0.1w, 0.5w)
+HammerheadGUI.Controllers.click!(ex, 0.9w, 0.5w)
+fig
+
+#-
+
+set_tool!(ex, :circulation)
+for (px, py) in ((0.35, 0.35), (0.75, 0.35), (0.75, 0.75), (0.35, 0.75))
+    HammerheadGUI.Controllers.click!(ex, px * w, py * w)   # clear of the mask
+end
+HammerheadGUI.Controllers.alt_click!(ex)
+tool_summary(ex)
+
+# ## Beyond the planar workflow
 #
-# The calibration tools work on the same data as the
-# [real stereo tutorial](stereo_real.md): Particle Image Velocimetry (PIV)
-# Challenge case 4E's
-# two-level plate, imaged at three traverse positions.
-# [`calibration_review`](@ref) runs the grid detection, fits a camera, and
-# shows each plate with its dots colored by reprojection error:
+# **Calibration review.** [`calibration_review`](@ref) runs the dot-grid
+# detection on real plate images, fits a camera, and shows each plate with
+# its dots colored by reprojection error. On the Particle Image Velocimetry
+# (PIV) Challenge case-4E plates from the
+# [real stereo tutorial](stereo_real.md):
 
 dir = joinpath(pkgdir(Hammerhead), "test", "reference_images", "E")
 plates = [load_image(joinpath(dir, "E_camera_1_z_$k.png")) for k in (1, 4, 7)]
@@ -243,22 +228,31 @@ calibration_review(plates, [-3.0, 0.0, 3.0]; spacing = 15.0,
     two_level = true, level_separation = 3.0, origin_offset = (30.0, 7.5))
 
 # The fiducial markers are outlined in cyan, the slider steps through the
-# planes, and the camera-model menu refits on the spot — the per-plane and
-# overall summaries on the right are [`calibration_quality`](@ref)'s
-# numbers. What residuals to expect from a physical plate (these ~0.5 px
-# are the plate, not the detection) is covered in the
-# [stereo-rig how-to](../howto/stereo_rig.md).
-#
+# planes, and the camera-model menu refits on the spot; what residuals to
+# expect from a physical plate (these ~0.5 px are the plate, not the
+# detection) is covered in the [stereo-rig how-to](../howto/stereo_rig.md).
 # Its sibling [`selfcal_review`](@ref) browses a
-# [`SelfCalibrationReport`](@ref): run
-# `self_calibrate(...; keep_disparity_maps = true)` and the per-pass
-# disparity maps open in an embedded result explorer, with the frame
-# slider stepping through the correction passes.
+# [`SelfCalibrationReport`](@ref) with the per-pass disparity maps in an
+# embedded explorer.
 #
+# **Stereo batch.** [`stereo_calibration`](@ref) embeds two of these
+# reviews side by side and builds the shared-grid [`ImageDewarper`](@ref)
+# pair ([`build_dewarpers`](@ref)); [`stereo_batch_runner`](@ref) then
+# drives [`run_piv_stereo_sequence`](@ref) over two synchronized frame
+# lists — same live progress, live results, and incremental output as the
+# planar form. See [the GUI how-to](../howto/gui.md) for the workflow.
+#
+# **Scattered results.** The explorer browses all four persisted result
+# types, mixed sequences included. A [`PTVResult`](@ref) draws as a colored
+# particle scatter with its scattered field menu:
+
+ptv = run_ptv(imgA, imgB)
+result_explorer(ptv)
+
 # ## Where to go next
 #
-# - Task recipes — masks from files, batch output, embedding views in your
-#   own figures: [Work interactively with the GUI](../howto/gui.md).
+# - Task recipes — masks from files, batch output, live viewing, stereo:
+#   [Work interactively with the GUI](../howto/gui.md).
 # - Why every tool is a controller + view pair, and what that lets you
 #   automate: [The GUI's controller–view split](../explanation/gui.md).
 # - The full API: [GUI reference](../reference/gui.md).

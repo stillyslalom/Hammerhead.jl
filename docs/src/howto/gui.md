@@ -49,6 +49,23 @@ set_color_limits!(ex; min = 0, max = 5)
 set_color_limits!(ex; max = "auto")    # clear one bound
 ```
 
+For planar results the field menu also carries the derived fields —
+vorticity, divergence, strain rate `|S|`, swirling strength, and Q — via
+[`flow_derivatives`](@ref), computed once per frame and labelled `1/s`
+(`1/s²` for Q) when a scale is attached. The *tool* menu adds interactive
+analysis on the same results:
+
+```julia
+set_tool!(ex, :profile)      # two clicks sample u/v/|V| along a line
+set_tool!(ex, :circulation)  # click a contour, right-click to close:
+                             # line-integral + vorticity-area circulation
+tool_summary(ex)             # the live numbers, with units
+set_tool!(ex, :inspect)      # back to click-to-inspect
+```
+
+Tool state clears when the frame changes, and the analysis tools revert to
+`:inspect` on result types without derived analysis (stereo/PTV/tracking).
+
 ## Draw a mask and use it
 
 ```julia
@@ -106,12 +123,13 @@ set_effort!(bc, :high)
 set_scale!(bc; pixel_size = 50.0, dt = 0.001, length_unit = "mm", time_unit = "s")
 ```
 
-Instead of typing the pixel size, derive it from the image with the scale
-tool — click the two endpoints of a feature of known physical size and
-apply the result to the form:
+Instead of typing the pixel size, derive it from an image with the scale
+tool — click the two endpoints of a feature of known physical size (a
+ruler, or two dots of a calibration plate) and apply the result to the
+form:
 
 ```julia
-st = ScaleTool("frame_0001.tif")
+st = ScaleTool("calibration_plate.tif")
 scale_tool(st; batch = bc)     # click two points, enter the separation…
 apply_scale!(bc, st)           # …or do the hand-off from code
 ```
@@ -130,6 +148,18 @@ set_preprocess!(bc, pp)        # snapshot: later edits don't affect the run
 
 The exported closure copies each frame before its in-place steps, so
 in-memory arrays are never mutated.
+
+Give the preview the frame's correlation partner and it gains a
+single-window probe: click the processed image and that window's
+displacement and peak ratio recompute live with every pipeline change —
+judge a preprocessing choice by what it does to the correlation, before
+committing to a batch:
+
+```julia
+pp = PreprocessPreview(frameA; pair = frameB)   # the batch pop-out does this
+set_probe_window!(pp, 48)
+probe_summary(pp)      # "du = …, dv = … px, peak ratio = …" after a click
+```
 
 Seed the form from code with a [`BatchRunner`](@ref) — every form field is
 an observable on the controller:

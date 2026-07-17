@@ -325,7 +325,14 @@ scatter heads, NOT arrows2d — arrows2d's per-frame pixel-space tip sizing
 made pan/zoom crawl at thousands of arrows; colorbar limits default to a
 robust 2–98% percentile band over valid vectors (`color_limits`) with
 bound-wise manual overrides persisting across frames; `push_result!`
-appends live and grows the view's slider via the `count` observable);
+appends live and grows the view's slider via the `count` observable;
+planar results add derived fields (:vorticity/:divergence/:strain_rate/
+:swirling_strength/:q_criterion via flow_derivatives, cached per frame,
+unit-labelled 1/time — physical-at-construction keeps the gradients
+exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
+`click!`/`alt_click!` gestures, planar-only, state clears on frame
+switches; circulation reports both line-integral and vorticity-area
+estimators; the profile panel appears as a third layout row);
 `MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
@@ -343,8 +350,11 @@ progress; throwing aborts like progress) feeds the live `completed`
 observable, and "view results" opens an explorer mid-run that follows the
 batch; `set_preprocess!` attaches a per-frame pipeline);
 `PreprocessPreview`/`preprocess_preview` (ordered toggleable pipeline over
-the core preprocessing set with live raw/processed preview;
-`build_preprocess` exports a frame-copying, snapshot-semantics closure for
+the core preprocessing set with live raw/processed preview and a
+single-window correlation probe — `set_pair!` + `click!` place it, du/dv/
+peak-ratio recompute on every pipeline change via a border-clamped
+single-window `run_piv` at the accuracy defaults; `build_preprocess`
+exports a frame-copying, snapshot-semantics closure for
 the batch drivers); `ScaleTool`/`scale_tool` (two clicked points + known
 separation → `PhysicalScale`; `apply_scale!` into a batch form);
 `StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two

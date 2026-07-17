@@ -176,7 +176,10 @@ function result_explorer!(target, ex::ResultExplorer)
             end
         else
             if profile_ax[] === nothing
-                profile_ax[] = Axis(gl[3, 1:3]; height = 150,
+                # span only the plot + colorbar columns: the controls column
+                # holds the (tellheight = false) info text, which would
+                # otherwise overlap the panel
+                profile_ax[] = Axis(gl[3, 1:2]; height = 150,
                                     xlabel = "s along line",
                                     ylabel = "sampled value")
             end

@@ -20,7 +20,9 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   mean speed (gap-aware), robust percentile color limits with manual
   override, frame scrubbing, click-to-inspect, live appending
   (`push_result!`) while a batch runs, and physical-unit labels when a
-  `PhysicalScale` is attached
+  `PhysicalScale` is attached; planar results add the derived fields
+  (vorticity, divergence, strain rate, swirling strength, Q, unit-labelled)
+  and interactive profile/circulation tools
 - **Mask editor** (done) — `mask_editor(image_or_path)` draws exclusion
   polygons over the image (left-click add/select, right-click close);
   `polygon_mask(editor)` exports the package mask convention and
@@ -33,8 +35,10 @@ Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
   batch live
 - **Preprocessing preview** (done) — `preprocess_preview(image_or_path)`
   composes the core preprocessing set into an ordered, toggleable pipeline
-  with a live raw/processed comparison; `build_preprocess` exports the
-  batch-driver closure (frame-copying, snapshot semantics)
+  with a live raw/processed comparison and a single-window correlation
+  probe (click a location; du/dv/peak-ratio recompute as steps change);
+  `build_preprocess` exports the batch-driver closure (frame-copying,
+  snapshot semantics)
 - **Scale tool** (done) — `scale_tool(image_or_path)` derives a
   `PhysicalScale` from a two-point calibration line of known separation;
   `apply_scale!` hands it into a batch form
