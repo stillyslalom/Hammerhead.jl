@@ -1,28 +1,38 @@
 # # A tour of the graphical user interface (GUI)
 #
-# Hammerhead's interactive tools live in a companion package,
-# **HammerheadGUI**. Two design facts shape how you use them:
+# This tutorial takes a pair of particle images to an explorable vector
+# field in three form actions, then improves that first result the way a
+# real analysis grows: attach a physical scale, mask what should not
+# correlate, tune preprocessing against a live correlation probe, re-run,
+# and analyze the flow. Calibration review, stereo, and particle tracking
+# make a brief appearance at the end.
 #
-# - Every tool is a thin shell over the same API this manual documents.
-#   What you click is what you would have typed: the mask editor produces
-#   the `Bool` matrices [`run_piv`](@ref) takes, the batch runner writes
-#   the JLD2-format Julia data files [`load_results`](@ref) reads — the GUI and
-#   your scripts mix freely.
-# - Every window is driven by a *controller*: a plain-Julia object holding
-#   the tool's state as `Observables`. You can construct it yourself,
-#   drive it from the REPL, and any open view follows live. (Why it is
-#   built this way: [the controller–view split](../explanation/gui.md).)
+# The GUI lives in a companion package, **HammerheadGUI**, so the core
+# package never carries plotting dependencies. Install and launch it like
+# any Julia package:
 #
-# This tutorial walks one planar workflow end to end — set a scale, mask,
-# choose preprocessing, run, explore — driving each tool through its
-# controller, which is how the docs build renders real figures; at your
-# REPL each `Figure` below opens as an interactive window instead. The
-# remaining tools (calibration review, stereo, PTV browsing) follow after
-# the walkthrough.
+# ```julia
+# pkg> add HammerheadGUI        # `]` at the julia> prompt opens pkg>
 #
-# ## A recording to process
+# julia> using HammerheadGUI
+# julia> batch_runner()         # the front door: an empty batch form
+# ```
 #
-# The same Lamb–Oseen vortex as [the first tutorial](first_vector_field.md):
+# One reading note. Every window is a thin shell over a plain-Julia
+# *controller*, and clicking a widget calls the same function the code
+# below calls — the docs build cannot click, so where you would use the
+# mouse this tutorial drives the controller instead. At your REPL every
+# figure in this page opens as a live interactive window, and you can
+# work with the mouse, the code, or both at once. (Why it is built this
+# way, and what that lets you automate:
+# [the controller–view split](../explanation/gui.md).)
+#
+# ## First vectors
+#
+# Your data is a folder of image files, added to the batch form with its
+# "add frames…" file picker. The docs build fabricates a recording
+# instead — a Lamb–Oseen vortex imaged as realistic particle images. Skip
+# over this block; it merely stands in for your camera:
 
 using Hammerhead
 using Hammerhead.SyntheticData
@@ -41,25 +51,49 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(flow, (256, 256), 1.0;
     particle_density = 0.05, background_noise = 0.03,
     z_range = (-1.0, 1.0), rng)
 
-# The workflow revolves around the batch runner — a parameter form around
-# [`run_piv_sequence`](@ref). Seed the [`BatchRunner`](@ref) controller with
-# the frames (normally file paths picked with "add frames…"; here our
-# in-memory pair) and keep a handle on it — each of the following steps
-# hands its output to this form:
+# The whole first analysis is three actions on the [`BatchRunner`](@ref)
+# form, a front end to [`run_piv_sequence`](@ref): add the frames, pick an
+# effort preset from the "effort" menu (`:low`/`:medium`/`:high` — see
+# [Choose an effort level](../howto/effort.md)), press "run":
 
 using HammerheadGUI
 
-bc = BatchRunner(files = Any[imgA, imgB], uncertainty = true)
+bc = BatchRunner(files = Any[imgA, imgB])   # "add frames…"
+set_effort!(bc, :medium)                    # the "effort" menu
+start!(bc; async = false)                   # the "run" button
+bc.status[]
 
-# ## Step 1: set the physical scale
+# In the GUI the run executes as a background task, so the window stays
+# live: a progress bar counts pairs, "cancel" stops after the pair in
+# flight (keeping the finished ones), and "view results" lights up as soon
+# as the first pair completes, appending later pairs to the open explorer
+# as they finish. The docs build runs synchronously and opens
+# [`result_explorer`](@ref) on the output — exactly what "view results"
+# does:
+
+ex = ResultExplorer(bc.results[])
+fig = result_explorer(ex)
+
+# That is a working PIV measurement: the displacement-magnitude field
+# under the vector arrows, a field menu of components and diagnostics, a
+# frame slider for longer recordings, and click-to-inspect on every
+# vector.
+#
+# It can be better, though. The axes read pixels and the displacements
+# pixels-per-frame; the frame edges correlate content that belongs to no
+# flow; and the defaults know nothing about your imaging conditions. The
+# rest of the walkthrough upgrades the same batch form one step at a
+# time — which is how a real analysis usually iterates.
+#
+# ## Improve it: physical units
 #
 # [`scale_tool`](@ref) turns a calibration image into a
 # [`PhysicalScale`](@ref): click the two endpoints of a feature of known
-# physical size and enter the separation. Here the calibration image is a
-# synthetic dot grid rendered with [`render_calibration_target`](@ref) — a
-# plate of dots at exactly 15 mm spacing seen through a known camera — and
-# we "click" the centres of two neighbouring dots through the
-# [`ScaleTool`](@ref) controller, exactly what a mouse click does:
+# physical size and type in the separation. Normally you would open a
+# photographed target with `scale_tool("plate.png")`; the docs build
+# renders a synthetic plate — dots at exactly 15 mm spacing seen through a
+# known camera ([`render_calibration_target`](@ref)). Skip this block too,
+# it only fabricates that photo:
 
 θ = deg2rad(10.0)
 R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
@@ -67,6 +101,11 @@ camC = R' * [0.0, 0.0, -500.0]
 K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
 cam = PinholeCamera(K, R, -R * camC)
 plate = render_calibration_target(cam, (512, 512); spacing = 15.0)
+
+# In the window: click the centres of two neighbouring dots, enter the
+# separation and units, and read the derived pixel size off the status
+# line. `Controllers.click!` is literally the function a mouse click
+# invokes:
 
 st = ScaleTool(plate)
 dot1 = world_to_pixel(cam, (0.0, 0.0, 0.0))     # two neighbouring dots,
@@ -78,20 +117,20 @@ st.dt[] = 0.001                                  # 1 ms between frames
 st.time_unit[] = "s"
 scale_tool(st)
 
-# The status line reports the derived pixel size, and "apply to batch"
-# copies the whole scale — pixel size, dt, and unit labels — into the batch
-# form ([`apply_scale!`](@ref)); every result the batch produces will carry
-# it:
+# "Apply to batch" copies the whole scale — pixel size, dt, and unit
+# labels — into the batch form ([`apply_scale!`](@ref)); every result the
+# batch produces from now on will carry it:
 
 apply_scale!(bc, st)
 physical_scale(st)
 
-# ## Step 2: mask what should not correlate
+# ## Improve it: mask what should not correlate
 #
 # [`mask_editor`](@ref) draws exclusion polygons over a frame: left-click
-# adds vertices (inside a polygon it selects instead), right-click closes,
-# Backspace/Delete undo and remove. [`add_vertex!`](@ref) and
-# [`close_active!`](@ref) are exactly what the view calls when you click:
+# adds vertices (a click inside an existing polygon selects it instead),
+# right-click closes the polygon, and buttons undo, delete, and grow or
+# shrink the mask. In code those clicks are [`add_vertex!`](@ref) and
+# [`close_active!`](@ref):
 
 me = MaskEditor(imgA)
 fig = mask_editor(me)
@@ -110,16 +149,17 @@ fig
 bc.mask[] = polygon_mask(me)
 count(bc.mask[])
 
-# ## Step 3: choose preprocessing, with a correlation probe
+# ## Improve it: preprocessing, tuned with a correlation probe
 #
 # [`preprocess_preview`](@ref) composes the
 # [core preprocessing set](../howto/preprocessing.md) into an ordered,
 # toggleable pipeline with a live raw/processed comparison. Give the
 # [`PreprocessPreview`](@ref) controller the frame's pair partner and it
 # also runs a *single-window correlation probe*: click a location on the
-# processed image and that window's displacement and peak ratio update live
-# as you toggle and tune steps — a direct readout of what each
-# preprocessing choice does to the correlation:
+# processed image and that window's displacement and peak ratio update
+# live as you toggle and tune steps — a direct readout of what each
+# preprocessing choice does to the measurement itself, not just to how
+# the image looks:
 
 pp = PreprocessPreview(imgA; pair = imgB, enabled = [:highpass_filter])
 set_step_param!(pp, :highpass_filter, :sigma, 5)
@@ -130,9 +170,9 @@ preprocess_preview(pp)
 
 probe_summary(pp)
 
-# Toggle a step and the probe recomputes — the displacement barely moves
-# but the peak ratio shifts, which is exactly the comparison the probe
-# exists for:
+# Toggle a step and the probe recomputes — here the displacement barely
+# moves but the peak ratio shifts, which is exactly the comparison the
+# probe exists for:
 
 enable_step!(pp, :percentile_stretch)
 probe_summary(pp)
@@ -142,36 +182,33 @@ probe_summary(pp)
 enable_step!(pp, :percentile_stretch, false)
 
 # "Use in batch" installs the pipeline; from code that is
-# [`set_preprocess!`](@ref), which snapshots the steps so later form edits
-# cannot affect a running batch:
+# [`set_preprocess!`](@ref), which snapshots the steps so later preview
+# edits cannot affect a running batch:
 
 set_preprocess!(bc, pp)
 
-# ## Step 4: run
+# ## Re-run with the full setup
 #
-# The parameter form holds the multi-pass window schedule and the accuracy
-# options, or an *effort* preset (`:low`/`:medium`/`:high` — see
-# [Choose an effort level](../howto/effort.md)) that replaces the manual
-# schedule. [`start!`](@ref) is the run button; in the GUI it runs as a
-# cooperative background task so the window stays live, "cancel" stops
-# after the pair in flight, and "view results" opens the explorer as soon
-# as the first pair finishes, appending later pairs live. Here we run
-# synchronously:
+# Back on the batch form: scale, mask, and preprocessing are now set, and
+# the "custom" effort setting exposes the manual multi-pass window
+# schedule and the accuracy options in their place — here the default
+# 64/32/32 px schedule with the uncertainty estimator switched on:
 
+set_effort!(bc, :custom)     # back to the manual parameter form
+bc.uncertainty[] = true      # the "uncertainty" toggle
 fig = batch_runner(bc)
 start!(bc; async = false)
 fig
 
 # The results are the plain `Vector` of [`PIVResult`](@ref)s any script
-# would produce, each carrying the scale from step 1:
+# would produce, each carrying the physical scale:
 
 bc.results[]
 
-# ## Step 5: explore the results
+# ## Explore and analyze
 #
-# [`result_explorer`](@ref) browses the batch output — the "view results"
-# button opens exactly this. Because the results carry a scale, every
-# label, colorbar, and inspection panel reads in physical units:
+# Open the explorer again — because the results now carry a scale, every
+# axis, colorbar, and inspection panel reads in physical units:
 
 ex = ResultExplorer(bc.results[])
 fig = result_explorer(ex)
