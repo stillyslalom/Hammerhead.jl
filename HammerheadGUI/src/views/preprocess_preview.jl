@@ -13,6 +13,11 @@ button that moves the step earlier in the pipeline (the summary line shows
 the current order). "background…" picks frames to compute the
 background-subtraction reference from. Hand the pipeline to a batch with
 [`build_preprocess`](@ref) or [`set_preprocess!`](@ref).
+
+When the controller carries a pair frame ([`set_pair!`](@ref)), clicking
+the processed image places a single-window correlation probe: the window
+outline is drawn at the click, and the panel below reports its
+displacement and peak ratio live as steps are toggled and edited.
 """
 preprocess_preview(source; kwargs...) =
     preprocess_preview(PreprocessPreview(source); kwargs...)
@@ -35,6 +40,14 @@ function preprocess_preview!(target, pp::PreprocessPreview)
 
     ax_raw = Axis(gl[1, 1]; title = "raw", yreversed = true, aspect = DataAspect())
     ax_proc = Axis(gl[1, 2]; title = "processed", yreversed = true, aspect = DataAspect())
+
+    # Correlation-probe row under the images: window-size box + live numbers.
+    probe_row = GridLayout(gl[2, 1:2]; halign = :left)
+    Label(probe_row[1, 1], "probe"; halign = :left, font = :bold)
+    probe_box = Textbox(probe_row[1, 2]; placeholder = "window: $(pp.probe_window[])",
+                        width = 100)
+    probe_label = Label(probe_row[1, 3], Controllers.probe_summary(pp);
+                        halign = :left, justification = :left)
 
     # The steps column is content-sized (no colsize! override — Auto(false)
     # made it ignore content width, so the widgets overflowed onto the
@@ -106,6 +119,42 @@ function preprocess_preview!(target, pp::PreprocessPreview)
         paths = pick_multi_file()
         isempty(paths) || Controllers.set_background!(pp, paths)
     end
+    on(probe_box.stored_string) do s
+        s === nothing && return
+        try
+            Controllers.set_probe_window!(pp, s)
+        catch
+        end
+    end
+
+    # Click on the processed image places the probe; the window outline and
+    # the numbers panel follow the controller's probe_result.
+    on(events(ax_proc.scene).mousebutton) do mb
+        if mb.button == Mouse.left && mb.action == Mouse.press &&
+           GLMakie.Makie.is_mouseinside(ax_proc.scene)
+            pos = GLMakie.Makie.mouseposition(ax_proc.scene)
+            Controllers.click!(pp, pos[1], pos[2])
+        end
+        return Consume(false)
+    end
+    probe_rect = Observable(Point2f[])
+    rect_plot = lines!(ax_proc, probe_rect; color = :cyan, linewidth = 2)
+    translate!(rect_plot, 0, 0, 1)
+    function refresh_probe!()
+        res = pp.probe_result[]
+        if res === nothing
+            probe_rect[] = Point2f[]
+        else
+            x0, y0, w = res.x0 - 0.5, res.y0 - 0.5, res.window
+            probe_rect[] = [Point2f(x0, y0), Point2f(x0 + w, y0),
+                            Point2f(x0 + w, y0 + w), Point2f(x0, y0 + w),
+                            Point2f(x0, y0)]
+        end
+        probe_label.text[] = Controllers.probe_summary(pp)
+        return
+    end
+    onany((args...) -> refresh_probe!(), pp.probe_result, pp.probe, pp.image2)
+    refresh_probe!()   # a probe placed before the view opened still draws
 
     # Recreate the image plots per refresh (sizes can change with set_image!).
     raw_plot = Ref{Any}(nothing)

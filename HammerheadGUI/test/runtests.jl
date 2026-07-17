@@ -609,6 +609,65 @@ const r_track = TrackingResult(
         @test bc.preprocess[] === nothing
     end
 
+    @testset "PreprocessPreview correlation probe (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # no pair / no click: probe inactive with explanatory summaries
+        pp0 = PreprocessPreview(imgA)
+        C.click!(pp0, 64.0, 64.0)
+        @test pp0.probe_result[] === nothing
+        @test occursin("pair frame", probe_summary(pp0))
+
+        pp = PreprocessPreview(imgA; pair = imgB)
+        @test pp.probe_result[] === nothing
+        @test occursin("click", probe_summary(pp))
+
+        # probe on the known uniform shift (fixtures: u ≈ 3, v ≈ 2)
+        C.click!(pp, 64.0, 64.0)
+        res = pp.probe_result[]
+        @test res !== nothing && !res.clamped
+        @test res.du ≈ 3.0 atol = 0.3
+        @test res.dv ≈ 2.0 atol = 0.3
+        @test res.peak_ratio > 1.0
+        s = probe_summary(pp)
+        @test occursin("du = ", s) && occursin("peak ratio", s)
+
+        # the numbers follow the pipeline live
+        enable_step!(pp, :highpass_filter)
+        res2 = pp.probe_result[]
+        @test res2 !== nothing && res2 != res            # recomputed
+        @test res2.du ≈ 3.0 atol = 0.3                   # still the true shift
+        enable_step!(pp, :highpass_filter, false)
+        @test pp.probe_result[].peak_ratio ≈ res.peak_ratio
+
+        # border clicks clamp the window instead of throwing
+        C.click!(pp, 2.0, 2.0)
+        resb = pp.probe_result[]
+        @test resb !== nothing && resb.clamped
+        @test resb.x0 == 1 && resb.y0 == 1
+        @test isfinite(resb.du)
+        @test occursin("clamped", probe_summary(pp))
+
+        # window-size handling: parse, validation, too-big windows
+        set_probe_window!(pp, "32")
+        @test pp.probe_window[] == 32
+        @test pp.probe_result[].window == 32
+        @test_throws ArgumentError set_probe_window!(pp, 7)
+        @test_throws ArgumentError set_probe_window!(pp, "abc")
+        set_probe_window!(pp, 256)                        # larger than the 128² frame
+        @test pp.probe_result[] === nothing
+        @test occursin("does not fit", probe_summary(pp))
+        set_probe_window!(pp, 64)
+        @test pp.probe_result[] !== nothing
+
+        # clearing the probe and the pair
+        clear_probe!(pp)
+        @test pp.probe_result[] === nothing
+        set_pair!(pp, nothing)
+        @test occursin("pair frame", probe_summary(pp))
+        @test_throws ArgumentError set_pair!(pp, rand(16, 16))
+    end
+
     @testset "preprocess_preview view (offscreen)" begin
         pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
         fig = preprocess_preview(pp)
@@ -621,6 +680,14 @@ const r_track = TrackingResult(
         img2 = colorbuffer(fig; px_per_unit = 1)
         @test size(img2) == size(img1)
         @test img2 != img1
+
+        # probe rectangle + numbers render and follow the probe
+        ppp = PreprocessPreview(imgA; pair = imgB)
+        figp = preprocess_preview(ppp)
+        imgp1 = copy(colorbuffer(figp; px_per_unit = 1))
+        HammerheadGUI.Controllers.click!(ppp, 64.0, 64.0)
+        imgp2 = colorbuffer(figp; px_per_unit = 1)
+        @test imgp2 != imgp1
     end
 
     @testset "live results during a batch (offscreen)" begin

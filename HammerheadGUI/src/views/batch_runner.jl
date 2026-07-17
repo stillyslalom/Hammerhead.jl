@@ -183,7 +183,9 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
     # with a "use in batch" hand-off that snapshots the pipeline into bc.
     on(pp_btn.clicks) do _
         isempty(bc.files[]) && (bc.status[] = "add frames first"; return)
-        pp = PreprocessPreview(bc.files[][1])
+        # the representative frame's pair partner enables the correlation probe
+        pp = PreprocessPreview(bc.files[][1];
+                               pair = length(bc.files[]) >= 2 ? bc.files[][2] : nothing)
         ppfig = Figure(size = (1250, 700))
         preprocess_preview!(ppfig[1, 1], pp)
         apply_btn = Button(ppfig[2, 1]; label = "use in batch", tellwidth = false)

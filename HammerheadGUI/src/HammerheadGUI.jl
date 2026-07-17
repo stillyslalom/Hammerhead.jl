@@ -44,7 +44,8 @@ export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
 export PreprocessPreview, PreprocStep, set_image!, set_background!,
        enable_step!, set_step_param!, move_step!, apply_pipeline,
-       build_preprocess, pipeline_summary
+       build_preprocess, pipeline_summary,
+       set_pair!, set_probe_window!, clear_probe!, probe_summary
 export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
        parse_schedule, set_schedule!, set_effort!, set_pixel_size!, set_dt!,
        set_scale!, set_preprocess!, build_parameters, build_scale, validate,
@@ -68,7 +69,8 @@ export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
 export PreprocessPreview, preprocess_preview, preprocess_preview!,
        set_image!, set_background!, enable_step!, set_step_param!,
-       move_step!, apply_pipeline, build_preprocess
+       move_step!, apply_pipeline, build_preprocess,
+       set_pair!, set_probe_window!, clear_probe!, probe_summary
 export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
        set_effort!, set_scale!, set_pixel_size!, set_dt!, set_preprocess!,
        start!, cancel!

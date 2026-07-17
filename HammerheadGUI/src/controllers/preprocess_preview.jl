@@ -35,7 +35,7 @@ preproc_label(name::Symbol) =
     last(PREPROC_CATALOG[findfirst(p -> first(p) === name, PREPROC_CATALOG)])[1]
 
 """
-    PreprocessPreview(image; enabled = Symbol[])
+    PreprocessPreview(image; pair = nothing, enabled = Symbol[])
     PreprocessPreview(path::AbstractString; kwargs...)
 
 Controller for the preprocessing-pipeline preview: a representative `image`
@@ -51,26 +51,50 @@ Supported steps, in default order: `:subtract_background`,
 `:local_variance_normalize` (`sigma`) — the core preprocessing set.
 [`build_preprocess`](@ref) exports the composed closure for the batch
 drivers.
+
+With `pair` (the representative frame's correlation partner — matrix or
+path, see [`set_pair!`](@ref)) a single-window correlation probe becomes
+available: [`click!`](@ref) places it, `probe_window` sizes it (64 px by
+default, [`set_probe_window!`](@ref)), and `probe_result` /
+[`probe_summary`](@ref) report the window's displacement and peak ratio,
+recomputed live as the pipeline changes — a direct readout of what each
+preprocessing choice does to the correlation.
 """
 struct PreprocessPreview
     image::Observable{Matrix{Float64}}
     background::Observable{Union{Nothing,Matrix{Float64}}}
     steps::Observable{Vector{PreprocStep}}
     processed::Observable{Matrix{Float64}}
+    image2::Observable{Union{Nothing,Matrix{Float64}}}
+    probe::Observable{Union{Nothing,NTuple{2,Float64}}}
+    probe_window::Observable{Int}
+    probe_result::Observable{Union{Nothing,NamedTuple}}
 end
 
-function PreprocessPreview(image::AbstractMatrix{<:Real}; enabled = Symbol[])
+function PreprocessPreview(image::AbstractMatrix{<:Real}; pair = nothing,
+                           enabled = Symbol[])
     steps = [PreprocStep(name, name in enabled, Dict{Symbol,Float64}(defaults))
              for (name, (_, defaults)) in PREPROC_CATALOG]
     img = Matrix{Float64}(image)
     pp = PreprocessPreview(Observable(img),
                            Observable{Union{Nothing,Matrix{Float64}}}(nothing),
                            Observable(steps),
-                           Observable(copy(img)))
-    recompute = _ -> (pp.processed[] = apply_pipeline(pp, pp.image[]))
+                           Observable(copy(img)),
+                           Observable{Union{Nothing,Matrix{Float64}}}(nothing),
+                           Observable{Union{Nothing,NTuple{2,Float64}}}(nothing),
+                           Observable(64),
+                           Observable{Union{Nothing,NamedTuple}}(nothing))
+    recompute = _ -> begin
+        pp.processed[] = apply_pipeline(pp, pp.image[])
+        _update_probe!(pp)
+    end
     on(recompute, pp.image)
     on(recompute, pp.background)
     on(recompute, pp.steps)
+    on(_ -> _update_probe!(pp), pp.image2)
+    on(_ -> _update_probe!(pp), pp.probe)
+    on(_ -> _update_probe!(pp), pp.probe_window)
+    pair === nothing || set_pair!(pp, pair)
     notify(pp.steps)   # populate `processed` for the initial state
     return pp
 end
@@ -100,6 +124,113 @@ set_image!(pp::PreprocessPreview, image::AbstractMatrix{<:Real}) =
     (pp.image[] = Matrix{Float64}(image); pp)
 set_image!(pp::PreprocessPreview, path::AbstractString) =
     set_image!(pp, load_image(path))
+
+"""
+    set_pair!(pp::PreprocessPreview, image_or_path)
+    set_pair!(pp::PreprocessPreview, nothing)
+
+Set the representative frame's correlation partner (matrix, or a path loaded
+with `Hammerhead.load_image`; must match the preview image's size) — this
+enables the correlation probe. `nothing` clears it.
+"""
+set_pair!(pp::PreprocessPreview, ::Nothing) = (pp.image2[] = nothing; pp)
+function set_pair!(pp::PreprocessPreview, image::AbstractMatrix{<:Real})
+    size(image) == size(pp.image[]) ||
+        throw(ArgumentError("pair frame size $(size(image)) does not match the preview image $(size(pp.image[]))"))
+    pp.image2[] = Matrix{Float64}(image)
+    return pp
+end
+set_pair!(pp::PreprocessPreview, path::AbstractString) =
+    set_pair!(pp, load_image(path))
+
+"""
+    click!(pp::PreprocessPreview, x::Real, y::Real)
+
+Place the correlation probe at data-space `(x, y)` on the processed image
+(the window is centered there, clamped to stay inside the frame).
+"""
+click!(pp::PreprocessPreview, x::Real, y::Real) =
+    (pp.probe[] = (Float64(x), Float64(y)); pp)
+
+"""
+    clear_probe!(pp::PreprocessPreview)
+
+Remove the correlation probe.
+"""
+clear_probe!(pp::PreprocessPreview) = (pp.probe[] = nothing; pp)
+
+"""
+    set_probe_window!(pp::PreprocessPreview, size)
+
+Set the probe's interrogation window size (an even integer ≥ 8, or its
+string form).
+"""
+function set_probe_window!(pp::PreprocessPreview, ws::Integer)
+    (ws >= 8 && iseven(ws)) ||
+        throw(ArgumentError("probe window must be an even integer ≥ 8, got $ws"))
+    pp.probe_window[] = Int(ws)
+    return pp
+end
+function set_probe_window!(pp::PreprocessPreview, s::AbstractString)
+    ws = tryparse(Int, strip(s))
+    ws === nothing &&
+        throw(ArgumentError("probe window must be an even integer ≥ 8, got \"$s\""))
+    return set_probe_window!(pp, ws)
+end
+
+# Recompute the probe correlation: run the pipeline on both frames (same
+# semantics as the batch closure), crop the probe window from each, and run
+# a single-window run_piv at the accuracy defaults. The window is clamped to
+# stay inside the frame (reported via `clamped`); `probe_result` is
+# `nothing` whenever the probe cannot run (no pair, no click, mismatched
+# sizes, window larger than the frame) — probe_summary explains which.
+function _update_probe!(pp::PreprocessPreview)
+    img2 = pp.image2[]
+    loc = pp.probe[]
+    if img2 === nothing || loc === nothing || size(img2) != size(pp.image[])
+        pp.probe_result[] === nothing || (pp.probe_result[] = nothing)
+        return pp
+    end
+    ws = pp.probe_window[]
+    nr, nc = size(pp.image[])
+    if ws > nr || ws > nc
+        pp.probe_result[] === nothing || (pp.probe_result[] = nothing)
+        return pp
+    end
+    x, y = loc
+    half = ws ÷ 2
+    r0 = clamp(round(Int, y) - half + 1, 1, nr - ws + 1)
+    c0 = clamp(round(Int, x) - half + 1, 1, nc - ws + 1)
+    clamped = r0 != round(Int, y) - half + 1 || c0 != round(Int, x) - half + 1
+    rows, cols = r0:(r0 + ws - 1), c0:(c0 + ws - 1)
+    a = pp.processed[][rows, cols]              # frame A is already processed
+    b = apply_pipeline(pp, img2)[rows, cols]
+    r = run_piv(a, b, PIVParameters(window_size = ws, overlap = (0, 0),
+                                    padding = true, apodization = :gauss,
+                                    uod_enable = false))
+    pp.probe_result[] = (; du = Float64(r.u[1, 1]), dv = Float64(r.v[1, 1]),
+                         peak_ratio = Float64(r.peak_ratio[1, 1]),
+                         x0 = c0, y0 = r0, window = ws, clamped)
+    return pp
+end
+
+"""
+    probe_summary(pp::PreprocessPreview) -> String
+
+Human-readable state of the correlation probe: the live displacement and
+peak ratio when it is placed, otherwise what is missing (pair frame, click,
+or a window that fits the frame).
+"""
+function probe_summary(pp::PreprocessPreview)
+    pp.image2[] === nothing && return "load a pair frame to probe the correlation"
+    size(pp.image2[]) == size(pp.image[]) || return "pair frame size differs from the preview image"
+    pp.probe[] === nothing && return "click the processed image to place the probe"
+    res = pp.probe_result[]
+    res === nothing && return "probe window ($(pp.probe_window[]) px) does not fit the frame"
+    return string("du = ", _fmt(res.du), " px, dv = ", _fmt(res.dv), " px\n",
+                  "peak ratio = ", _fmt(res.peak_ratio),
+                  res.clamped ? "\n(window clamped to the frame)" : "")
+end
 
 """
     set_background!(pp::PreprocessPreview, frames; method = :min)
