@@ -61,8 +61,14 @@ function result_explorer!(target, ex::ResultExplorer)
                       options = [("robust (2–98%)", :robust), ("full range", :full)])
     cmin_box = Textbox(cgrid[2, 1]; placeholder = "min: auto", width = 100)
     cmax_box = Textbox(cgrid[2, 2]; placeholder = "max: auto", width = 100)
-    Label(controls[6, 1], "click a vector to inspect"; halign = :left, font = :bold)
-    info = Label(controls[7, 1], ""; halign = :left, justification = :left)
+    Label(controls[6, 1], "tool"; halign = :left, font = :bold)
+    tool_menu = Menu(controls[7, 1]; tellwidth = false,
+                     options = [("inspect", :inspect), ("profile", :profile),
+                                ("circulation", :circulation)])
+    tool_info = Label(controls[8, 1], ""; halign = :left, justification = :left,
+                      word_wrap = true, width = 210, tellwidth = false)
+    Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
+    info = Label(controls[10, 1], ""; halign = :left, justification = :left)
     colsize!(gl, 3, Fixed(230))
 
     Label(gl[2, 1:3][1, 1], "frame")
@@ -88,6 +94,21 @@ function result_explorer!(target, ex::ResultExplorer)
         f === nothing || f == ex.field[] || set_field!(ex, f)
     end
     _sync_menu!(cmode_menu, ex.color_mode)
+    # Tool menu: set_tool! rejects analysis tools on non-planar results —
+    # revert the menu selection instead of leaving it out of sync.
+    on(tool_menu.selection) do t
+        (t === nothing || t == ex.tool[]) && return
+        try
+            set_tool!(ex, t)
+        catch
+            i = findfirst(==(ex.tool[]), (:inspect, :profile, :circulation))
+            tool_menu.i_selected[] = something(i, 1)
+        end
+    end
+    on(ex.tool) do t
+        i = findfirst(==(t), (:inspect, :profile, :circulation))
+        (i === nothing || i == tool_menu.i_selected[]) || (tool_menu.i_selected[] = i)
+    end
     # Manual colorbar bounds: one-way widget -> controller (the box's
     # placeholder documents the cleared state); junk entries are ignored.
     on(cmin_box.stored_string) do s
@@ -105,12 +126,16 @@ function result_explorer!(target, ex::ResultExplorer)
         end
     end
 
-    # Click to inspect (left press inside the axis).
+    # Clicks route through the active tool (left = place/select, right =
+    # close a circulation contour).
     on(events(ax.scene).mousebutton) do mb
-        if mb.button == Mouse.left && mb.action == Mouse.press &&
-           GLMakie.Makie.is_mouseinside(ax.scene)
-            pos = GLMakie.Makie.mouseposition(ax.scene)
-            select_nearest!(ex, pos[1], pos[2])
+        if mb.action == Mouse.press && GLMakie.Makie.is_mouseinside(ax.scene)
+            if mb.button == Mouse.left
+                pos = GLMakie.Makie.mouseposition(ax.scene)
+                Controllers.click!(ex, pos[1], pos[2])
+            elseif mb.button == Mouse.right
+                Controllers.alt_click!(ex)
+            end
         end
         return Consume(false)
     end
@@ -125,6 +150,47 @@ function result_explorer!(target, ex::ResultExplorer)
         sel_points[] = pt === nothing ? Point2f[] : [Point2f(pt[1], pt[2])]
         info.text[] = describe_selection(ex)
     end
+
+    # Tool overlay (profile line / circulation contour) and the profile
+    # side panel, which appears as a third row while a profile is set.
+    tool_line = Observable(Point2f[])
+    tool_plot = lines!(ax, tool_line; color = :cyan, linewidth = 2)
+    tool_marks = scatter!(ax, tool_line; color = :cyan, markersize = 8)
+    translate!(tool_plot, 0, 0, 2)
+    translate!(tool_marks, 0, 0, 2)
+    profile_ax = Ref{Any}(nothing)
+    function refresh_tools!()
+        pts = [Point2f(p[1], p[2]) for p in ex.tool_points[]]
+        # a closed circulation contour draws with its closing segment
+        res = ex.circulation_result[]
+        ex.tool[] === :circulation && res !== nothing && !isempty(pts) &&
+            push!(pts, pts[1])
+        tool_line[] = pts
+        tool_info.text[] = tool_summary(ex)
+        pd = ex.profile_data[]
+        if pd === nothing
+            if profile_ax[] !== nothing
+                delete!(profile_ax[])
+                profile_ax[] = nothing
+                trim!(gl)
+            end
+        else
+            if profile_ax[] === nothing
+                profile_ax[] = Axis(gl[3, 1:3]; height = 150,
+                                    xlabel = "s along line",
+                                    ylabel = "sampled value")
+            end
+            ax2 = profile_ax[]
+            empty!(ax2)
+            lines!(ax2, pd.s, pd.u; color = :steelblue)
+            lines!(ax2, pd.s, pd.v; color = :darkorange)
+            lines!(ax2, pd.s, hypot.(pd.u, pd.v); color = :black)
+            autolimits!(ax2)
+        end
+        return
+    end
+    onany((args...) -> refresh_tools!(),
+          ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
 
     function refresh_menu!()
         fields = available_fields(current_result(ex))
@@ -185,7 +251,7 @@ function result_explorer!(target, ex::ResultExplorer)
     end
 
     function _draw!(r::Union{PIVResult,StereoPIVResult})
-        data = field_values(r, ex.field[])
+        data = Controllers.current_field_values(ex)   # cached for derived fields
         lo, hi = current_color_limits(ex)
         crange[] = (lo, hi)
         clabel[] = field_label(r, ex.field[])
@@ -251,5 +317,6 @@ function result_explorer!(target, ex::ResultExplorer)
 
     refresh_menu!()
     refresh_plots!()
+    refresh_tools!()
     return gl
 end

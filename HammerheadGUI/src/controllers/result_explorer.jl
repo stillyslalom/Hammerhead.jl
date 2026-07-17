@@ -27,7 +27,10 @@ gridded window, a linear `Int` index for a scattered particle/trajectory, or
 `color_max` (see [`color_limits`](@ref) and [`set_color_limits!`](@ref);
 manual overrides persist across frame/field switches until cleared), and
 `count` (the current sequence length, notified by [`push_result!`](@ref) so
-views can grow their frame slider while a batch appends live).
+views can grow their frame slider while a batch appends live), and the
+interactive-analysis state `tool` / `tool_points` / `profile_data` /
+`circulation_result` (see [`set_tool!`](@ref) and [`click!`](@ref);
+planar results only — tool state clears on frame switches).
 
 Each entry is routed through [`physical`](@ref) at construction, so loaded
 results carrying a [`PhysicalScale`](@ref) display in physical units with
@@ -50,6 +53,11 @@ struct ResultExplorer
     color_min::Observable{Union{Nothing,Float64}}
     color_max::Observable{Union{Nothing,Float64}}
     count::Observable{Int}
+    tool::Observable{Symbol}
+    tool_points::Observable{Vector{NTuple{2,Float64}}}
+    profile_data::Observable{Union{Nothing,NamedTuple}}
+    circulation_result::Observable{Union{Nothing,NamedTuple}}
+    derived_cache::Dict{Int,NamedTuple}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -65,11 +73,20 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
                         Observable(:robust),
                         Observable{Union{Nothing,Float64}}(nothing),
                         Observable{Union{Nothing,Float64}}(nothing),
-                        Observable(length(conv)))
+                        Observable(length(conv)),
+                        Observable(:inspect),
+                        Observable(NTuple{2,Float64}[]),
+                        Observable{Union{Nothing,NamedTuple}}(nothing),
+                        Observable{Union{Nothing,NamedTuple}}(nothing),
+                        Dict{Int,NamedTuple}())
     on(ex.frame) do _
         r = current_result(ex)
         ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
         ex.selection[] = _valid_selection(r, ex.selection[])
+        # tool state describes one frame's flow: clear it on a frame switch,
+        # and revert to :inspect when the new result has no derived analysis
+        _reset_tool!(ex)
+        r isa PIVResult || ex.tool[] === :inspect || (ex.tool[] = :inspect)
     end
     return ex
 end
@@ -132,20 +149,30 @@ function _valid_selection(r, sel)
     end
 end
 
+# Derived scalar fields (planar PIVResult only — the core derived.jl API is
+# planar-typed; stereo has no gradient methods and PTV/Tracking no grid).
+const DERIVED_FIELDS = (:vorticity, :divergence, :strain_rate,
+                        :swirling_strength, :q_criterion)
+
 """
     available_fields(result) -> Vector{Symbol}
 
 Scalar fields displayable for a result. Gridded results (`PIVResult` /
 `StereoPIVResult`) offer `:magnitude` (in-plane, or 3-component for stereo,
 displacement magnitude) plus the per-vector component/diagnostic fields, with
-uncertainty fields included only when estimates are present. A `PTVResult`
-offers `[:magnitude, :u, :v, :match_residual]`; a `TrackingResult` offers
-`[:speed]` (per-trajectory mean speed).
+uncertainty fields included only when estimates are present. Planar results
+additionally offer the derived fields `:vorticity`, `:divergence`,
+`:strain_rate` (the magnitude `|S|`), `:swirling_strength`, and
+`:q_criterion` (computed via `flow_derivatives` on grids with at least two
+points per axis). A `PTVResult` offers `[:magnitude, :u, :v,
+:match_residual]`; a `TrackingResult` offers `[:speed]` (per-trajectory mean
+speed).
 """
 function available_fields(r::PIVResult)
     fields = [:magnitude, :u, :v, :peak_ratio, :correlation_moment]
     any(isfinite, r.uncertainty_u) && push!(fields, :uncertainty_u)
     any(isfinite, r.uncertainty_v) && push!(fields, :uncertainty_v)
+    length(r.x) >= 2 && length(r.y) >= 2 && append!(fields, DERIVED_FIELDS)
     return fields
 end
 
@@ -159,21 +186,46 @@ end
 available_fields(::PTVResult) = [:magnitude, :u, :v, :match_residual]
 available_fields(::TrackingResult) = [:speed]
 
+# One derived scalar from a precomputed flow_derivatives NamedTuple.
+_derived_field(d::NamedTuple, field::Symbol) =
+    field === :vorticity ? vorticity(d) :
+    field === :divergence ? divergence(d) :
+    field === :strain_rate ? strain_rate(d).magnitude :
+    field === :swirling_strength ? swirling_strength(d) :
+    q_criterion(d)
+
+# The frame's velocity-gradient tensor, computed once and cached (results
+# are immutable, so the cache never invalidates).
+_derived(ex::ResultExplorer) =
+    get!(() -> flow_derivatives(current_result(ex)), ex.derived_cache, ex.frame[])
+
 """
     field_values(result, field::Symbol)
 
 The scalar field to display. For gridded results this is a `Matrix`
-(`:magnitude` is `hypot` of the displacement components, everything else the
-result's own matrix). For a `PTVResult` it is a per-particle `Vector`
-(`:magnitude`, `:u`, `:v`, `:match_residual`). For a `TrackingResult` it is a
-per-trajectory `Vector` of mean speeds (`:speed`).
+(`:magnitude` is `hypot` of the displacement components, derived fields —
+see [`available_fields`](@ref) — come from `flow_derivatives`, everything
+else is the result's own matrix). For a `PTVResult` it is a per-particle
+`Vector` (`:magnitude`, `:u`, `:v`, `:match_residual`). For a
+`TrackingResult` it is a per-trajectory `Vector` of mean speeds (`:speed`).
 """
 function field_values(r::GridResult, field::Symbol)
     field === :magnitude &&
         return r isa StereoPIVResult ? hypot.(r.u, r.v, r.w) : hypot.(r.u, r.v)
     field in available_fields(r) ||
         throw(ArgumentError("field :$field is not available for this result"))
+    field in DERIVED_FIELDS && return _derived_field(flow_derivatives(r), field)
     return getproperty(r, field)
+end
+
+# Explorer-aware variant of field_values: derived fields reuse the cached
+# flow_derivatives of the current frame (the view and colorbar both read it).
+function current_field_values(ex::ResultExplorer)
+    r = current_result(ex)
+    field = ex.field[]
+    r isa PIVResult && field in DERIVED_FIELDS &&
+        return _derived_field(_derived(ex), field)
+    return field_values(r, field)
 end
 
 function field_values(r::PTVResult, field::Symbol)
@@ -197,6 +249,9 @@ const FIELD_NAMES = Dict(
     :match_residual => "match residual",
     :speed => "speed",
     :uncertainty_u => "σu", :uncertainty_v => "σv", :uncertainty_w => "σw",
+    :vorticity => "vorticity", :divergence => "divergence",
+    :strain_rate => "strain rate |S|", :swirling_strength => "swirling strength",
+    :q_criterion => "Q",
 )
 
 """
@@ -217,6 +272,11 @@ _fallback_unit(::AnyResult) = "px"
 _length_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) : r.scale.length_unit
 _field_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) :
     string(r.scale.length_unit, "/", r.scale.time_unit)
+# Time unit for the derived-gradient fields: velocity/length cancels the
+# length, so vorticity/divergence/strain are 1/time (Q is 1/time²). The
+# `physical` conversion keeps this consistent: positions and displacements
+# scale by the same length factor, so the gradients carry exactly 1/dt.
+_time_unit(r::AnyResult) = r.scale === nothing ? "frame" : r.scale.time_unit
 
 """
     field_label(result, field::Symbol) -> String
@@ -225,11 +285,14 @@ Display name of a scalar field with the result's units appended (colorbar
 label). Displacement/velocity fields and their uncertainties carry the
 velocity unit (`length_unit/time_unit`, e.g. `mm/s`, or the `px`/`world units`
 fallback when unscaled); a `PTVResult`'s `match_residual` carries the length
-unit; dimensionless diagnostics carry no unit.
+unit; the derived gradient fields carry `1/time_unit` (`1/time_unit²` for Q,
+`1/frame` when unscaled); dimensionless diagnostics carry no unit.
 """
 function field_label(r::AnyResult, field::Symbol)
     field in (:peak_ratio, :correlation_moment) && return field_name(field)
     field === :match_residual && return string(field_name(field), " (", _length_unit(r), ")")
+    field === :q_criterion && return string(field_name(field), " (1/", _time_unit(r), "²)")
+    field in DERIVED_FIELDS && return string(field_name(field), " (1/", _time_unit(r), ")")
     return string(field_name(field), " (", _field_unit(r), ")")
 end
 
@@ -271,10 +334,12 @@ non-flagged PTV particles) so a few outliers cannot stretch the color range;
 when no valid values exist it falls back to all finite values. A degenerate
 range is padded by ±0.5.
 """
-function color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust)
+color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust) =
+    _color_limits(r, field_values(r, field), mode)
+
+function _color_limits(r::AnyResult, data, mode::Symbol)
     mode in (:robust, :full) ||
         throw(ArgumentError("mode must be :robust or :full, got :$mode"))
-    data = field_values(r, field)
     vals = Float64[]
     if mode === :robust
         for i in eachindex(data)
@@ -340,7 +405,7 @@ The colorbar limits in effect for the current frame and field: the automatic
 degenerate manual pair is padded to a valid range).
 """
 function current_color_limits(ex::ResultExplorer)
-    lo, hi = color_limits(current_result(ex), ex.field[], ex.color_mode[])
+    lo, hi = _color_limits(current_result(ex), current_field_values(ex), ex.color_mode[])
     ex.color_min[] === nothing || (lo = ex.color_min[])
     ex.color_max[] === nothing || (hi = ex.color_max[])
     if !(lo < hi)
@@ -388,6 +453,140 @@ end
 Drop the current selection.
 """
 clear_selection!(ex::ResultExplorer) = (ex.selection[] = nothing; ex)
+
+# ---------------------------------------------------------------------------
+# Interactive derived-analysis tools (planar PIVResult only)
+# ---------------------------------------------------------------------------
+
+const EXPLORER_TOOLS = (:inspect, :profile, :circulation)
+
+# Clear the gesture points and computed outputs (frame switches, tool
+# switches, and restarts all funnel through here).
+function _reset_tool!(ex::ResultExplorer)
+    isempty(ex.tool_points[]) || (empty!(ex.tool_points[]); notify(ex.tool_points))
+    ex.profile_data[] === nothing || (ex.profile_data[] = nothing)
+    ex.circulation_result[] === nothing || (ex.circulation_result[] = nothing)
+    return ex
+end
+
+"""
+    set_tool!(ex::ResultExplorer, tool::Symbol)
+
+Select the explorer's interaction tool: `:inspect` (click selects the
+nearest item — the default), `:profile` (two clicks define a line sampled
+with `extract_profile`), or `:circulation` (clicks accumulate a contour,
+[`alt_click!`](@ref) closes it and evaluates `circulation`). The analysis
+tools need a planar `PIVResult` at the current frame; switching tools (or
+frames) clears any in-progress gesture and outputs.
+"""
+function set_tool!(ex::ResultExplorer, tool::Symbol)
+    tool in EXPLORER_TOOLS ||
+        throw(ArgumentError("tool must be one of $(EXPLORER_TOOLS), got :$tool"))
+    tool === :inspect || current_result(ex) isa PIVResult ||
+        throw(ArgumentError("the :$tool tool needs a planar PIVResult at the current frame"))
+    _reset_tool!(ex)
+    ex.tool[] = tool
+    return ex
+end
+
+"""
+    click!(ex::ResultExplorer, x::Real, y::Real)
+
+Route a click through the active tool: `:inspect` selects the nearest item
+([`select_nearest!`](@ref)); `:profile` places a line endpoint (the profile
+is computed when the second point lands, a third click starts a new line);
+`:circulation` appends a contour vertex.
+"""
+function click!(ex::ResultExplorer, x::Real, y::Real)
+    tool = ex.tool[]
+    tool === :inspect && return select_nearest!(ex, x, y)
+    pts = ex.tool_points[]
+    if tool === :profile
+        length(pts) >= 2 && (empty!(pts); ex.profile_data[] = nothing)
+        push!(pts, (Float64(x), Float64(y)))
+        notify(ex.tool_points)
+        length(pts) == 2 && _compute_profile!(ex)
+    else # :circulation
+        ex.circulation_result[] === nothing ||
+            (empty!(pts); ex.circulation_result[] = nothing)   # closed: start anew
+        push!(pts, (Float64(x), Float64(y)))
+        notify(ex.tool_points)
+    end
+    return ex
+end
+
+"""
+    alt_click!(ex::ResultExplorer)
+
+Close the `:circulation` contour (right-click in the view): with at least
+three vertices the line-integral `circulation(r, contour)` and the
+vorticity-area form `circulation(r; region = contour)` are both evaluated
+into `circulation_result`; with fewer the gesture is cancelled. A no-op for
+the other tools.
+"""
+function alt_click!(ex::ResultExplorer)
+    ex.tool[] === :circulation || return ex
+    pts = ex.tool_points[]
+    if length(pts) < 3
+        _reset_tool!(ex)
+        return ex
+    end
+    r = current_result(ex)
+    contour = copy(pts)
+    ex.circulation_result[] = (; line = circulation(r, contour),
+                               area = circulation(r; region = contour),
+                               contour)
+    return ex
+end
+
+"""
+    clear_tool!(ex::ResultExplorer)
+
+Clear the active tool's in-progress gesture and computed outputs (the tool
+itself stays selected).
+"""
+clear_tool!(ex::ResultExplorer) = _reset_tool!(ex)
+
+# Sample u/v along the two-point line. The panel always shows u, v, and |V|
+# (extract_profile samples the velocity components; the displayed scalar
+# field is not resampled — documented simplification).
+function _compute_profile!(ex::ResultExplorer)
+    r = current_result(ex)
+    pts = ex.tool_points[]
+    prof = extract_profile(r, pts; n = 100)
+    ex.profile_data[] = prof
+    return ex
+end
+
+# Circulation carries length²/time: px²/frame unscaled, e.g. mm²/s scaled.
+_circulation_unit(r::AnyResult) =
+    string(_length_unit(r), "²/", _time_unit(r))
+
+"""
+    tool_summary(ex::ResultExplorer) -> String
+
+One-line status of the active analysis tool: gesture instructions while
+points are being placed, the profile legend once a line is set, or the
+computed circulation (line-integral and vorticity-area forms, with units).
+"""
+function tool_summary(ex::ResultExplorer)
+    tool = ex.tool[]
+    tool === :inspect && return ""
+    r = current_result(ex)
+    if tool === :profile
+        ex.profile_data[] === nothing &&
+            return "profile: click two points to sample a line"
+        return "profile along the line: u (blue), v (orange), |V| (black)"
+    end
+    res = ex.circulation_result[]
+    if res === nothing
+        n = length(ex.tool_points[])
+        return "circulation: click contour vertices ($n placed), right-click to close"
+    end
+    un = _circulation_unit(r)
+    return string("Γ (line) = ", _fmt(res.line), " ", un,
+                  "\nΓ (vorticity area) = ", _fmt(res.area), " ", un)
+end
 
 # Data-space point (x, y) marking the current selection, or `nothing` when the
 # selection is empty or stale — the view draws a marker there.

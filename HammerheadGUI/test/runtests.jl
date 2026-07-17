@@ -71,13 +71,16 @@ const r_track = TrackingResult(
         @test ex.field[] == :magnitude
         @test current_result(ex) === r_unc
 
-        # field inventory: uncertainty entries only where estimates exist
+        # field inventory: uncertainty entries only where estimates exist,
+        # derived fields on every planar grid with >= 2 points per axis
+        derived = collect(HammerheadGUI.Controllers.DERIVED_FIELDS)
         @test available_fields(r_unc) ==
-              [:magnitude, :u, :v, :peak_ratio, :correlation_moment,
-               :uncertainty_u, :uncertainty_v]
+              vcat([:magnitude, :u, :v, :peak_ratio, :correlation_moment,
+                    :uncertainty_u, :uncertainty_v], derived)
         @test available_fields(r_plain) ==
-              [:magnitude, :u, :v, :peak_ratio, :correlation_moment]
+              vcat([:magnitude, :u, :v, :peak_ratio, :correlation_moment], derived)
         @test :w in available_fields(r_stereo)
+        @test !any(in(available_fields(r_stereo)), derived)   # planar only
 
         @test field_values(r_unc, :magnitude) ≈ hypot.(r_unc.u, r_unc.v) nans = true
         @test field_values(r_unc, :peak_ratio) === r_unc.peak_ratio
@@ -213,6 +216,104 @@ const r_track = TrackingResult(
         @test loi < hii
     end
 
+    @testset "ResultExplorer derived fields + analysis tools (no GL)" begin
+        C = HammerheadGUI.Controllers
+
+        # solid-body rotation about the grid center: vorticity = 2Ω exactly,
+        # circulation over any enclosed contour = 2Ω * area
+        n, Ω, ctr = 21, 0.05, 10.0
+        xs = collect(0.0:20.0)
+        u = [-Ω * (y - ctr) for y in xs, x in xs]
+        v = [Ω * (x - ctr) for y in xs, x in xs]
+        rot = PIVResult(xs, copy(xs), u, v, ones(n, n), ones(n, n),
+                        fill(NaN, n, n), fill(NaN, n, n), falses(n, n),
+                        falses(n, n), PIVParameters(window_size = 16, overlap = (8, 8)))
+
+        # derived fields match the direct core calls (hand-checked value)
+        ω = field_values(rot, :vorticity)
+        @test all(isapprox.(ω, 2Ω; atol = 1e-12))
+        d = flow_derivatives(rot)
+        @test isequal(field_values(rot, :divergence), divergence(d))
+        @test isequal(field_values(rot, :strain_rate), strain_rate(d).magnitude)
+        @test isequal(field_values(rot, :swirling_strength), swirling_strength(d))
+        @test isequal(field_values(rot, :q_criterion), q_criterion(d))
+        @test isequal(field_values(r_unc, :vorticity),
+                      vorticity(flow_derivatives(r_unc)))
+
+        # units: gradients are 1/time — the physical conversion (positions
+        # and velocities share the length factor) leaves exactly 1/dt
+        @test C.field_label(rot, :vorticity) == "vorticity (1/frame)"
+        @test C.field_label(rot, :q_criterion) == "Q (1/frame²)"
+        exs = ResultExplorer(with_scale(rot, PhysicalScale(2.0, 0.5, "mm", "s")))
+        rs = current_result(exs)
+        @test C.field_label(rs, :vorticity) == "vorticity (1/s)"
+        @test C.field_label(rs, :q_criterion) == "Q (1/s²)"
+        set_field!(exs, :vorticity)
+        ωs = C.current_field_values(exs)
+        @test all(isapprox.(ωs, 2Ω / 0.5; atol = 1e-12))   # 1/dt scaling
+        @test C._derived(exs) === C._derived(exs)          # cached per frame
+        lo, hi = current_color_limits(exs)
+        @test isfinite(lo) && isfinite(hi)
+
+        # profile tool: two clicks sample the line; a third starts over
+        ex = ResultExplorer(rot)
+        @test ex.tool[] == :inspect
+        C.click!(ex, xs[3] + 0.2, xs[4] - 0.2)             # :inspect → selection
+        @test ex.selection[] == CartesianIndex(4, 3)
+        set_tool!(ex, :profile)
+        @test occursin("two points", tool_summary(ex))
+        C.click!(ex, 5.0, 10.0)
+        @test ex.profile_data[] === nothing
+        C.click!(ex, 15.0, 10.0)
+        pd = ex.profile_data[]
+        @test pd !== nothing && length(pd.s) == 100
+        @test pd.u[1] ≈ 0.0 atol = 1e-12                   # u = -Ω(y-yc) = 0 on y = 10
+        @test pd.v[1] ≈ -5Ω atol = 1e-12                   # v = Ω(x-yc) at x = 5
+        @test pd.v[end] ≈ 5Ω atol = 1e-12
+        @test occursin("u (blue)", tool_summary(ex))
+        C.click!(ex, 0.0, 0.0)                             # restart
+        @test length(ex.tool_points[]) == 1 && ex.profile_data[] === nothing
+
+        # circulation tool: polygon + alt-click close, both estimators
+        set_tool!(ex, :circulation)
+        @test isempty(ex.tool_points[])
+        for p in ((5.0, 5.0), (15.0, 5.0), (15.0, 15.0), (5.0, 15.0))
+            C.click!(ex, p...)
+        end
+        C.alt_click!(ex)
+        res = ex.circulation_result[]
+        @test res !== nothing
+        @test res.line ≈ 2Ω * 100 atol = 1e-9              # exact on the linear field
+        @test res.area ≈ 2Ω * 100 atol = 2.5               # node-cell quantization
+        @test occursin("Γ (line)", tool_summary(ex))
+        @test occursin("px²/frame", tool_summary(ex))
+        C.click!(ex, 1.0, 1.0)                             # closed → new contour
+        @test length(ex.tool_points[]) == 1 && ex.circulation_result[] === nothing
+        C.alt_click!(ex)                                   # < 3 vertices: cancel
+        @test isempty(ex.tool_points[])
+        clear_tool!(ex)
+        @test ex.circulation_result[] === nothing
+
+        # scaled circulation carries length²/time
+        set_tool!(exs, :circulation)
+        for p in ((10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0))
+            C.click!(exs, p...)                            # converted coords (×2)
+        end
+        C.alt_click!(exs)
+        @test occursin("mm²/s", tool_summary(exs))
+        @test exs.circulation_result[].line ≈ 2Ω / 0.5 * 400 atol = 1e-6
+
+        # non-planar results reject analysis tools; frame switches revert
+        @test_throws ArgumentError set_tool!(ResultExplorer(r_stereo), :profile)
+        @test_throws ArgumentError set_tool!(ex, :nope)
+        exm = ResultExplorer([rot, r_ptv])
+        set_tool!(exm, :circulation)
+        C.click!(exm, 5.0, 5.0)
+        set_frame!(exm, 2)
+        @test exm.tool[] == :inspect
+        @test isempty(exm.tool_points[])
+    end
+
     @testset "ResultExplorer PTV + tracking (no GL)" begin
         C = HammerheadGUI.Controllers
 
@@ -307,6 +408,29 @@ const r_track = TrackingResult(
         # stereo view renders too
         figs = result_explorer(r_stereo)
         @test !isempty(colorbuffer(figs; px_per_unit = 1))
+
+        # derived field renders, and the analysis tools draw their overlays:
+        # a profile grows a side-panel axis, a circulation contour closes
+        set_frame!(ex, 1)
+        set_field!(ex, :vorticity)
+        imgd = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(imgd) == size(img1)
+        set_tool!(ex, :profile)
+        HammerheadGUI.Controllers.click!(ex, r_unc.x[2], r_unc.y[2])
+        HammerheadGUI.Controllers.click!(ex, r_unc.x[end - 1], r_unc.y[end - 1])
+        @test ex.profile_data[] !== nothing
+        imgp = copy(colorbuffer(fig; px_per_unit = 1))
+        @test imgp != imgd
+        set_tool!(ex, :circulation)
+        for p in ((r_unc.x[2], r_unc.y[2]), (r_unc.x[end - 1], r_unc.y[2]),
+                  (r_unc.x[end - 1], r_unc.y[end - 1]))
+            HammerheadGUI.Controllers.click!(ex, p...)
+        end
+        HammerheadGUI.Controllers.alt_click!(ex)
+        @test ex.circulation_result[] !== nothing
+        imgc = copy(colorbuffer(fig; px_per_unit = 1))
+        @test imgc != imgp
+        set_tool!(ex, :inspect)
 
         # PTV explorer: renders and re-renders on a field/toggle change
         exp = ResultExplorer(r_ptv)
