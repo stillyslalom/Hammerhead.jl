@@ -3,7 +3,7 @@
 # step toggles/parameters; all pipeline state lives in the controller.
 
 """
-    preprocess_preview(source; size = (1100, 560)) -> Figure
+    preprocess_preview(source; size = (1200, 640)) -> Figure
 
 Open the preprocessing-pipeline preview on `source`: a representative image
 (matrix or path) or a prebuilt [`PreprocessPreview`](@ref) controller. The
@@ -17,7 +17,7 @@ background-subtraction reference from. Hand the pipeline to a batch with
 preprocess_preview(source; kwargs...) =
     preprocess_preview(PreprocessPreview(source); kwargs...)
 
-function preprocess_preview(pp::PreprocessPreview; size = (1100, 560))
+function preprocess_preview(pp::PreprocessPreview; size = (1200, 640))
     fig = Figure(; size)
     preprocess_preview!(fig[1, 1], pp)
     return fig
@@ -36,25 +36,35 @@ function preprocess_preview!(target, pp::PreprocessPreview)
     ax_raw = Axis(gl[1, 1]; title = "raw", yreversed = true, aspect = DataAspect())
     ax_proc = Axis(gl[1, 2]; title = "processed", yreversed = true, aspect = DataAspect())
 
+    # The steps column is content-sized (no colsize! override — Auto(false)
+    # made it ignore content width, so the widgets overflowed onto the
+    # processed image). Parameter textboxes get their own row under each
+    # step, keeping the widest row at ~250 px.
     steps_col = GridLayout(gl[1, 3]; tellheight = false, valign = :top)
-    Label(steps_col[1, 1:4], "pipeline"; halign = :left, font = :bold)
-    order_label = Label(steps_col[2, 1:4], Controllers.pipeline_summary(pp);
+    Label(steps_col[1, 1:3], "pipeline"; halign = :left, font = :bold)
+    order_label = Label(steps_col[2, 1:3], Controllers.pipeline_summary(pp);
                         halign = :left, justification = :left,
-                        word_wrap = true, width = 240)
+                        word_wrap = true, width = 240, tellwidth = false)
 
-    # One fixed widget row per catalogue step (rows keep catalogue order; the
-    # summary label above shows the live pipeline order after "▲" reorders).
+    # One widget row per catalogue step, its parameters on the row below
+    # (rows keep catalogue order; the summary label above shows the live
+    # pipeline order after "▲" reorders).
     toggles = Dict{Symbol,Any}()
     row = 3
     for (name, (label, defaults)) in Controllers.PREPROC_CATALOG
-        tg = Toggle(steps_col[row, 1]; halign = :right)
+        tg = Toggle(steps_col[row, 1]; halign = :left,
+                    active = Controllers._step(pp, name).enabled)
         toggles[name] = tg
         Label(steps_col[row, 2], label; halign = :left)
-        up = Button(steps_col[row, 3]; label = "▲")
+        up = Button(steps_col[row, 3]; label = "▲", halign = :right)
         on(_ -> Controllers.move_step!(pp, name, -1), up.clicks)
-        col = 4
-        for (param, default) in defaults
-            box = Textbox(steps_col[row, col]; placeholder = "$param: $default",
+        row += 1
+        isempty(defaults) && continue
+        # span the full column width so two-parameter rows never widen the
+        # label column (and never clip at the figure edge)
+        pgrid = GridLayout(steps_col[row, 1:3]; halign = :left)
+        for (k, (param, default)) in enumerate(defaults)
+            box = Textbox(pgrid[1, k]; placeholder = "$param: $default",
                           width = 90)
             on(box.stored_string) do s
                 s === nothing && return
@@ -63,16 +73,14 @@ function preprocess_preview!(target, pp::PreprocessPreview)
                 catch
                 end
             end
-            col += 1
-            col > 5 && (row += 1; col = 4)   # wrap two-param steps
         end
         row += 1
     end
     bg_btn = Button(steps_col[row, 1:2]; label = "background…", tellwidth = false)
-    bg_label = Label(steps_col[row, 3:4],
+    bg_label = Label(steps_col[row, 3],
                      lift(b -> b === nothing ? "none" : "computed", pp.background);
-                     halign = :left)
-    colsize!(gl, 3, Auto(false))
+                     halign = :right)
+    rowgap!(steps_col, 6)   # 12 content rows must fit the default height
 
     # Widget -> controller (guards break notification cycles); step toggles
     # sync back from the controller on every steps notification.

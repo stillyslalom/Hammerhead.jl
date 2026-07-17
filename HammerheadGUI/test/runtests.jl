@@ -526,7 +526,7 @@ const r_track = TrackingResult(
                          padding = false, apodization = :none)
         fig = batch_runner(bc)
         img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (640, 960)
+        @test size(img1) == (720, 960)
 
         set_schedule!(bc, "64 32")   # form summary label updates
         bc.uncertainty[] = true      # toggle syncs back into the widget
@@ -613,7 +613,7 @@ const r_track = TrackingResult(
         pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
         fig = preprocess_preview(pp)
         img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (560, 1100)
+        @test size(img1) == (640, 1200)
 
         # drive through the controller: preview and summary refresh
         enable_step!(pp, :invert_image)

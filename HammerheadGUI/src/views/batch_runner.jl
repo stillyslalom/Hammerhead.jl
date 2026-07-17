@@ -3,7 +3,7 @@
 # two-way sync; the run itself is the controller's cooperative task.
 
 """
-    batch_runner(bc = BatchRunner(); size = (900, 520)) -> Figure
+    batch_runner(bc = BatchRunner(); size = (960, 720)) -> Figure
 
 Open the parameter form + batch runner. Pick frames ("add frames…") and the
 pairing mode, edit the multi-pass window schedule ("64, 32, 32" style) and
@@ -19,7 +19,7 @@ frames) or to drive it programmatically.
 """
 batch_runner(; kwargs...) = batch_runner(BatchRunner(); kwargs...)
 
-function batch_runner(bc::BatchRunner; size = (960, 640))
+function batch_runner(bc::BatchRunner; size = (960, 720))
     fig = Figure(; size)
 
     # -- frames column ------------------------------------------------------
@@ -184,7 +184,7 @@ function batch_runner(bc::BatchRunner; size = (960, 640))
     on(pp_btn.clicks) do _
         isempty(bc.files[]) && (bc.status[] = "add frames first"; return)
         pp = PreprocessPreview(bc.files[][1])
-        ppfig = Figure(size = (1100, 620))
+        ppfig = Figure(size = (1250, 700))
         preprocess_preview!(ppfig[1, 1], pp)
         apply_btn = Button(ppfig[2, 1]; label = "use in batch", tellwidth = false)
         on(apply_btn.clicks) do _
