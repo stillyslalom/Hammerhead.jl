@@ -15,4 +15,10 @@ jobs:
       - name: CompatHelper.main()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only used to force-push the branch after the PR exists, so that
+          # pull_request:synchronize fires and CI.yml runs on compat PRs.
+          # PR creation itself goes through the API with GITHUB_TOKEN, which
+          # additionally requires the repo's "Allow GitHub Actions to create
+          # and approve pull requests" setting to be enabled.
+          COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}
         run: julia -e 'using CompatHelper; CompatHelper.main(subdirs=["", "HammerheadGUI"])'
