@@ -132,15 +132,15 @@ end
 """
     selfcal_summary(report::SelfCalibrationReport) -> String
 
-Multi-line summary of a self-calibration run: per-pass disparity and
-triangulation statistics, the fitted planes, convergence, and the size of
-the cumulative rigid correction.
+Summarize each pass's disparity magnitudes and RMS, fitted planes,
+convergence, and cumulative rigid correction. When the residual RMS remains
+above tolerance, inspect the spatial disparity maps for patterns.
 """
 function selfcal_summary(report::SelfCalibrationReport)
     lines = String[]
     for (k, p) in enumerate(report.passes)
-        s = "pass $k: disparity median $(_fmt(p.disparity_median)) px, " *
-            "rms $(_fmt(p.disparity_rms)) px ($(p.n_vectors) vectors)"
+        s = "pass $k: disparity median magnitude $(_fmt(p.disparity_median)) px, " *
+            "RMS $(_fmt(p.disparity_rms)) px ($(p.n_vectors) vectors)"
         if p.plane === nothing
             s *= " — no correction"
         else
@@ -149,8 +149,14 @@ function selfcal_summary(report::SelfCalibrationReport)
         end
         push!(lines, s)
     end
-    push!(lines, report.converged ? "converged (tol $(_fmt(report.tol)) px)" :
-                 "not converged at tol $(_fmt(report.tol)) px — judge by the signed median disparity")
+    if report.converged
+        push!(lines, "converged (RMS tolerance $(_fmt(report.tol)) px)")
+    else
+        advice = isempty(report.disparity_maps) ?
+                 "rerun with keep_disparity_maps = true to inspect spatial residuals" :
+                 "inspect the final disparity map for spatial residuals"
+        push!(lines, "not converged (RMS above $(_fmt(report.tol)) px); $advice")
+    end
     angle = acosd(clamp((LinearAlgebra.tr(report.R) - 1) / 2, -1.0, 1.0))
     push!(lines, "correction: rotation $(_fmt(angle))°, shift $(_fmt(LinearAlgebra.norm(report.t))) (world units)")
     return join(lines, "\n")

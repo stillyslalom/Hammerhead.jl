@@ -181,7 +181,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
   swirling strength/Q, profile/region extraction, circulation, and
   results-vector spectra with an explicit sampling interval (`dt`, independent
-  of the image-pair delay in `PhysicalScale`)
+  of the image-pair delay in `PhysicalScale`). Profile interpolation ignores
+  invalid corners with zero weight at exact nodes/edges. `extract_region`
+  returns `included` (`true` = returned valid node); its legacy `mask` field
+  aliases that grid and has the opposite convention from `PIVResult.mask`.
+  Area `circulation(result; region=...)` now errors on incomplete coverage
+  by default; `coverage=:report` returns value, valid/requested area, fraction,
+  and authoritative `complete` flag (no valid area gives `NaN` value).
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`

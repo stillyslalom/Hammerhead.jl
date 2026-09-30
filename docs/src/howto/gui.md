@@ -66,6 +66,11 @@ tool_summary(ex)             # the live numbers, with units
 set_tool!(ex, :inspect)      # back to click-to-inspect
 ```
 
+For a circulation contour, check the reported area coverage before using
+the vorticity-area estimate. Masked or invalid cells can leave a partial
+integral; with no valid area, there is no area estimate. Inspect the source
+field and flags if the two estimates disagree.
+
 Tool state clears when the frame changes, and the analysis tools revert to
 `:inspect` on result types without derived analysis (stereo/PTV/tracking).
 

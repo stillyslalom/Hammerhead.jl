@@ -521,8 +521,10 @@ end
 Close the `:circulation` contour (right-click in the view): with at least
 three vertices the line-integral `circulation(r, contour)` and the
 vorticity-area form `circulation(r; region = contour)` are both evaluated
-into `circulation_result`; with fewer the gesture is cancelled. A no-op for
-the other tools.
+into `circulation_result`; the area form also reports valid and requested
+area and their coverage fraction. An incomplete area retains its partial
+integral; zero valid area yields `NaN`. With fewer vertices the gesture is
+cancelled. A no-op for the other tools.
 """
 function alt_click!(ex::ResultExplorer)
     ex.tool[] === :circulation || return ex
@@ -533,9 +535,11 @@ function alt_click!(ex::ResultExplorer)
     end
     r = current_result(ex)
     contour = copy(pts)
+    area_report = circulation(r; region = contour, coverage = :report)
     ex.circulation_result[] = (; line = circulation(r, contour),
-                               area = circulation(r; region = contour),
-                               contour)
+                               area = area_report.value, contour,
+                               area_report.valid_area, area_report.requested_area,
+                               area_report.coverage_fraction, area_report.complete)
     return ex
 end
 
@@ -567,7 +571,8 @@ _circulation_unit(r::AnyResult) =
 
 One-line status of the active analysis tool: gesture instructions while
 points are being placed, the profile legend once a line is set, or the
-computed circulation (line-integral and vorticity-area forms, with units).
+computed circulation (line-integral and vorticity-area forms, with units and
+area coverage).
 """
 function tool_summary(ex::ResultExplorer)
     tool = ex.tool[]
@@ -584,8 +589,15 @@ function tool_summary(ex::ResultExplorer)
         return "circulation: click contour vertices ($n placed), right-click to close"
     end
     un = _circulation_unit(r)
-    return string("Γ (line) = ", _fmt(res.line), " ", un,
-                  "\nΓ (vorticity area) = ", _fmt(res.area), " ", un)
+    area_text = if res.coverage_fraction == 0
+        "Γ (vorticity area): no valid area (0% coverage)"
+    elseif !res.complete
+        string("Γ (vorticity area, partial) = ", _fmt(res.area), " ", un,
+               " (", _fmt(100 * res.coverage_fraction), "% coverage)")
+    else
+        string("Γ (vorticity area) = ", _fmt(res.area), " ", un)
+    end
+    return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text)
 end
 
 # Data-space point (x, y) marking the current selection, or `nothing` when the

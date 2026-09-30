@@ -242,7 +242,9 @@ end
 # samples u, v, and |V| along a two-click line ([`extract_profile`](@ref)),
 # drawn in a side panel; `circulation` accumulates a contour (right-click
 # closes it) and evaluates [`circulation`](@ref) with both the
-# line-integral and vorticity-area estimators:
+# line-integral and vorticity-area estimators. Check the area's coverage
+# before comparing them: masked or invalid cells can leave a partial integral,
+# and no valid area gives no area estimate.
 
 set_tool!(ex, :profile)
 HammerheadGUI.Controllers.click!(ex, 0.1w, 0.5w)

@@ -284,7 +284,9 @@ const r_track = TrackingResult(
         res = ex.circulation_result[]
         @test res !== nothing
         @test res.line ≈ 2Ω * 100 atol = 1e-9              # exact on the linear field
-        @test res.area ≈ 2Ω * 100 atol = 2.5               # node-cell quantization
+        @test res.area ≈ 2Ω * 100 atol = 1e-9               # exact for constant vorticity
+        @test res.coverage_fraction == 1.0
+        @test res.valid_area ≈ res.requested_area ≈ 100.0
         @test occursin("Γ (line)", tool_summary(ex))
         @test occursin("px²/frame", tool_summary(ex))
         C.click!(ex, 1.0, 1.0)                             # closed → new contour
@@ -302,6 +304,55 @@ const r_track = TrackingResult(
         C.alt_click!(exs)
         @test occursin("mm²/s", tool_summary(exs))
         @test exs.circulation_result[].line ≈ 2Ω / 0.5 * 400 atol = 1e-6
+        @test exs.circulation_result[].coverage_fraction == 1.0
+
+        # Partly outside the grid: retain the partial integral and show coverage.
+        set_tool!(ex, :circulation)
+        for p in ((10.0, 10.0), (25.0, 10.0), (25.0, 15.0), (10.0, 15.0))
+            C.click!(ex, p...)
+        end
+        C.alt_click!(ex)
+        partial = ex.circulation_result[]
+        @test partial.requested_area ≈ 75.0
+        @test partial.valid_area ≈ 50.0
+        @test partial.coverage_fraction ≈ 2 / 3
+        @test partial.area ≈ 2Ω * partial.valid_area atol = 1e-9
+        @test occursin("partial", tool_summary(ex))
+        @test occursin("coverage", tool_summary(ex))
+
+        # Masked data and an entirely outside contour both report no valid area.
+        invalid = PIVResult(xs, copy(xs), u, v, ones(n, n), ones(n, n),
+                            fill(NaN, n, n), fill(NaN, n, n), falses(n, n),
+                            trues(n, n), PIVParameters(window_size = 16, overlap = (8, 8)))
+        ex_invalid = ResultExplorer(invalid)
+        set_tool!(ex_invalid, :circulation)
+        for p in ((5.0, 5.0), (15.0, 5.0), (15.0, 15.0), (5.0, 15.0))
+            C.click!(ex_invalid, p...)
+        end
+        C.alt_click!(ex_invalid)
+        @test isnan(ex_invalid.circulation_result[].area)
+        @test ex_invalid.circulation_result[].coverage_fraction == 0
+        @test occursin("no valid area", tool_summary(ex_invalid))
+        set_tool!(ex, :circulation)
+        for p in ((30.0, 30.0), (40.0, 30.0), (40.0, 40.0), (30.0, 40.0))
+            C.click!(ex, p...)
+        end
+        C.alt_click!(ex)
+        @test isnan(ex.circulation_result[].area)
+        @test ex.circulation_result[].requested_area ≈ 100.0
+        @test ex.circulation_result[].valid_area == 0
+        @test occursin("no valid area", tool_summary(ex))
+
+        # The coverage metric uses the scaled coordinate area as well.
+        set_tool!(exs, :circulation)
+        for p in ((20.0, 20.0), (50.0, 20.0), (50.0, 30.0), (20.0, 30.0))
+            C.click!(exs, p...)
+        end
+        C.alt_click!(exs)
+        @test exs.circulation_result[].coverage_fraction ≈ 2 / 3
+        @test exs.circulation_result[].valid_area ≈ 200.0
+        @test occursin("mm²/s", tool_summary(exs))
+        @test occursin("partial", tool_summary(exs))
 
         # non-planar results reject analysis tools; frame switches revert
         @test_throws ArgumentError set_tool!(ResultExplorer(r_stereo), :profile)
@@ -972,11 +1023,10 @@ const r_track = TrackingResult(
 
         @test_throws ArgumentError CalibrationReview(plates, zs[1:2]; spacing = 15.0)
 
-        # self-calibration summary (direct SelfCalPass/Report construction —
-        # breaks when the report types gain fields, like the core fixtures)
+        # SelfCalPass stores a median disparity magnitude, not a signed median.
         passes = [Hammerhead.SelfCalPass(2.85, 2.74, 1200, 0.10,
                                          (a = -0.674, b = 0.001, c = -0.004)),
-                  Hammerhead.SelfCalPass(0.46, -0.03, 1200, 0.09, nothing)]
+                  Hammerhead.SelfCalPass(0.46, 0.03, 1200, 0.09, nothing)]
         report = SelfCalibrationReport(passes, false, 0.05,
                                        [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
                                        [0.0, 0.0, 0.674], [r_unc, r_plain])
@@ -984,7 +1034,39 @@ const r_track = TrackingResult(
         @test occursin("pass 1", s) && occursin("plane a = -0.674", s)
         @test occursin("no correction", s)
         @test occursin("not converged", s)
+        @test occursin("median magnitude", s)
+        @test occursin("RMS above", s)
+        @test occursin("final disparity map", s)
+        @test !occursin("signed median", s)
         @test occursin("shift 0.674", s)
+
+        # Equal and opposite component residuals have zero signed median,
+        # but nonzero magnitude and RMS. The review must not recommend that median.
+        opposed_u = [1.0 -1.0; 1.0 -1.0]
+        @test median(vec(opposed_u)) == 0.0
+        opposed = PIVResult([1.0, 2.0], [1.0, 2.0], opposed_u, zeros(2, 2),
+                            ones(2, 2), ones(2, 2), fill(NaN, 2, 2), fill(NaN, 2, 2),
+                            falses(2, 2), falses(2, 2), PIVParameters(window_size = 16, overlap = 8))
+        opposed_pass = Hammerhead.SelfCalPass(1.0, 1.0, 4, NaN, nothing)
+        opposed_report = SelfCalibrationReport([opposed_pass], false, 0.05,
+                                                [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                                [0.0, 0.0, 0.0], [opposed])
+        opposed_summary = C.selfcal_summary(opposed_report)
+        @test occursin("median magnitude 1", opposed_summary)
+        @test occursin("RMS 1", opposed_summary)
+        @test occursin("final disparity map", opposed_summary)
+        @test !occursin("signed median", opposed_summary)
+
+        without_maps = SelfCalibrationReport([opposed_pass], false, 0.05,
+                                              [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                              [0.0, 0.0, 0.0], PIVResult[])
+        @test occursin("keep_disparity_maps = true", C.selfcal_summary(without_maps))
+        converged = SelfCalibrationReport([opposed_pass], true, 1.1,
+                                           [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
+                                           [0.0, 0.0, 0.0], PIVResult[])
+        converged_summary = C.selfcal_summary(converged)
+        @test occursin("converged (RMS tolerance", converged_summary)
+        @test !occursin("not converged", converged_summary)
     end
 
     @testset "StereoBatchRunner controller (no GL)" begin
@@ -1141,7 +1223,7 @@ const r_track = TrackingResult(
 
         passes = [Hammerhead.SelfCalPass(2.85, 2.74, 1200, 0.10,
                                          (a = -0.674, b = 0.001, c = -0.004)),
-                  Hammerhead.SelfCalPass(0.46, -0.03, 1200, 0.09, nothing)]
+                  Hammerhead.SelfCalPass(0.46, 0.03, 1200, 0.09, nothing)]
         with_maps = SelfCalibrationReport(passes, false, 0.05,
                                           [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0],
                                           [0.0, 0.0, 0.674], [r_unc, r_plain])

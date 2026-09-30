@@ -19,6 +19,12 @@ using Test
     rotation = mkfield(xr, yr, [-yy for yy in yr, xx in xr],
                                [xx for yy in yr, xx in xr])
     @test circulation(rotation; region=(0.,4.,0.,4.)) ≈ 32 atol=1e-12
+    complete = circulation(rotation; region=(0.,4.,0.,4.), coverage=:report)
+    @test complete.value ≈ 32 atol=1e-12
+    @test complete.valid_area ≈ 16 atol=1e-12
+    @test complete.requested_area ≈ 16 atol=1e-12
+    @test complete.coverage_fraction == 1
+    @test complete.complete
     @test circulation(rotation; region=(0.25,3.75,0.5,3.5)) ≈ 21 atol=1e-12
     triangle = [(0.,0.),(4.,0.),(0.,4.)]
     @test circulation(rotation; region=triangle) ≈ 16 atol=1e-12
@@ -32,15 +38,57 @@ using Test
     @test profile.u ≈ [-0.5,-2.,-3.5]
     @test profile.v ≈ [0.5,2.,3.5]
     @test circulation(descending; region=triangle) ≈ 16 atol=1e-12
+    @test circulation(descending; region=reverse(triangle), coverage=:report).coverage_fraction == 1
+    shifted_x = 1.0e6 .+ collect(0.0:0.2:4.0)
+    shifted_y = -1.0e6 .+ collect(0.0:0.2:4.0)
+    shifted = mkfield(shifted_x, shifted_y,
+        [-yy for yy in shifted_y, xx in shifted_x],
+        [xx for yy in shifted_y, xx in shifted_x])
+    shifted_region = (first(shifted_x), last(shifted_x), first(shifted_y), last(shifted_y))
+    @test circulation(shifted; region=shifted_region) ≈ 32 atol=1e-8
+    @test circulation(shifted; region=shifted_region, coverage=:report).coverage_fraction == 1
     varying = mkfield(xr, yr, zeros(5,5), [xx^2 for yy in yr, xx in xr])
     @test circulation(varying; region=(1.25,2.75,0.5,3.5)) ≈ 18 atol=1e-12
     @test circulation(varying; region=[(1.,1.),(3.,1.),(1.,3.)]) ≈ 20/3 atol=1e-12
     flagged = mkfield(xr, yr, copy(rotation.u), copy(rotation.v))
     flagged.outliers[3,3] = true
-    @test circulation(flagged; region=(1.,2.,1.,2.)) == 0
+    @test_throws ArgumentError circulation(flagged; region=(1.,2.,1.,2.))
+    missing_cell = circulation(flagged; region=(1.,2.,1.,2.), coverage=:report)
+    @test isnan(missing_cell.value)
+    @test missing_cell.valid_area == 0
+    @test missing_cell.requested_area ≈ 1
+    @test missing_cell.coverage_fraction == 0
+    @test !missing_cell.complete
+    @test_throws ArgumentError circulation(flagged; region=(0.,4.,0.,4.))
+    partial = circulation(flagged; region=(0.,4.,0.,4.), coverage=:report)
+    @test partial.value ≈ 24 atol=1e-12
+    @test partial.valid_area ≈ 12 atol=1e-12
+    @test partial.requested_area ≈ 16 atol=1e-12
+    @test partial.coverage_fraction ≈ 0.75 atol=1e-12
+    @test !partial.complete
+    @test circulation(flagged; region=reverse([(0.,0.),(4.,0.),(4.,4.),(0.,4.)]), coverage=:report).value ≈ 24 atol=1e-12
     @test circulation(flagged; region=(1.,2.,1.,2.),include_invalid=true) ≈ 2
     flagged.mask[3,3] = true
-    @test circulation(flagged; region=(1.,2.,1.,2.),include_invalid=true) == 0
+    @test isnan(circulation(flagged; region=(1.,2.,1.,2.),include_invalid=true,coverage=:report).value)
+    @test_throws ArgumentError circulation(flagged; region=(1.,2.,1.,2.),include_invalid=true)
+    @test_throws ArgumentError circulation(rotation; region=(-1.,1.,0.,1.))
+    outside_part = circulation(rotation; region=(-1.,1.,0.,1.), coverage=:report)
+    @test outside_part.value ≈ 2 atol=1e-12
+    @test outside_part.valid_area ≈ 1 atol=1e-12
+    @test outside_part.requested_area ≈ 2 atol=1e-12
+    @test outside_part.coverage_fraction ≈ 0.5 atol=1e-12
+    @test_throws ArgumentError circulation(rotation; region=(-1e-15,4.,0.,4.))
+    tiny_sliver = circulation(rotation; region=(-1e-15,4.,0.,4.), coverage=:report)
+    @test !tiny_sliver.complete
+    @test tiny_sliver.coverage_fraction ≈ 1 atol=1e-14
+    @test_throws ArgumentError circulation(rotation; region=(5.,6.,5.,6.))
+    outside_all = circulation(rotation; region=(5.,6.,5.,6.), coverage=:report)
+    @test isnan(outside_all.value)
+    @test outside_all.valid_area == 0
+    @test outside_all.requested_area ≈ 1
+    @test outside_all.coverage_fraction == 0
+    @test !outside_all.complete
+    @test_throws ArgumentError circulation(rotation; region=(0.,4.,0.,4.), coverage=:skip)
 
     # physical() resets the conversion scale's dt to 1, but not the cadence.
     sequence = [mkfield([0.,1.],[0.,1.],fill(sin(2π*k/10),2,2),zeros(2,2))

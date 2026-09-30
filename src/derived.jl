@@ -138,9 +138,15 @@ function _bilinear(x, y, f, qx, qy)
     iy = clamp(searchsortedlast(y, qy; rev=first(y)>last(y)), 1, length(y) - 1)
     x0, x1 = x[ix], x[ix + 1]; y0, y1 = y[iy], y[iy + 1]
     vals = (f[iy, ix], f[iy, ix + 1], f[iy + 1, ix], f[iy + 1, ix + 1])
-    all(isfinite, vals) || return NaN
     tx = (qx - x0) / (x1 - x0); ty = (qy - y0) / (y1 - y0)
-    (1-ty) * ((1-tx)*vals[1] + tx*vals[2]) + ty * ((1-tx)*vals[3] + tx*vals[4])
+    weights = ((1-ty)*(1-tx), (1-ty)*tx, ty*(1-tx), ty*tx)
+    value = 0.0
+    for k in eachindex(vals)
+        weights[k] > 0 || continue
+        isfinite(vals[k]) || return NaN
+        value += weights[k] * vals[k]
+    end
+    value
 end
 
 """
@@ -151,9 +157,10 @@ positions along a polyline of `(x, y)` points. Return
 `(; s, x, y, u, v)` as vectors in the result's current units. At least two
 points, positive total length, and `n ≥ 2` are required.
 
-Samples outside the grid or in a cell with any nonfinite, masked, or flagged
-corner become `NaN`, even if interpolation would give that corner zero
-weight. `include_invalid=true` admits flagged corners only. Use
+Samples outside the grid or requiring any nonfinite, masked, or flagged
+corner with positive interpolation weight become `NaN`. An invalid corner
+with zero weight does not affect an exact node or edge sample.
+`include_invalid=true` admits flagged corners only. Use
 [`physical`](@ref) first if physical positions and velocities are needed.
 """
 function extract_profile(r::PIVResult, points::AbstractVector{<:Tuple}; n::Int = 100,
@@ -178,10 +185,11 @@ end
 """
     extract_region(result::PIVResult, region; include_invalid=false)
 
-Return `(; indices, x, y, u, v, mask)` for valid grid nodes inside a
+Return `(; indices, x, y, u, v, mask, included)` for valid grid nodes inside a
 rectangle `(xmin, xmax, ymin, ymax)` or a polygon of `(x, y)` vertices.
-`mask` is a grid-shaped inclusion mask: `true` means the node was returned,
-the opposite convention from `result.mask`, where `true` means excluded.
+`included` is a grid-shaped inclusion mask: `true` means the node was returned.
+`mask` is a backward-compatible alias for the same matrix. Both have the
+opposite convention from `result.mask`, where `true` means excluded.
 Masked and nonfinite vectors are always omitted; `include_invalid=true`
 also includes flagged vectors. Values retain the result's stored units.
 """
@@ -207,7 +215,7 @@ function extract_region(r::PIVResult, region; include_invalid::Bool = false)
     include_invalid || (valid .&= .!r.outliers)
     inds = findall(valid)
     (; indices=inds, x=[r.x[I[2]] for I in inds], y=[r.y[I[1]] for I in inds],
-       u=r.u[inds], v=r.v[inds], mask=valid)
+       u=r.u[inds], v=r.v[inds], mask=valid, included=valid)
 end
 
 """
@@ -249,17 +257,36 @@ function _clip_polygon(poly, dim::Int, bound, keep_greater::Bool)
 end
 
 """
-    circulation(result::PIVResult; region, include_invalid=false)
+    circulation(result::PIVResult; region, include_invalid=false,
+                coverage=:error)
 
 Integrate planar vorticity over a rectangle `(xmin, xmax, ymin, ymax)` or
-polygonal `region`, clipped to the grid. Return a scalar in stored component
-units multiplied by coordinate units. The result does not depend on polygon
-vertex order. Cells with any nonfinite corner vorticity are skipped, so a
-finite return value can cover only part of the requested area. Inspect
-validity before interpreting it as circulation over the full region.
+polygonal `region`. The scalar result uses stored component and coordinate
+units and does not depend on polygon vertex order. A grid cell contributes
+only when all four vorticity corners are finite.
+
+With the default `coverage=:error`, throw if any requested area lies outside
+the grid or lacks valid vorticity. Use `coverage=:report` to receive
+`(; value, valid_area, requested_area, coverage_fraction, complete)`. `value` integrates
+only the valid area and is `NaN` when no cell contributes. `requested_area`
+is the whole supplied region, including any portion outside the grid;
+`coverage_fraction` is `valid_area / requested_area`. `complete` is the
+authoritative coverage check; it remains `false` if a missing sliver is too
+small for the ratio to differ from 1 in floating-point arithmetic.
+
+`include_invalid=true` admits flagged vectors when deriving vorticity, but
+masked and nonfinite vectors remain excluded.
 """
-function circulation(r::PIVResult; region, include_invalid::Bool=false)
+function circulation(r::PIVResult; region, include_invalid::Bool=false,
+                     coverage::Symbol=:error)
+    coverage in (:error, :report) ||
+        throw(ArgumentError("coverage must be :error or :report, got :$coverage"))
     length(r.x)>=2 && length(r.y)>=2 || throw(ArgumentError("circulation needs at least a 2x2 grid"))
+    for axis in (r.x, r.y)
+        steps = diff(axis)
+        (all(x -> x > 0, steps) || all(x -> x < 0, steps)) ||
+            throw(ArgumentError("circulation grid axes must be strictly monotonic"))
+    end
     poly = if region isa NTuple{4,Real}
         xmin, xmax, ymin, ymax = region
         xmin <= xmax && ymin <= ymax || throw(ArgumentError("rectangle bounds must be ordered"))
@@ -270,13 +297,26 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false)
         length(points) >= 3 || throw(ArgumentError("a polygon region needs at least 3 vertices"))
         points
     end
-    signed_twice_area = sum(poly[k][1]*poly[mod1(k+1,length(poly))][2] -
-                            poly[mod1(k+1,length(poly))][1]*poly[k][2]
+    all(p -> all(isfinite, p), poly) ||
+        throw(ArgumentError("circulation region vertices must be finite"))
+    # Translate before the shoelace sum to avoid subtracting large, nearly
+    # equal products when a small region has large world coordinates.
+    px, py = poly[1]
+    signed_twice_area = sum((poly[k][1]-px)*(poly[mod1(k+1,length(poly))][2]-py) -
+                            (poly[mod1(k+1,length(poly))][1]-px)*(poly[k][2]-py)
                             for k in eachindex(poly))
-    signed_twice_area != 0 || throw(ArgumentError("circulation region must have nonzero area"))
+    isfinite(signed_twice_area) && signed_twice_area != 0 ||
+        throw(ArgumentError("circulation region must have finite nonzero area"))
     orientation = sign(signed_twice_area)
+    requested_area = abs(signed_twice_area) / 2
+    xmin, xmax = extrema(r.x)
+    ymin, ymax = extrema(r.y)
+    outside_grid = any(p -> !(xmin <= p[1] <= xmax && ymin <= p[2] <= ymax), poly)
     omega = vorticity(r; include_invalid)
     total = 0.0
+    valid_area = 0.0
+    area_compensation = 0.0
+    invalid_overlap = false
     for j in 1:length(r.x)-1, i in 1:length(r.y)-1
         x0, x1 = r.x[j], r.x[j+1]
         y0, y1 = r.y[i], r.y[i+1]
@@ -287,11 +327,23 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false)
             isempty(clipped) && break
         end
         length(clipped) >= 3 || continue
+        a = clipped[1]
+        cell_area = orientation * sum((clipped[k][1]-a[1])*(clipped[k+1][2]-a[2]) -
+                                      (clipped[k+1][1]-a[1])*(clipped[k][2]-a[2])
+                                      for k in 2:length(clipped)-1) / 2
+        cell_area > 0 || continue
         corners = (omega[i,j],omega[i,j+1],omega[i+1,j],omega[i+1,j+1])
-        all(isfinite,corners) || continue
+        if !all(isfinite,corners)
+            invalid_overlap = true
+            continue
+        end
+        # Compensated accumulation keeps the covered area stable on finer grids.
+        area_step = cell_area - area_compensation
+        next_area = valid_area + area_step
+        area_compensation = (next_area - valid_area) - area_step
+        valid_area = next_area
         # Three-point triangle quadrature integrates the cell's bilinear
         # interpolant exactly, including its x*y term.
-        a = clipped[1]
         for k in 2:length(clipped)-1
             b, c = clipped[k], clipped[k+1]
             area = orientation*((b[1]-a[1])*(c[2]-a[2])-
@@ -306,7 +358,19 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false)
             end
         end
     end
-    total
+    # A simple polygon wholly inside the rectangular grid is covered exactly
+    # when every intersected cell is usable. Comparing summed cell areas with
+    # polygon area is less reliable at large coordinate offsets.
+    complete = valid_area > 0 && !invalid_overlap && !outside_grid
+    complete && (valid_area = requested_area)
+    if coverage === :report
+        return (; value = valid_area > 0 ? total : NaN, valid_area,
+                requested_area,
+                coverage_fraction = complete ? 1.0 : valid_area / requested_area,
+                complete)
+    end
+    complete || throw(ArgumentError("circulation covers $(valid_area / requested_area) of the requested area; use coverage=:report for the partial integral and coverage diagnostics"))
+    return total
 end
 
 """

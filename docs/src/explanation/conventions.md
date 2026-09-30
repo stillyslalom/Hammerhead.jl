@@ -121,6 +121,16 @@ Interrogation windows use a stride of `window_size - overlap`;
 *centers*. All per-vector fields (`u`, `v`, `peak_ratio`, `outliers`, …)
 share the `(length(y), length(x))` grid shape.
 
+The mask stored in a [`PIVResult`](@ref) uses `true` for excluded windows.
+[`extract_region`](@ref) returns an `included` grid with `true` for windows
+selected and valid within the requested region. Its older `mask` field is an
+alias for `included`, so it also uses `true` for included windows.
+
+For area-form [`circulation`](@ref), a masked or nonfinite cell can leave part
+of the requested region uncovered. The default call raises an error in that
+case. Use `coverage=:report` to inspect the valid and requested areas and
+the `complete` flag before using a partial integral.
+
 With the default `search_area_size == window_size`, tiling begins at the
 top-left corner. A larger centered search area moves the outer centers inward
 so its full footprint stays inside both images, without changing the stride.

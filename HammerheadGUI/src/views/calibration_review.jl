@@ -102,10 +102,11 @@ end
 
 Open the self-calibration report with per-pass disparity and triangulation
 statistics, fitted sheet planes, and the cumulative rigid correction.
-Inspect spatial disparity maps as well as the summary statistics: a small
-signed median can hide residuals with opposing signs. When the report carries disparity maps
-(`self_calibrate(...; keep_disparity_maps = true)`), they open in an
-embedded result explorer with the frame slider stepping through the passes.
+The reported disparity median is a median magnitude, not a signed component.
+Inspect RMS and the spatial pattern of both disparity components when the
+report has not converged. Pass `keep_disparity_maps = true` to
+`self_calibrate` to retain the maps; the explorer's frame slider then steps
+through the passes.
 """
 function selfcal_review(report::SelfCalibrationReport; size = (1150, 650))
     fig = Figure(; size)
@@ -115,10 +116,10 @@ function selfcal_review(report::SelfCalibrationReport; size = (1150, 650))
           justification = :left, word_wrap = true, width = 330)
     if isempty(report.disparity_maps)
         Label(left[3, 1],
-              "run self_calibrate with keep_disparity_maps = true to inspect the disparity maps";
+              "Rerun self_calibrate with keep_disparity_maps = true to inspect residual disparity maps.";
               halign = :left, justification = :left, word_wrap = true, width = 330)
     else
-        Label(left[3, 1], "disparity maps (frame = pass):"; halign = :left)
+        Label(left[3, 1], "residual disparity maps (frame = pass; inspect u and v):"; halign = :left)
         result_explorer!(fig[1, 2], ResultExplorer(report.disparity_maps))
         colsize!(fig.layout, 1, Fixed(350))
     end
