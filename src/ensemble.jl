@@ -33,15 +33,12 @@ at every sample count is not guaranteed. The estimator assumes a common
 displacement across pairs and does not quantify flow fluctuations. Use
 [`field_statistics`](@ref) over single-pair results for those statistics.
 
-Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
-`mask_threshold`, `backend`, and `scale` (attach a [`PhysicalScale`](@ref) to
-the result) as in [`run_piv`](@ref); `preprocess`, `image_type`, `progress`
-as in [`run_piv_sequence`](@ref). On the KA-family backends (`:ka` and the
-device selectors) the summed correlation planes stay resident on the device —
-only the final vector grid returns to the host. With `uncertainty = true`,
-the additive Float64 statistics also remain device-resident until finalization.
-`subpixel_method = :gauss2d` and retained correlation
-planes still require `backend = :cpu`.
+Keyword arguments `threaded`, `predictor_smoothing`, `mask`,
+`mask_threshold`, `backend`, and `scale` follow [`run_piv`](@ref).
+`preprocess` is applied to each loaded frame before analysis; `image_type`
+sets the loaded image precision, and `progress` controls the progress display,
+as in [`run_piv_sequence`](@ref). `subpixel_method = :gauss2d` and
+`keep_correlation_planes = true` require `backend = :cpu`.
 """
 function run_piv_ensemble(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};

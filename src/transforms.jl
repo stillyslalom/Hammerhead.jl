@@ -2,8 +2,9 @@
     AffineTransform(A::AbstractMatrix, b::AbstractVector)
     AffineTransform()  # identity
 
-2D affine transform `x' = A*x + b` acting on `[x, y]` coordinates (`x` along
-columns, `y` along rows). `A` must be 2×2 and `b` of length 2.
+Map an image point `[x, y]` to `A * [x, y] + b`, with `x` along columns and
+`y` along rows. Supply a 2×2 matrix `A` and a two-element offset `b`; the
+zero-argument constructor is the identity transform.
 """
 struct AffineTransform{T<:Real}
     A::Matrix{T}
@@ -26,9 +27,10 @@ Base.show(io::IO, t::AffineTransform{T}) where {T} =
 """
     warp_image(image, tform::AffineTransform) -> Matrix
 
-Apply `tform` to `image`: the output at `(row, col)` samples the input at the
-inverse-transformed coordinate, using bilinear interpolation. Coordinates
-outside the input are filled with zero.
+Warp `image` into the coordinates specified by `tform`. Each output pixel
+samples the input at its inverse-transformed location using bilinear
+interpolation; locations outside the input are filled with zero. Returns a
+new matrix with the same dimensions as `image`.
 """
 function warp_image(image::AbstractMatrix{T}, tform::AffineTransform{S}) where {T,S<:Real}
     itp = extrapolate(interpolate(image, BSpline(Linear())), zero(T))
@@ -47,10 +49,10 @@ end
 """
     calculate_manual_registration(points_image, points_reference) -> AffineTransform
 
-Least-squares affine transform mapping image coordinates to reference
-coordinates (`x_ref = A*x_img + b`). Both arguments are vectors of
-corresponding 2D points (tuples or 2-vectors, as `(x, y)`); at least 3
-non-collinear pairs are required.
+Fit an affine transform from image points to corresponding reference
+points, both supplied as vectors of `(x, y)` tuples or two-element vectors.
+At least three non-collinear pairs are required. The returned transform
+maps `x_image` to `A * x_image + b` in reference coordinates.
 """
 function calculate_manual_registration(points_image::AbstractVector, points_reference::AbstractVector)
     N = length(points_image)
@@ -76,9 +78,10 @@ end
 """
     transform_vector_field(x, y, u, v, tform::AffineTransform)
 
-Transform grid-point locations (`x' = A*x + b`) and vector components
-(`u' = A*u`) by `tform`. All four arrays must share the same shape, which is
-preserved. Returns `(new_x, new_y, new_u, new_v)`.
+Apply `tform` to each grid-point location and displacement vector. The
+offset affects positions (`x' = A*x + b`); only `A` affects vectors
+(`u' = A*u`). The four input arrays must share a shape. Returns
+`(new_x, new_y, new_u, new_v)` with that shape.
 """
 function transform_vector_field(x::AbstractArray{<:Real}, y::AbstractArray{<:Real},
                                 u::AbstractArray{<:Real}, v::AbstractArray{<:Real},

@@ -5,15 +5,15 @@
 """
     result_explorer(source; size = (1000, 700)) -> Figure
 
-Open the result explorer on `source`: a `PIVResult` / `StereoPIVResult`, a
-vector of them, a results-file path (read with `Hammerhead.load_results`),
-or a prebuilt [`ResultExplorer`](@ref) controller (pass the controller when
-you want to drive the view programmatically — its observables stay live).
+Open results from a `PIVResult`, `StereoPIVResult`, `PTVResult`, or
+`TrackingResult`, a sequence of results, a saved-results path, or a
+[`ResultExplorer`](@ref). Pass a controller to control the open view through
+its observables.
 
 For a gridded (`PIVResult` / `StereoPIVResult`) result the view shows a
-scalar field (menu: displacement magnitude, components, diagnostics,
-uncertainty when present) as a heatmap in image orientation (y down) with
-the vector field as arrows (outliers red). A `PTVResult` is drawn as a
+scalar field (magnitude, components, diagnostics, or available uncertainty)
+as a heatmap in image orientation (y down) with vector arrows. Flagged
+vectors can be highlighted. A `PTVResult` is drawn as a
 colored particle scatter with optional displacement arrows, and a
 `TrackingResult` as trajectory polylines colored by mean speed (breaks at
 frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel

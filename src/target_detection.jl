@@ -18,7 +18,9 @@
 """
     CalibrationGrid
 
-Detected calibration-target dot grid (see [`detect_calibration_grid`](@ref)).
+Indexed dot detections from one calibration image. Pass a grid and its
+reference-level `z` to [`calibration_points`](@ref), or pass grids from
+several planes to [`calibrate_camera`](@ref).
 
 # Fields
 - `pixels`: dot centroids in pixel coordinates (`x` along columns, `y` along
@@ -262,13 +264,13 @@ end
 """
     detect_calibration_grid(img; spacing, kwargs...) -> CalibrationGrid
 
-Detect a rectilinear calibration dot grid in `img` (grayscale, any real
-element type) and index it: dots are found as bright blobs (intensity-weighted
-subpixel centroids), assigned integer lattice positions, and anchored to a
-world coordinate frame. World +X is the lattice direction closest to
-image-right, +Y the one closest to image-up; the origin dot is chosen from
-the square fiducial marker when present (see `origin_offset`), otherwise the
-dot nearest the image center. Dots clipped by the image border are excluded.
+Find and index bright dots in a grayscale calibration image. The returned
+[`CalibrationGrid`](@ref) holds pixel centroids and integer lattice indices.
+With `orientation = :image`, world +X follows the lattice direction closest
+to image-right and +Y the direction closest to image-up. The origin comes
+from the square marker when detected; otherwise it is the dot nearest the
+image center. Border-clipped dots are excluded. Inspect marker detection
+and dot indices before fitting camera models.
 
 # Keywords
 - `spacing` (required): dot spacing on one level, world units (e.g. mm).
@@ -282,11 +284,10 @@ dot nearest the image center. Dots clipped by the image border are excluded.
 - `origin_level = :front`: which level the origin dot belongs to; that level
   becomes level 0, the Z reference.
 - `origin_offset = nothing`: world-units `(ΔX, ΔY)` from the square marker
-  centroid to the origin dot (e.g. `(30.0, 7.5)` for PIV Challenge case 4E:
-  "the dot 30 mm right of and 7.5 mm above the square marker"). When
+  centroid to the origin dot. When
   `nothing`, the dot nearest the square marker (or the image center when no
-  marker is found) becomes the origin. A consistent origin across cameras
-  requires the marker.
+  marker is found) becomes the origin. For stereo, use the same physical
+  origin in both camera calibrations.
 - `invert = false`: set for dark dots on a bright background.
 - `orientation = :image`: `:image` keeps +X image-right and +Y image-up.
   `:fiducials` instead uses the square-to-triangle direction as +X and plate
@@ -419,12 +420,11 @@ end
 """
     calibration_points(grid::CalibrationGrid, z) -> (pixel_points, world_points)
 
-Convert a detected grid into calibration point pairs: pixel centroids and
-world `(X, Y, Z)` positions with the reference level of the plate at
-out-of-plane position `z` (level-1 dots sit at `z - level_separation`).
-Concatenate the pairs from several plate positions and feed them to
-[`calibrate_camera`](@ref), or use the `calibrate_camera(grids, zs)`
-convenience method.
+Return matched pixel `(x, y)` and world `(X, Y, Z)` point vectors from one
+detected grid. `z` is the reference level's world Z coordinate; level-1
+dots are at `z - level_separation`. Use the returned pairs with
+[`calibrate_camera`](@ref), or pass all grids and their plane positions to
+`calibrate_camera(grids, zs)`.
 """
 function calibration_points(grid::CalibrationGrid, z::Real)
     world = [SVector(grid.indices[i][1] * grid.spacing / 2,
@@ -452,8 +452,10 @@ end
 """
     calibrate_camera(grids::AbstractVector{CalibrationGrid}, zs; model = :soloff)
 
-Calibrate a camera from dot grids detected at several plate positions `zs`
-(reference-level Z of each grid, world units).
+Fit a camera using one detected grid per plate position. `zs[k]` is the
+world Z coordinate of grid `k`'s reference level, in the same length unit
+as each grid's `spacing`. The default Soloff model needs at least three
+distinct Z positions; use `model = :pinhole` for a projective fit.
 """
 function calibrate_camera(grids::AbstractVector{CalibrationGrid},
                           zs::AbstractVector{<:Real}; model::Symbol = :soloff)
@@ -465,8 +467,8 @@ end
     calibration_quality(cam::CameraCalibration, grids::AbstractVector{CalibrationGrid}, zs)
         -> (rms, max, n)
 
-Reprojection-error summary of `cam` over dot grids detected at several plate
-positions `zs`, as accepted by `calibrate_camera(grids, zs)`.
+Return reprojection `rms` and `max` errors in pixels, plus point count `n`,
+using the same grid and `zs` inputs as `calibrate_camera(grids, zs)`.
 """
 function calibration_quality(cam::CameraCalibration,
                              grids::AbstractVector{CalibrationGrid},
@@ -507,11 +509,11 @@ end
     render_calibration_target(cam::CameraCalibration, image_size; spacing, kwargs...)
         -> Matrix{Float64}
 
-Render a synthetic calibration-plate image as seen through `cam`: the
-ground-truth fixture for testing target detection and calibration fitting
-(and, downstream, the stereo reconstruction chain). Dots are anti-aliased by
-supersampled back-projection onto the plate plane(s), so each rendered dot's
-centroid is the exact projection of its world-lattice position.
+Render a grayscale calibration plate through `cam` into an image of size
+`(rows, cols)`. This can provide known target geometry for checking a
+calibration workflow. Dots are antialiased by supersampling; rendered
+centroids may vary slightly from ideal projected centers at finite pixel
+resolution.
 
 # Keywords
 - `spacing` (required): dot spacing on one level, world units.

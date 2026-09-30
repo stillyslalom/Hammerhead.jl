@@ -5,19 +5,18 @@
 """
     preprocess_preview(source; size = (1200, 640)) -> Figure
 
-Open the preprocessing-pipeline preview on `source`: a representative image
-(matrix or path) or a prebuilt [`PreprocessPreview`](@ref) controller. The
-raw image renders on the left, the processed result on the right, and the
-step list on the far right: a toggle per step, its parameters, and an "▲"
-button that moves the step earlier in the pipeline (the summary line shows
-the current order). "background…" picks frames to compute the
-background-subtraction reference from. Hand the pipeline to a batch with
+Preview preprocessing on a representative image or a prebuilt
+[`PreprocessPreview`](@ref). The raw and processed images appear side by side.
+Use the step toggles and parameter fields to compare results; "▲" moves a
+step earlier in the pipeline. "Background…" chooses frames for a
+background-subtraction reference. Pass the selected pipeline to a batch with
 [`build_preprocess`](@ref) or [`set_preprocess!`](@ref).
 
 When the controller carries a pair frame ([`set_pair!`](@ref)), clicking
 the processed image places a single-window correlation probe: the window
 outline is drawn at the click, and the panel below reports its
-displacement and peak ratio live as steps are toggled and edited.
+displacement and peak ratio as steps change. Repeat the probe at several
+locations before applying the pipeline to a sequence.
 """
 preprocess_preview(source; kwargs...) =
     preprocess_preview(PreprocessPreview(source); kwargs...)
@@ -31,9 +30,8 @@ end
 """
     preprocess_preview!(target, pp::PreprocessPreview) -> GridLayout
 
-Build the preprocess-preview view into `target` (a `GridPosition`), for
-embedding in a larger layout — the embeddable form, like
-[`result_explorer!`](@ref).
+Build the preview in a `GridPosition` and return its `GridLayout` for
+embedding in a larger figure.
 """
 function preprocess_preview!(target, pp::PreprocessPreview)
     gl = GridLayout(target)

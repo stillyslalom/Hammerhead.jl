@@ -7,9 +7,8 @@
     MaskEditor(image; polygons = [])
     MaskEditor(path::AbstractString)
 
-Controller for the mask editor: a reference image (displayed as the drawing
-background; the string form loads it with `Hammerhead.load_image`) plus the
-editing state as `Observables` — `polygons` (committed exclusion polygons,
+Edit an exclusion mask over a reference image (matrix or image path). Editing
+state is held in `Observables`: `polygons` (committed polygons,
 each a vector of `(x, y)` vertices in pixel coordinates), `active` (the
 in-progress polygon), `selected` (index of the selected polygon or
 `nothing`), and `show_mask` (overlay toggle).
@@ -18,8 +17,9 @@ Gestures ([`click!`](@ref), [`alt_click!`](@ref)) implement the editing
 model: click to add vertices (a click on empty background starts a new
 polygon; a click inside an existing polygon selects it), alt/right-click to
 close the active polygon. Export the combined mask with
-`polygon_mask(editor)` or [`save_mask`](@ref); seed `polygons` to resume
-editing an existing set.
+`polygon_mask(editor)` or [`save_mask`](@ref). Use [`begin_hole!`](@ref) to
+draw a region that is restored inside an exclusion polygon. Seed `polygons`
+to resume editing an existing set.
 """
 struct MaskEditor
     image::Matrix{Float64}
@@ -206,9 +206,9 @@ end
 """
     polygon_mask(me::MaskEditor) -> BitMatrix
 
-The combined exclusion mask of all committed polygons, in the package mask
-convention (image-sized, `true` = excluded) — pass it as `mask` to
-`run_piv`. All-`false` when no polygons are committed.
+Return the image-sized `BitMatrix` mask (`true` means excluded), including
+holes and any rasterized edits. Pass it as `mask` to `run_piv`. If no edits
+are present, all values are `false`.
 """
 function Hammerhead.polygon_mask(me::MaskEditor)
     mask = me.raster[] === nothing ? falses(size(me.image)) : copy(me.raster[])
@@ -220,7 +220,9 @@ function Hammerhead.polygon_mask(me::MaskEditor)
 end
 
 
-"""Rasterize the editor state and grow the excluded region by `radius` pixels."""
+"""Rasterize the mask, expand excluded pixels by `radius`, and return `me`.
+Existing polygons become a raster mask and can no longer be edited as polygons.
+"""
 function grow_mask!(me::MaskEditor, radius::Integer = 1)
     me.raster[] = Hammerhead.grow_mask(polygon_mask(me), radius)
     empty!(me.polygons[]); empty!(me.holes[])
@@ -228,7 +230,9 @@ function grow_mask!(me::MaskEditor, radius::Integer = 1)
     return me
 end
 
-"""Rasterize the editor state and shrink the excluded region by `radius` pixels."""
+"""Rasterize the mask, reduce excluded pixels by `radius`, and return `me`.
+Existing polygons become a raster mask and can no longer be edited as polygons.
+"""
 function shrink_mask!(me::MaskEditor, radius::Integer = 1)
     me.raster[] = Hammerhead.shrink_mask(polygon_mask(me), radius)
     empty!(me.polygons[]); empty!(me.holes[])

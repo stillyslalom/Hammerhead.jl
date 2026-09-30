@@ -16,9 +16,9 @@ const Selection = Union{Nothing,CartesianIndex{2},Int}
     ResultExplorer(result)
     ResultExplorer(path::AbstractString)
 
-Controller for the result explorer: a loaded sequence of `PIVResult`,
-`StereoPIVResult`, `PTVResult`, or `TrackingResult` entries (mixed files are
-allowed) plus the view state as `Observables` — `frame` (1-based index into
+Browse a sequence of `PIVResult`, `StereoPIVResult`, `PTVResult`, or
+`TrackingResult` entries; result types may be mixed. View state is held in
+`Observables`: `frame` (1-based index into
 the sequence), `field` (the displayed scalar field, see
 [`available_fields`](@ref)), `show_vectors` / `highlight_outliers` (overlay
 toggles), `selection` (the inspected item: a `CartesianIndex` for a
@@ -32,14 +32,13 @@ interactive-analysis state `tool` / `tool_points` / `profile_data` /
 `circulation_result` (see [`set_tool!`](@ref) and [`click!`](@ref);
 planar results only — tool state clears on frame switches).
 
-Each entry is routed through [`physical`](@ref) at construction, so loaded
-results carrying a [`PhysicalScale`](@ref) display in physical units with
-labelled axes (`physical` is idempotent and identity-safe, so unscaled
-results are untouched).
+Results with a [`PhysicalScale`](@ref) are converted through
+[`physical`](@ref) at construction for display in physical units. Unscaled
+results retain their original units.
 
-The string form loads the sequence with `Hammerhead.load_results`. Changing
-frames resets `field` to the new result's default when the current field is
-unavailable, and drops `selection` when it no longer refers to a valid item.
+The string form loads a saved sequence with `Hammerhead.load_results`.
+Changing frames resets an unavailable `field` to that result's default and
+clears an invalid `selection`.
 """
 struct ResultExplorer
     results::Vector{AnyResult}
@@ -158,8 +157,9 @@ const DERIVED_FIELDS = (:vorticity, :divergence, :strain_rate,
     available_fields(result) -> Vector{Symbol}
 
 Scalar fields displayable for a result. Gridded results (`PIVResult` /
-`StereoPIVResult`) offer `:magnitude` (in-plane, or 3-component for stereo,
-displacement magnitude) plus the per-vector component/diagnostic fields, with
+`StereoPIVResult`) offer `:magnitude` (in-plane or three-component magnitude,
+in the result's current displacement or velocity units) plus component and
+diagnostic fields, with
 uncertainty fields included only when estimates are present. Planar results
 additionally offer the derived fields `:vorticity`, `:divergence`,
 `:strain_rate` (the magnitude `|S|`), `:swirling_strength`, and
@@ -202,10 +202,10 @@ _derived(ex::ResultExplorer) =
 """
     field_values(result, field::Symbol)
 
-The scalar field to display. For gridded results this is a `Matrix`
-(`:magnitude` is `hypot` of the displacement components, derived fields —
-see [`available_fields`](@ref) — come from `flow_derivatives`, everything
-else is the result's own matrix). For a `PTVResult` it is a per-particle
+Return the scalar field to display. For gridded results this is a `Matrix`:
+`:magnitude` is the norm of the available components, derived fields from
+[`available_fields`](@ref) use `flow_derivatives`, and other fields come
+from the result's matrices. For a `PTVResult` it is a per-particle
 `Vector` (`:magnitude`, `:u`, `:v`, `:match_residual`). For a
 `TrackingResult` it is a per-trajectory `Vector` of mean speeds (`:speed`).
 """
@@ -719,10 +719,10 @@ end
 """
     vector_data(result) -> NamedTuple
 
-Displayable vectors of the result as flat, NaN-free arrays
-`(; x, y, u, v, outlier)` — the arrow-overlay input. Gridded results skip
-masked and out-of-view nodes; a `PTVResult` returns one entry per matched
-particle.
+Return `(; x, y, u, v, outlier)` as flat arrays for an arrow overlay.
+Gridded results skip nodes whose `u` or `v` is `NaN`; a `PTVResult` skips
+matches with nonfinite displacement. The `outlier` flag remains available
+for color coding, and `w` is not included for stereo results.
 """
 function vector_data(r::GridResult)
     x = Float64[]; y = Float64[]; u = Float64[]; v = Float64[]; outlier = Bool[]

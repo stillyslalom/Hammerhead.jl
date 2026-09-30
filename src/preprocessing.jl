@@ -14,8 +14,9 @@ float_copy(img::AbstractMatrix{<:Real}) = float(eltype(img)).(img)
     compute_background(images; method=:min) -> Matrix{Float64}
 
 Estimate a static background from an iterable of equally sized images:
-`:min` (pixel-wise minimum — robust for sparse particles over a static
-background) or `:mean`.
+`:min` (pixelwise minimum, useful when moving bright particles leave each
+background pixel exposed in some frames) or `:mean`. Returns a `Float64`
+matrix. Every input image must have the same size.
 """
 function compute_background(images; method::Symbol = :min)
     method in (:min, :mean) ||
@@ -40,9 +41,9 @@ end
     subtract_background(img, background) -> Matrix
     subtract_background!(img, background) -> img
 
-Subtract a background image (see [`compute_background`](@ref)), clamping the
-result at zero. The mutating version overwrites the floating-point `img`
-without allocating.
+Subtract a same-sized background image (see [`compute_background`](@ref)),
+clamping negative results to zero. The mutating form overwrites floating-point
+`img` and returns it.
 """
 function subtract_background!(img::AbstractMatrix{<:AbstractFloat}, background::AbstractMatrix{<:Real})
     size(img) == size(background) ||
@@ -99,11 +100,10 @@ end
     highpass_filter(img; sigma=3) -> Matrix
     highpass_filter!(img; sigma=3) -> img
 
-Remove low-frequency background (sheet inhomogeneity, glare) by subtracting a
-Gaussian blur of scale `sigma` pixels, clamping at zero. `sigma` should be a
-few times the particle image diameter so particles survive the filter. The
-mutating version overwrites the floating-point `img`; the blur itself requires
-one internal buffer.
+Remove low-frequency background by subtracting a Gaussian blur of scale
+`sigma` pixels, clamping at zero. Choose `sigma` large enough to retain the
+particle images you need. The mutating form overwrites floating-point `img`;
+the blur requires a temporary buffer.
 """
 function highpass_filter!(img::AbstractMatrix{<:AbstractFloat}; sigma::Real = 3)
     blur = gaussian_blur(img, sigma)
@@ -133,8 +133,7 @@ Contrast-limited adaptive histogram equalization. The image is divided into
 `tiles`, each tile's histogram is clipped at `clip_limit` times the uniform
 bin count (excess redistributed) and converted to a CDF mapping; pixel values
 are remapped with bilinear interpolation between the four surrounding tile
-mappings. Output is in `[0, 1]`. Standard preprocessing for unevenly
-illuminated PIV recordings. The mutating version remaps the floating-point
+mappings. Output is in `[0, 1]`. The mutating version remaps the floating-point
 `img` in place.
 """
 function clahe!(img::AbstractMatrix{<:AbstractFloat};
@@ -208,7 +207,15 @@ inputs are converted to floating point.
 """
 clahe(img::AbstractMatrix{<:Real}; kwargs...) = clahe!(float_copy(img); kwargs...)
 
-"""Stretch the `low` and `high` intensity percentiles to `[0,1]`, clipping outside."""
+"""
+    percentile_stretch(img; low=1, high=99)
+    percentile_stretch!(img; low=1, high=99)
+
+Map the `low` and `high` intensity percentiles to 0 and 1, clipping values
+outside that range. The mutating form overwrites a floating-point image and
+returns it; the other form returns a floating-point copy. If both percentile
+values are equal, the result is filled with 0.5.
+"""
 function percentile_stretch!(img::AbstractMatrix{<:AbstractFloat}; low::Real=1, high::Real=99)
     0 <= low < high <= 100 || throw(ArgumentError("percentiles must satisfy 0 <= low < high <= 100"))
     lo,hi = quantile(vec(img), [low/100,high/100])
@@ -218,7 +225,14 @@ function percentile_stretch!(img::AbstractMatrix{<:AbstractFloat}; low::Real=1, 
 end
 percentile_stretch(img::AbstractMatrix{<:Real}; kwargs...) = percentile_stretch!(float_copy(img); kwargs...)
 
-"""Invert intensities about their finite range (`lo + hi - value`)."""
+"""
+    invert_image(img)
+    invert_image!(img)
+
+Invert intensities about the image minimum and maximum (`lo + hi - value`).
+The mutating form overwrites a floating-point image and returns it; the other
+form returns a floating-point copy. Input values should be finite.
+"""
 function invert_image!(img::AbstractMatrix{<:AbstractFloat})
     lo,hi=extrema(img); img .= lo+hi .- img; img
 end

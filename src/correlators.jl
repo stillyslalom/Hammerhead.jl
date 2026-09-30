@@ -81,19 +81,20 @@ CrossCorrelator(window_size::Dims{2}; kwargs...) = CrossCorrelator{Float32}(wind
 """
     PhaseCorrelator{T}(window_size::Dims{2}; search_area_size=window_size,
                        padding=false, apodization=:none,
-                       filter_sigma=min(fft_size...) / 8)
+                       filter_sigma=nothing)
     PhaseCorrelator(window_size; kwargs...)  # T = Float32
 
-Filtered phase correlation (normalized cross-power spectrum) of two
-interrogation windows, with preallocated buffers and cached in-place FFTW
-plans. More robust to illumination differences than plain cross-correlation.
+Filtered phase correlation (normalized cross-power spectrum) of a frame-A
+interrogation window and a frame-B search area, with preallocated buffers and
+cached in-place FFTW plans. Spectral normalization changes how frequency
+components contribute to the displacement peak; compare it with ordinary
+cross-correlation on representative images.
 `padding` and `apodization` behave as for [`CrossCorrelator`](@ref).
 
-Whitening the spectrum gives noise-only high-frequency bins the same weight as
-signal-bearing ones, which destroys the peak for low-frequency content like
-particle images; the whitened spectrum is therefore weighted by a Gaussian
-low-pass with standard deviation `filter_sigma` (in FFT frequency bins of the
-possibly padded transform).
+The normalized spectrum is weighted by a Gaussian low-pass to suppress noisy
+high-frequency bins. `filter_sigma` is its standard deviation in frequency
+bins of the possibly padded FFT. The default `nothing` uses one-eighth of
+the shorter FFT dimension.
 """
 struct PhaseCorrelator{T<:AbstractFloat,FP,IP} <: Correlator
     C1::Matrix{Complex{T}}
@@ -306,7 +307,7 @@ Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 - `refined_peakloc`: subpixel `(row, col)` peak location;
 - `correlation`: the real correlation plane (zero lag at `size .÷ 2 .+ 1`).
 
-`subpixel` is one of `:gauss3`, `:gauss2d`, or `:none`.
+`subpixel` is one of `:gauss3`, `:gauss9`, `:gauss2d`, or `:none`.
 
 !!! warning
     `correlation` aliases an internal buffer of `c` and is overwritten by the
@@ -523,14 +524,12 @@ end
 """
     subpixel_gauss9(R, peakloc::Tuple{Int,Int}) -> (row, col)
 
-Refine an integer correlation peak with a closed-form least-squares 2D
-Gaussian regression over the 3×3 neighborhood (log-paraboloid including the
-cross term, Nobach & Honkanen 2005). Unlike the two independent 1D fits of
-[`subpixel_gauss3`](@ref), this is exact for an elliptical — including
-rotated — Gaussian peak and exhibits less peak locking, at the cost of nine
-`log`s and a hardcoded 2×2 solve. Falls back to `subpixel_gauss3` at plane
-edges, on non-positive samples, or when the fitted surface has no interior
-maximum.
+Refine an integer correlation peak with a closed-form 2D Gaussian fit over
+the 3×3 neighborhood (a log-paraboloid with a cross term, Nobach & Honkanen
+2005). The cross term represents a rotated elliptical peak, unlike the
+independent row and column fits of [`subpixel_gauss3`](@ref). Falls back to
+that method at plane edges, on non-positive samples, or when the fitted
+surface has no interior maximum.
 """
 function subpixel_gauss9(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int}) where {T<:AbstractFloat}
     nr, nc = size(R)

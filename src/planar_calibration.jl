@@ -1,9 +1,10 @@
 """
     PlanarTransform
 
-Explicit affine transform from image `(x,y)` coordinates to planar physical
-coordinates. `matrix` supports rotation, reflection, and anisotropic scales;
-`offset` sets the physical origin.
+Map image pixels `(x, y)` to planar physical coordinates with an affine
+transform. `matrix` holds rotation and scale, including anisotropic scaling
+or reflection; `offset` places the physical origin. Build one from two
+measured points with [`planar_calibration`](@ref).
 """
 struct PlanarTransform{T<:AbstractFloat}
     matrix::SMatrix{2,2,T,4}
@@ -21,11 +22,12 @@ end
     planar_calibration(p1, p2, distance; origin=(0,0), reflection=false,
                        perpendicular_scale=nothing)
 
-Build a two-point planar calibration. The physical x axis runs from image
-point `p1` to `p2` and has the supplied physical `distance`; `origin` is the
-physical coordinate assigned to `p1`. By default pixels are isotropic.
-`perpendicular_scale` supplies a separate physical-units-per-pixel y scale,
-and `reflection=true` reverses that physical y axis.
+Build a pixel-to-physical transform from two image points and their known
+separation. The physical x axis points from `p1` to `p2`; `distance` is
+their separation in your chosen length unit. `origin` is the physical
+coordinate of `p1`. By default, the perpendicular axis uses the same
+length per pixel. Set `perpendicular_scale` to a different length per pixel
+for anisotropic calibration, or `reflection=true` to reverse that axis.
 """
 function planar_calibration(p1::Tuple{<:Real,<:Real}, p2::Tuple{<:Real,<:Real},
                             distance::Real; origin::Tuple{<:Real,<:Real}=(0,0),

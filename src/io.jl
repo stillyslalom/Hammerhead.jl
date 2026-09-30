@@ -5,17 +5,17 @@
     load_image(path)          -> Matrix{Float64}
     load_image(T, path)       -> Matrix{T}
 
-Load an image file as a grayscale floating-point matrix, ready for
-[`run_piv`](@ref) or the preprocessing functions. Color images are converted
-to grayscale; integer-valued images are scaled by their type's full range
-(e.g. 16-bit TIFF values map to `[0, 1]` as `n / 65535`).
+Read one image as a grayscale matrix for [`run_piv`](@ref) or preprocessing.
+Color images are converted to grayscale. Normalized fixed-point pixels from
+the image decoder convert to values in `[0, 1]`; numeric matrices are converted
+directly to `T`. No per-image contrast normalization is applied.
 
-The element type defaults to `Float64`; pass `T = Float32` to run the
-downstream pipeline in single precision (see [`PIVResult`](@ref)).
+The element type defaults to `Float64`; call `load_image(Float32, path)`
+for a `Float32` matrix and single-precision image processing.
 
 Formats are dispatched through FileIO: TIFF (including 16-bit) and PNG are
-supported out of the box; BMP and other exotic formats work when ImageMagick
-is installed (`using ImageMagick`).
+supported by the installed image decoders. The decoded image must be a 2D
+matrix. Use [`TIFFStack`](@ref) for a multi-page recording.
 """
 function load_image(::Type{T}, path::AbstractString) where {T<:AbstractFloat}
     isfile(path) || throw(ArgumentError("no such image file: $path"))
@@ -42,7 +42,7 @@ image_to_matrix(::Type, img, path) =
     load_mask(path; threshold = 0.5, invert = false) -> BitMatrix
 
 Load an analysis mask from an image file: pixels with grayscale value
-`>= threshold` become `true` (excluded from analysis — see `mask` in
+`>= threshold` become `true` (excluded from analysis; see `mask` in
 [`run_piv`](@ref)). Use `invert = true` when dark pixels mark the excluded
 region instead.
 """
@@ -52,14 +52,23 @@ function load_mask(path::AbstractString; threshold::Real = 0.5, invert::Bool = f
 end
 
 """
-    image_pairs(files; mode = :paired) -> Vector{Tuple}
+    image_pairs(files; mode=:paired, stride=1, offset=0, deltas=(1,)) -> Vector{Tuple}
 
-Group an ordered list of frames (file paths or matrices) into correlation
-pairs for [`run_piv_sequence`](@ref):
+Group an ordered list of frame paths or matrices into pairs for
+[`run_piv_sequence`](@ref). This function does not sort or load frames;
+verify acquisition order before calling it.
 
-- `mode = :paired` — double-frame recordings: `(1, 2), (3, 4), …`
-  (requires an even number of frames).
-- `mode = :chained` — time-resolved recordings: `(1, 2), (2, 3), …`
+- `mode = :paired` selects start indices `1 + offset:2*stride:length(files)`.
+  The defaults produce `(1, 2), (3, 4), …` and require an even frame count.
+- `mode = :chained` selects start indices `1 + offset:stride:length(files)`.
+  The defaults produce `(1, 2), (2, 3), …` and require at least two frames.
+- `offset` is a nonnegative count of leading frames to skip; `stride` is
+  positive. `deltas` is a positive integer or collection of frame separations.
+  Pairs are grouped by delta, then start index; incomplete pairs are omitted.
+
+For example, `mode=:chained, stride=2, deltas=(1, 3)` first pairs frames
+1 and 2, 3 and 4, and so on, then frames 1 and 4, 3 and 6, and so on.
+See [`FrameSource`](@ref) for lazy loading and per-pair timestamps.
 """
 function image_pairs(files::AbstractVector; mode::Symbol = :paired,
                      stride::Integer = 1, offset::Integer = 0, deltas = (1,))
@@ -76,11 +85,9 @@ end
 """
     frame_index_strings(pathA, pathB) -> (strA, strB)
 
-Extract the differing frame-index substrings from a pair of frame paths:
-strip each path's directory and extension, then return the portions of the
-two stems that differ, with any shared leading/trailing **digits** of that
-field kept intact (so a zero-padded index is not truncated). Handy for
-naming per-pair output files — see the `output` keyword of
+Extract frame indices from two differing path stems, without their
+directories or extensions. Leading zeros in an index are preserved.
+Use the returned strings to name per-pair output files; see `output` in
 [`run_piv_sequence`](@ref).
 
 ```jldoctest
@@ -137,9 +144,10 @@ source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
 """
     save_results(path, results) -> path
 
-Save a [`PIVResult`](@ref), [`StereoPIVResult`](@ref), or [`PTVResult`](@ref)
-(or a vector of them, possibly mixed) to a JLD2 file (conventionally `*.jld2`),
-overwriting `path` if it exists. Read back with [`load_results`](@ref).
+Write one result or a vector of results to a JLD2 file at `path`, replacing
+an existing file. The vector may mix [`PIVResult`](@ref),
+[`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
+[`TrackingResult`](@ref). Read it with [`load_results`](@ref).
 """
 function save_results(path::AbstractString,
                       results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
@@ -158,11 +166,14 @@ save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVRe
 """
     load_results(path) -> Vector
 
-Load the results (`PIVResult` and/or `StereoPIVResult` entries) stored in a
-JLD2 file written by [`save_results`](@ref) or [`run_piv_sequence`](@ref), in
-sequence order. Files written by `run_piv_sequence(...; output = path)` from
-file-path pairs also carry the source image paths, retrievable with
-`JLD2.load(path, "sources/000001")` etc.
+Read results in saved order from a Hammerhead JLD2 file. The returned
+vector may contain planar PIV, stereo PIV, PTV, and tracking results.
+An empty saved sequence returns an empty vector. Unknown file-format
+versions raise an `ArgumentError`.
+
+Sequence drivers also save source labels when available; this function
+returns result objects only. To inspect the first saved pair's labels, load
+`"sources/000001"` from the same file with JLD2.
 """
 function load_results(path::AbstractString)
     jldopen(path, "r") do f
@@ -185,25 +196,22 @@ end
                      progress = true, backend = :cpu, kwargs...) -> Vector{PIVResult}
     run_piv_sequence(pairs; effort = :low/:medium/:high, kwargs...) -> Vector{PIVResult}
 
-Run PIV over a sequence of image pairs. `pairs` is a vector of 2-tuples whose
-entries are file paths (loaded with [`load_image`](@ref)) and/or real-valued
-matrices — see [`image_pairs`](@ref) for building it from a frame list.
+Analyze image pairs in order and return one [`PIVResult`](@ref) per pair.
+`pairs` is a nonempty vector of path or matrix 2-tuples, or lazy
+[`FramePair`](@ref)s. Use [`image_pairs`](@ref) to build it.
 `params` is a single `PIVParameters` or a multi-pass schedule; alternatively,
 omit it and pass `effort = :low`, `:medium`, or `:high` to use the built-in
-effort schedules from [`run_piv`](@ref). Remaining `kwargs` (e.g. `mask` for a
-static analysis mask shared by all pairs, `scale` for a shared
-[`PhysicalScale`](@ref), or PIV-parameter overrides when `effort` is set) are
-forwarded to [`run_piv`](@ref).
+effort schedules from [`run_piv`](@ref). Remaining `kwargs`, including `roi`
+and parameter overrides when `effort` is set, go to [`run_piv`](@ref).
 
 - `preprocess`: function applied to each frame after loading, e.g.
   `img -> clahe!(subtract_background!(img, bg))`. Frames loaded from file
   paths are fresh buffers, so mutating preprocessors are safe; in-memory
-  matrix pairs are passed through as-is — use the allocating versions there
+  matrix pairs are passed through as-is; use allocating preprocessors there
   to leave the caller's arrays untouched.
-- `output`: either a path of a single JLD2 file (overwritten) to which all
-  results are written incrementally as they complete — so a crashed batch
-  keeps its finished pairs — or a function `(i, pair) -> outpath` mapping the
-  1-based pair index and the original pair tuple to a per-pair output path
+- `output`: either one JLD2 path (overwritten) receiving completed results
+  incrementally, or a function `(i, pair) -> outpath` mapping a 1-based pair
+  index and the original pair to a per-pair output path
   (each written as its own single-result JLD2 file as that pair completes;
   parent directories are created). For file-path pairs the source paths are
   stored alongside in either mode. Read any of these back with
@@ -214,23 +222,28 @@ forwarded to [`run_piv`](@ref).
   external progress display). Throwing from the callback aborts the batch;
   pairs finished before the abort stay in `output`.
 - `on_result`: optional function `(i, result) -> nothing` called with each
-  pair's result immediately after it completes (before the incremental
-  `output` write and the `progress` callback) — for consuming results live,
-  e.g. streaming them into a viewer while the batch runs. Runs on the calling
+  pair's result immediately after it completes, before `output` and
+  `progress`. Use it to consume results during a batch. Runs on the calling
   task, in pair order. Throwing aborts the batch like a throwing `progress`
   callback; pairs already persisted stay in `output`.
-- `backend`: execution backend selector. The core package provides `:cpu`;
+- `backend`: execution backend selector. The core provides `:cpu` and `:ka`;
   package extensions add device selectors (see [Run PIV on a GPU](@ref)).
 - `image_type`: element type frames are loaded as (default `Float64`);
-  `Float32` runs the pipeline in single precision. In-memory matrix pairs are
-  used as-is, so convert those yourself.
+  `Float32` selects single precision for the main image-processing buffers.
+  In-memory matrices and frame-source outputs keep their existing types.
+- `mask`: a shared exclusion mask, a mask per pair, or a callback
+  `(i, imgA, imgB) -> mask` applied to the loaded, preprocessed images.
+  A returned `(maskA, maskB)` tuple excludes the union. Lazy frame pairs also
+  accept one mask per source frame.
+- `scale`: optional [`PhysicalScale`](@ref). For timestamped `FramePair`s,
+  their `dt` replaces the supplied scale's delay; timestamps alone do not
+  attach a physical scale.
 
-The interpolant, deformation, and correlator scratch is reused across pairs via
-a single [`PIVWorkspace`](@ref) (the pairs share an image size), so a batch pays
-those allocations once; results are bitwise identical to calling [`run_piv`](@ref)
-per pair. Because pairs are processed serially — while the *next* pair's frames
-are prefetched on a background task that never touches the workspace — this stays
-race-free.
+Pairs are analyzed serially while the next pair is loaded and preprocessed
+on a background task. Preprocessors must be safe to call from that task.
+A shared [`PIVWorkspace`](@ref) reuses buffers across pairs. If processing or
+a callback throws, the exception propagates after pending loading finishes;
+results already written to `output` are retained.
 """
 function run_piv_sequence(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};
@@ -275,14 +288,13 @@ end
                      preprocess = nothing, output = nothing,
                      progress = true, kwargs...) -> Vector{PTVResult}
 
-Run PTV over a sequence of image pairs, mirroring [`run_piv_sequence`](@ref):
-`pairs` entries are file paths (loaded with [`load_image`](@ref)) and/or
-real-valued matrices, `params` is a [`PTVParameters`](@ref), and the same
-`preprocess`, `output` (incremental JLD2), `progress`, `on_result`, and
-`image_type` options apply. Remaining `kwargs` (e.g. `predictor`, `mask`, or `scale`) are
-forwarded to [`run_ptv`](@ref). Results are [`PTVResult`](@ref)s; when `output` is a path
-they are persisted incrementally as they complete (with source paths for
-file-path pairs), readable with [`load_results`](@ref).
+Analyze image pairs in order with [`run_ptv`](@ref), returning one
+[`PTVResult`](@ref) per pair. Pairs may contain file paths or matrices.
+`params` controls detection and matching. `preprocess`, `output`,
+`progress`, `on_result`, and `image_type` follow
+[`run_piv_sequence`](@ref); remaining keywords such as `predictor`,
+`mask`, and `scale` go to `run_ptv`. If `output` is supplied, completed
+results are saved incrementally for [`load_results`](@ref).
 """
 function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVParameters();
                           preprocess = nothing,

@@ -13,18 +13,17 @@
 """
     SelfCalPass
 
-Diagnostics of one measurement pass of [`self_calibrate`](@ref) (one entry
-per disparity-map computation, in `report.passes`):
+Diagnostics from one disparity measurement in [`self_calibrate`](@ref).
+The report stores one entry per pass, including the final verification.
 
-- `disparity_rms`, `disparity_median`: RMS and median magnitude of the
-  disparity vectors (dewarped pixels) over valid, non-outlier grid points —
-  measured *before* any correction of this pass. Wieneke (2005) reports
-  well-corrected setups below 0.1 px.
+- `disparity_rms`, `disparity_median`: RMS and median magnitude of valid,
+  unflagged camera-to-camera disparity vectors, in dewarped pixels, before
+  any correction made on this pass.
 - `n_vectors`: number of disparity vectors entering the statistics.
-- `triangulation_rms`: RMS of the per-vector 4-equation triangulation
-  residual (dewarped pixels) over the accepted vectors; `NaN` when the pass
-  applied no correction. Large values with a small plane-fit residual
-  indicate calibration errors rather than sheet misalignment.
+- `triangulation_rms`: RMS of the per-vector four-equation camera-ray
+  residual, in dewarped pixels, over accepted vectors. `NaN` when the pass
+  applied no correction. A large value calls for inspection of both the
+  camera calibration and disparity measurements.
 - `plane`: the fitted sheet plane `z = a + b·X + c·Y` (world units, in the
   frame current at that pass), or `nothing` when the pass only measured
   (converged, or the trailing verification pass).
@@ -40,7 +39,10 @@ end
 """
     SelfCalibrationReport
 
-Diagnostics returned by [`self_calibrate`](@ref).
+Inspect this report before using the corrected dewarpers returned by
+[`self_calibrate`](@ref). A false `converged` flag means the disparity RMS
+remains above `tol`; inspect signed disparity maps and fitted planes to
+decide whether a systematic offset remains.
 
 # Fields
 - `passes`: per-measurement diagnostics ([`SelfCalPass`](@ref)); entries with
@@ -171,37 +173,30 @@ end
     self_calibrate(frames1, frames2, dw1, dw2; kwargs...)
         -> (dw1′, dw2′, report)
 
-Disparity self-calibration (Wieneke 2005): correct residual misalignment
-between the calibration-target plane and the actual laser sheet. The two
-cameras' dewarped images of the *same* instant should coincide; the residual
-disparity field (camera 1 vs camera 2, ensemble sum-of-correlation over all
-instants) is triangulated to world points on the true sheet, a plane is
-fitted through them, and both camera models are rigidly transformed so the
-fitted plane becomes the measurement plane `z = grid.z` — repeated until the
-disparity RMS drops below `tol` or `iterations` corrections have been
-applied, then verified with a final disparity measurement.
+Align a stereo calibration with the light sheet using camera-to-camera
+particle disparity [Wieneke2005](@cite). Corresponding frames must show the
+same instant. The function measures disparity on the shared dewarp grid,
+triangulates accepted vectors, fits a sheet plane, and transforms both
+camera models. It repeats until disparity RMS reaches `tol` or the
+`iterations` correction limit, then measures disparity once more.
 
-`frames1` and `frames2` are vectors of raw same-instant frames of cameras 1
-and 2 (file paths and/or matrices, as in [`run_piv_sequence`](@ref)); entry
-`k` of both must show the same instant. Wieneke recommends 5–50 instants
-for a well-shaped ensemble correlation peak; a single dense image per camera
-also works and may be passed directly as `self_calibrate(A1, A2, dw1, dw2)`.
+`frames1` and `frames2` are equal-length vectors of raw camera frames (file
+paths or matrices); entry `k` of each must show the same instant. Multiple
+instants help when individual disparity correlations are weak. A single
+dense frame per camera may also be passed directly as
+`self_calibrate(A1, A2, dw1, dw2)`.
 `dw1`/`dw2` are the cameras' [`ImageDewarper`](@ref)s sharing one
 [`DewarpGrid`](@ref).
 
-Returns replacement dewarpers built from the corrected cameras on the same
-grid (drop-in for [`run_piv_stereo`](@ref); the corrected models are
-`dw1′.cam`/`dw2′.cam` — a corrected [`PinholeCamera`](@ref) stays a
-`PinholeCamera`, other models come back wrapped in a
-[`TransformedCamera`](@ref)) and a [`SelfCalibrationReport`](@ref) with
-per-pass diagnostics and the cumulative world transform. When the first
-measurement is already below `tol`, the input dewarpers are returned as-is.
+Returns corrected dewarpers on the same grid for [`run_piv_stereo`](@ref)
+and a [`SelfCalibrationReport`](@ref). The report records per-pass diagnostics
+and the world-frame transform. If the first measurement already meets `tol`,
+the input dewarpers are returned unchanged.
 
 # Keyword arguments
-- `params = nothing`: `PIVParameters` (or multi-pass schedule) for the
-  disparity correlation; the default is the paper's recipe — a single pass
-  of large windows (128 px or less on small grids) with 50% overlap,
-  padded and Gaussian-apodized.
+- `params = nothing`: `PIVParameters` or a pass schedule for disparity
+  correlation. The default is one pass with windows up to 128 px, 50%
+  overlap, padding, and Gaussian apodization.
 - `iterations = 3`: maximum number of plane-fit corrections.
 - `tol = 0.05`: convergence threshold on the disparity RMS (dewarped px).
 - `max_triangulation_error = 0.5`: reject disparity vectors whose
@@ -209,9 +204,9 @@ measurement is already below `tol`, the input dewarpers are returned as-is.
 - `mask = nothing`: grid-sized `Bool` matrix of world-plane pixels to
   exclude (`true` = excluded), combined with the dewarpers' out-of-view
   masks as in [`run_piv_stereo`](@ref).
-- `keep_disparity_maps = false`: retain every pass's disparity
-  [`PIVResult`](@ref) in the report (for troubleshooting; off for
-  production runs — the scalar diagnostics are always recorded).
+- `keep_disparity_maps = false`: retain each disparity [`PIVResult`](@ref)
+  in the report for spatial inspection; scalar diagnostics are recorded
+  regardless.
 - `preprocess = nothing`: function applied to each raw frame before
   dewarping (e.g. background subtraction).
 - `image_type = Float64`: precision for frames loaded from file paths.

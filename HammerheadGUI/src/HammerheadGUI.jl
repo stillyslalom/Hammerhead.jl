@@ -1,12 +1,10 @@
 """
     HammerheadGUI
 
-Desktop GUI for Hammerhead.jl (particle image velocimetry) built on GLMakie.
-
-Application state and logic live in the framework-free `Controllers`
-submodule (plain Julia + Observables — no Makie in scope); the view layer
-renders controllers and pushes user input into them, so the widget shell
-stays swappable and the logic testable without a GL context.
+GLMakie views and controllers for inspecting and running Hammerhead analyses.
+Use the views for interactive work, or use `Controllers` to configure and
+inspect an analysis without opening a window. Controller state is exposed
+through `Observables`.
 """
 module HammerheadGUI
 

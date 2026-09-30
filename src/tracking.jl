@@ -10,10 +10,10 @@
 """
     Trajectory{T<:AbstractFloat}
 
-A single particle track: `start_frame` (1-based) is the frame of the first
-point, `x`/`y` hold subpixel positions, and `frames` records their frame indices,
-including gaps when a particle is reacquired. `length(t)` is the number of
-observed points. See [`track_particles`](@ref).
+One linked particle path from [`track_particles`](@ref). `x` and `y` hold
+observed subpixel positions in image columns and rows; `frames` gives each
+observation's frame number, including gaps after a reacquisition.
+`start_frame` is the first frame number and `length(t)` counts observations.
 """
 struct Trajectory{T<:AbstractFloat}
     start_frame::Int
@@ -35,10 +35,10 @@ Base.show(io::IO, t::Trajectory{T}) where {T} =
 """
     TrackingResult{T<:AbstractFloat}
 
-Result of [`track_particles`](@ref): the linked `trajectories`, the number of
-frames `n_frames`, the `parameters` used, and the optional [`PhysicalScale`](@ref)
-`scale` (`nothing` when none was attached — positions stay in pixels until
-[`physical`](@ref) converts them).
+Collection of linked `trajectories` from [`track_particles`](@ref), with
+input frame count `n_frames` and the `parameters` used. `scale` is optional
+[`PhysicalScale`](@ref) metadata; positions remain in pixels until
+[`physical`](@ref) converts them.
 """
 struct TrackingResult{T<:AbstractFloat}
     trajectories::Vector{Trajectory{T}}
@@ -93,29 +93,26 @@ end
                     min_track_length = 3, max_gap = 0, mask = nothing, scale = nothing,
                     image_type = Float64, progress = true) -> TrackingResult
 
-Link particles across a sequence of `frames` (≥ 2 file paths or real-valued
-matrices) into trajectories. Each frame is detected once; for every transition
-`k → k+1`, track heads are predicted — constant-velocity extrapolation for
-heads with ≥ 2 points, and a field predictor for fresh 1-point heads (the
-`predictor` option on the first transition, exactly as in [`run_ptv`](@ref);
-the binned previous transition afterwards) — then matched with the greedy PTV
-matcher. Scattered-UOD-flagged links are rejected (never linked, so they cannot
-poison the constant-velocity predictor). `max_gap` keeps unmatched heads alive
-for a bounded number of missed frames and records reacquisition gaps explicitly
-in [`Trajectory`](@ref)`s `frames`; its default zero terminates immediately as
-before. Unmatched frame-`(k+1)` particles seed new tracks.
+Link detections across at least two frames, supplied as file paths or
+real-valued matrices. Each frame is detected once. Tracks with two or more
+points use constant-velocity prediction; newer tracks use a field predictor.
+The first transition uses `predictor` and `piv_passes` as in
+[`run_ptv`](@ref); later transitions use binned matches from the previous
+pair. Scattered-UOD-flagged links are rejected. `max_gap` permits that many
+missed frames before a track ends and records any reacquisition gap in
+[`Trajectory`](@ref)`s `frames`; its default of zero ends a track at the first
+miss. Unmatched detections can start new tracks.
 
-Only tracks with `length ≥ min_track_length` (which must be ≥ 2) are returned,
-sorted by `start_frame` then first position. `scale` attaches a
-[`PhysicalScale`](@ref) to the result (positions stay in pixels; see
-[`physical`](@ref) and [`trajectory_velocities`](@ref)). `image_type` is the
-element type file paths load as (`Float32` runs in single precision); `progress`
-is a `Bool` meter or an `(i, n)` callback ticked per transition, as in
-[`run_piv_sequence`](@ref). Frames are loaded and detected one at a time.
-The result precision promotes the element types of in-memory matrices;
-file paths use `image_type`. For lazy `FrameRef` sources whose later element
-types are unknown without loading them, the first loaded frame sets the
-precision and later detections are converted to it.
+Returns tracks with at least `min_track_length` observations (minimum 2),
+sorted by starting frame and first position. `scale` attaches physical-unit
+metadata without converting stored pixel positions. Use [`physical`](@ref)
+and [`trajectory_velocities`](@ref) for velocities. `image_type` selects the
+precision used when loading file paths; in-memory matrix types are promoted.
+`progress` is a Boolean meter setting or an `(i, n)` callback after each
+transition. Frames are loaded and detected one at a time. For lazy
+[`FrameRef`](@ref) sources whose later element types cannot be inspected
+without loading, the first frame sets result precision and later detections
+are converted to it.
 """
 function track_particles(frames::AbstractVector, params::PTVParameters = PTVParameters();
                          predictor = :piv,
@@ -247,15 +244,16 @@ end
 """
     trajectory_velocities(t::Trajectory, scale = nothing) -> (u, v)
 
-Per-point displacement estimates along a trajectory (px per frame interval):
-central differences in the interior and one-sided differences at the ends.
-`u` is the column (x) component, `v` the row (y). Requires `length(t) ≥ 2`.
+Estimate one velocity at each observed trajectory point. The endpoints use
+one-sided differences and interior points use central differences, each
+divided by the actual difference in frame indices so gaps are accounted for.
+Without a scale, `u` and `v` are pixels per frame interval, along columns
+and rows respectively. At least two observed points are required.
 
-With a [`PhysicalScale`](@ref) the differences are multiplied by
-`pixel_size / dt` into physical velocities. Pass the owning result's `scale`
-field — this yields the same velocities whether `t` comes from a raw or a
-[`physical`](@ref)-converted [`TrackingResult`](@ref), because the converted
-result's scale keeps `dt` (its positions are already lengths).
+Pass the owning result's [`PhysicalScale`](@ref) as `scale` for physical
+velocity units. A raw result uses `pixel_size / dt`; a result converted by
+[`physical`](@ref) already has length coordinates and retains `dt`, so the
+same call also works on its trajectories.
 """
 function trajectory_velocities(t::Trajectory{T},
                                scale::Union{Nothing,PhysicalScale} = nothing) where {T}

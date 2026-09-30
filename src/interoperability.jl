@@ -5,9 +5,10 @@
 """
     ROI(rows, cols)
 
-Rectangular image region used by `run_piv`, `run_ptv`, and the sequence
-drivers. `rows` and `cols` are integer unit ranges in the original image.
-Returned coordinates remain in that original image coordinate system.
+Limit [`run_piv`](@ref), [`run_ptv`](@ref), or a sequence driver to a
+rectangular part of each image. `rows` and `cols` are nonempty, positive
+integer unit ranges in the original image. Returned particle positions or
+vector centers retain the original image coordinates.
 """
 struct ROI
     rows::UnitRange{Int}
@@ -51,15 +52,18 @@ function offset_result(r::PTVResult{T}, roi::ROI) where {T}
         r.outliers, r.index_a, r.index_b, pa, pb, r.parameters, r.scale)
 end
 
-"""Abstract interface for lazily addressable image recordings."""
+"""Common type for indexed frame sources used by [`image_pairs`](@ref)."""
 abstract type AbstractFrameSource end
 
 """
     FrameSource(n, loader; timestamps=nothing, labels=nothing)
 
-Create a lazy source around `loader(i)`. Camera-format adapters only need to
-provide a frame count and an index loader; optional timestamps are carried into
-`FramePair.dt` by [`image_pairs`](@ref).
+Wrap an indexed frame loader without materializing the whole recording.
+`loader(i)` must return the image matrix for one-based frame index `i`.
+Optional `timestamps` and `labels` must each have `n` entries. Use numeric
+timestamps in the same time unit as any [`PhysicalScale`](@ref) you attach:
+[`image_pairs`](@ref) subtracts paired timestamps into `FramePair.dt`.
+`labels` identify frames in saved sequence results.
 """
 struct FrameSource{F,TS,L} <: AbstractFrameSource
     n::Int
@@ -82,13 +86,18 @@ Base.getindex(s::FrameSource, i::Integer) = (checkbounds(1:s.n, i); s.loader(i))
 frame_timestamp(s::FrameSource, i) = s.timestamps === nothing ? nothing : s.timestamps[i]
 frame_source_label(s::FrameSource, i) = s.labels === nothing ? string(i) : string(s.labels[i])
 
-"""A frame reference. Calling `load_frame` materializes only this frame."""
+"""Reference to one indexed frame of an [`AbstractFrameSource`](@ref). The
+source loader runs when a driver requests the frame; constructing the
+reference does not load image pixels."""
 struct FrameRef{S<:AbstractFrameSource}
     source::S
     index::Int
 end
 
-"""Pair descriptor carrying source indices and optional timestamp difference."""
+"""Two paired frames and optional `dt` between their timestamps. The
+`dt` field is `nothing` without timestamps. In sequence drivers it
+overrides the delay of a supplied [`PhysicalScale`](@ref); timestamps
+alone do not attach a scale or convert displacement to velocity."""
 struct FramePair{A,B,D}
     first::A
     second::B
@@ -101,9 +110,11 @@ Base.iterate(p::FramePair, st=1) = st > 2 ? nothing : (p[st], st + 1)
 """
     TIFFStack(path; image_type=Float64)
 
-Open a multi-page TIFF as a frame source. The TIFF container is opened once;
-individual pages are converted to matrices only when indexed. Single-page
-TIFFs are valid one-frame stacks.
+Expose the pages of a TIFF as an indexed frame source. Construction decodes
+the TIFF through FileIO and may hold the whole decoded stack in memory;
+indexing a page converts only that page to `image_type` (`Float64` by
+default). A single-page TIFF has one frame. Use [`image_pairs`](@ref) to
+form lazy page references for a sequence driver.
 """
 struct TIFFStack{T,R} <: AbstractFrameSource
     path::String
@@ -144,9 +155,11 @@ end
 """
     image_pairs(source; mode=:paired, stride=1, offset=0, deltas=(1,))
 
-Build lazy pairs from a frame source, with arbitrary start `offset`, sampling
-`stride`, and one or more frame separations (`deltas`). Timestamped sources
-attach the actual time difference to each returned `FramePair`.
+Return [`FramePair`](@ref)s of lazy references to an indexed source.
+`mode = :paired` selects starts spaced by `2 * stride`; `:chained` uses
+starts spaced by `stride`. `offset` and `deltas` follow the vector overload of
+[`image_pairs`](@ref). When both source timestamps are present, each pair
+stores their difference as `dt`; check its units before attaching a scale.
 """
 function image_pairs(s::AbstractFrameSource; mode::Symbol=:paired, stride::Integer=1,
                      offset::Integer=0, deltas=(1,))
@@ -183,9 +196,15 @@ end
 """
     export_table(path, result; frame_id="", source_a="", source_b="")
 
-Write a long-form UTF-8 CSV using the stable `hammerhead-table-1` schema.
-Planar, stereo, and PTV exports share the same columns; non-applicable values
-are empty. Attached physical scaling is applied and its units are recorded.
+Write one planar PIV, stereo PIV, or PTV result to a long-form UTF-8 CSV
+using schema `hammerhead-table-1`, replacing `path` and returning it.
+Every grid node or matched particle is
+written, including masked and flagged entries; use the `masked` and
+`outlier` columns when filtering. Non-applicable fields are empty.
+If a [`PhysicalScale`](@ref) is attached, positions and components are
+converted with [`physical`](@ref) and the units are recorded. Otherwise
+planar PIV and PTV values remain in pixels per pair, and stereo values in
+unlabeled world length units per pair. Tracking results are not supported.
 """
 function export_table(path::AbstractString, r::Union{PIVResult,StereoPIVResult,PTVResult};
                       frame_id="", source_a="", source_b="")
@@ -225,13 +244,15 @@ end
 """
     export_vtk(path, result)
 
-Write a planar or stereo result as an ASCII VTK legacy structured grid. The
-file contains point coordinates, a three-component `velocity` vector, mask and
-outlier flags, and available uncertainty/quality scalar arrays. The dataset's
-`FIELD` metadata carries UTF-8 `coordinate_unit` and `component_unit` strings
-as byte arrays. Unscaled stereo values use the calibration grid's world units,
-whose name is unknown to Hammerhead (`world_unit`); attach a `PhysicalScale`
-to label them explicitly.
+Write a planar or stereo grid to a legacy ASCII VTK file, replacing `path`
+and returning it. The file includes all grid nodes, including masked and
+flagged ones, plus mask, outlier, uncertainty, and available quality arrays.
+Its vector array is named `velocity` by the VTK writer; values are still
+displacements per pair when no [`PhysicalScale`](@ref) is attached. With a
+scale, [`physical`](@ref) converts them to velocity. `FIELD` metadata stores
+`coordinate_unit` and `component_unit`; unscaled stereo uses the placeholder
+`world_unit` because the calibration's length-unit name is unavailable.
+PTV and tracking results are not structured grids and are not supported.
 """
 function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
     coordinate_unit, _, component_unit, q = _export_units(r)

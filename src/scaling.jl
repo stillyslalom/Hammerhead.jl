@@ -7,12 +7,12 @@
 """
     with_scale(result, scale::Union{Nothing,PhysicalScale})
 
-Return a result identical to `result` (all arrays shared, not copied) with its
-`scale` field replaced. Works on [`PIVResult`](@ref), [`StereoPIVResult`](@ref),
-[`PTVResult`](@ref), and [`TrackingResult`](@ref); `nothing` strips an
-attached scale (e.g. to overlay vectors on the source image in pixel
-coordinates). Attaching is pure metadata — the stored arrays keep their
-measured units until [`physical`](@ref) converts them.
+Return the same result type with `scale` replaced. The stored arrays are
+shared, not copied or converted. Works on [`PIVResult`](@ref),
+[`StereoPIVResult`](@ref), [`PTVResult`](@ref), and [`TrackingResult`](@ref).
+Pass `nothing` to remove a scale from a raw result, for example before
+plotting it on a source image in pixel coordinates. Removing the scale
+does not undo a previous [`physical`](@ref) conversion.
 """
 with_scale(r::PIVResult{T}, scale::Union{Nothing,PhysicalScale}) where {T} =
     PIVResult{T}(r.x, r.y, r.u, r.v, r.peak_ratio, r.correlation_moment,
@@ -36,27 +36,25 @@ with_scale(r::TrackingResult{T}, scale::Union{Nothing,PhysicalScale}) where {T} 
     physical(result) -> same-type result in physical units
     physical(result, scale::PhysicalScale)
 
-Convert `result` to physical units using its attached [`PhysicalScale`](@ref)
-(the two-argument form attaches `scale` first, replacing any existing one).
-Positions (`x`, `y`, `z`, trajectory points) are multiplied by `pixel_size`
-and displacements together with their uncertainties (`u`, `v`, `w`,
-`uncertainty_*`, and a [`PTVResult`](@ref)'s `match_residual` by `pixel_size`
-alone) by `pixel_size / dt`, turning displacements per frame interval into
-velocities. Returns `result` itself when there is nothing to convert
-(`scale === nothing` or an identity scale).
+Convert a result using its attached [`PhysicalScale`](@ref). The two-argument
+form replaces any attached scale before conversion. Positions (`x`, `y`,
+`z`, trajectory points) and PTV `match_residual` values multiply by
+`pixel_size`. Displacement components (`u`, `v`, `w`) and their uncertainty
+estimates multiply by `pixel_size / dt`, becoming velocities. Stereo arrays
+already use world coordinates, so their scale normally has `pixel_size = 1`.
+Without a scale, or with an identity scale, return the original result.
 
-The returned result carries an *identity* scale with the same unit labels, so
-`physical` is idempotent and plot labels always match the arrays. Pixel-native
-diagnostics are never converted: `peak_ratio`, `correlation_moment`,
-`correlation_planes`, the embedded `particles_a`/`particles_b`, and a
-[`StereoPIVResult`](@ref)'s per-camera `cam1`/`cam2` results are shared
-untouched. Convert last — validators, [`peak_locking`](@ref), and the other
-pixel-calibrated tools must run on the raw result.
+For PIV, stereo PIV, and PTV, the converted result carries an identity
+scale with the original unit labels. A second call to `physical` therefore
+does not convert the arrays again. Pixel-native diagnostics stay unchanged:
+`peak_ratio`, `correlation_moment`, `correlation_planes`, embedded PTV
+`particles_a`/`particles_b`, and stereo `cam1`/`cam2` results. Run validators,
+[`peak_locking`](@ref), and other pixel-calibrated tools before conversion.
 
-One deviation from the identity rule: a [`TrackingResult`](@ref) stores only
-positions (velocities are *derived* by differencing), so its converted scale
-keeps `dt` — pass it to [`trajectory_velocities`](@ref) to get physical
-velocities from either the raw or the converted result.
+A [`TrackingResult`](@ref) stores positions rather than displacement
+components. Its converted scale retains `dt` so
+[`trajectory_velocities`](@ref) can derive velocities from either raw or
+converted trajectories using the frame interval.
 """
 physical(r::Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult},
          scale::PhysicalScale) = physical(with_scale(r, scale))

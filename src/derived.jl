@@ -32,13 +32,20 @@ function _axis_derivative(f::AbstractMatrix, axis::AbstractVector, dim::Int,
 end
 
 """
-    flow_derivatives(result; include_invalid=false)
-    flow_derivatives(x, y, u, v; valid=...)
+    flow_derivatives(result::PIVResult; include_invalid=false)
+    flow_derivatives(x, y, u, v; valid=isfinite.(u) .& isfinite.(v))
 
-Compute the four entries of the planar velocity-gradient tensor on a regular
-grid. Central differences are used where both immediate neighbours are valid,
-one-sided differences at valid boundaries, and `NaN` where no valid local
-stencil exists. Masked and flagged vectors are excluded by default.
+Return `(; dudx, dudy, dvdx, dvdy, valid)` on a regular planar grid. Each
+derivative has the units of the supplied vector components divided by the
+coordinate units. The result method uses stored arrays; call [`physical`](@ref)
+first if physical velocity gradients are needed. Masked, nonfinite, and
+flagged vectors are excluded by default; `include_invalid=true` admits
+flagged vectors but still excludes masked and nonfinite ones. The array
+method uses its explicit `valid` mask.
+
+Central differences use two valid neighbors; boundaries or gaps use a
+one-sided difference when possible. Values without a valid local stencil
+are `NaN`. Each axis needs at least two distinct coordinates.
 """
 function flow_derivatives(x::AbstractVector, y::AbstractVector,
                           u::AbstractMatrix, v::AbstractMatrix;
@@ -58,12 +65,35 @@ function flow_derivatives(r::PIVResult; include_invalid::Bool = false)
     flow_derivatives(r.x, r.y, r.u, r.v; valid)
 end
 
+"""
+    vorticity(derivatives)
+    vorticity(result::PIVResult; include_invalid=false)
+
+Return planar `∂v/∂x - ∂u/∂y` as a matrix. Pass the tuple from
+[`flow_derivatives`](@ref), or a result to compute the derivatives first.
+Units follow the supplied arrays; invalid stencils remain `NaN`.
+"""
 vorticity(d::NamedTuple) = d.dvdx .- d.dudy
+"""
+    divergence(derivatives)
+    divergence(result::PIVResult; include_invalid=false)
+
+Return planar `∂u/∂x + ∂v/∂y` as a matrix. Pass the tuple from
+[`flow_derivatives`](@ref), or a result to compute the derivatives first.
+Units follow the supplied arrays; invalid stencils remain `NaN`.
+"""
 divergence(d::NamedTuple) = d.dudx .+ d.dvdy
 vorticity(args...; kwargs...) = vorticity(flow_derivatives(args...; kwargs...))
 divergence(args...; kwargs...) = divergence(flow_derivatives(args...; kwargs...))
 
-"""Return planar strain components `(xx, yy, xy, magnitude)` with `xy=(du/dy+dv/dx)/2`."""
+"""
+    strain_rate(derivatives)
+    strain_rate(result::PIVResult; include_invalid=false)
+
+Return planar strain components `(; xx, yy, xy, magnitude)`, where
+`xy = (∂u/∂y + ∂v/∂x)/2` and `magnitude = √(2(xx² + yy² + 2xy²))`.
+The arrays retain the units and invalid-stencil `NaN`s of the derivatives.
+"""
 function strain_rate(d::NamedTuple)
     xx, yy = d.dudx, d.dvdy
     xy = (d.dudy .+ d.dvdx) ./ 2
@@ -73,11 +103,13 @@ end
 strain_rate(args...; kwargs...) = strain_rate(flow_derivatives(args...; kwargs...))
 
 """
-    swirling_strength(...)
+    swirling_strength(derivatives)
+    swirling_strength(result::PIVResult; include_invalid=false)
 
 Planar swirling strength: the magnitude of the imaginary part of the two
 eigenvalues of the local 2x2 velocity-gradient tensor. It is zero where the
-eigenvalues are real.
+eigenvalues are real. Returns a matrix with the same units as the gradient;
+invalid stencils remain `NaN`.
 """
 function swirling_strength(d::NamedTuple)
     disc = d.dudx .* d.dvdy .- d.dudy .* d.dvdx .-
@@ -87,12 +119,14 @@ end
 swirling_strength(args...; kwargs...) = swirling_strength(flow_derivatives(args...; kwargs...))
 
 """
-    q_criterion(...)
+    q_criterion(derivatives)
+    q_criterion(result::PIVResult; include_invalid=false)
 
 The explicitly two-dimensional Q criterion,
 `Q = (||Omega||^2 - ||S||^2)/2 = -tr(grad(u)^2)/2`. Positive values indicate
 rotation dominating strain in the measured plane; no unmeasured gradients
-are assumed.
+are assumed. Returns a matrix in squared gradient units; invalid stencils
+remain `NaN`.
 """
 q_criterion(d::NamedTuple) = .-(d.dudx.^2 .+ 2 .* d.dudy .* d.dvdx .+ d.dvdy.^2) ./ 2
 q_criterion(args...; kwargs...) = q_criterion(flow_derivatives(args...; kwargs...))
@@ -109,7 +143,19 @@ function _bilinear(x, y, f, qx, qy)
     (1-ty) * ((1-tx)*vals[1] + tx*vals[2]) + ty * ((1-tx)*vals[3] + tx*vals[4])
 end
 
-"""Sample a result along a polyline, returning arc length, coordinates, and interpolated components."""
+"""
+    extract_profile(result::PIVResult, points; n=100, include_invalid=false)
+
+Sample the stored `u` and `v` arrays at `n` equally spaced arc-length
+positions along a polyline of `(x, y)` points. Return
+`(; s, x, y, u, v)` as vectors in the result's current units. At least two
+points, positive total length, and `n ≥ 2` are required.
+
+Samples outside the grid or in a cell with any nonfinite, masked, or flagged
+corner become `NaN`, even if interpolation would give that corner zero
+weight. `include_invalid=true` admits flagged corners only. Use
+[`physical`](@ref) first if physical positions and velocities are needed.
+"""
 function extract_profile(r::PIVResult, points::AbstractVector{<:Tuple}; n::Int = 100,
                          include_invalid::Bool = false)
     length(points) >= 2 || throw(ArgumentError("a profile needs at least two points"))
@@ -129,7 +175,16 @@ function extract_profile(r::PIVResult, points::AbstractVector{<:Tuple}; n::Int =
        v=[_bilinear(r.x,r.y,vf,x,y) for (x,y) in zip(qx,qy)])
 end
 
-"""Extract grid samples inside `(xmin,xmax,ymin,ymax)` or a polygon."""
+"""
+    extract_region(result::PIVResult, region; include_invalid=false)
+
+Return `(; indices, x, y, u, v, mask)` for valid grid nodes inside a
+rectangle `(xmin, xmax, ymin, ymax)` or a polygon of `(x, y)` vertices.
+`mask` is a grid-shaped inclusion mask: `true` means the node was returned,
+the opposite convention from `result.mask`, where `true` means excluded.
+Masked and nonfinite vectors are always omitted; `include_invalid=true`
+also includes flagged vectors. Values retain the result's stored units.
+"""
 function extract_region(r::PIVResult, region; include_invalid::Bool = false)
     inside = if region isa NTuple{4,Real}
         xmin,xmax,ymin,ymax = region
@@ -155,7 +210,15 @@ function extract_region(r::PIVResult, region; include_invalid::Bool = false)
        u=r.u[inds], v=r.v[inds], mask=valid)
 end
 
-"""Compute circulation `integral(u dx + v dy)` around a supplied closed contour."""
+"""
+    circulation(result::PIVResult, contour; close=true, include_invalid=false)
+
+Estimate `∮(u dx + v dy)` by sampling along at least three contour points.
+The sign follows the supplied vertex order. `close=true` joins the last
+point to the first when needed; with `close=false`, only the supplied path
+is integrated. Return `NaN` if any sampled component is invalid or outside
+the grid. Units are stored component units multiplied by coordinate units.
+"""
 function circulation(r::PIVResult, contour::AbstractVector{<:Tuple}; close::Bool = true,
                      include_invalid::Bool = false)
     pts = collect(contour)
@@ -185,7 +248,16 @@ function _clip_polygon(poly, dim::Int, bound, keep_greater::Bool)
     result
 end
 
-"""Area-form circulation over a rectangular or polygonal `region`, integrating vorticity over its overlap with the grid."""
+"""
+    circulation(result::PIVResult; region, include_invalid=false)
+
+Integrate planar vorticity over a rectangle `(xmin, xmax, ymin, ymax)` or
+polygonal `region`, clipped to the grid. Return a scalar in stored component
+units multiplied by coordinate units. The result does not depend on polygon
+vertex order. Cells with any nonfinite corner vorticity are skipped, so a
+finite return value can cover only part of the requested area. Inspect
+validity before interpreting it as circulation over the full region.
+"""
 function circulation(r::PIVResult; region, include_invalid::Bool=false)
     length(r.x)>=2 && length(r.y)>=2 || throw(ArgumentError("circulation needs at least a 2x2 grid"))
     poly = if region isa NTuple{4,Real}
@@ -240,11 +312,17 @@ end
 """
     result_spectrum(results, i, j; dt, component=:u, invalid=:error, window=:hann)
 
-Spectrum of one grid point across a uniformly sampled result sequence. Supply
-`dt` as the time between successive results. An attached `PhysicalScale.dt`
-is the time between images within a pair and does not determine this interval,
-especially for strided or overlapping pairs. Invalid samples can `:error`, be linearly `:interpolate`d, or
-be replaced by the valid-sample `:mean`; invalid handling is always explicit.
+Return `(; frequencies, psd)` for component `:u` or `:v` at grid row `i`,
+column `j` across uniformly sampled results. Frequencies are cycles per
+time unit; `psd` is one-sided power spectral density. Supply `dt` between
+successive results; an attached `PhysicalScale.dt` describes an image pair
+and is not used here. The stored component values are analyzed without
+automatic physical conversion. `window` is passed to [`power_spectrum`](@ref).
+
+Masked, flagged, or nonfinite samples cause an error by default. Set
+`invalid=:mean` to replace them with the mean of valid samples, or
+`invalid=:interpolate` to interpolate interior gaps and hold the nearest
+valid value at either end. At least one valid sample is required.
 """
 function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
                          component::Symbol=:u, invalid::Symbol=:error,

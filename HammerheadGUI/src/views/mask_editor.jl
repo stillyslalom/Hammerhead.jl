@@ -5,16 +5,15 @@
 """
     mask_editor(source; size = (1000, 700)) -> Figure
 
-Open the mask editor on `source`: an image matrix, an image-file path
-(read with `Hammerhead.load_image`), or a prebuilt [`MaskEditor`](@ref)
-controller — pass the controller when you want the drawn mask back
-programmatically (`polygon_mask(editor)`), or to seed existing polygons.
+Open the mask editor on an image matrix, an image-file path, or a prebuilt
+[`MaskEditor`](@ref). Pass the controller to read the edited mask with
+`polygon_mask(editor)` or to seed polygons before opening the view.
 
 Editing model: left-click adds vertices (on empty background it starts a
 new polygon; inside an existing polygon it selects it), right-click closes
 the active polygon, Backspace undoes the last vertex, Delete removes the
-selected polygon. "Save mask…" writes the white-=-excluded grayscale image
-`Hammerhead.load_mask` reads back.
+selected polygon. "Save mask…" writes a grayscale image in which white
+pixels are excluded; `Hammerhead.load_mask` can read it back.
 """
 mask_editor(source; kwargs...) = mask_editor(MaskEditor(source); kwargs...)
 

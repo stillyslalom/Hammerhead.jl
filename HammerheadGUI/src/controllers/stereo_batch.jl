@@ -7,21 +7,19 @@
 """
     StereoBatchRunner(; kwargs...)
 
-Controller for the stereo batch runner. Holds the two synchronized camera
-frame lists (`files1`/`files2`) and pairing mode, the [`ImageDewarper`](@ref)
-pair (`dewarpers`, `nothing` until built or supplied — see
-[`set_dewarpers!`](@ref) and [`build_dewarpers`](@ref)), a curated parameter
-form (effort preset or manual window schedule), the stereo scale form
-(`dt`/`time_unit`/`length_unit`; stereo results are already in world units,
-so `pixel_size` is fixed at 1), the output path, and the run state — all as
-`Observables`.
+Configure a stereo PIV sequence and observe its progress. `files1` and
+`files2` hold synchronized camera frames. Supply a pair of
+[`ImageDewarper`](@ref)s with [`set_dewarpers!`](@ref) or
+[`build_dewarpers`](@ref) before running. Inputs and run state are
+`Observables`. Stereo displacements are already in world units; the
+`dt`, `time_unit`, and `length_unit` settings determine velocity units.
 
 # Keyword defaults
 - `files1 = Any[]`, `files2 = Any[]`, `pair_mode = :paired`
 - `dewarpers = nothing` (a `(dw1, dw2)` tuple sharing one `DewarpGrid`)
 - `effort = :custom`, `window_schedule = [64, 32, 32]`,
   `overlap_fraction = 0.5`, `uncertainty = false` (the manual schedule uses
-  the accuracy configuration: padded, Gaussian apodization)
+  padded correlation and Gaussian apodization)
 - `dt = 1.0`, `time_unit = "frame"`, `length_unit = "world units"` — a
   dt-only [`PhysicalScale`](@ref) is attached when any differs from default
 - `output_path = ""` (empty = in memory only)
@@ -133,10 +131,12 @@ end
                     z = 0.0, spacing = :auto, coverage = :intersection,
                     margin = 0.0) -> (dw1, dw2)
 
-Build the stereo [`ImageDewarper`](@ref) pair from two fitted calibration
-reviews: `Hammerhead.common_dewarp_grid` over both fitted cameras (each
-review's plate image size), then one dewarper per camera on the shared grid.
-Throws when either review has no fitted camera.
+Build a pair of [`ImageDewarper`](@ref)s on one world-coordinate grid.
+`z` selects the world plane; `spacing` and `margin` use the calibrations'
+world length unit. `coverage = :intersection` or `:union` combines the
+cameras' projected boundary boxes, not their exact visible regions;
+out-of-view samples remain masked per camera. The grid uses each review's
+first plate image size. Throws if either camera has no fit.
 """
 function build_dewarpers(cr1::CalibrationReview, cr2::CalibrationReview;
                          z::Real = 0.0, spacing = :auto,
@@ -229,8 +229,9 @@ end
 """
     validate(sbc::StereoBatchRunner) -> Union{Nothing,String}
 
-`nothing` when the stereo batch can start, otherwise a human-readable
-reason.
+Return `nothing` when the form has the required inputs and valid settings,
+or a message describing the first problem. Image loading and processing
+errors can still occur during the run.
 """
 function validate(sbc::StereoBatchRunner)
     sbc.dewarpers[] === nothing && return "build or set the dewarpers first"
@@ -256,10 +257,11 @@ end
 """
     start!(sbc::StereoBatchRunner; async = true)
 
-Validate and start the stereo batch (same task semantics as the planar
-[`start!`](@ref)). Progress lands in `progress`/`status`, finished
-acquisitions stream into `completed`, results into `results`, and the
-output file is written incrementally.
+Validate and start the stereo batch. Return `sbc` immediately with
+`async = true`, or wait for the run with `async = false`. Follow `running`,
+`progress`, and `status`; `completed` receives each finished acquisition
+and `results` holds the finished run. If `output_path` is set, results are
+also written incrementally.
 """
 function start!(sbc::StereoBatchRunner; async::Bool = true)
     sbc.running[] && return sbc
@@ -274,9 +276,8 @@ end
 """
     cancel!(sbc::StereoBatchRunner)
 
-Request cancellation: the stereo driver's native predicate stops the run
-between acquisitions, and the completed prefix is returned in `results`
-(and stays in the incremental output).
+Request cancellation between acquisitions and return `sbc`. Completed
+results remain available in `results` and in the output file when set.
 """
 cancel!(sbc::StereoBatchRunner) = (sbc.cancel[] = true; sbc)
 

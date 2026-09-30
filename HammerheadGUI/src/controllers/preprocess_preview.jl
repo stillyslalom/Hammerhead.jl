@@ -38,17 +38,15 @@ preproc_label(name::Symbol) =
     PreprocessPreview(image; pair = nothing, enabled = Symbol[])
     PreprocessPreview(path::AbstractString; kwargs...)
 
-Controller for the preprocessing-pipeline preview: a representative `image`
-(matrix, or a path loaded with `Hammerhead.load_image`), the ordered step
-list `steps` (every supported step, disabled unless listed in `enabled`),
-an optional `background` for the subtraction step (see
-[`set_background!`](@ref)), and the live `processed` observable — the
-pipeline applied to `image`, recomputed on every change.
+Preview an ordered preprocessing pipeline on a representative `image`
+(matrix or image path). `steps` contains all supported steps; only names in
+`enabled` run initially. Set a `background` with [`set_background!`](@ref)
+before enabling subtraction. `processed` updates when image or steps change.
 
 Supported steps, in default order: `:subtract_background`,
 `:intensity_cap` (`n_sigma`), `:highpass_filter` (`sigma`), `:clahe`
 (`clip_limit`), `:percentile_stretch` (`low`/`high`), `:invert_image`, and
-`:local_variance_normalize` (`sigma`) — the core preprocessing set.
+`:local_variance_normalize` (`sigma`).
 [`build_preprocess`](@ref) exports the composed closure for the batch
 drivers.
 
@@ -57,8 +55,8 @@ path, see [`set_pair!`](@ref)) a single-window correlation probe becomes
 available: [`click!`](@ref) places it, `probe_window` sizes it (64 px by
 default, [`set_probe_window!`](@ref)), and `probe_result` /
 [`probe_summary`](@ref) report the window's displacement and peak ratio,
-recomputed live as the pipeline changes — a direct readout of what each
-preprocessing choice does to the correlation.
+recomputed as the pipeline changes. Probe several representative locations
+before applying a pipeline to a full batch.
 """
 struct PreprocessPreview
     image::Observable{Matrix{Float64}}
@@ -366,13 +364,11 @@ end
 """
     build_preprocess(pp::PreprocessPreview) -> Union{Nothing,Function}
 
-The composed pipeline as the `preprocess` closure the batch drivers take
-(`run_piv_sequence(...; preprocess = build_preprocess(pp))`), or `nothing`
-when no step is enabled. The closure copies each frame before the in-place
-steps run, so in-memory matrix pairs are never mutated (frames loaded from
-paths pay one extra copy — negligible next to the analysis). The step list
-and background are snapshotted at build time: later form edits do not affect
-a batch already running.
+Return a `preprocess` function for sequence drivers, or `nothing` when no
+step is enabled. The function makes a float copy of each input frame before
+applying the steps, so the input is unchanged. Step settings and the
+background are captured when this function is built; later preview edits
+do not change it.
 """
 function build_preprocess(pp::PreprocessPreview)
     steps = [PreprocStep(s.name, true, copy(s.params))

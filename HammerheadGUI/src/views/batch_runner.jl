@@ -5,17 +5,15 @@
 """
     batch_runner(bc = BatchRunner(); size = (960, 720)) -> Figure
 
-Open the parameter form + batch runner. Pick frames ("add frames…") and the
-pairing mode, edit the multi-pass window schedule ("64, 32, 32" style) and
-the correlation/validation options, optionally choose an incremental JLD2
-output file and an analysis mask image, then run — progress and status
-update live, "cancel" stops after the pair in flight, and "view results"
-opens the batch in [`result_explorer`](@ref) as soon as the first pair is
-done: pairs finishing later append into the open explorer live (the frame
-slider grows with the run).
+Open the planar PIV batch form. Add frames, choose a pairing mode, set the
+window schedule and processing options, then run. An optional mask excludes
+image regions, and an output path writes completed pairs to JLD2 as the run
+progresses. "Cancel" stops after the current pair. "View results" opens
+[`result_explorer`](@ref) after the first pair finishes; later pairs appear
+there as they complete.
 
-Pass a prebuilt [`BatchRunner`](@ref) to seed the form (e.g. with in-memory
-frames) or to drive it programmatically.
+Pass a prebuilt [`BatchRunner`](@ref) to supply in-memory frames or control
+the run programmatically.
 """
 batch_runner(; kwargs...) = batch_runner(BatchRunner(); kwargs...)
 

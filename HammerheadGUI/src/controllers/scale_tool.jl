@@ -7,16 +7,16 @@
     ScaleTool(image)
     ScaleTool(path::AbstractString)
 
-Controller for the calibration-line scale tool: an `image` (matrix, or a
-path loaded with `Hammerhead.load_image`), the clicked line endpoints
-(`points`, at most two), and the physical inputs `separation` (the known
-distance between the two points), `length_unit`, `dt`, and `time_unit` — all
-as `Observables`.
+Derive a planar pixel scale from two points on an image (matrix or path).
+`points` holds at most two clicked endpoints. `separation` is their known
+physical distance; `dt` is the interval between the two PIV images.
+`length_unit` and `time_unit` label those measurements. These values are
+`Observables`.
 
 Click two points along a feature of known size ([`click!`](@ref); a third
 click starts a new line), enter the separation and units, and read the
-derived [`pixel_size`](@ref) / [`physical_scale`](@ref); hand the result to
-a batch with [`apply_scale!`](@ref).
+derived [`pixel_size`](@ref) and [`physical_scale`](@ref). Use
+[`apply_scale!`](@ref) to copy the scale to a batch.
 """
 struct ScaleTool
     image::Matrix{Float64}

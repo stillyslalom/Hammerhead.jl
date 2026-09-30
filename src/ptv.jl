@@ -13,9 +13,9 @@
 """
     PTVParameters(; kwargs...)
 
-Immutable, validated configuration for particle detection, matching, and
-scattered-vector validation in [`detect_particles`](@ref), [`run_ptv`](@ref),
-and [`track_particles`](@ref).
+Choose detection, matching, and scattered-vector validation settings for
+[`detect_particles`](@ref), [`run_ptv`](@ref), and
+[`track_particles`](@ref). Distances and diameters below are in image pixels.
 
 # Keyword arguments
 - `threshold = :auto`: detection intensity threshold — `:auto` for a robust
@@ -106,21 +106,24 @@ end
 """
     PTVResult{T<:AbstractFloat}
 
-Result of [`run_ptv`](@ref). The numeric precision `T` follows the input
-images, like [`PIVResult`](@ref).
+Matched particle displacements from [`run_ptv`](@ref). Positions refer to
+frame A; `T` follows the promoted input image precision. Each array entry
+describes one matched particle rather than an interrogation window.
 
 # Fields
 - `x`, `y`: frame-A particle positions of the matched pairs (`x` along columns,
   `y` along rows, in pixels).
 - `u`, `v`: displacement to frame B (px, package sign convention: a particle at
   `(y, x)` in frame A is found at `(y + v, x + u)` in frame B).
-- `match_residual`: `|found − predicted|` distance (px) — a match-quality proxy.
+- `match_residual`: distance in pixels between the matched frame-B position
+  and its predicted position. A larger residual calls for inspection of the
+  match and predictor.
 - `outliers`: `BitVector` of scattered-UOD flags. Matched vectors are never
   replaced (a track is a measurement of one particle), only flagged.
 - `index_a`, `index_b`: the match `i` pairs `particles_a[index_a[i]]` with
   `particles_b[index_b[i]]`.
-- `particles_a`, `particles_b`: all detections in each frame (unmatched ones are
-  seeding dropout or new entries), kept for diagnostics.
+- `particles_a`, `particles_b`: all detections in each frame, including
+  detections left unmatched, for image and match inspection.
 - `parameters`: the `PTVParameters` used.
 - `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
   [`run_ptv`](@ref) or [`with_scale`](@ref); `nothing` when none was
@@ -300,31 +303,27 @@ end
             predictor = :piv, piv_passes = multipass_parameters([64, 32]),
             mask = nothing, scale = nothing) -> PTVResult
 
-Two-frame particle tracking velocimetry on an image pair. Particles are
-detected in both frames ([`detect_particles`](@ref)), each frame-A particle is
-matched to a frame-B particle by predictor-guided nearest neighbor with global
-cost-sorted greedy one-to-one assignment [Keane1995](@cite), and the matched
-displacements are validated with a scattered normalized median test
-[Duncan2010](@cite) that flags — but never replaces — outliers.
+Match particles between two images. The function detects particles in both
+frames, searches around each predicted frame-B position, and assigns
+one-to-one matches by sorted match cost [Keane1995](@cite). A scattered
+normalized median test flags suspect displacements without changing their
+values [Duncan2010](@cite). The result contains frame-A positions and
+pixel displacements to frame B.
 
 The `predictor` supplies the displacement field that centers each match search:
 
-- `:piv` (default) runs a coarse [`run_piv`](@ref) on the pair internally
-  (`piv_passes`), so `run_ptv` works out of the box at realistic densities and
-  displacements — the hybrid PIV-guided default.
+- `:piv` (default) runs [`run_piv`](@ref) with `piv_passes` to predict
+  displacement before particle matching.
 - a [`PIVResult`](@ref) reuses an existing field (skips the redundant run).
 - a NamedTuple with `x`, `y`, `u`, `v` fields is used as-is.
 - `nothing` gives pure nearest neighbor (zero displacement); set
   `search_radius` accordingly.
 
-`mask` is an optional image-sized `Bool` matrix marking excluded pixels
-(`true` = excluded); it is applied to detection in both frames and forwarded to
-the internal PIV run. `scale` attaches a [`PhysicalScale`](@ref) to the result
-as metadata (the fields stay in pixels until [`physical`](@ref) converts them;
-the internal PIV predictor always runs in pixels). Position attribution is
-frame-A: `x`/`y` are frame-A positions and `u`/`v` the displacement to frame B
-(see [`PTVResult`](@ref)). Empty frames or no matches yield a valid empty
-result rather than throwing.
+`mask` is an optional image-sized `Bool` matrix (`true` = excluded), used
+for both detections and the internal PIV predictor. `scale` attaches a
+[`PhysicalScale`](@ref) without converting stored pixel positions or
+displacements; call [`physical`](@ref) for length and velocity units. If
+either frame has no detections, or no matches are found, the result is empty.
 For mixed image element types, the result and both particle sets use
 `float(promote_type(eltype(imgA), eltype(imgB)))`.
 """
@@ -383,20 +382,17 @@ end
                 window_size = (32, 32), overlap = (16, 16),
                 min_count = 3, include_outliers = false) -> PIVResult
 
-Bin the matched PTV vectors onto the regular interrogation grid that
-[`run_piv`](@ref) would use for `image_size`. Each vector contributes to the
-single bin whose center is nearest its frame-A position, and each bin value is
-the component-wise **median** of its vectors (robust to residual mismatches).
-Bins with fewer than `min_count` vectors are masked (`mask = true`, `NaN`
-fields), so the result plugs straight into the masked-result conventions
-([`field_statistics`](@ref), plotting). Outlier-
-flagged vectors are excluded unless `include_outliers`.
+Bin matched PTV displacements onto a PIV-style grid for `image_size`.
+Each vector joins the bin nearest its frame-A position. A bin reports the
+component-wise median of its vectors; bins with fewer than `min_count`
+contributions are masked and contain `NaN`. Flagged matches are excluded
+unless `include_outliers = true`. The returned grid can be plotted or passed
+to [`field_statistics`](@ref).
 
-This is a **binned PTV field**, not a correlation measurement: `peak_ratio`,
-`correlation_moment`, and the uncertainty fields are `NaN`, and no vector is
-flagged an outlier in the returned grid. An attached [`PhysicalScale`](@ref)
-is carried over onto the grid; bin **raw** (pixel) results — the binning
-works in the frame-A image plane.
+The grid contains binned PTV values, so `peak_ratio`, `correlation_moment`,
+and correlation uncertainty fields are `NaN`; grid vectors have no outlier
+flags. A scale attached to the PTV result carries over. Bin before calling
+[`physical`](@ref), because grid assignment uses frame-A pixel positions.
 """
 function ptv_to_grid(result::PTVResult{T}, image_size::Tuple{Int,Int};
                      window_size = (32, 32), overlap = (16, 16),

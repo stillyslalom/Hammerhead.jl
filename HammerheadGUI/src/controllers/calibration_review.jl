@@ -5,15 +5,14 @@
 """
     CalibrationReview(images, zs; model = :soloff, detect_kwargs...)
 
-Controller for the calibration diagnostics: detects the dot grid on every
-plate image (`detect_calibration_grid`; `detect_kwargs` — `spacing`,
-`two_level`, `origin_offset`, … — are forwarded), then fits a camera and
-exposes per-plane reprojection errors. `images` are matrices and/or image
-paths; `zs` are the plate positions (world units, one per image).
+Detect dot grids in calibration images and fit a camera for reprojection
+review. `images` contains matrices and/or image paths; `zs` gives one plate
+position per image in world units. Keywords such as `spacing`, `two_level`,
+and `origin_offset` are passed to `detect_calibration_grid`.
 
 Observables: `plane` (selected plane index), `model` (`:soloff` /
 `:pinhole`; changing it refits), `camera` (the fitted `CameraCalibration`,
-or `nothing` when the fit fails — e.g. `:soloff` with fewer than 3 planes),
+or `nothing` when the fit lacks enough distinct world points or otherwise fails),
 and `fit_message` (the failure reason, empty on success).
 """
 struct CalibrationReview
@@ -89,8 +88,8 @@ end
 """
     plane_errors(cr::CalibrationReview, i = cr.plane[])
 
-Detected dot pixels and their reprojection errors on plane `i`, as
-`(; pixels, errors)` — or `nothing` when no camera is fitted.
+Return `(; pixels, errors)` for plane `i`: detected dot locations and their
+Euclidean reprojection errors in pixels. Return `nothing` if no camera is fitted.
 """
 function plane_errors(cr::CalibrationReview, i::Integer = cr.plane[])
     cam = cr.camera[]

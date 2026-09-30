@@ -2,21 +2,19 @@
     PhysicalScale(; pixel_size = 1.0, dt = 1.0, length_unit = "px", time_unit = "frame")
     PhysicalScale(pixel_size::Unitful.Length, dt::Unitful.Time)
 
-Physical calibration attached to a result: `pixel_size` is the physical
-length of one pixel (in `length_unit`s per pixel; for stereo results, whose
-arrays are already in world units, it acts as an output-length-per-stored-
-world-unit factor — leave it at 1) and `dt` is the time between the two
-frames of a pair (in `time_unit`s per frame interval). The unit names are
-display-only labels (plot axes, `show`); the numbers carry the actual
-conversion, so results come out in whatever units go in — millimeters and
-seconds in, mm/s out.
+Attach spatial and temporal calibration to a result. `pixel_size` is the
+physical length per image pixel, and `dt` is the time between the two images
+in a pair. For stereo results, positions and displacements are already in
+calibration-grid world units; leave `pixel_size = 1` and supply `dt`. Both
+numeric factors must be positive and finite. `length_unit` and `time_unit`
+are display labels, so choose numeric factors consistent with those labels.
 
 Attach a scale with the `scale` keyword of the drivers ([`run_piv`](@ref),
 [`run_piv_sequence`](@ref), [`run_piv_ensemble`](@ref),
 [`run_piv_stereo`](@ref), [`run_ptv`](@ref), [`run_ptv_sequence`](@ref),
 [`track_particles`](@ref)) or after the fact with [`with_scale`](@ref).
-Attaching never changes the stored arrays — they stay in measured units
-(pixels, or world units for stereo) until [`physical`](@ref) converts them.
+Attaching a scale leaves stored arrays in their measured units. Use
+[`physical`](@ref) to convert positions and displacements.
 
 The Unitful-quantity constructor is provided by a package extension: load
 Unitful first (`using Unitful`), e.g. `PhysicalScale(20.0u"µm", 0.5u"ms")`.
@@ -127,28 +125,25 @@ Immutable, validated configuration for a PIV analysis.
   `0 ≤ overlap < window_size`. An `Int` is expanded likewise.
 - `correlation_method = :cross`: `:cross` (standard FFT cross-correlation) or
   `:phase` (phase correlation).
-- `padding = false`: zero-pad the correlation FFT to twice the window size
-  (true linear correlation; removes the wrap-around bias at ~4× FFT cost).
+- `padding = false`: set `true` to zero-pad each FFT dimension to twice the
+  search-area size. This replaces circular with linear correlation and avoids
+  wraparound contributions; the padded arrays have four times as many elements.
 - `apodization = :none`: `:gauss` applies a Gaussian window to each
   interrogation window before correlating.
-- `subpixel_method = :gauss3`: `:gauss3` (two independent 3-point Gaussian
-  fits), `:gauss9` (closed-form 2D Gaussian regression on the 3×3
-  neighborhood — exact for rotated elliptical peaks, less peak locking, only
-  marginally slower), `:gauss2d` (iterative least-squares 2D Gaussian fit),
-  or `:none`.
+- `subpixel_method = :gauss3`: `:gauss3` fits three correlation samples along
+  each axis; `:gauss9` fits a 2D Gaussian to the 3×3 neighborhood; `:gauss2d`
+  uses an iterative 2D fit; `:none` returns the integer peak location.
 - `n_peaks = 3`: number of correlation peaks located per window (primary +
   alternatives, ≥ 1). When > 1, vectors that fail validation are re-tested
   against their secondary/tertiary peak displacements and locally consistent
   alternatives are accepted before local-median replacement kicks in
   ("peak substitution"; accepted cells are unflagged since they hold measured
-  data). The top two peaks are always located — the peak ratio needs both —
-  so values up to 2 are free; each additional peak costs about one extra
-  scan of the correlation plane, and alternatives are always refined with
-  the cheap 3-point fit.
+  data). The top two peaks are located even when `n_peaks = 1` so the result
+  can report a peak ratio. Alternative peaks use the three-point subpixel fit.
 - `peak_finder = :regionalmax`: how integer correlation peaks are selected.
   The default first restricts candidates to 8-connected local maxima, so a
   real nearby secondary peak can still contribute to peak-ratio validation
-  and peak substitution. `:exclusion` is the classic alternative: repeatedly
+  and peak substitution. `:exclusion` instead repeatedly
   take the largest remaining value outside a fixed exclusion box around
   stronger peaks.
 - `uncertainty = false`: estimate a per-vector measurement uncertainty from
@@ -157,17 +152,16 @@ Immutable, validated configuration for a PIV analysis.
   asymmetry of the correlation peak between the two deformed windows and
   assumes the peak sits at ~zero residual displacement, so it runs on the
   final pass only and is meaningful only after multi-pass deformation has
-  converged — iterate the final pass to convergence (`max_iterations`), or
-  use the equivalent explicit schedule that repeats the final window size
-  (e.g. `multipass_parameters([32, 16, 16])`). It estimates the random error only
-  (systematic bias such as peak locking is invisible to it) and is accurate
-  for uncertainties up to ~0.3 px.
+  converged. Iterate the final pass (`max_iterations`) or repeat its window
+  size in the schedule (e.g. `multipass_parameters([32, 16, 16])`). It estimates
+  random correlation error, not systematic bias such as peak locking. The
+  linearization is intended for uncertainties up to about 0.3 px; estimates
+  above that range are not automatically rejected.
 - `uod_enable = true`: validate vectors with universal outlier detection.
 - `uod_threshold = 2.0`: UOD sensitivity (higher is less sensitive).
 - `uod_neighborhood = 2`: UOD neighborhood layers (1 → 3×3, 2 → 5×5, ...).
-  The 5×5 default tolerates smooth velocity gradients at the field edges,
-  where 3×3 neighborhoods falsely flag (and replacement then corrupts) the
-  outermost rows of e.g. a sheared field.
+  A larger neighborhood can help distinguish smooth gradients from isolated
+  vectors, including near field edges.
 - `min_peak_ratio = 1.0`: vectors whose correlation peak ratio falls below this
   are flagged invalid; values ≤ 1 disable the check (the peak ratio is ≥ 1 by
   construction).
@@ -180,28 +174,24 @@ Immutable, validated configuration for a PIV analysis.
   valid neighbors. Intermediate passes of a multi-pass run always replace,
   regardless of this setting, to keep the predictor field well behaved.
 - `max_iterations = 1`: iteration budget for this pass. With the default 1
-  the pass correlates once (classic WIDIM). With more, the pass *iterates*:
+  the pass correlates once. With more, the pass *iterates*:
   its own validated field becomes the deformation predictor, the images are
   re-deformed, and the windows re-correlated, until the field converges (see
-  `convergence_tol`) or the budget is spent. Replacement artifacts then relax
-  toward measured data within the pass instead of cascading into later
-  (smaller-window) passes, and the final pass can be iterated to
-  convergence — the predictor state the Wieneke (2015) `uncertainty`
-  estimator assumes. Sweeps beyond the first always replace flagged vectors
+  `convergence_tol`) or the budget is spent. A flagged vector can be
+  remeasured at the same window size before the next pass. Sweeps beyond the
+  first always replace flagged vectors
   internally (the next predictor must be well behaved), but the returned
   field still honors `replace_outliers`.
-- `convergence_tol = 0.05`: convergence threshold (pixels) for the
-  `max_iterations` loop — the pass stops early once 95% of the unmasked
-  vectors change by less than this between successive sweeps (the 95th
-  percentile rather than the maximum, because a few bistable low-signal
-  windows flicker between correlation peaks indefinitely — they are
-  validation's problem and would keep a max-norm from ever converging).
+- `convergence_tol = 0.05`: convergence threshold in pixels for the
+  `max_iterations` loop. The pass stops early when the 95th percentile of
+  per-vector changes over unmasked nodes falls below this value.
   `0` disables the early exit (the pass always runs `max_iterations`
   sweeps). Unused when `max_iterations == 1`.
 - `keep_correlation_planes = false`: retain each window's full correlation
-  plane in the result's `correlation_planes` field for inspection. **Opt-in
-  and memory-heavy** — a 32² window on a 100×100 grid in `Float64` is
-  ~800 MB — so intended for small regions or coarse grids. As
+  plane in the result's `correlation_planes` field for inspection. This can
+  use substantial memory: 32×32 planes on a 100×100 grid in `Float64` hold
+  about 82 MB of plane values before array overhead (about 328 MB if padding
+  makes each plane 64×64). As
   [`run_piv`](@ref) returns the final pass, set it on the final pass only
   (pair it with the `final` keyword of [`multipass_parameters`](@ref)). See
   [`PIVResult`](@ref).
@@ -311,10 +301,10 @@ end
 """
     PIVResult{T<:AbstractFloat}
 
-Result of [`run_piv`](@ref). The numeric precision `T` follows the input
-images: `float(promote_type(eltype(imgA), eltype(imgB)))`, e.g. `Float32`
-images produce a `PIVResult{Float32}`. Correlation and deformation use this
-precision; uncertainty accumulation uses Float64 internally.
+Vector field returned by [`run_piv`](@ref). Numeric arrays use
+`T = float(promote_type(eltype(imgA), eltype(imgB)))`; for example, Float32
+images produce a `PIVResult{Float32}`. Uncertainty statistics accumulate in
+Float64 before being stored as `T`.
 
 # Fields
 - `x`, `y`: window-center coordinates of the interrogation grid (`x` along
@@ -326,24 +316,22 @@ precision; uncertainty accumulation uses Float64 internally.
 - `peak_ratio`: primary-to-secondary correlation peak ratio per window.
   A higher ratio indicates a more distinct primary peak, not a calibrated
   probability that the vector is correct.
-- `correlation_moment`: second moment of the correlation peak per window (an
-  uncertainty proxy; lower is sharper).
+- `correlation_moment`: peak-spread diagnostic per window (lower is sharper).
+  It is not a calibrated uncertainty.
 - `uncertainty_u`, `uncertainty_v`: per-vector measurement uncertainty (one
   standard deviation, in pixels) of `u` and `v`, estimated from correlation
   statistics (Wieneke 2015) when the `uncertainty` parameter is enabled.
-  `NaN` when disabled, for masked windows, and where the estimate is
-  undefined because the correlation statistics are unusable. Finite estimates
-  can exceed 0.3 px; there is no automatic cutoff at that value. The estimate
-  describes the correlation
-  measurement at the window; it is not updated when validation replaces or
-  substitutes the vector.
+  `NaN` when disabled, for masked windows, or when the correlation statistics
+  cannot yield an estimate. The estimate describes the original correlation
+  measurement; validation does not update it after replacing or substituting
+  a vector.
 - `outliers`: `BitMatrix` marking vectors that failed validation (UOD,
   peak-ratio check, and/or the `validation` pipeline). When outlier
   replacement is active, the `u`/`v` entries at
   these positions hold the local-median replacement rather than the measured
   displacement.
-- `mask`: `BitMatrix` marking nodes dropped because their interrogation or
-  search-area footprint overlaps the analysis mask beyond the threshold (see
+- `mask`: `BitMatrix` marking nodes dropped because the masked fraction of
+  their interrogation or search-area footprint reaches `mask_threshold` (see
   `mask` in [`run_piv`](@ref)). Masked windows
   hold `NaN` in `u`/`v`/`peak_ratio`/`correlation_moment` and are never
   counted as outliers. All-false when no mask was supplied.
@@ -352,10 +340,10 @@ precision; uncertainty accumulation uses Float64 internally.
   `keep_correlation_planes` was set, in which case a
   `Matrix{Union{Nothing,Matrix{T}}}` indexed like the vector grid, holding a
   copy of each window's full correlation plane (`nothing` for masked/dropped
-  windows). Opt-in and memory-heavy — see [`PIVParameters`](@ref).
+  windows). See [`PIVParameters`](@ref) for memory use.
 - `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
   [`run_piv`](@ref) or [`with_scale`](@ref); `nothing` when none was
-  attached. Metadata only — the arrays above stay in pixels until
+  attached. The arrays above stay in pixels until
   [`physical`](@ref) converts them.
 """
 struct PIVResult{T<:AbstractFloat}

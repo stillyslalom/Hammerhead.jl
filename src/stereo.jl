@@ -9,8 +9,10 @@
 """
     StereoPIVResult{T<:AbstractFloat}
 
-Result of [`run_piv_stereo`](@ref). The numeric precision `T` follows the
-input images, like [`PIVResult`](@ref).
+Three-component displacement field from [`run_piv_stereo`](@ref). `T`
+follows the input image precision. Coordinates and displacements use the
+[`DewarpGrid`](@ref)'s world length unit until [`physical`](@ref) converts
+displacements to velocity.
 
 # Fields
 - `x`, `y`: world coordinates of the vector grid (`x` along the dewarp grid's
@@ -20,9 +22,9 @@ input images, like [`PIVResult`](@ref).
   grid, in world units per frame interval: `u` along world X, `v` along
   world Y (signs follow the dewarp grid's ranges), `w` along world +Z.
 - `uncertainty_u`, `uncertainty_v`, `uncertainty_w`: per-vector measurement
-  uncertainty (one standard deviation, world units) propagated from the two
-  cameras' correlation-statistics estimates through the reconstruction —
-  `NaN` unless the `uncertainty` parameter was enabled.
+  uncertainty (one standard deviation, world units) propagated from both
+  camera estimates. They are `NaN` unless uncertainty was enabled in the
+  PIV parameters.
 - `outliers`: union of the two cameras' outlier flags. Flagged vectors were
   reconstructed from at least one flagged 2C vector, which may have been
   replaced. An alternative peak accepted by validation is not flagged.
@@ -31,11 +33,11 @@ input images, like [`PIVResult`](@ref).
 - `cam1`, `cam2`: the per-camera 2C [`PIVResult`](@ref)s on the dewarped
   images (displacements in dewarped pixels), retained for diagnostics.
 - `parameters`: the `PIVParameters` of the (final) pass.
-- `scale`: the [`PhysicalScale`](@ref) attached via the `scale` keyword of
-  [`run_piv_stereo`](@ref) or [`with_scale`](@ref); `nothing` when none was
-  attached. For stereo, set `dt` (and the unit labels) only and leave
-  `pixel_size = 1` — the arrays are already in world units. Metadata only
-  until [`physical`](@ref) converts them; `cam1`/`cam2` always stay raw.
+- `scale`: [`PhysicalScale`](@ref) metadata attached with `scale` or
+  [`with_scale`](@ref); `nothing` when none was attached. For stereo, set
+  `dt` and unit labels, leaving `pixel_size = 1` because arrays are already
+  in world units. [`physical`](@ref) converts the stereo arrays; `cam1`
+  and `cam2` remain in dewarped pixels.
 """
 struct StereoPIVResult{T<:AbstractFloat}
     x::Vector{T}
@@ -96,41 +98,37 @@ end
     run_piv_stereo(A1, B1, A2, B2, dw1, dw2;
                    effort = :low/:medium/:high, mask = nothing, kwargs...)
 
-Stereoscopic (2D3C) PIV on one frame pair: `A1`/`B1` are camera 1's raw
-frames and `A2`/`B2` camera 2's, `dw1`/`dw2` the cameras'
-[`ImageDewarper`](@ref)s (which must share one [`DewarpGrid`](@ref)). Each
-camera's pair is dewarped onto the common world plane, analyzed with the 2D
-engine ([`run_piv`](@ref) with `params`, which may be a multi-pass schedule,
-or with `effort = :low`, `:medium`, or `:high`), and the two 2C fields are
-combined per vector into the three-component displacement `(u, v, w)` in world
-units per frame interval (no time scaling is applied).
+Reconstruct three displacement components from two synchronized camera
+pairs. `A1`/`B1` belong to camera 1, `A2`/`B2` to camera 2. Their
+[`ImageDewarper`](@ref)s must share a [`DewarpGrid`](@ref). The driver
+dewarps both pairs, runs planar PIV on each, then combines the two fields.
+Pass a `PIVParameters` value or pass schedule; alternatively, use an
+`effort` preset. The returned `(u, v, w)` are in world length units per
+image-pair interval, with no time scaling applied.
 
-Reconstruction: at each grid point, camera `i`'s dewarped in-plane
-displacement measures `uᵢ = dx - dz·tXᵢ`, `vᵢ = dy - dz·tYᵢ`, where
-`(tXᵢ, tYᵢ)` is the in-plane drift per unit Z along that camera's viewing
-ray (evaluated from the calibration). The four equations are solved for
-`(dx, dy, dz)` by unweighted least squares; points with degenerate geometry
-(parallel viewing rays, e.g. identical cameras) come out `NaN`. With the
-`uncertainty` parameter enabled, the per-camera Wieneke (2015) estimates are
-propagated through the same least-squares operator into
-`uncertainty_u`/`v`/`w` (world units, assuming independent per-camera
-errors).
+The four measured in-plane components constrain three world displacements
+through the calibrated viewing rays. Reconstruction uses unweighted least
+squares; degenerate camera geometry yields `NaN` components. With
+uncertainty enabled in the PIV parameters, per-camera correlation estimates
+propagate into `uncertainty_u`, `uncertainty_v`, and `uncertainty_w`, assuming independent
+camera measurement errors. Geometry and image quality affect how much
+uncertainty appears in each component.
 
 `mask` is an optional grid-sized `Bool` matrix of world-plane pixels to
 exclude (`true` = excluded); it is combined with the dewarpers' out-of-view
 masks (`dw1.mask .| dw2.mask`), so only the stereo overlap region is
 analyzed. `scale` attaches a [`PhysicalScale`](@ref) to the stereo result
-(not to the per-camera results): set `dt` and the unit labels only, leaving
-`pixel_size = 1` — the stereo fields are already in world units, so
+(not to the per-camera results): set `dt` and the unit labels, leaving
+`pixel_size = 1` because the stereo fields are already in world units.
 [`physical`](@ref) only needs to divide by the frame interval. Remaining
 keyword arguments (`threaded`, `predictor_smoothing`, `backend`,
 `mask_threshold`) are forwarded to [`run_piv`](@ref). A GPU backend accelerates
 the two per-camera PIV analyses; dewarping and reconstruction remain on the
 CPU (see [Run PIV on a GPU](@ref)).
 
-Both cameras are analyzed with the same parameters and mask, so their vector
-grids, masks, and (via the union) outlier maps are directly compatible; the
-per-camera results are retained in the returned [`StereoPIVResult`](@ref).
+The returned [`StereoPIVResult`](@ref) retains both per-camera fields and
+combines their mask and outlier flags. Inspect those fields when one camera
+has weak seeding or a larger uncertainty estimate.
 """
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
@@ -220,11 +218,11 @@ end
     run_piv_stereo_sequence(pairs1, pairs2, dw1, dw2, params = PIVParameters(); kwargs...)
     run_piv_stereo_sequence(acquisitions, dw1, dw2, params = PIVParameters(); kwargs...)
 
-Process a synchronized stereo recording. `pairs1` and `pairs2` are equal-length
-camera pair lists in the same format accepted by [`run_piv_sequence`](@ref).
-As a convenience, `acquisitions` may instead contain 4-tuples
-`(A1, B1, A2, B2)`. The supplied [`ImageDewarper`](@ref)s, a dewarped-image
-buffer pair, and one [`PIVWorkspace`](@ref) are reused for the whole sequence.
+Process synchronized stereo image pairs. `pairs1` and `pairs2` must have
+the same number of entries, with each camera's pair in the format accepted
+by [`run_piv_sequence`](@ref). Alternatively, pass `acquisitions` as
+4-tuples `(A1, B1, A2, B2)`. Dewarping buffers and a PIV workspace are
+reused across acquisitions.
 
 `preprocess` may be one function shared by both cameras or a tuple
 `(preprocess1, preprocess2)`; each hook runs after loading and before
@@ -236,7 +234,6 @@ paths are recorded when all four inputs are paths. `progress` and
 `cancel` may be a zero-argument predicate; when it becomes true, processing
 stops between acquisitions and the completed prefix is returned (and remains
 persisted).
-The next synchronized acquisition is prefetched while the current one runs.
 Timestamped [`FramePair`](@ref)s attach their actual pair-specific `dt` to
 each result when `scale` is supplied; the two cameras' intervals must agree.
 
@@ -438,20 +435,20 @@ end
     run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2,
                             params = PIVParameters(); kwargs...) -> StereoPIVResult
 
-Low-SNR stereoscopic PIV by composing two synchronized
-[`run_piv_ensemble`](@ref) analyses followed by the same calibrated 3C
-reconstruction used by [`run_piv_stereo`](@ref). The two camera pair lists
-must have equal nonzero length. Frames are loaded, optionally preprocessed,
-and dewarped lazily on every ensemble pass; the whole dewarped recording is
-never retained in memory. `preprocess` may be shared or a camera-specific
-2-tuple. The dewarper overlap and optional world-grid `mask` are applied to
-both cameras. Other keywords follow [`run_piv_ensemble`](@ref), including
-`effort`, `backend`, `image_type`, and `progress`.
+Estimate one stereo field by summing correlations over synchronized pairs
+for each camera, then reconstructing three components. Use this for weak
+single-pair peaks in a statistically stationary interval. The two camera
+pair lists must have the same nonzero length. Frames are loaded and
+dewarped as needed on each ensemble pass. `preprocess` may be one function
+or a two-function tuple for separate cameras. The shared dewarp overlap and
+optional world-grid `mask` apply to both cameras; other keywords follow
+[`run_piv_ensemble`](@ref), including `effort`, `backend`, and `image_type`.
 
-The result estimates one stationary ensemble-mean 3C field. Its propagated
-uncertainty is the noise-driven uncertainty of that mean, not physical
-pair-to-pair turbulence; use [`field_statistics`](@ref) on a stereo sequence
-for the latter.
+The result is a peak estimate from the pooled correlations, which can differ
+from the arithmetic mean of individual vectors when their displacements
+vary widely. Its propagated uncertainty describes correlation noise in that
+pooled estimate; it does not measure pair-to-pair flow fluctuations. Use
+[`field_statistics`](@ref) on a stereo sequence for those fluctuations.
 """
 function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper,

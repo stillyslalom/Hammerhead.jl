@@ -13,9 +13,10 @@
 """
     CameraCalibration
 
-Abstract supertype for camera mapping models ([`PinholeCamera`](@ref),
-[`SoloffCamera`](@ref)). Subtypes implement [`world_to_pixel`](@ref) and
-[`pixel_to_world`](@ref); fit either with [`calibrate_camera`](@ref).
+Camera models map world `(X, Y, Z)` coordinates to image `(x, y)` pixels.
+Use [`calibrate_camera`](@ref) to fit a [`PinholeCamera`](@ref) or
+[`SoloffCamera`](@ref), then [`world_to_pixel`](@ref) and
+[`pixel_to_world`](@ref) to inspect the mapping.
 """
 abstract type CameraCalibration end
 
@@ -23,16 +24,14 @@ abstract type CameraCalibration end
     PinholeCamera(P::AbstractMatrix)
     PinholeCamera(K, R, t)
 
-Pinhole (projective / DLT) camera: world point `(X, Y, Z)` maps to the pixel
+Pinhole camera: world point `(X, Y, Z)` maps to the pixel
 `(x, y) = (h₁/h₃, h₂/h₃)` where `h = P * [X, Y, Z, 1]` and `P` is the 3×4
 projection matrix. The second form builds `P = K * [R t]` from a 3×3
 intrinsic matrix `K`, a 3×3 rotation `R`, and a translation 3-vector `t`.
 
-`P` is stored normalized so that its third row's rotational part is a unit
-vector (making `h₃` the point's depth along the optical axis). Fit from
-point correspondences with `calibrate_camera(...; model = :pinhole)`; the fit
-requires non-coplanar world points, i.e. a calibration target imaged at two
-or more `Z` positions.
+`P` is normalized on construction. Fit it from correspondences with
+`calibrate_camera(...; model = :pinhole)`. The fit needs non-coplanar world
+points, such as target points recorded at two or more `Z` positions.
 """
 struct PinholeCamera <: CameraCalibration
     P::SMatrix{3,4,Float64,12}
@@ -76,12 +75,10 @@ Base.show(io::IO, cam::PinholeCamera) =
 """
     SoloffCamera
 
-Soloff polynomial camera (Soloff, Adrian & Liu 1997): each pixel coordinate
-is a 19-term polynomial in the world coordinates — cubic in `X` and `Y`,
-quadratic in `Z` — evaluated on internally normalized coordinates. The
-polynomial absorbs lens distortion and refraction that a pinhole model
-cannot, at the cost of having no closed-form inverse
-([`pixel_to_world`](@ref) uses Newton iteration).
+Soloff polynomial camera (Soloff, Adrian & Liu 1997). Each pixel coordinate
+uses a 19-term polynomial in normalized world coordinates: cubic in `X` and
+`Y`, quadratic in `Z`. This model can fit non-projective effects such as
+refraction. [`pixel_to_world`](@ref) solves its inverse numerically.
 
 Fit from point correspondences with `calibrate_camera(...; model = :soloff)`;
 the fit requires calibration points at three or more distinct `Z` positions.
@@ -101,8 +98,9 @@ Base.show(io::IO, cam::SoloffCamera) =
 """
     world_to_pixel(cam::CameraCalibration, world) -> SVector{2,Float64}
 
-Map a world point `(X, Y, Z)` (any 3-element indexable) to its pixel
-coordinates `(x, y)` (`x` along columns, `y` along rows).
+Project a world point `(X, Y, Z)` to image pixels `(x, y)`, with `x` along
+columns and `y` along rows. The input may be any indexable three-element
+container; the output is a two-element `SVector{2,Float64}`.
 """
 function world_to_pixel(cam::PinholeCamera, world)
     h = cam.P * SVector(Float64(world[1]), Float64(world[2]), Float64(world[3]), 1.0)
@@ -119,12 +117,11 @@ end
 """
     pixel_to_world(cam::CameraCalibration, pixel, z) -> SVector{3,Float64}
 
-Map pixel coordinates `(x, y)` back to the world point `(X, Y, z)` on the
-plane at out-of-plane position `z`. For a [`PinholeCamera`](@ref) this is an
-exact linear solve (the ray–plane intersection); for a
-[`SoloffCamera`](@ref) or [`TransformedCamera`](@ref) it is a 2D Newton
-iteration and returns a NaN-filled point if the iteration fails to converge
-(e.g. for pixels far outside the calibrated domain).
+Intersect image pixel `(x, y)` with the world plane at the supplied `z`.
+Returns `(X, Y, z)` as an `SVector{3,Float64}`. A pinhole camera uses a
+ray-plane solve; Soloff and transformed cameras use Newton iteration and
+return `NaN` coordinates when that solve fails. Check results outside the
+calibrated image region before using them to build a dewarp grid.
 """
 function pixel_to_world(cam::PinholeCamera, pixel, z::Real)
     x, y = Float64(pixel[1]), Float64(pixel[2])
@@ -168,18 +165,15 @@ end
 """
     TransformedCamera(cam::CameraCalibration, R, t)
 
-Camera model pre-composed with a rigid world-coordinate transform: a point
+Camera model with a rigid world-coordinate transform: a point
 `w` in the transformed (new) world frame maps to the pixel
 `world_to_pixel(cam, R * w + t)`, where the 3×3 rotation `R` and 3-vector
 `t` express the new frame in the original calibration's frame. Wrapping a
 `TransformedCamera` collapses into a single composed transform.
 
-Produced by [`self_calibrate`](@ref) when correcting camera models whose
-functional form cannot absorb a world rotation exactly (e.g.
-[`SoloffCamera`](@ref) — a [`PinholeCamera`](@ref) correction is instead
-baked directly into its projection matrix). Behaves like any other
-[`CameraCalibration`](@ref): `world_to_pixel`, `pixel_to_world`, and
-[`ImageDewarper`](@ref) all apply.
+[`self_calibrate`](@ref) may return this wrapper for a Soloff camera. For a
+pinhole camera, the transform is incorporated into the projection matrix.
+The wrapped camera supports the same projection and dewarping functions.
 """
 struct TransformedCamera{C<:CameraCalibration} <: CameraCalibration
     cam::C
@@ -242,7 +236,7 @@ end
 """
     apply_world_transform(cam::CameraCalibration, R, t) -> CameraCalibration
 
-Pre-compose `cam` with a rigid world transform: the returned camera maps a
+Apply a rigid world transform to `cam`: the returned camera maps a
 point `w` of the new world frame as `cam` maps `R * w + t`. A
 [`PinholeCamera`](@ref) absorbs the transform exactly into its projection
 matrix; other models are wrapped in a [`TransformedCamera`](@ref) (nested
@@ -349,18 +343,19 @@ end
 """
     calibrate_camera(pixel_points, world_points; model = :soloff) -> CameraCalibration
 
-Fit a camera model to corresponding calibration points. `pixel_points` are
-2-element indexables `(x, y)` (pixels, `x` along columns) and `world_points`
-3-element indexables `(X, Y, Z)` (physical units); typically these come from
-a dot-grid target via [`detect_calibration_grid`](@ref) and
-[`calibration_points`](@ref), imaged at several `Z` positions.
+Fit a camera model to matched image and world points. Supply one `(x, y)`
+pixel position and one `(X, Y, Z)` world position per target point, in the
+same order. Use consistent world units across all planes. Target detections
+can be converted with [`calibration_points`](@ref), or pass detected grids
+to the overload of [`calibrate_camera`](@ref).
 
 - `model = :soloff` (default): [`SoloffCamera`](@ref), 19-term polynomial;
   needs ≥ 19 points on ≥ 3 distinct Z planes.
 - `model = :pinhole`: [`PinholeCamera`](@ref) via the normalized DLT; needs
   ≥ 6 non-coplanar points (≥ 2 Z planes).
 
-Check the fit with [`calibration_quality`](@ref).
+Inspect reprojection residuals with [`calibration_quality`](@ref) before
+dewarping particle images.
 """
 function calibrate_camera(pixel_points::AbstractVector, world_points::AbstractVector;
                           model::Symbol = :soloff)
@@ -377,8 +372,9 @@ end
 """
     reprojection_errors(cam::CameraCalibration, pixel_points, world_points) -> Vector{Float64}
 
-Per-point Euclidean distance (pixels) between each measured pixel position
-and the projection of its world point through `cam`.
+Return one Euclidean reprojection error in pixels per correspondence, in
+input order. Each error compares a measured pixel position with
+[`world_to_pixel`](@ref) applied to its world point.
 """
 reprojection_errors(cam::CameraCalibration, pixel_points::AbstractVector,
                     world_points::AbstractVector) =
@@ -390,8 +386,8 @@ reprojection_errors(cam::CameraCalibration, pixel_points::AbstractVector,
     calibration_quality(cam::CameraCalibration, pixel_points, world_points)
         -> (rms, max, n)
 
-Summary of the reprojection error of `cam` over the given correspondences:
-root-mean-square and maximum error in pixels, and the number of points.
+Return the root-mean-square (`rms`) and largest (`max`) reprojection error
+in pixels, plus the number of correspondences (`n`).
 """
 function calibration_quality(cam::CameraCalibration, pixel_points::AbstractVector,
                              world_points::AbstractVector)

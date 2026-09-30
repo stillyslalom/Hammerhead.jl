@@ -5,8 +5,10 @@
 Ratio of the primary correlation peak at `peakloc` to the largest other
 regional maximum (`peak_finder = :regionalmax`, the default), or to the largest
 value outside a square exclusion zone of `±exclusion_radius` pixels around it
-(`peak_finder = :exclusion`). Returns `Inf` when no positive secondary peak
-exists. Higher values indicate a more reliable displacement estimate.
+(`peak_finder = :exclusion`). Returns `Inf` when the primary peak is positive
+and no positive secondary peak exists; returns `NaN` if neither is positive.
+A larger finite ratio means the selected peak stands out more, but does not
+give a calibrated probability that its displacement is correct.
 """
 function calculate_peak_ratio(R::AbstractMatrix{T}, peakloc::Tuple{Int,Int};
                               exclusion_radius::Int = 2,
@@ -40,11 +42,12 @@ const CORR_MOMENT_EPSILON = 1e-9
 """
     calculate_correlation_moment(R, peakloc::Tuple{Real,Real}; neighborhood_size=3)
 
-Square root of the second moment of the correlation values in an odd-sized
-square neighborhood around the (subpixel) peak location `(row, col)` — a
-weighted standard deviation of the peak, usable as an uncertainty proxy. Lower
-values indicate a sharper peak. Returns `NaN` when the neighborhood is empty or
-its correlation sum is non-positive.
+Measure the spread of a correlation peak in an odd-sized square neighborhood
+around the subpixel `(row, col)` location. Negative correlation values are
+clipped to zero before calculating the weighted root-mean-square distance to
+the peak. Smaller values indicate a sharper peak; this is a diagnostic, not a
+calibrated uncertainty. Returns `NaN` for a non-finite peak location, an empty
+neighborhood, or total weight below `1e-9`.
 """
 function calculate_correlation_moment(R::AbstractMatrix{<:Real}, peakloc::Tuple{<:Real,<:Real};
                                       neighborhood_size::Int = 3)
@@ -79,8 +82,10 @@ end
 Replace each vector flagged in `invalid` with the component-wise median of the
 *valid* vectors in a square neighborhood, growing the neighborhood until at
 least 3 valid neighbors are found. Replacements are computed from the original
-field, so the result does not depend on traversal order. Vectors with no valid
-neighbors anywhere are left unchanged.
+field, so the result does not depend on traversal order. A flagged vector
+remains unchanged if fewer than three unflagged neighbors are available.
+This function does not separately test neighbors for finite values. Returns
+the mutated `(u, v)` arrays.
 """
 function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::AbstractMatrix{Bool})
     size(u) == size(v) == size(invalid) ||
@@ -141,8 +146,8 @@ end
 Penalized least-squares smoothing of a gridded field (Garcia, CSDA 2010),
 solved in the DCT domain. The smoothing parameter `s` is chosen by
 generalized cross-validation when not given; larger values smooth more.
-`weights` (same size, ≥ 0) express per-point confidence — e.g.
-`.!(result.outliers .| result.mask)` — and non-finite entries of `y`
+`weights` (same size, nonnegative) express per-point confidence, for example
+`.!(result.outliers .| result.mask)`. Non-finite entries of `y`
 automatically get weight 0 and are filled from the smooth surface.
 `robust = true` adds bisquare reweighting passes that resist outliers not
 captured by the weights. Returns the smoothed field `z` and the `s` used.
@@ -232,12 +237,13 @@ its neighbors is normalized by the median absolute neighbor residual plus
 exceeds `threshold`.
 
 `neighborhood_size` is the number of neighbor layers (1 → 3×3, 2 → 5×5).
-`epsilon` is the assumed measurement noise level in the same units as `u` and
-`v` (typically ≈ 0.1 px for PIV); it keeps ordinary subpixel noise in smooth
-regions from being flagged.
+`epsilon` is a positive noise floor in the same units as `u` and `v`. It
+prevents a near-zero neighbor residual from making the normalized test
+arbitrarily sensitive.
 
-Cells marked `true` in `exclude` (e.g. masked windows) are never flagged and
-never enter a neighbor median, so `NaN` entries there cannot poison the test.
+Cells marked `true` in `exclude` (for example masked windows) are neither
+tested nor included in neighboring medians. Other non-finite values are not
+filtered automatically; exclude them before calling this function.
 
 Returns a `BitMatrix` where `true` marks an outlier.
 """
@@ -295,14 +301,14 @@ end
 """
     substitute_alternatives!(result, alt_u, alt_v, params) -> n_substituted
 
-Peak substitution: for each vector flagged in `result.outliers` (masked
-windows excluded), test its alternative peak displacements — `alt_u`/`alt_v`
-are `(ny, nx, m)` arrays ordered by peak strength, `NaN` where absent —
-against the valid neighbors using the UOD criterion (median ± threshold ×
-(MAD + 0.1 px)). The first consistent alternative replaces the vector and
-clears its outlier flag: it is measured data, just not the tallest peak.
-Acceptance is judged against a snapshot of the field, so the result does not
-depend on traversal order.
+For each flagged, unmasked vector, test alternative correlation-peak
+displacements against the local median of unflagged neighbors. `alt_u` and
+`alt_v` have shape `(ny, nx, m)` with alternatives ordered by peak strength;
+absent alternatives are `NaN`. An alternative is accepted when each component
+is within `params.uod_threshold * (MAD + 0.1)` of the neighbor median. It
+replaces the vector and clears its outlier flag. At least three unflagged
+neighbors are required. Decisions use a snapshot of the input field, so
+traversal order does not affect them. Returns the number substituted.
 """
 function substitute_alternatives!(result::PIVResult, alt_u::AbstractArray{<:Real,3},
                                   alt_v::AbstractArray{<:Real,3}, params::PIVParameters)
@@ -412,7 +418,7 @@ end
 """
     UniversalOutlierValidator(threshold; neighborhood_size = 2, epsilon = 0.1)
 
-Flag vectors that fail the normalized median test — see
+Flag vectors that fail the normalized median test; see
 [`universal_outlier_detection`](@ref) for the parameters. Pair spec:
 `:uod => (threshold = 2.0, neighborhood_size = 2, epsilon = 0.1)` (only
 `threshold` is required; `:universal_outlier` is an alias). See the
@@ -460,9 +466,9 @@ parse_validator(spec) = throw(ArgumentError("cannot interpret $spec as a validat
 """
     validate_vectors!(result::PIVResult, pipeline) -> PIVResult
 
-Apply a validation pipeline — a single validator or specification, or a tuple
-of them (see [`parse_validator`](@ref)) — accumulating rejected vectors into
-`result.outliers`.
+Apply one validator or a tuple of validators or specifications (see
+[`parse_validator`](@ref)). Rejected vectors are added to `result.outliers`;
+existing flags remain set. Returns the mutated result.
 """
 function validate_vectors!(result::PIVResult, pipeline)
     for spec in (pipeline isa Tuple ? pipeline : (pipeline,))
@@ -474,7 +480,8 @@ end
 """
     apply_validator!(result::PIVResult, v::PIVValidator) -> PIVResult
 
-Apply a single validator, ORing the vectors it rejects into `result.outliers`.
+Apply one validator, adding rejected vectors to `result.outliers`. Existing
+flags remain set. Returns the mutated result.
 """
 function apply_validator!(result::PIVResult, v::PeakRatioValidator)
     # NaN ratios fail the comparison and are flagged.

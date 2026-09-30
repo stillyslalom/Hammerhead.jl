@@ -6,11 +6,10 @@
     calibration_review(images, zs; model = :soloff, detect_kwargs...) -> Figure
     calibration_review(cr::CalibrationReview) -> Figure
 
-Open the calibration review: each plate image with its detected dots
-colored by reprojection error (fiducial markers outlined in cyan), a plane
-slider, a camera-model menu (`soloff` / `pinhole` — switching refits), and
-per-plane + overall fit summaries. `detect_kwargs` (`spacing`,
-`origin_offset`, `two_level`, …) are forwarded to
+Review detected dots and reprojection errors for each calibration plate.
+The plane slider selects an image; dots are colored by error in pixels and
+fiducial markers are outlined in cyan. Changing the camera model between
+`soloff` and `pinhole` refits the camera. `detect_kwargs` are passed to
 `Hammerhead.detect_calibration_grid`.
 """
 calibration_review(images, zs; model = :soloff, size = (1000, 720), detect_kwargs...) =
@@ -25,10 +24,8 @@ end
 """
     calibration_review!(target, cr::CalibrationReview) -> GridLayout
 
-Build the calibration-review view into `target` (a `GridPosition`), for
-embedding in a larger layout — the embeddable form, like
-[`result_explorer!`](@ref) (used by [`stereo_calibration`](@ref) to show
-both cameras side by side).
+Build the calibration review in a `GridPosition` and return its
+`GridLayout`. Use this method to embed a review in a larger figure.
 """
 function calibration_review!(target, cr::CalibrationReview)
     gl = GridLayout(target)
@@ -103,10 +100,10 @@ end
 """
     selfcal_review(report::SelfCalibrationReport; size = (1150, 650)) -> Figure
 
-Open the self-calibration report: per-pass disparity/triangulation
-statistics, the fitted sheet planes, convergence (with the
-judge-by-signed-median reminder for real data), and the size of the rigid
-correction. When the report carries disparity maps
+Open the self-calibration report with per-pass disparity and triangulation
+statistics, fitted sheet planes, and the cumulative rigid correction.
+Inspect spatial disparity maps as well as the summary statistics: a small
+signed median can hide residuals with opposing signs. When the report carries disparity maps
 (`self_calibrate(...; keep_disparity_maps = true)`), they open in an
 embedded result explorer with the frame slider stepping through the passes.
 """

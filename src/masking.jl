@@ -106,9 +106,13 @@ end
 
 Construct an image-derived exclusion mask. `method` is `:intensity`,
 `:contrast` (local standard deviation), or `:edge` (gradient magnitude).
-`threshold=:auto` selects a robust tail quantile; a numeric threshold uses
-the image's intensity units. The pair method returns the union of both frame
-masks, the normal convention for moving geometry.
+`threshold=:auto` selects a tail quantile of the selected score. A numeric
+threshold is compared with intensity for `:intensity`, local standard
+deviation for `:contrast`, or gradient magnitude for `:edge`. `side=:high`
+masks scores at or above the threshold; `:low` masks scores at or below it.
+`radius` sets the contrast neighborhood in pixels, and `grow` expands the
+resulting mask by that pixel radius. The two-image form returns the union of
+the masks from both frames.
 """
 function automatic_mask(image::AbstractMatrix{<:Real};
                         method::Symbol = :intensity, threshold = :auto,

@@ -113,14 +113,15 @@ y-axis is reversed to match image (row-down) coordinates. For a
 [`PIVResult`](@ref) the arrows sit on the interrogation grid; for a
 [`PTVResult`](@ref) they are scattered at the frame-A particle positions.
 
-For grid fields, `stride` plots every `stride`-th vector in each direction
-(inspect a high-resolution field without a solid mat of arrows), and
-`lengthscale = :auto` scales the arrows so the 0.99-quantile of the valid
-vectors' magnitudes spans one plotted grid cell (`stride ×` the grid spacing);
+For grid fields, `stride` plots every `stride`-th vector in each direction.
+`lengthscale = :auto` scales arrows so the 0.99-quantile of valid vector
+magnitudes spans one plotted grid cell (`stride ×` the smaller grid spacing);
 pass a `Real` for a manual multiplier. Flagged/replaced vectors
 (`result.outliers`) are drawn in `replaced_color` when `show_replaced` is
 true and omitted otherwise; masked (`NaN`) vectors are always skipped;
-remaining `kwargs` are passed to `arrows2d!`.
+remaining `kwargs` are passed to `arrows2d!`. For PTV results,
+`highlight_outliers = true` draws flagged matches in red; turning it off
+leaves them plotted with the other vectors.
 
 A result with an attached [`PhysicalScale`](@ref) is plotted in physical
 units (positions and velocities converted via [`physical`](@ref), axis
@@ -138,9 +139,9 @@ function plot_vector_field end
     plot_vector_field!(ax, result::PTVResult; highlight_outliers=true, kwargs...)
     plot_vector_field!(ax, x, y, u, v; stride=1, lengthscale=:auto, kwargs...)
 
-Like [`plot_vector_field`](@ref), but draws into an existing `Makie.Axis`.
-Scaled results are converted the same way, but the labels of an existing
-axis are left alone.
+Draw into an existing `Makie.Axis` and return `ax`. Scaled results are
+converted as in [`plot_vector_field`](@ref), but the axis labels are left
+unchanged. Set the labels yourself if the result uses physical units.
 """
 function plot_vector_field! end
 

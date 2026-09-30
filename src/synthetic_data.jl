@@ -1,9 +1,9 @@
 """
     SyntheticData
 
-Synthetic PIV test data with particle-based image generation. Ground truth
-comes from displacing particle positions directly (no interpolation warping),
-including out-of-plane motion and a laser-sheet intensity profile.
+Generate particle images and their known displacements for PIV examples and
+checks. Particles move in 3D and their brightness can vary with a laser-sheet
+profile. Images are rendered from particle positions rather than warped.
 """
 module SyntheticData
 
@@ -67,7 +67,9 @@ end
 """
     linear_flow(u₀, v₀, w₀, ∂u∂x, ∂u∂y, ∂v∂x, ∂v∂y) -> velocity_function
 
-Create a linear velocity field `(x, y, z, t) -> (u, v, w)`.
+Return `(x, y, z, t) -> (u, v, w)` with `u = u₀ + ∂u∂x*x + ∂u∂y*y`,
+`v = v₀ + ∂v∂x*x + ∂v∂y*y`, and constant `w = w₀`. The field does not
+depend on `z` or `t`.
 """
 function linear_flow(u₀, v₀, w₀, ∂u∂x, ∂u∂y, ∂v∂x, ∂v∂y)
     return (x, y, z, t) -> (u₀ + ∂u∂x * x + ∂u∂y * y,
@@ -78,8 +80,10 @@ end
 """
     vortex_flow(center_x, center_y, strength, w₀ = 0.0) -> velocity_function
 
-Create a circular vortex velocity field with constant azimuthal speed
-`strength` around `(center_x, center_y)`.
+Return a circular velocity field with azimuthal speed `strength` around
+`(center_x, center_y)`. Positive strength rotates clockwise in image
+coordinates (rows increase downward). At the center, where direction is
+undefined, in-plane velocity is zero. Out-of-plane velocity is `w₀`.
 """
 function vortex_flow(center_x, center_y, strength, w₀ = 0.0)
     return (x, y, z, t) -> begin
@@ -94,7 +98,8 @@ end
 """
     shear_flow(shear_rate, w₀ = 0.0) -> velocity_function
 
-Create a simple shear velocity field `u = shear_rate * y`.
+Return `(x, y, z, t) -> (shear_rate*y, 0, w₀)`, where `y` is the row
+coordinate. The field does not depend on `x`, `z`, or `t`.
 """
 function shear_flow(shear_rate, w₀ = 0.0)
     return (x, y, z, t) -> (shear_rate * y, 0.0, w₀)
@@ -112,7 +117,8 @@ Generate a random 3D particle field for synthetic PIV images.
 # Keywords
 - `z_range = (-5.0, 5.0)`: range of out-of-plane positions
 - `diameter_mean = 3.0`, `diameter_std = 0.5`: particle image diameter
-  distribution in pixels (normal, clipped to ≥ 0.5)
+  distribution in pixels (normal, clipped to ≥ 0.5); the renderer uses
+  `diameter = 4σ` for each Gaussian, not its full width at half maximum
 - `intensity_mean = 1.0`, `intensity_std = 0.2`: particle intensity
   distribution (normal, clipped to ≥ 0.1)
 - `rng = Random.default_rng()`: random number generator
@@ -144,9 +150,9 @@ end
 
 Displace particles in place by one forward-Euler step of `velocity_function`
 (signature `(x, y, z, t) -> (u, v, w)`): each particle moves by its local
-velocity — evaluated at its current position and time `t` — times `dt`. The
-exact displacement of every particle is therefore the velocity field at its
-launch point, whatever the field's curvature.
+velocity evaluated at its starting position and time `t`, multiplied by
+`dt`. This describes the discrete synthetic step; it does not integrate a
+curved trajectory through a time-varying field.
 """
 function displace_particles!(particles::ParticleField3D, velocity_function, dt::Real, t::Real = 0.0)
     for i in eachindex(particles.x)
@@ -169,9 +175,11 @@ displace_particles(particles::ParticleField3D, velocity_function, dt::Real, t::R
 """
     generate_gaussian_particle!(image, (cx, cy), diameter, intensity = 1.0)
 
-Add a Gaussian particle image centered at `(cx, cy)` — `cx` along columns (x),
-`cy` along rows (y) — with `σ = diameter / 4`. Intensity is accumulated within
-a 3σ bounding box, clipped to the image.
+Add a Gaussian particle centered at `(cx, cy)`, with `cx` along columns and
+`cy` along rows. Its standard deviation is `diameter / 4`; `diameter` is
+not the Gaussian's full width at half maximum. Values are sampled at pixel
+centers and added within a clipped 3σ bounding box, without pixel-area
+integration or normalization. Return the mutated `image`.
 """
 function generate_gaussian_particle!(image::AbstractMatrix{T}, center::Tuple{Real,Real},
                                      diameter::Real, intensity::Real = 1.0) where {T<:Real}
@@ -198,7 +206,8 @@ outside the frame still contribute their in-frame tails, so pairs of rendered
 images stay consistent near the borders.
 
 # Keywords
-- `background_noise = 0.01`: Gaussian background noise level (0 disables)
+- `background_noise = 0.01`: standard deviation of additive Gaussian noise;
+  negative pixels after noise are clipped to zero (0 disables noise)
 - `intensity_threshold = 0.01`: minimum laser intensity multiplier for a
   particle to be rendered
 - `rng = Random.default_rng()`: random number generator (noise only)

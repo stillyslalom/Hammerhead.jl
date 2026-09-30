@@ -10,12 +10,10 @@
 """
     DewarpGrid(; x, y, z = 0.0)
 
-Regular world-plane pixel grid for image dewarping: `x` and `y` are ranges of
-world coordinates (physical units, e.g. mm) spanning the measurement region,
-and `z` is the out-of-plane position of the measurement plane. The grid's
-resolution is `step(x)` / `step(y)` world units per dewarped pixel; choose it
-finer than the target vector spacing, since correlation windows live on the
-dewarped images.
+Set the world coordinates sampled by each dewarped image. `x` and `y` are
+regular ranges in your chosen length unit, and `z` is the measurement plane.
+Their steps give world length per dewarped pixel; select spacing fine enough
+for your interrogation windows without assuming it adds source-image detail.
 
 A dewarped image is indexed `[row, col]` with `row` running along `y` and
 `col` along `x` **in the order given**: `out[r, c]` shows the world point
@@ -24,9 +22,8 @@ image; pass a descending `y` range for a display-oriented (+Y up) image.
 Displacements measured on dewarped images convert to world units as
 `du * step(x)`, `dv * step(y)` — signs included.
 
-One `DewarpGrid` is shared by all cameras of a stereo rig (build one
-[`ImageDewarper`](@ref) per camera on it), and the stereo vector grid is
-later derived from it.
+Use the same `DewarpGrid` for every camera in a stereo analysis, with one
+[`ImageDewarper`](@ref) per camera. The stereo vector grid is derived from it.
 """
 struct DewarpGrid
     x::LinRange{Float64,Int}
@@ -66,25 +63,24 @@ Base.show(io::IO, g::DewarpGrid) =
                        spacing = :auto, margin = 0.0,
                        coverage = :intersection) -> DewarpGrid
 
-Construct a [`DewarpGrid`](@ref) covering the world-plane region that a set of
-cameras jointly image at out-of-plane position `z` — the grid-construction
-step of a stereo (or multi-camera) analysis, without hand-tuning extents.
+Build a [`DewarpGrid`](@ref) from the cameras' projected image footprints at
+world plane `z`. The default covers their common bounding-box region;
+out-of-view corners remain masked by each [`ImageDewarper`](@ref).
 
-`cameras` is an iterable of [`CameraCalibration`](@ref)s; `image_size` is the
-pixel size `(rows, cols)` used for every camera, or a vector of per-camera
-sizes. Each camera's image border is projected to the `z` plane
-([`pixel_to_world`](@ref), ~50 samples per edge) and reduced to an
-axis-aligned world bounding box.
+`cameras` is an iterable of [`CameraCalibration`](@ref)s. Pass one image
+size `(rows, cols)` if every camera matches, or one size per camera. The
+function projects samples on each image border to plane `z` and forms
+axis-aligned world bounding boxes.
 
-- `coverage = :intersection` (default — the stereo case) keeps only the
-  region **all** cameras see; `:union` keeps everything **any** camera sees
-  (out-of-view nodes are still flagged per camera in [`ImageDewarper`](@ref)'s
-  `mask`). An empty intersection throws.
+- `coverage = :intersection` (default) intersects camera bounding boxes;
+  `:union` covers their union. Either choice can include out-of-view nodes
+  inside a bounding box; each dewarper flags those nodes in its `mask`.
+  An empty intersection throws.
 - `margin` (world units) shrinks the region on all sides when positive, grows
   it when negative.
-- `spacing = :auto` estimates each camera's median world-units-per-pixel over
-  its footprint and uses the **coarsest** camera's value, so no camera is
-  resampled below its native resolution; pass a `Real` to set it directly.
+- `spacing = :auto` estimates world length per source pixel for each camera
+  and uses the coarsest estimate. Pass a positive number in world length
+  units to choose a spacing yourself.
 
 The `y` range is built **descending** so the dewarped image displays upright
 (world +Y up); PIV downstream is orientation-agnostic (`dv * step(y)` carries
@@ -173,17 +169,13 @@ end
 """
     ImageDewarper(cam::CameraCalibration, grid::DewarpGrid, image_size)
 
-Precomputed dewarping map for one camera: for every node of `grid` the source
-pixel coordinate `world_to_pixel(cam, (X, Y, grid.z))` is evaluated once and
-stored, so applying the map to a frame ([`dewarp!`](@ref)) is a pure
-resampling — build the dewarper once per camera and reuse it across a whole
-sequence. `image_size` is the camera's image size `(rows, cols)`.
+Map one camera's source pixels to a shared [`DewarpGrid`](@ref). The
+constructor projects each grid node through `cam` once; reuse the result
+for frames from that camera. `image_size` is the raw frame size `(rows, cols)`.
 
-Grid nodes whose source coordinate falls outside the camera's image (or is
-non-finite) are recorded in `mask`, a grid-sized `BitMatrix` in the
-package mask convention (`true` = excluded, static lab-frame geometry) —
-pass it to `run_piv(...; mask)` on the dewarped images, and combine the
-cameras' masks with `.|` for the stereo overlap region.
+`dw.mask` marks grid nodes outside the camera view (`true` = excluded).
+[`dewarp`](@ref) fills them with zero. Pass this mask to planar PIV on a
+dewarped pair; stereo drivers combine both camera masks automatically.
 """
 struct ImageDewarper{C<:CameraCalibration}
     cam::C
@@ -224,11 +216,10 @@ Base.show(io::IO, dw::ImageDewarper) =
 """
     dewarp!(out, dw::ImageDewarper, img) -> out
 
-Resample the camera frame `img` onto `dw`'s world grid, writing into `out`
-(size `size(dw.grid)`). Sampling uses cubic B-spline interpolation at the
-precomputed source coordinates; values are computed in the image's precision
-(`float(eltype(img))`). Out-of-view grid nodes (see `dw.mask`) are filled
-with zero.
+Resample `img` onto `dw.grid` using cubic B-spline interpolation. `img`
+must match `dw.image_size`, and the floating-point `out` must have size
+`size(dw.grid)`. The interpolation uses `float(eltype(img))` internally;
+values are written into `out` and masked nodes are filled with zero.
 """
 function dewarp!(out::AbstractMatrix{<:AbstractFloat}, dw::ImageDewarper,
                  img::AbstractMatrix{<:Real})
@@ -249,8 +240,8 @@ end
 """
     dewarp(dw::ImageDewarper, img) -> Matrix
 
-Allocating form of [`dewarp!`](@ref): returns the dewarped image as a
-`Matrix{float(eltype(img))}` of size `size(dw.grid)`.
+Allocate and return a `Matrix{float(eltype(img))}` of size `size(dw.grid)`.
+See [`dewarp!`](@ref) to reuse an output buffer across frames.
 """
 dewarp(dw::ImageDewarper, img::AbstractMatrix{<:Real}) =
     dewarp!(Matrix{float(eltype(img))}(undef, size(dw.grid)), dw, img)

@@ -1,22 +1,14 @@
 """
     PIVWorkspace
 
-Reusable scratch for [`run_piv`](@ref): the padded cubic-B-spline coefficient
-buffers of the two image interpolants, the two image-deformation output
-buffers, and a pool of window correlators (cached FFTW plans) — or, on the
-KA-family backends, of correlation engines with their batch buffers and FFT
-plans — keyed by window configuration. Build one with [`piv_workspace`](@ref)
-and pass it as the
-`workspace` keyword to reuse this scratch across many `run_piv` calls on
-**equally sized** image pairs — [`run_piv_sequence`](@ref) and
-[`run_piv_ensemble`](@ref) do this internally so a whole batch pays the
-allocations once. The buffers resize automatically if a later call presents a
-different image size or precision.
+Reusable buffers and correlator plans for repeated [`run_piv`](@ref) calls.
+Create one with [`piv_workspace`](@ref) and pass it through the `workspace`
+keyword when processing a sequence of pairs. Buffers are recreated as needed
+when image size or numeric precision changes. [`run_piv_sequence`](@ref) and
+[`run_piv_ensemble`](@ref) manage their own workspaces.
 
-A workspace is stateful scratch: it must **not** be shared across `run_piv`
-calls running concurrently. The drivers hold one workspace on their serial
-pair loop, so `run_piv`'s own internal threading (which only reads the
-interpolant coefficients and writes disjoint buffer regions) stays race-free.
+A workspace is mutable scratch and must not be shared by concurrent
+`run_piv` calls. Internal window threading within one call is supported.
 """
 mutable struct PIVWorkspace
     _backend::_AbstractHammerheadBackend
@@ -33,13 +25,11 @@ end
 """
     piv_workspace(; backend = :cpu) -> PIVWorkspace
 
-Construct an empty [`PIVWorkspace`](@ref). Its buffers allocate lazily on the
-first [`run_piv`](@ref) call and are reused (and resized on demand) thereafter
-— pass one via the `workspace` keyword when running many equally sized pairs
-yourself, to amortize the per-pair interpolant/deformation/correlator
-allocations across the batch. `backend = :cpu` selects the execution backend;
-the core package provides the CPU backend, and package extensions add device
-selectors (see the internals reference).
+Construct an empty [`PIVWorkspace`](@ref) for the selected `backend`.
+Buffers allocate on the first [`run_piv`](@ref) call and are reused for later
+calls with compatible images. The core provides `:cpu` and `:ka`; loaded
+device packages register their GPU selectors. Pass the workspace to
+`run_piv(...; workspace)` and do not use it concurrently.
 """
 piv_workspace(; backend::Symbol = :cpu) =
     PIVWorkspace(_resolve_backend(backend), nothing, nothing, nothing, nothing,
@@ -163,7 +153,7 @@ end
     effort_schedule(level::Symbol; ensemble = false, image_size = nothing, kwargs...) -> Vector{PIVParameters}
 
 Build the schedule used by `effort = :low`, `:medium`, or `:high`. Keyword
-arguments whose names match [`PIVParameters`](@ref) fields override the preset;
+arguments matching [`PIVParameters`](@ref) fields override the preset;
 `window_size` rescales the pyramid so the final pass has that size,
 `search_area_size` likewise sets the final search size and rescales its pyramid,
 `uncertainty`, `max_iterations`, and `keep_correlation_planes` apply to the
@@ -238,48 +228,46 @@ end
             threaded = Threads.nthreads() > 1,
             predictor_smoothing = true,
             backend = :cpu,
+            uncertainty_backend = :same,
             mask = nothing, mask_threshold = 0.5,
-            workspace = nothing, scale = nothing) -> PIVResult
+            workspace = nothing, scale = nothing, roi = nothing) -> PIVResult
     run_piv(imgA, imgB, params::PIVParameters = PIVParameters(); kwargs...)
     run_piv(imgA, imgB; effort = :low/:medium/:high, kwargs...)
 
-Run a (multi-pass) PIV analysis on an in-memory image pair. `imgA` and `imgB`
-must be equally sized real-valued matrices (load and convert image files with
-your preferred image package).
+Measure a PIV displacement field from equally sized, real-valued image
+matrices. Use [`load_image`](@ref) to read image files. The returned
+[`PIVResult`](@ref) contains the final pass's vector grid, diagnostics,
+validation flags, and optional uncertainty estimates.
 
 Each pass tiles the images into interrogation windows (`window_size`,
 `overlap`). When `search_area_size` is larger, the centered frame-A
 interrogation window is correlated against that larger frame-B search area;
 grid stride remains `window_size - overlap`, while the outer grid centers move
 inward far enough to contain the search area. This raises the first-pass
-capture range without increasing the particle-sampling window. The pass then
+search range without increasing the particle-sampling window. The pass then
 correlates each pair (`correlation_method`, optionally
 zero-padded and apodized), refines the peak to subpixel precision
 (`subpixel_method`), and validates the resulting field (universal outlier
-detection, peak-ratio threshold, and any additional `validation` pipeline —
-see the [validation how-to](../howto/validation.md) for the full list of
-validators and their pair-spec syntax) with local-median replacement of
-invalid vectors.
+detection, an optional peak-ratio threshold, and any additional `validation`
+pipeline. Remaining flagged vectors are locally replaced when
+`replace_outliers = true`; see the
+[validation how-to](../howto/validation.md).
 
 From the second pass on, the previous pass's validated field is used as a
 predictor: it is smoothed (`predictor_smoothing`), interpolated to pixel
 resolution, and both images are symmetrically deformed by ±half the predictor
 displacement (central-difference image deformation, cubic B-spline
 resampling). The pass then measures only the small residual displacement, so
-window sizes can shrink across passes — e.g. `multipass_parameters([64, 32,
-16])` — without violating the quarter-window displacement limit. Additional
-convergence sweeps are normally expressed with `max_iterations` on a pass; a
-schedule that repeats a window size is the equivalent explicit form.
+window sizes can shrink across passes, as in
+`multipass_parameters([64, 32, 16])`. `max_iterations` repeats a pass at its
+current window size; an explicit schedule can also repeat that size.
 
-For common tradeoffs, pass `effort = :low`, `:medium`, or `:high` instead of
-an explicit schedule. Typical single-threaded synthetic benchmarks on 256×256
-pairs measure:
-
-| Effort | Schedule | Options | Typical result |
-|---|---|---|---|
-| `:low` | `[32]` | `PIVParameters()` defaults | 1× time; ≈0.10 px uniform-shift RMS, ≈0.43 px vortex RMS |
-| `:medium` | `[64, 32]` | defaults | ≈4× time; ≈0.02 px uniform-shift RMS, ≈0.22 px vortex RMS |
-| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | ≈32× time; ≈0.02 px uniform-shift RMS, ≈0.09 px vortex RMS |
+For a preset schedule, pass `effort = :low`, `:medium`, or `:high`.
+`:low` uses one 32 px pass, `:medium` uses 64 and 32 px passes, and `:high`
+uses 128, 64, and 32 px passes with padding, Gaussian apodization, an
+iteration budget, and final-pass uncertainty. Preset window sizes are
+clamped to the image dimensions. Compare accuracy and runtime on your own
+representative pairs before choosing a preset.
 
 With an effort level, `PIVParameters` keyword overrides are applied on top of
 the preset: most fields apply to every pass, `window_size` rescales the
@@ -287,7 +275,7 @@ pyramid's final window size, `search_area_size` sets the final search size and
 rescales it with the window pyramid, and `uncertainty`, `max_iterations`, and
 `keep_correlation_planes` apply to the final pass only. `final = (;)` merges
 last and wins over both the preset and field keywords. The final window size is
-a seeding-density and physics decision, so smaller is not automatically better.
+chosen to retain enough particles while resolving the flow feature of interest.
 Passing `effort` together with an explicit `PIVParameters` or pass vector is
 an error.
 
@@ -295,12 +283,11 @@ A pass whose parameters set `max_iterations > 1` additionally *iterates
 in place*: its own validated field is fed back as the deformation predictor
 and the windows are re-correlated until the bulk field stops changing
 (`convergence_tol`) or the budget runs out, so a bad vector caught by
-validation is re-measured within the stage instead of leaking its local-median
-replacement into the next pass's predictor. Iterating the final pass to
-convergence is also the predictor state the `uncertainty` estimator assumes —
-`multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))` is
-equivalent to repeating 16-px passes until converged, but stops as soon as
-the field settles.
+validation is re-measured within the stage. Iterating the final pass to
+convergence also supplies the predictor state assumed by the `uncertainty`
+estimator:
+`multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))` repeats
+the 16 px stage until the convergence criterion is met or the budget is spent.
 
 With `uncertainty = true` in the final pass's parameters, a per-vector
 measurement uncertainty is estimated from correlation statistics (Wieneke
@@ -308,7 +295,7 @@ measurement uncertainty is estimated from correlation statistics (Wieneke
 [`PIVParameters`](@ref) for its convergence requirements.
 
 `mask` is an optional image-sized `Bool` matrix marking pixels to exclude
-(`true` = excluded), e.g. model geometry or reflection regions — build one
+(`true` = excluded), e.g. model geometry or reflection regions. Build one
 with [`polygon_mask`](@ref), [`load_mask`](@ref), or any Bool array. The mask
 describes static lab-frame geometry and is not warped between passes. Windows
 whose masked-pixel fraction reaches `mask_threshold` produce no vector: they
@@ -319,8 +306,8 @@ interrogation footprint and frame-B search footprint; reaching it in either
 drops the node. Footprints below the threshold are correlated over their valid
 pixels only.
 
-With `threaded = true` (the default on multithreaded sessions) the window grid
-of each pass is split across tasks; results are identical to the serial path.
+With `threaded = true` (the default on multithreaded sessions), window jobs
+are split across tasks.
 
 `backend = :cpu` selects the execution backend. The core package provides
 `:cpu` (FFTW) and `:ka` (the same portable KernelAbstractions kernels the GPU
@@ -334,15 +321,13 @@ implementation types are internal.
 the selected `backend`. Set it to `:cpu` to keep correlation and deformation
 on that backend while transferring the final deformed pair once and evaluating
 uncertainty on the threaded CPU. This hybrid policy is backend-independent and
-is often preferable when the selected device has weak Float64 throughput. Use
-[`benchmark_piv_configurations`](@ref) on the production workload rather than
-selecting the policy from the device vendor or product name.
+can help when the selected device has weak Float64 throughput. Compare both
+policies with [`benchmark_piv_configurations`](@ref) on representative data.
 
 `workspace` optionally supplies a [`PIVWorkspace`](@ref) (from
 [`piv_workspace`](@ref)) whose interpolant, deformation, and correlator scratch
-is reused across calls — pass the same one to every `run_piv` in a hand-written
-loop over equally sized pairs to amortize those allocations. Results are
-bitwise identical to `workspace = nothing`. [`run_piv_sequence`](@ref) and
+is reused across calls. Pass the same one to each `run_piv` in a sequential
+loop over image pairs. [`run_piv_sequence`](@ref) and
 [`run_piv_ensemble`](@ref) manage a workspace for you.
 
 `scale` optionally attaches a [`PhysicalScale`](@ref) (pixel size, frame
@@ -352,9 +337,14 @@ them.
 
 The numeric precision of the analysis follows the images:
 `T = float(promote_type(eltype(imgA), eltype(imgB)))` is used for the
-correlators, deformation, and every field of the returned
-[`PIVResult`](@ref)`{T}`. Feed `Float32` matrices (e.g.
-`load_image(Float32, path)`) to run the whole pipeline in single precision.
+correlators, deformation, and numeric arrays of the returned
+[`PIVResult`](@ref). Float32 inputs keep the main image-processing buffers
+in single precision; uncertainty statistics still accumulate in Float64.
+
+`roi` optionally selects an image rectangle for analysis. Pass an
+[`ROI`](@ref) or a `(rows, cols)` tuple of inclusive index ranges, such as
+`(50:200, 80:300)`. Returned grid coordinates refer to the original image
+frame.
 
 Returns the [`PIVResult`](@ref) of the final pass.
 """
@@ -482,24 +472,21 @@ end
 """
     multipass_parameters(window_sizes; overlap_fraction = 0.5, final = (;), kwargs...) -> Vector{PIVParameters}
 
-Build a multi-pass schedule with one `PIVParameters` per entry of
+Return one `PIVParameters` per entry of
 `window_sizes` (integers or `(rows, cols)` tuples), each with `overlap =
 floor(window_size * overlap_fraction)`. All remaining keyword arguments are
 forwarded to every pass.
 
-`final` is a `NamedTuple` of keyword overrides applied to the **last** entry
-only (its fields override the shared `kwargs` for that pass); it applies even
-to a length-1 schedule. Use it for settings you want only on the final pass —
-e.g. saving correlation planes for inspection, or turning off outlier
-replacement:
+`final` is a `NamedTuple` of overrides applied only to the last entry,
+including in a one-pass schedule. Its values take precedence over shared
+keywords. For example, retain final-pass correlation planes:
 
 ```julia
 passes = multipass_parameters([64, 32, 16]; padding = true,
-                              final = (n_peaks = 3, keep_correlation_planes = true))
+                              final = (keep_correlation_planes = true,))
 ```
 
-A schedule is just a `Vector{PIVParameters}`, so arbitrary per-pass control is
-always available by constructing the entries directly.
+Construct the entries directly when passes need different settings.
 
 ```julia
 passes = multipass_parameters([64, 32, 16]; padding = true, apodization = :gauss)
@@ -901,10 +888,9 @@ uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
 """
     image_interpolant(img, ::Type{T}) -> extrapolation
 
-Build the cubic B-spline resampler (`T`-typed, zero-extrapolated) that
-[`deform_images`](@ref) samples. The prefilter is the expensive part, and it
-depends only on the source image, so multipass [`run_piv`](@ref) builds this
-once per image and reuses it across every deforming pass.
+Build a zero-extrapolated cubic B-spline interpolant in precision `T`.
+[`deform_images`](@ref) samples this interpolant; a multipass
+[`run_piv`](@ref) call reuses it for each deforming pass.
 """
 function image_interpolant(img::AbstractMatrix, ::Type{T}) where {T}
     # `interpolate` copies its input into the (padded) coefficient array during
@@ -915,23 +901,21 @@ function image_interpolant(img::AbstractMatrix, ::Type{T}) where {T}
 end
 
 """
-    deform_images(itpA, itpB, itp_u, itp_v, imgsize, ::Type{T}; threaded = false) -> (warpedA, warpedB)
+    deform_images(itpA, itpB, itp_u, itp_v, imgsize, ::Type{T};
+                  threaded = false, warpA = nothing, warpB = nothing) -> (warpedA, warpedB)
 
-Symmetric (central-difference) image deformation: each `imgsize` output is
-resampled from its prebuilt cubic B-spline image interpolant
-([`image_interpolant`](@ref)) — `itpA` shifted by −d/2 and `itpB` by +d/2,
+Resample both `imgsize` images from prebuilt cubic B-spline interpolants
+([`image_interpolant`](@ref)): `itpA` is shifted by −d/2 and `itpB` by +d/2,
 where `d = (itp_u, itp_v)` is the displacement field evaluated at each pixel.
 After deformation, content displaced by exactly `d` is aligned in both
 outputs, so correlating them measures the residual displacement. Out-of-image
 samples are zero-filled (a property of the passed interpolants).
 
-Interpolant evaluation is a pure read, so with `threaded = true` the output
-columns are filled concurrently.
+With `threaded = true`, output columns are filled concurrently.
 
-`warpA`/`warpB` optionally supply the output buffers (each `imgsize`,
-element type `T`); when `nothing` they are freshly allocated. Multipass
-[`run_piv`](@ref) allocates them once and reuses them across every deforming
-pass, since each pass fully overwrites them before use.
+`warpA` and `warpB` optionally supply output buffers of size `imgsize` and
+element type `T`; otherwise new buffers are allocated. Both outputs are
+fully overwritten.
 """
 function deform_images(itpA, itpB, itp_u, itp_v, imgsize::Dims{2}, ::Type{T};
                        threaded::Bool = false,
@@ -1057,10 +1041,9 @@ each configuration, matching sequence-style production use.
 Each returned row contains `configuration`, `backend`, `uncertainty_backend`,
 `seconds`, `speedup`, `max_vector_delta`, `p99_vector_delta`,
 `max_uncertainty_delta`, and `p99_uncertainty_delta`. Deltas are measured
-against the CPU result over entries finite in both results; the `p99_*`
-0.99-quantiles report bulk agreement, since the `max_*` field-wide extremes
-are dominated by the near-outlier windows the Wieneke estimator legitimately
-assigns huge σ.
+against the CPU result over entries finite in both results. The `p99_*`
+fields are 0.99 quantiles of those differences, while the `max_*` fields
+show the largest differences.
 Benchmark the same image precision, size, schedule, mask, and preprocessing
 used in production; backend rankings are workload- and hardware-dependent.
 """

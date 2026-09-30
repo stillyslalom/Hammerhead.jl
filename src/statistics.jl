@@ -34,13 +34,20 @@ sample_valid(r::StereoPIVResult, i, include_invalid::Bool) =
 """
     field_statistics(results; include_invalid = false) -> NamedTuple
 
-Pointwise temporal statistics over a sequence of same-grid `PIVResult`s:
-returns `(x, y, mean_u, mean_v, rms_u, rms_v, reynolds_uv, count)`, where
-`rms_u`/`rms_v` are the RMS of the fluctuating components and `reynolds_uv`
-is the Reynolds shear-stress correlation `mean(u'v')` (denominator `n`, the
-per-point valid-sample count in `count`). Outlier-flagged vectors, masked
-windows, and non-finite entries are excluded unless `include_invalid`; points
-with no valid samples are `NaN`.
+Calculate pointwise statistics from a nonempty sequence of planar results
+on the same grid. Returns `(x, y, mean_u, mean_v, rms_u, rms_v, reynolds_uv,
+count)`. RMS describes fluctuations about the local mean; `reynolds_uv`
+is `mean(u'v')`. Moments divide by the valid-sample count, without an
+`n - 1` correction.
+
+A sample contributes only when both components are finite and the cell is
+unmasked. Flagged vectors are also excluded unless `include_invalid=true`.
+Cells with no samples have `count == 0` and `NaN` statistics.
+
+The stored arrays are used directly. To obtain velocity statistics, convert
+each result with [`physical`](@ref) first and use consistent units across the
+sequence. Fluctuation RMS includes measurement noise; it is not an uncertainty
+estimate for the mean.
 """
 function field_statistics(results::AbstractVector{<:PIVResult};
                           include_invalid::Bool = false)
@@ -76,13 +83,18 @@ end
     field_statistics(results::AbstractVector{<:StereoPIVResult};
                      include_invalid = false) -> NamedTuple
 
-Pointwise statistics over a same-grid stereo sequence. Returns coordinates,
-means and fluctuating-component RMS values for `u`, `v`, and `w`, all six
-independent Reynolds-stress terms (`reynolds_uu`, `reynolds_vv`,
-`reynolds_ww`, `reynolds_uv`, `reynolds_uw`, `reynolds_vw`), and the
-per-point valid-sample `count`. Normal stresses equal the corresponding RMS
-squared. A sample is admitted only when all three components are finite and
-the vector is unmasked and, unless `include_invalid`, unflagged.
+Calculate pointwise statistics from a nonempty, same-grid stereo sequence.
+Returns coordinates, means and fluctuation RMS values for `u`, `v`, and `w`,
+six Reynolds-stress terms (`reynolds_uu`, `reynolds_vv`, `reynolds_ww`,
+`reynolds_uv`, `reynolds_uw`, `reynolds_vw`), and valid-sample `count`.
+Normal stresses equal the corresponding RMS squared. Moments divide by the
+valid-sample count, without an `n - 1` correction.
+
+A sample contributes only when all three components are finite and the node
+is unmasked. Flagged vectors are also excluded unless `include_invalid=true`.
+Cells with no samples have `count == 0` and `NaN` statistics. Coordinates,
+including `z`, must match across results. Values use the stored arrays' units;
+attached scales are not applied automatically.
 """
 function field_statistics(results::AbstractVector{<:StereoPIVResult};
                           include_invalid::Bool = false)
@@ -129,10 +141,15 @@ Temporal normalized-median test across a sequence of same-grid `PIVResult`s:
 at each grid point the median and median absolute deviation (MAD) of the
 valid samples over time form a robust reference, and samples with
 `|component − median| / (MAD + epsilon) > threshold` in either component are
-flagged into their result's `outliers`. Points with fewer than 3 valid
-samples, masked windows, and already-flagged vectors are left untouched.
-Complements the spatial UOD: a vector consistent with its spatial neighbors
-can still be exposed as an outlier by the point's time history.
+marked in each result's `outliers`. Displacement arrays are not changed and
+existing flags are not cleared. Masked, non-finite, and already-flagged samples
+are excluded; points with fewer than three remaining samples are untouched.
+`epsilon` is a positive noise floor in the stored components' units;
+`threshold` is positive and dimensionless. Scaling metadata is not applied.
+
+The reference spans the whole supplied sequence, rather than a moving time
+window. Check newly flagged values against the time history: a real transient
+can also differ from the sequence median.
 """
 function validate_temporal!(results::AbstractVector{<:PIVResult};
                             threshold::Real = 3, epsilon::Real = 0.1)
@@ -173,7 +190,9 @@ end
 Stereo form of the temporal normalized-median test. The robust reference is
 built independently for all three components and a sample is flagged when
 any component exceeds `threshold`. Masked, non-finite, already flagged, and
-short (fewer than three valid samples) histories are unchanged.
+short (fewer than three valid samples) histories are unchanged. Only the
+`outliers` arrays are mutated. `epsilon` uses the stored components' units,
+which are calibration length units for unconverted stereo results.
 """
 function validate_temporal!(results::AbstractVector{<:StereoPIVResult};
                             threshold::Real = 3, epsilon::Real = 0.1)
@@ -206,13 +225,15 @@ end
 """
     error_statistics(result, u_ref, v_ref; include_invalid = false) -> NamedTuple
 
-Compare a PIV field against a known reference — the bias-error tooling for
-ground-truthed cases (e.g. PIV Challenge 4F solid-body rotation).
+Compare a planar field with reference components in the same units.
 `u_ref`/`v_ref` are grid-sized arrays or functions `(x, y) -> value`
 evaluated at the interrogation grid points. Returns
 `(; err_u, err_v, bias_u, bias_v, rms_u, rms_v, n)`: signed error fields
 (`NaN` where invalid) plus mean (bias) and RMS errors over the `n` valid
-vectors (finite, unmasked, and unflagged unless `include_invalid`).
+vectors. Errors are measured minus reference. Masked or non-finite measured
+vectors are always excluded; `include_invalid=true` admits flagged vectors.
+Reference values must be finite at admitted locations, or they propagate
+into the error statistics. Attached physical scaling is not applied.
 """
 function error_statistics(result::PIVResult, u_ref, v_ref; include_invalid::Bool = false)
     as_field(f) = f isa AbstractMatrix ? Float64.(f) :
@@ -247,13 +268,17 @@ end
 """
     peak_locking(displacements; nbins = 21) -> (fractions, counts, index)
 
-Diagnose peak locking from the fractional parts `f = x − round(x) ∈
+Summarize fractional displacements in pixels, `f = x − round(x) ∈
 [−0.5, 0.5)` of a displacement sample (any array; non-finite entries are
 skipped). Returns the histogram bin centers and counts, plus a locking
-index comparing the sample density near integer displacements (`|f| ≤ 0.1`)
-with the density near half-integers (`|f| ≥ 0.4`): 0 for a uniform (locking
-free) distribution, → 1 as fractions pile up on integers, negative if they
-avoid them. `NaN` when there are no valid samples.
+index `(n_center - n_edge) / (n_center + n_edge)`, where `n_center` counts
+`|f| ≤ 0.1` and `n_edge` counts `|f| ≥ 0.4`. Positive values indicate more
+samples near integers; negative values indicate more near half-integers.
+The index is `NaN` if neither band contains samples, even if other bins do.
+
+Clustering near integers can indicate peak locking, but the flow's actual
+displacement distribution also affects this diagnostic. Pass only the samples
+you intend to assess, for example `result.u[.!result.mask .& .!result.outliers]`.
 """
 function peak_locking(displacements::AbstractArray{<:Real}; nbins::Int = 21)
     nbins >= 3 || throw(ArgumentError("nbins must be at least 3, got $nbins"))
@@ -281,14 +306,19 @@ end
 """
     power_spectrum(signal; dt = 1.0, window = :hann) -> (frequencies, psd)
 
-One-sided power spectral density of a uniformly sampled series (sampling
-interval `dt`): the mean is removed, the taper applied (`:hann` or `:none`,
-power-normalized), and `sum(psd) * Δf` recovers the signal variance.
-Frequencies are in cycles per unit of `dt`. Extract a per-point velocity
-time series from a sequence with e.g. `[r.u[i, j] for r in results]` and
-pass the sampling interval between successive results as `dt`. This can
-differ from the delay between the two images of each pair. For a two-sample
-series, `:hann` uses the untapered window because its Hann weights are zero.
+Estimate a one-sided power spectral density from at least two uniformly
+spaced samples. The mean is removed before applying `window=:hann` or `:none`.
+Supply a finite, positive sampling interval `dt`. Frequencies are in cycles
+per time unit; PSD has units of signal squared per frequency unit.
+
+With `:none`, `sum(psd) * Δf` equals the population variance (division by
+the sample count). With `:hann`, it equals the power-normalized mean square
+of the tapered, demeaned signal, which can differ from the untapered variance.
+For two samples, `:hann` uses an untapered window.
+
+Non-finite samples are not removed or filled. For a sequence of PIV fields,
+use [`result_spectrum`](@ref) to handle validation flags explicitly. Its `dt`
+is the interval between fields, separate from the delay within an image pair.
 """
 function power_spectrum(signal::AbstractVector{<:Real};
                         dt::Real = 1.0, window::Symbol = :hann)

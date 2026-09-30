@@ -105,11 +105,11 @@ end
 """
     Particles{T<:AbstractFloat}
 
-Detected particles from one frame (a struct-of-arrays), as produced by
-[`detect_particles`](@ref). `x` is the subpixel column (x) position, `y` the
-subpixel row (y) position, `intensity` the background-subtracted peak
-amplitude, and `diameter` the 4σ estimate from the Gaussian fit (`NaN` when
-both axes fell back to the centroid, e.g. a saturated particle).
+Particle detections from one image, returned by [`detect_particles`](@ref).
+The parallel arrays `x` and `y` give subpixel column and row positions;
+`intensity` is the background-subtracted peak amplitude. `diameter` is a
+4σ estimate in pixels from the Gaussian fit, or `NaN` when both axes used
+centroid fallback. Check detections on the image before matching them.
 """
 struct Particles{T<:AbstractFloat}
     x::Vector{T}
@@ -137,10 +137,12 @@ Base.show(io::IO, p::Particles{T}) where {T} =
 """
     detect_particles(img, params = PTVParameters(); mask = nothing) -> Particles
 
-Detect particles in a single image as subpixel local maxima with Gaussian peak
-fits. The numeric precision follows the image: `T = float(eltype(img))`.
+Find particle centers in one grayscale image. Returns a [`Particles`](@ref)
+collection with positions in pixels and precision `float(eltype(img))`.
+`mask` excludes image pixels when set to an image-sized `Bool` array
+(`true` = excluded).
 
-The algorithm is:
+Detection proceeds as follows:
 
 1. **Threshold** from a robust intensity floor. `bg` is the median over valid
    (unmasked) pixels and `mad = 1.4826 · median(|img − bg|)`; with

@@ -5,16 +5,14 @@
 """
     stereo_batch_runner(sbc = StereoBatchRunner(); size = (960, 600)) -> Figure
 
-Open the stereo batch runner. Add each camera's frames, set the dewarpers
-(build them from calibrations with [`stereo_calibration`](@ref), or
-[`set_dewarpers!`](@ref) from the REPL), pick an effort preset or edit the
-manual window schedule, optionally enter the frame interval (`dt` + units —
-stereo results are already in world units, so the attached scale converts
-displacements to velocities), choose an output file, and run. Cancellation
-uses [`run_piv_stereo_sequence`](@ref)'s native between-acquisition
-predicate, so the completed prefix always lands in `results`. "view
-results" opens the completed acquisitions in the result explorer as soon as
-the first one is done, live-appending the rest.
+Open the stereo PIV batch form. Add synchronized frames for both cameras
+and supply dewarpers from [`stereo_calibration`](@ref) or
+[`set_dewarpers!`](@ref). Choose an effort preset or manual window schedule,
+enter the frame interval and units, and run. Stereo displacements are
+already in world units; the frame interval converts them to velocities.
+An optional output file stores completed acquisitions incrementally.
+"Cancel" stops between acquisitions, and "View results" opens an explorer
+that receives each finished acquisition.
 """
 stereo_batch_runner(; kwargs...) = stereo_batch_runner(StereoBatchRunner(); kwargs...)
 

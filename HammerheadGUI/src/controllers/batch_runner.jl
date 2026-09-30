@@ -6,18 +6,16 @@
 """
     BatchCancelled()
 
-Thrown from the progress callback to abort a running batch; pairs finished
-before the abort stay in the incremental output file.
+Signals cancellation between frame pairs. Completed pairs remain in
+`BatchRunner.completed` and in the output file when `output_path` is set.
 """
 struct BatchCancelled <: Exception end
 
 """
     BatchRunner(; kwargs...)
 
-Controller for the parameter form + batch runner. Holds the frame list and
-pairing mode, a curated `PIVParameters` form (multi-pass window schedule +
-the accuracy-relevant options), the output path and analysis mask, and the
-run state — all as `Observables`.
+Configure a planar PIV sequence and observe its progress. Inputs, options,
+and run state are `Observables`.
 
 # Keyword defaults
 - `files = Any[]` (frame paths and/or in-memory matrices), `pair_mode = :paired`
@@ -26,7 +24,7 @@ run state — all as `Observables`.
   and ignore the schedule/option widgets.
 - `window_schedule = [64, 32, 32]`, `overlap_fraction = 0.5`
 - `correlation_method = :cross`, `padding = true`, `apodization = :gauss`
-  (the accuracy configuration), `subpixel_method = :gauss3`,
+  `subpixel_method = :gauss3`,
   `uncertainty = false`
 - `pixel_size = 1.0`, `dt = 1.0`, `length_unit = "px"`, `time_unit = "frame"` —
   a [`PhysicalScale`](@ref) is attached to the outputs only when any of these
@@ -39,8 +37,8 @@ preprocessing pipeline, e.g. from a [`PreprocessPreview`](@ref)),
 [`start!`](@ref) and [`cancel!`](@ref); watch
 `progress` (`(done, total)`), `status`, `running`, `results` (a
 `Vector{PIVResult}` after a completed run, `nothing` before), and
-`completed` (the finished pairs' results so far, appended and notified
-live while the batch runs — feed them to a [`ResultExplorer`](@ref) via
+`completed` (finished pairs appended during a run; feed them to a
+[`ResultExplorer`](@ref) via
 [`push_result!`](@ref) to browse a batch in progress).
 """
 struct BatchRunner
@@ -262,8 +260,10 @@ build_parameters(bc::BatchRunner) =
 """
     validate(bc::BatchRunner) -> Union{Nothing,String}
 
-`nothing` when the batch can start, otherwise a human-readable reason. With a
-non-`:custom` effort the manual schedule is not consulted.
+Return `nothing` when the form has the required inputs and valid settings,
+or a message describing the first problem. Images are loaded when the run
+starts, so this does not check that every image can be read. With a
+non-`:custom` effort, the manual schedule is not consulted.
 """
 function validate(bc::BatchRunner)
     isempty(bc.files[]) && return "add frames first"
@@ -295,12 +295,10 @@ _errmsg(err) = first(split(sprint(showerror, err), '\n'))
 """
     start!(bc::BatchRunner; async = true)
 
-Validate and start the batch. With `async = true` the run executes in a
-cooperative task (`@async`) so a GLMakie render loop keeps updating —
-`run_piv`'s internal thread spawns provide the yield points; observables
-are still written from the primary thread. Progress lands in
-`bc.progress`/`bc.status`, results in `bc.results`, and the output file
-(when `output_path` is set) is written incrementally.
+Validate and start the batch. Return `bc` immediately with `async = true`,
+or wait for the run with `async = false`. Follow `running`, `progress`, and
+`status`; `completed` receives each finished pair and `results` holds the
+finished run. If `output_path` is set, pairs are also written incrementally.
 """
 function start!(bc::BatchRunner; async::Bool = true)
     bc.running[] && return bc
@@ -315,8 +313,8 @@ end
 """
     cancel!(bc::BatchRunner)
 
-Request cancellation of the running batch; it stops after the pair in
-flight, keeping finished pairs in the incremental output.
+Request cancellation after the pair in flight. Return `bc`. Finished pairs
+remain in `completed` and in the output file when one is configured.
 """
 cancel!(bc::BatchRunner) = (bc.cancel[] = true; bc)
 
