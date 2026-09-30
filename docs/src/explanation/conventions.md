@@ -51,6 +51,14 @@ converted result carries an identity scale with the same unit labels, so
 `physical` is idempotent and plots label their axes correctly either way.
 See the [scaling how-to](../howto/scaling.md).
 
+Temporal spectra need a separate **sampling interval**: pass `dt` explicitly
+to [`result_spectrum`](@ref). `PhysicalScale.dt` describes the delay between
+the two images used to measure a displacement, which need not equal the time
+between successive velocity samples. For example, frames acquired every
+0.01 s and grouped as `(1, 2), (3, 4), …` produce velocity samples every
+0.02 s. Use that 0.02 s sampling interval for spectra, whether the results
+are raw or converted with `physical`.
+
 ## World coordinates (stereo)
 
 Stereo processing works in a physical world frame `(X, Y, Z)` (units set by

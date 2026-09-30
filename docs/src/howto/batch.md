@@ -136,8 +136,10 @@ results = load_results("run_042_piv.jld2")   # Vector of results, in order
 ```
 
 [`load_results`](@ref) returns [`PIVResult`](@ref) and/or
-[`StereoPIVResult`](@ref) entries in sequence order. The stored source
-paths, when present, are retrievable directly with JLD2:
+[`StereoPIVResult`](@ref) entries in sequence order. An empty saved vector, or
+a batch stopped before its first result, loads as an empty vector. Files with
+an unknown `format_version` raise an error. Stored source paths, when present,
+are retrievable directly with JLD2:
 
 ```julia
 using JLD2
@@ -159,6 +161,9 @@ inapplicable values empty. Identifiers, flags, quality values, uncertainties,
 and unit strings are included, and attached scaling is applied. Planar and
 stereo grids can also be written for ParaView with
 `export_vtk("field.vtk", result)` (legacy ASCII structured-grid VTK).
+The VTK `FIELD` metadata records coordinate and vector-component unit labels;
+without an attached scale, stereo labels use `world_unit` for the calibration
+grid's unnamed world units.
 
 ## Post-process the sequence
 
@@ -176,3 +181,5 @@ If a pair fails (unreadable file, size mismatch), `run_piv_sequence` logs
 which pair and rethrows — the incremental output file retains everything
 processed up to that point, so you can fix the offending frame and resume
 from a trimmed pair list.
+The driver waits for any started frame prefetch before it returns, including
+when processing or a callback fails.

@@ -1,8 +1,8 @@
 # Multi-frame trajectory linking (Phase 8): chain per-transition PTV matches
 # into Lagrangian tracks. Each frame is detected once; transitions are linked
-# frame-to-frame with the same greedy matcher as run_ptv, predicting each track
-# head by constant velocity (heads with ≥ 2 points) or by a field predictor
-# (fresh 1-point heads). No gap bridging in v1 (deferred).
+# with the same greedy matcher as run_ptv, predicting each track head by
+# constant velocity (heads with ≥ 2 points) or by a field predictor (fresh
+# 1-point heads). Unmatched heads can bridge up to max_gap missed frames.
 #
 # `load_frame`/`frame_label` live in io.jl, which is included after this file;
 # they are only called at runtime here, so the forward reference is fine.
@@ -11,8 +11,9 @@
     Trajectory{T<:AbstractFloat}
 
 A single particle track: `start_frame` (1-based) is the frame of the first
-point, and `x`/`y` hold one subpixel position per consecutive frame (no gaps in
-v1). `length(t)` is the number of points. See [`track_particles`](@ref).
+point, `x`/`y` hold subpixel positions, and `frames` records their frame indices,
+including gaps when a particle is reacquired. `length(t)` is the number of
+observed points. See [`track_particles`](@ref).
 """
 struct Trajectory{T<:AbstractFloat}
     start_frame::Int
@@ -108,9 +109,13 @@ Only tracks with `length ≥ min_track_length` (which must be ≥ 2) are returne
 sorted by `start_frame` then first position. `scale` attaches a
 [`PhysicalScale`](@ref) to the result (positions stay in pixels; see
 [`physical`](@ref) and [`trajectory_velocities`](@ref)). `image_type` is the
-element type frames load as (`Float32` runs in single precision); `progress`
+element type file paths load as (`Float32` runs in single precision); `progress`
 is a `Bool` meter or an `(i, n)` callback ticked per transition, as in
-[`run_piv_sequence`](@ref).
+[`run_piv_sequence`](@ref). Frames are loaded and detected one at a time.
+The result precision promotes the element types of in-memory matrices;
+file paths use `image_type`. For lazy `FrameRef` sources whose later element
+types are unknown without loading them, the first loaded frame sets the
+precision and later detections are converted to it.
 """
 function track_particles(frames::AbstractVector, params::PTVParameters = PTVParameters();
                          predictor = :piv,
@@ -126,19 +131,18 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     min_track_length >= 2 ||
         throw(ArgumentError("min_track_length must be at least 2, got $min_track_length"))
     max_gap >= 0 || throw(ArgumentError("max_gap must be nonnegative, got $max_gap"))
-    T = float(image_type)
-
-    # Load every frame once (needed for detection, and frames 1–2 for the
-    # initial :piv predictor) and detect particles in each.
-    imgs = [load_frame(f, image_type) for f in frames]
-    all(size(im) == size(imgs[1]) for im in imgs) ||
-        throw(DimensionMismatch("all frames must have the same size"))
-    image_size = size(imgs[1])
-    particles = [detect_particles(im, params; mask) for im in imgs]
+    img_first = load_frame(frames[1], image_type)
+    image_size = size(img_first)
+    # In-memory matrices retain their element type. Inspect their metadata
+    # for a common precision without materializing any later lazy frames.
+    T = float(foldl(promote_type,
+                    (f isa AbstractMatrix ? eltype(f) :
+                     f isa AbstractString ? image_type : eltype(img_first) for f in frames);
+                    init=eltype(img_first)))
+    p1 = convert_particles(T, detect_particles(img_first, params; mask))
 
     all_tracks = _Track{T}[]
     active = _Track{T}[]
-    p1 = particles[1]
     for i in 1:length(p1)
         tr = _Track{T}(1, T[p1.x[i]], T[p1.y[i]], Int[1],
                        T(p1.intensity[i]), T(p1.diameter[i]), 0)
@@ -150,10 +154,14 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     n_trans = n_frames - 1
     meter = Progress(n_trans; desc = "Tracking: ", enabled = progress === true)
     for k in 1:n_trans
-        pb = particles[k + 1]
-        field = k == 1 ? resolve_predictor(predictor, imgs[1], imgs[2], piv_passes, mask, T) :
+        img_next = load_frame(frames[k + 1], image_type)
+        size(img_next) == image_size ||
+            throw(DimensionMismatch("all frames must have the same size"))
+        pb = convert_particles(T, detect_particles(img_next, params; mask))
+        field = k == 1 ? resolve_predictor(predictor, img_first, img_next, piv_passes, mask, T) :
                 (prev_matches === nothing ? nothing :
                  grid_predictor(prev_matches..., image_size, T))
+        k == 1 && (img_first = nothing)
         interp = make_field_interp(field)
 
         M = length(active)

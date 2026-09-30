@@ -100,8 +100,8 @@ q_criterion(args...; kwargs...) = q_criterion(flow_derivatives(args...; kwargs..
 function _bilinear(x, y, f, qx, qy)
     (first(x) <= qx <= last(x) || last(x) <= qx <= first(x)) || return NaN
     (first(y) <= qy <= last(y) || last(y) <= qy <= first(y)) || return NaN
-    ix = clamp(searchsortedlast(x, qx), 1, length(x) - 1)
-    iy = clamp(searchsortedlast(y, qy), 1, length(y) - 1)
+    ix = clamp(searchsortedlast(x, qx; rev=first(x)>last(x)), 1, length(x) - 1)
+    iy = clamp(searchsortedlast(y, qy; rev=first(y)>last(y)), 1, length(y) - 1)
     x0, x1 = x[ix], x[ix + 1]; y0, y1 = y[iy], y[iy + 1]
     vals = (f[iy, ix], f[iy, ix + 1], f[iy + 1, ix], f[iy + 1, ix + 1])
     all(isfinite, vals) || return NaN
@@ -167,28 +167,90 @@ function circulation(r::PIVResult, contour::AbstractVector{<:Tuple}; close::Bool
         (prof.v[k]+prof.v[k+1])*(prof.y[k+1]-prof.y[k])/2 for k in 1:length(prof.x)-1)
 end
 
-"""Area-form circulation over a rectangular or polygonal `region`, using the vorticity-area integral."""
+function _clip_polygon(poly, dim::Int, bound, keep_greater::Bool)
+    isempty(poly) && return poly
+    inside(p) = keep_greater ? p[dim] >= bound : p[dim] <= bound
+    result = Tuple{Float64,Float64}[]
+    previous = poly[end]
+    for current in poly
+        a, b = inside(previous), inside(current)
+        if a != b
+            t = (bound - previous[dim]) / (current[dim] - previous[dim])
+            push!(result, ((1-t)*previous[1]+t*current[1],
+                           (1-t)*previous[2]+t*current[2]))
+        end
+        b && push!(result, current)
+        previous = current
+    end
+    result
+end
+
+"""Area-form circulation over a rectangular or polygonal `region`, integrating vorticity over its overlap with the grid."""
 function circulation(r::PIVResult; region, include_invalid::Bool=false)
-    reg=extract_region(r,region; include_invalid)
-    omega=vorticity(r; include_invalid)
     length(r.x)>=2 && length(r.y)>=2 || throw(ArgumentError("circulation needs at least a 2x2 grid"))
-    wx=[j==1 ? abs(r.x[2]-r.x[1]) : j==length(r.x) ? abs(r.x[end]-r.x[end-1]) : abs(r.x[j+1]-r.x[j-1])/2 for j in eachindex(r.x)]
-    wy=[i==1 ? abs(r.y[2]-r.y[1]) : i==length(r.y) ? abs(r.y[end]-r.y[end-1]) : abs(r.y[i+1]-r.y[i-1])/2 for i in eachindex(r.y)]
-    inds=findall(reg.mask .& isfinite.(omega))
-    sum(omega[I]*wx[I[2]]*wy[I[1]] for I in inds)
+    poly = if region isa NTuple{4,Real}
+        xmin, xmax, ymin, ymax = region
+        xmin <= xmax && ymin <= ymax || throw(ArgumentError("rectangle bounds must be ordered"))
+        [(Float64(xmin),Float64(ymin)), (Float64(xmax),Float64(ymin)),
+         (Float64(xmax),Float64(ymax)), (Float64(xmin),Float64(ymax))]
+    else
+        points = [(Float64(p[1]),Float64(p[2])) for p in region]
+        length(points) >= 3 || throw(ArgumentError("a polygon region needs at least 3 vertices"))
+        points
+    end
+    signed_twice_area = sum(poly[k][1]*poly[mod1(k+1,length(poly))][2] -
+                            poly[mod1(k+1,length(poly))][1]*poly[k][2]
+                            for k in eachindex(poly))
+    signed_twice_area != 0 || throw(ArgumentError("circulation region must have nonzero area"))
+    orientation = sign(signed_twice_area)
+    omega = vorticity(r; include_invalid)
+    total = 0.0
+    for j in 1:length(r.x)-1, i in 1:length(r.y)-1
+        x0, x1 = r.x[j], r.x[j+1]
+        y0, y1 = r.y[i], r.y[i+1]
+        clipped = poly
+        for (dim, bound, greater) in ((1,min(x0,x1),true), (1,max(x0,x1),false),
+                                       (2,min(y0,y1),true), (2,max(y0,y1),false))
+            clipped = _clip_polygon(clipped, dim, bound, greater)
+            isempty(clipped) && break
+        end
+        length(clipped) >= 3 || continue
+        corners = (omega[i,j],omega[i,j+1],omega[i+1,j],omega[i+1,j+1])
+        all(isfinite,corners) || continue
+        # Three-point triangle quadrature integrates the cell's bilinear
+        # interpolant exactly, including its x*y term.
+        a = clipped[1]
+        for k in 2:length(clipped)-1
+            b, c = clipped[k], clipped[k+1]
+            area = orientation*((b[1]-a[1])*(c[2]-a[2])-
+                                (c[1]-a[1])*(b[2]-a[2]))/2
+            for (wa,wb,wc) in ((2/3,1/6,1/6),(1/6,2/3,1/6),(1/6,1/6,2/3))
+                qx = wa*a[1]+wb*b[1]+wc*c[1]
+                qy = wa*a[2]+wb*b[2]+wc*c[2]
+                tx, ty = (qx-x0)/(x1-x0), (qy-y0)/(y1-y0)
+                value = (1-ty)*((1-tx)*corners[1]+tx*corners[2]) +
+                        ty*((1-tx)*corners[3]+tx*corners[4])
+                total += area*value/3
+            end
+        end
+    end
+    total
 end
 
 """
-    result_spectrum(results, i, j; component=:u, invalid=:error, dt=nothing, window=:hann)
+    result_spectrum(results, i, j; dt, component=:u, invalid=:error, window=:hann)
 
-Spectrum of one grid point across a result sequence. `dt` defaults to attached
-scale metadata. Invalid samples can `:error`, be linearly `:interpolate`d, or
+Spectrum of one grid point across a uniformly sampled result sequence. Supply
+`dt` as the time between successive results. An attached `PhysicalScale.dt`
+is the time between images within a pair and does not determine this interval,
+especially for strided or overlapping pairs. Invalid samples can `:error`, be linearly `:interpolate`d, or
 be replaced by the valid-sample `:mean`; invalid handling is always explicit.
 """
 function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
                          component::Symbol=:u, invalid::Symbol=:error,
                          dt::Union{Nothing,Real}=nothing, window::Symbol=:hann)
-    isempty(results) && throw(ArgumentError("results must not be empty"))
+    check_same_grid(results)
+    dt === nothing && throw(ArgumentError("dt must be the sampling interval between successive results"))
     component in (:u,:v) || throw(ArgumentError("component must be :u or :v"))
     invalid in (:error,:interpolate,:mean) || throw(ArgumentError("invalid must be :error, :interpolate, or :mean"))
     vals = Float64[getproperty(r,component)[i,j] for r in results]
@@ -209,13 +271,6 @@ function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
                 end
             end
         end
-    end
-    if dt === nothing
-        s = results[1].scale
-        s === nothing && throw(ArgumentError("dt is required when results have no attached PhysicalScale"))
-        dt = s.dt
-        all(r -> r.scale !== nothing && r.scale.dt == dt, results) ||
-            throw(ArgumentError("all results must have the same attached dt"))
     end
     power_spectrum(vals; dt, window)
 end

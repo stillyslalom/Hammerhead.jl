@@ -71,6 +71,21 @@ using Statistics
         @test s.reynolds_uv ≈ fill(-1.0, 3, 2)
         @test s.count == fill(2, 3, 2)
 
+        large = field_statistics([mk(1e8-1, -1e8+2), mk(1e8+1, -1e8-2)])
+        @test large.rms_u ≈ fill(1.0,3,2)
+        @test large.rms_v ≈ fill(2.0,3,2)
+        @test large.reynolds_uv ≈ fill(-2.0,3,2)
+
+        stereo(u,v,w) = StereoPIVResult(x, y, 0.0, fill(u,3,2), fill(v,3,2),
+            fill(w,3,2), zeros(3,2), zeros(3,2), zeros(3,2),
+            falses(3,2), falses(3,2), r1, r1, params)
+        ss = field_statistics([stereo(1e8-1,-1e8+2,1e8-3),
+                               stereo(1e8+1,-1e8-2,1e8+3)])
+        @test ss.rms_u ≈ fill(1.0,3,2)
+        @test ss.rms_v ≈ fill(2.0,3,2)
+        @test ss.rms_w ≈ fill(3.0,3,2)
+        @test ss.reynolds_uw ≈ fill(3.0,3,2)
+
         # Outliers excluded by default, included on request.
         out2 = falses(3, 2)
         out2[1, 1] = true
@@ -125,7 +140,11 @@ using Statistics
         fh, psdh = power_spectrum(sig; dt)  # Hann default
         @test fh[argmax(psdh)] ≈ f0
         @test_throws ArgumentError power_spectrum(sig; dt = 0)
+        @test_throws ArgumentError power_spectrum(sig; dt = Inf)
         @test_throws ArgumentError power_spectrum(sig; window = :hamming)
         @test_throws ArgumentError power_spectrum([1.0])
+        f2, p2 = power_spectrum([1.0,2.0])
+        @test all(isfinite, p2)
+        @test sum(p2) * (f2[2]-f2[1]) ≈ 0.25
     end
 end

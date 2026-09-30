@@ -46,11 +46,7 @@ function field_statistics(results::AbstractVector{<:PIVResult};
                           include_invalid::Bool = false)
     r1 = check_same_grid(results)
     ny, nx = size(r1.u)
-    su = zeros(ny, nx)
-    sv = zeros(ny, nx)
-    suu = zeros(ny, nx)
-    svv = zeros(ny, nx)
-    suv = zeros(ny, nx)
+    mu, mv, m2u, m2v, c2uv = (zeros(ny, nx) for _ in 1:5)
     count = zeros(Int, ny, nx)
     for r in results
         size(r.u) == (ny, nx) ||
@@ -58,20 +54,20 @@ function field_statistics(results::AbstractVector{<:PIVResult};
         for i in eachindex(r.u)
             sample_valid(r, i, include_invalid) || continue
             ui, vi = Float64(r.u[i]), Float64(r.v[i])
-            su[i] += ui
-            sv[i] += vi
-            suu[i] += ui^2
-            svv[i] += vi^2
-            suv[i] += ui * vi
             count[i] += 1
+            n = count[i]
+            du, dv = ui-mu[i], vi-mv[i]
+            mu[i] += du/n; mv[i] += dv/n
+            m2u[i] += du*(ui-mu[i]); m2v[i] += dv*(vi-mv[i])
+            c2uv[i] += du*(vi-mv[i])
         end
     end
     stat(f) = [count[i] > 0 ? f(i) : NaN for i in eachindex(count)]
-    mean_u = reshape(stat(i -> su[i] / count[i]), ny, nx)
-    mean_v = reshape(stat(i -> sv[i] / count[i]), ny, nx)
-    rms_u = reshape(stat(i -> sqrt(max(suu[i] / count[i] - (su[i] / count[i])^2, 0.0))), ny, nx)
-    rms_v = reshape(stat(i -> sqrt(max(svv[i] / count[i] - (sv[i] / count[i])^2, 0.0))), ny, nx)
-    reynolds_uv = reshape(stat(i -> suv[i] / count[i] - su[i] * sv[i] / count[i]^2), ny, nx)
+    mean_u = reshape(stat(i -> mu[i]), ny, nx)
+    mean_v = reshape(stat(i -> mv[i]), ny, nx)
+    rms_u = reshape(stat(i -> sqrt(max(m2u[i] / count[i], 0.0))), ny, nx)
+    rms_v = reshape(stat(i -> sqrt(max(m2v[i] / count[i], 0.0))), ny, nx)
+    reynolds_uv = reshape(stat(i -> c2uv[i] / count[i]), ny, nx)
     return (; x = r1.x, y = r1.y, mean_u, mean_v, rms_u, rms_v, reynolds_uv, count)
 end
 
@@ -92,8 +88,8 @@ function field_statistics(results::AbstractVector{<:StereoPIVResult};
                           include_invalid::Bool = false)
     r1 = check_same_grid(results)
     ny, nx = size(r1.u)
-    sums = [zeros(ny, nx) for _ in 1:9]
-    su, sv, sw, suu, svv, sww, suv, suw, svw = sums
+    moments = [zeros(ny, nx) for _ in 1:9]
+    mu, mv, mw, m2u, m2v, m2w, c2uv, c2uw, c2vw = moments
     count = zeros(Int, ny, nx)
     for r in results
         size(r.u) == (ny, nx) ||
@@ -101,23 +97,25 @@ function field_statistics(results::AbstractVector{<:StereoPIVResult};
         for i in eachindex(r.u)
             sample_valid(r, i, include_invalid) || continue
             ui, vi, wi = Float64(r.u[i]), Float64(r.v[i]), Float64(r.w[i])
-            su[i] += ui; sv[i] += vi; sw[i] += wi
-            suu[i] += ui^2; svv[i] += vi^2; sww[i] += wi^2
-            suv[i] += ui * vi; suw[i] += ui * wi; svw[i] += vi * wi
             count[i] += 1
+            n = count[i]
+            du, dv, dw = ui-mu[i], vi-mv[i], wi-mw[i]
+            mu[i] += du/n; mv[i] += dv/n; mw[i] += dw/n
+            m2u[i] += du*(ui-mu[i]); m2v[i] += dv*(vi-mv[i]); m2w[i] += dw*(wi-mw[i])
+            c2uv[i] += du*(vi-mv[i]); c2uw[i] += du*(wi-mw[i]); c2vw[i] += dv*(wi-mw[i])
         end
     end
     value(i, f) = count[i] > 0 ? f(count[i]) : NaN
     field(f) = reshape([value(i, n -> f(i, n)) for i in eachindex(count)], ny, nx)
-    mean_u = field((i, n) -> su[i] / n)
-    mean_v = field((i, n) -> sv[i] / n)
-    mean_w = field((i, n) -> sw[i] / n)
-    reynolds_uu = field((i, n) -> max(suu[i] / n - (su[i] / n)^2, 0.0))
-    reynolds_vv = field((i, n) -> max(svv[i] / n - (sv[i] / n)^2, 0.0))
-    reynolds_ww = field((i, n) -> max(sww[i] / n - (sw[i] / n)^2, 0.0))
-    reynolds_uv = field((i, n) -> suv[i] / n - su[i] * sv[i] / n^2)
-    reynolds_uw = field((i, n) -> suw[i] / n - su[i] * sw[i] / n^2)
-    reynolds_vw = field((i, n) -> svw[i] / n - sv[i] * sw[i] / n^2)
+    mean_u = field((i, n) -> mu[i])
+    mean_v = field((i, n) -> mv[i])
+    mean_w = field((i, n) -> mw[i])
+    reynolds_uu = field((i, n) -> max(m2u[i] / n, 0.0))
+    reynolds_vv = field((i, n) -> max(m2v[i] / n, 0.0))
+    reynolds_ww = field((i, n) -> max(m2w[i] / n, 0.0))
+    reynolds_uv = field((i, n) -> c2uv[i] / n)
+    reynolds_uw = field((i, n) -> c2uw[i] / n)
+    reynolds_vw = field((i, n) -> c2vw[i] / n)
     rms_u, rms_v, rms_w = sqrt.(reynolds_uu), sqrt.(reynolds_vv), sqrt.(reynolds_ww)
     return (; x = r1.x, y = r1.y, z = r1.z, mean_u, mean_v, mean_w,
             rms_u, rms_v, rms_w, reynolds_uu, reynolds_vv, reynolds_ww,
@@ -287,21 +285,22 @@ One-sided power spectral density of a uniformly sampled series (sampling
 interval `dt`): the mean is removed, the taper applied (`:hann` or `:none`,
 power-normalized), and `sum(psd) * Δf` recovers the signal variance.
 Frequencies are in cycles per unit of `dt`. Extract a per-point velocity
-time series from a sequence with e.g. `[r.u[i, j] for r in results]`; with a
-[`PhysicalScale`](@ref) attached, pass `dt = first(results).scale.dt` for
-physical frequencies.
+time series from a sequence with e.g. `[r.u[i, j] for r in results]` and
+pass the sampling interval between successive results as `dt`. This can
+differ from the delay between the two images of each pair. For a two-sample
+series, `:hann` uses the untapered window because its Hann weights are zero.
 """
 function power_spectrum(signal::AbstractVector{<:Real};
                         dt::Real = 1.0, window::Symbol = :hann)
     n = length(signal)
     n >= 2 || throw(ArgumentError("signal must have at least 2 samples, got $n"))
-    dt > 0 || throw(ArgumentError("dt must be positive, got $dt"))
+    isfinite(dt) && dt > 0 || throw(ArgumentError("dt must be finite and positive, got $dt"))
     x = Float64.(signal)
     x .-= sum(x) / n
-    if window === :hann
+    if window === :hann && n > 2
         x .*= [0.5 * (1 - cospi(2 * (k - 1) / (n - 1))) for k in 1:n]
         wnorm = sum(abs2, 0.5 * (1 - cospi(2 * (k - 1) / (n - 1))) for k in 1:n)
-    elseif window === :none
+    elseif window === :none || (window === :hann && n == 2)
         wnorm = Float64(n)
     else
         throw(ArgumentError("window must be :hann or :none, got :$window"))

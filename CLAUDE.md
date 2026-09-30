@@ -30,8 +30,13 @@ julia --project=docs docs/make.jl                    # docs, ~7 min: executes al
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
 ```
 
-Two `PIV sequence failed` error logs during tests are intentional
-(failure-propagation tests), not failures.
+`PIV sequence failed` error logs from the intentional failure-propagation
+tests are expected and do not indicate failed assertions.
+
+Core CI covers single-threaded Ubuntu on LTS/stable/prerelease Julia and
+four-threaded stable Julia on Ubuntu and Windows. Lifecycle regressions also
+exercise failed/cancelled batches: their prefetched loaders must finish before
+the driver returns, while the original failure remains the reported exception.
 
 ## Documentation (docs/)
 
@@ -134,7 +139,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   diameter consistency), `scattered_uod`, `ptv_to_grid` (`bin_to_grid`)
 - `tracking.jl` — `Trajectory`, `TrackingResult`, `track_particles`
   (constant-velocity + field predictor linking, bounded gap bridging;
-  trajectories retain explicit frame indices), `trajectory_velocities`
+  trajectories retain explicit frame indices; frames are loaded/detected one
+  at a time, retaining the first pair only for the initial PIV predictor),
+  `trajectory_velocities`
 - `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation), synchronized `run_piv_stereo_sequence`, and
@@ -172,7 +179,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `validate_temporal!`, `power_spectrum`
 - `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
   swirling strength/Q, profile/region extraction, circulation, and
-  attached-scale results-vector spectra
+  results-vector spectra with an explicit sampling interval (`dt`, independent
+  of the image-pair delay in `PhysicalScale`)
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -452,6 +460,10 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   capture `scale` so it is NOT forwarded to the per-camera `run_piv` calls.
   Unitful is a weakdep (`PhysicalScale(20.0u"µm", 0.5u"ms")` — values
   stripped in their own units, unit names become the labels).
+- **Temporal sampling:** `result_spectrum` requires an explicit `dt` for the
+  interval between successive velocity samples. Never infer that interval
+  from `PhysicalScale.dt`: that is the image-pair displacement delay, which
+  differs for paired/strided recordings and becomes 1 after `physical`.
 - **Calibration (Phase 5):** a deliberate Float64 island — offline
   once-per-experiment fits, not the image hot path. World axes are anchored
   to image orientation (+X = lattice direction nearest image-right, +Y

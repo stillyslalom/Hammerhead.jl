@@ -8,6 +8,8 @@ or native-format change without a major version bump.
 
 JLD2 is the lossless Julia round-trip format. Files carry `format_version`;
 readers reject unknown versions rather than silently misinterpreting data.
+An empty result vector (or a batch stopped before its first result) is a valid
+versioned file and loads as an empty vector.
 Users who need long-lived, language-neutral archives should also export the
 table or VTK form.
 
@@ -20,5 +22,10 @@ version; additive columns may be introduced without invalidating readers that
 select columns by name.
 
 VTK export uses the legacy structured-grid contract documented by
-[`export_vtk`](@ref). Coordinate/component units are written in field metadata
-and follow the attached [`PhysicalScale`](@ref) when present.
+[`export_vtk`](@ref). `FIELD FieldData` stores `coordinate_unit` and
+`component_unit` as UTF-8 byte arrays. They follow the attached
+[`PhysicalScale`](@ref) when present. Unscaled planar coordinates are pixels
+and components are pixels per frame; unscaled stereo coordinates and
+components are in calibration-grid world units and world units per frame. The
+grid does not carry a unit name, so these labels read `world_unit` and
+`world_unit/frame` until a scale supplies explicit names.

@@ -325,6 +325,8 @@ the internal PIV predictor always runs in pixels). Position attribution is
 frame-A: `x`/`y` are frame-A positions and `u`/`v` the displacement to frame B
 (see [`PTVResult`](@ref)). Empty frames or no matches yield a valid empty
 result rather than throwing.
+For mixed image element types, the result and both particle sets use
+`float(promote_type(eltype(imgA), eltype(imgB)))`.
 """
 function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  params::PTVParameters = PTVParameters();
@@ -344,8 +346,8 @@ function run_ptv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
         throw(DimensionMismatch("mask must have the same size as the images, got $(size(mask))"))
     T = float(promote_type(eltype(imgA), eltype(imgB)))
 
-    pa = detect_particles(imgA, params; mask)
-    pb = detect_particles(imgB, params; mask)
+    pa = convert_particles(T, detect_particles(imgA, params; mask))
+    pb = convert_particles(T, detect_particles(imgB, params; mask))
     # No detections in a frame means no matches: skip the (image-size-sensitive)
     # predictor entirely and return a valid empty result.
     if isempty(pa.x) || isempty(pb.x)

@@ -175,7 +175,8 @@ _csv(x) = '"' * replace(string(x), '"' => "\"\"") * '"'
 
 function _export_units(r)
     s = r.scale
-    s === nothing ? ("px", "frame", "px/frame", r) :
+    s === nothing ? (r isa StereoPIVResult ? "world_unit" : "px", "frame",
+                     r isa StereoPIVResult ? "world_unit/frame" : "px/frame", r) :
         (s.length_unit, s.time_unit, velocity_unit(s), physical(r))
 end
 
@@ -226,10 +227,14 @@ end
 
 Write a planar or stereo result as an ASCII VTK legacy structured grid. The
 file contains point coordinates, a three-component `velocity` vector, mask and
-outlier flags, and available uncertainty/quality scalar arrays.
+outlier flags, and available uncertainty/quality scalar arrays. The dataset's
+`FIELD` metadata carries UTF-8 `coordinate_unit` and `component_unit` strings
+as byte arrays. Unscaled stereo values use the calibration grid's world units,
+whose name is unknown to Hammerhead (`world_unit`); attach a `PhysicalScale`
+to label them explicitly.
 """
 function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
-    _, _, _, q = _export_units(r)
+    coordinate_unit, _, component_unit, q = _export_units(r)
     nx, ny = length(q.x), length(q.y)
     z = q isa StereoPIVResult ? q.z : 0
     open(path, "w") do io
@@ -237,6 +242,13 @@ function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
         println(io, "DIMENSIONS $nx $ny 1\nPOINTS $(nx*ny) double")
         for y in q.y, x in q.x
             println(io, "$x $y $z")
+        end
+        println(io, "FIELD FieldData 2")
+        for (name, unit) in (("coordinate_unit", coordinate_unit),
+                             ("component_unit", component_unit))
+            bytes = codeunits(unit)
+            println(io, "$name 1 $(length(bytes)) unsigned_char")
+            println(io, join(bytes, ' '))
         end
         println(io, "POINT_DATA $(nx*ny)\nVECTORS velocity double")
         for i in eachindex(q.y), j in eachindex(q.x)

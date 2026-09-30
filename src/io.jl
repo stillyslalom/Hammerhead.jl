@@ -166,8 +166,14 @@ file-path pairs also carry the source image paths, retrievable with
 """
 function load_results(path::AbstractString)
     jldopen(path, "r") do f
-        haskey(f, "results") ||
-            throw(ArgumentError("$path has no \"results\" group; not a Hammerhead results file"))
+        haskey(f, "format_version") ||
+            throw(ArgumentError("$path has no format_version; not a Hammerhead results file"))
+        version = f["format_version"]
+        version == RESULTS_FORMAT_VERSION ||
+            throw(ArgumentError("$path has unsupported format_version $version (supported: $RESULTS_FORMAT_VERSION)"))
+        # An empty save or a batch stopped before its first result has no
+        # `results` group: JLD2 creates groups only when a child is written.
+        haskey(f, "results") || return PIVResult[]
         g = f["results"]
         return [g[k] for k in sort!(keys(g))]
     end
@@ -321,6 +327,8 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
         imgB = load_frame(pair[2], image_type)
         preprocess === nothing ? (imgA, imgB) : (preprocess(imgA), preprocess(imgB))
     end
+    pending = nothing
+    failed = false
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
@@ -351,8 +359,27 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
             end
             progress isa Function ? progress(i, length(pairs)) : next!(meter)
         end
+    catch
+        failed = true
+        rethrow()
     finally
-        file === nothing || close(file)
+        try
+            if pending !== nothing
+                try
+                    fetch_frames(pending)
+                catch
+                    failed || rethrow()
+                end
+            end
+        finally
+            if file !== nothing
+                try
+                    close(file)
+                catch
+                    failed || rethrow()
+                end
+            end
+        end
     end
     return results
 end

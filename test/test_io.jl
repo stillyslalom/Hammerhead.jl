@@ -65,6 +65,21 @@ using Statistics
             save_results(path, result32)
             @test load_results(path)[1] isa PIVResult{Float32}
 
+            save_results(path, PIVResult[])
+            @test isempty(load_results(path))
+
+            jldopen(path, "w") do f
+                f["format_version"] = 999
+                f["results/000001"] = result
+            end
+            error_message = try
+                load_results(path)
+                ""
+            catch err
+                sprint(showerror, err)
+            end
+            @test occursin("unsupported format_version 999", error_message)
+
             other = joinpath(dir, "other.jld2")
             jldopen(f -> (f["foo"] = 1), other, "w")
             @test_throws ArgumentError load_results(other)
@@ -167,6 +182,44 @@ using Statistics
                                                     progress = false)
         @test_throws ArgumentError run_piv_sequence([(imgA, :nope)], params;
                                                     progress = false)
+
+        # A failed processor must join the next load before returning, and a
+        # failed prefetch must not replace the processor's original error.
+        started = Channel{Nothing}(1)
+        release = Channel{Nothing}(1)
+        finished = Threads.Atomic{Bool}(false)
+        source = FrameSource(4, i -> begin
+            if i == 3
+                put!(started, nothing)
+                take!(release)
+                finished[] = true
+                error("background load failed")
+            end
+            fill(1.0, 32, 32)
+        end)
+        failing = Channel{Nothing}(1)
+        primary = ErrorException("processor failed")
+        driver = Threads.@spawn begin
+            try
+                Hammerhead._run_sequence((args...) -> begin
+                    take!(started) # the next load has reached its gate
+                    put!(failing, nothing)
+                    throw(primary)
+                end, PIVResult, image_pairs(source); progress=false)
+                nothing
+            catch err
+                err
+            end
+        end
+        try
+            take!(failing)
+            @test timedwait(() -> istaskdone(driver), 0.1) == :timed_out
+        finally
+            put!(release, nothing)
+        end
+        caught = fetch(driver)
+        @test caught === primary
+        @test finished[]
     end
 
     @testset "PIVWorkspace reuse" begin

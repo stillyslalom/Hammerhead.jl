@@ -362,8 +362,53 @@ end
         @test eltype(res32.u) == Float32
         @test detect_particles(Float32.(img1)) isa Particles{Float32}
 
+        # Both particle sets must use the promoted precision for matching.
+        for (a, b) in ((Float32.(img1), img2), (img1, Float32.(img2)))
+            mixed = run_ptv(a, b; predictor = nothing)
+            @test mixed isa PTVResult{Float64}
+            @test mixed.particles_a isa Particles{Float64}
+            @test mixed.particles_b isa Particles{Float64}
+            @test !isempty(mixed.x)
+        end
+
         # Dimension checks.
         @test_throws DimensionMismatch run_ptv(zeros(64, 64), zeros(32, 32))
         @test occursin("PTVResult", sprint(show, res32))
+    end
+
+    @testset "Tracking streams frames and promotes matrix precision" begin
+        frames = [zeros(64, 64) for _ in 1:5]
+        for (k, im) in enumerate(frames)
+            generate_gaussian_particle!(im, (24.0 + 0.5k, 30.0), 3.0, 1.0)
+        end
+        frames32 = [Float32.(im) for im in frames]
+        loaded = Int[]
+        source = FrameSource(length(frames32), i -> (push!(loaded, i); frames32[i]))
+        refs = [FrameRef(source, i) for i in eachindex(frames32)]
+        ticks = Int[]
+        result = track_particles(refs, PTVParameters(uod_enable = false);
+            predictor = nothing, min_track_length = 5,
+            progress = (k, n) -> begin
+                @test n == 4
+                @test loaded == collect(1:k+1)
+                push!(ticks, k)
+            end)
+        @test loaded == collect(1:5)
+        @test ticks == collect(1:4)
+        @test result isa TrackingResult{Float32}
+        @test any(length(t) == 5 for t in result.trajectories)
+
+        # Default image_type applies to file paths, not in-memory Float32 images.
+        direct = track_particles(frames32, PTVParameters(uod_enable = false);
+            predictor = nothing, min_track_length = 5, progress = false)
+        @test direct isa TrackingResult{Float32}
+        @test any(length(t) == 5 for t in direct.trajectories)
+
+        mixed = Any[frames32...]
+        mixed[3] = frames[3]
+        promoted = track_particles(mixed, PTVParameters(uod_enable = false);
+            predictor = nothing, min_track_length = 5, progress = false)
+        @test promoted isa TrackingResult{Float64}
+        @test any(length(t) == 5 for t in promoted.trajectories)
     end
 end

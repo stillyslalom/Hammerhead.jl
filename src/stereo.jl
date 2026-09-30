@@ -338,6 +338,9 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
         T = float(promote_type(map(eltype, frames)...))
         return frames, T
     end
+    pending = nothing
+    failed = false
+    cancelled = false
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(acquisitions); desc = "Stereo PIV sequence: ",
@@ -345,12 +348,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
         pending = load_acquisition(first(acquisitions))
         for (i, acq) in enumerate(acquisitions)
             if cancel !== nothing && cancel()
-                # Ensure a prefetched preprocessor is no longer active when
-                # this call returns to its caller.
-                try
-                    fetch(pending)
-                catch
-                end
+                cancelled = true
                 break
             end
             try
@@ -381,8 +379,27 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
             end
             progress isa Function ? progress(i, length(acquisitions)) : next!(meter)
         end
+    catch
+        failed = true
+        rethrow()
     finally
-        file === nothing || close(file)
+        try
+            if pending !== nothing
+                try
+                    fetch_frames(pending)
+                catch
+                    (failed || cancelled) || rethrow()
+                end
+            end
+        finally
+            if file !== nothing
+                try
+                    close(file)
+                catch
+                    failed || rethrow()
+                end
+            end
+        end
     end
     return results
 end

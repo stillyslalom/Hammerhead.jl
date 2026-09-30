@@ -66,6 +66,28 @@ using ImageCore: Gray, N0f8
             text = read(vtk,String)
             @test occursin("DATASET STRUCTURED_GRID", text)
             @test occursin("VECTORS velocity", text)
+            function vtk_units(path)
+                lines = readlines(path)
+                start = findfirst(==("FIELD FieldData 2"), lines)
+                @test start !== nothing
+                @test startswith(lines[start + 5], "POINT_DATA ")
+                units = Dict{String,String}()
+                for k in (start + 1, start + 3)
+                    name, ncomp, ntuple, dtype = split(lines[k])
+                    @test ncomp == "1" && dtype == "unsigned_char"
+                    bytes = parse.(UInt8, split(lines[k + 1]))
+                    @test length(bytes) == parse(Int, ntuple)
+                    units[name] = String(bytes)
+                end
+                units
+            end
+            @test vtk_units(vtk) == Dict("coordinate_unit" => "px",
+                                         "component_unit" => "px/frame")
+            scaled = with_scale(r, PhysicalScale(pixel_size=0.1, dt=0.25,
+                length_unit="µm", time_unit="s"))
+            scaled_vtk = export_vtk(joinpath(dir,"scaled.vtk"), scaled)
+            @test vtk_units(scaled_vtk) == Dict("coordinate_unit" => "µm",
+                                                "component_unit" => "µm/s")
 
             tr = TrackingResult([Trajectory(1,[1.0,2.0],[3.0,4.0])], 2, PTVParameters())
             path = save_results(joinpath(dir,"tracks.jld2"), tr)

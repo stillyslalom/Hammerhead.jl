@@ -308,6 +308,46 @@ end
                                                    @test r isa StereoPIVResult),
                             progress = (i, n) -> push!(events, (:progress, i)))
     @test events == [(:result, 1), (:progress, 1)]
+    # A callback failure joins a blocked next acquisition, while preserving
+    # the callback's error even if that background load subsequently fails.
+    started = Channel{Nothing}(1)
+    release = Channel{Nothing}(1)
+    failing = Channel{Nothing}(1)
+    finished = Threads.Atomic{Bool}(false)
+    frames = (A1, B1, A2, B2)
+    source = FrameSource(8, i -> begin
+        if i == 5
+            put!(started, nothing)
+            take!(release)
+            finished[] = true
+            error("background stereo load failed")
+        end
+        frames[mod1(i, 4)]
+    end)
+    acquisitions = [ntuple(k -> Hammerhead.FrameRef(source, k), 4),
+                    ntuple(k -> Hammerhead.FrameRef(source, k + 4), 4)]
+    primary = ErrorException("stereo callback failed")
+    driver = Threads.@spawn begin
+        try
+            run_piv_stereo_sequence(acquisitions, dws[1], dws[2], params;
+                progress=false, on_result=(i, r) -> begin
+                    take!(started)
+                    put!(failing, nothing)
+                    throw(primary)
+                end)
+            nothing
+        catch err
+            err
+        end
+    end
+    try
+        take!(failing)
+        @test timedwait(() -> istaskdone(driver), 0.1) == :timed_out
+    finally
+        put!(release, nothing)
+    end
+    @test fetch(driver) === primary
+    @test finished[]
     @test isempty(run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
                                           progress = false, cancel = () -> true))
     @test_throws DimensionMismatch run_piv_stereo_sequence([(A1, B1)], [],
@@ -325,6 +365,10 @@ end
     # JLD2 roundtrip, including a mixed PIVResult/StereoPIVResult file.
     mktempdir() do dir
         sequence_path = joinpath(dir, "sequence.jld2")
+        run_piv_stereo_sequence([(A1, B1, A2, B2)], dws[1], dws[2], params;
+                                progress=false, cancel=() -> true,
+                                output=sequence_path)
+        @test isempty(load_results(sequence_path))
         pre_count = [Ref(0), Ref(0)]
         preprocessors = ((img -> (pre_count[1][] += 1; img)),
                          (img -> (pre_count[2][] += 1; img)))
@@ -337,6 +381,12 @@ end
 
         path = joinpath(dir, "stereo.jld2")
         save_results(path, stereo)
+        vtk = export_vtk(joinpath(dir, "stereo.vtk"), stereo)
+        vtk_lines = readlines(vtk)
+        field_line = findfirst(==("FIELD FieldData 2"), vtk_lines)
+        @test field_line !== nothing
+        @test String(parse.(UInt8, split(vtk_lines[field_line + 2]))) == "world_unit"
+        @test String(parse.(UInt8, split(vtk_lines[field_line + 4]))) == "world_unit/frame"
         loaded = load_results(path)
         @test length(loaded) == 1
         s = loaded[1]

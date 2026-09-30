@@ -120,6 +120,13 @@ end
 
 Base.length(p::Particles) = length(p.x)
 
+# Matching uses one precision for both frames, even when the source images
+# have different element types. Detection itself still follows each image.
+convert_particles(::Type{T}, p::Particles{T}) where {T<:AbstractFloat} = p
+function convert_particles(::Type{T}, p::Particles) where {T<:AbstractFloat}
+    Particles{T}(T.(p.x), T.(p.y), T.(p.intensity), T.(p.diameter))
+end
+
 Base.show(io::IO, p::Particles{T}) where {T} =
     print(io, "Particles{$T}($(length(p)) particles)")
 
