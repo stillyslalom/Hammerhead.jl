@@ -74,8 +74,8 @@ mask_editor("frame_0001.tif")
 
 Left-click adds vertices (inside an existing polygon it selects instead),
 right-click closes the polygon, Backspace undoes a vertex, Delete removes
-the selected polygon. "Save mask…" writes the white-=-excluded image that
-[`load_mask`](@ref) reads back:
+the selected polygon. "Save mask…" writes an image where white pixels mark
+excluded areas. Read it with [`load_mask`](@ref):
 
 ```julia
 mask = load_mask("mask.png")
@@ -106,10 +106,8 @@ pair by pair; read it with [`load_results`](@ref)). "Cancel" stops after
 the pair in flight and keeps every finished pair. "View results" activates
 as soon as the first pair completes: it opens the finished prefix in the
 result explorer and appends later pairs live, so you can inspect a long
-batch while it runs (the mechanism is the `completed` observable plus
-[`push_result!`](@ref) — available for your own live consumers too, and
-scripted runs get the same stream through `run_piv_sequence`'s `on_result`
-callback).
+batch while it runs. In a scripted run, use `run_piv_sequence`'s `on_result`
+callback for the same stream of completed results.
 
 The *effort* menu switches between the manual schedule (`:custom`) and
 [`run_piv_sequence`](@ref)'s `:low` / `:medium` / `:high` presets — when a

@@ -1,18 +1,16 @@
 # Uncertainty quantification
 
-Uncertainty quantification (UQ) asks how much random error is likely in each
-particle image velocimetry (PIV) vector; it is not a claim that the true value
-is known. With `uncertainty = true` in [`PIVParameters`](@ref), Hammerhead
-estimates a per-vector measurement uncertainty — one standard deviation, in pixels —
-into the `uncertainty_u` / `uncertainty_v` fields of the result. The
-estimator is the *correlation statistics* method of
-[Wieneke2015](@citet), implemented from the paper.
+Set `uncertainty = true` in [`PIVParameters`](@ref) to estimate the random
+error of each particle image velocimetry (PIV) vector. The result's
+`uncertainty_u` and `uncertainty_v` fields contain one-standard-deviation
+estimates in pixels, calculated with the correlation-statistics method of
+[Wieneke2015](@citet).
 
 ## How it works
 
 After image deformation has converged, the two deformed windows should show
 the same particle pattern; any residual asymmetry between them is caused by
-noise, out-of-plane loss, and local gradients — exactly the effects that
+noise, out-of-plane loss, and local gradients. These effects
 perturb the correlation peak. The method measures, pixel by pixel, the
 asymmetry statistics of the correlation-difference terms and propagates
 them to the displacement estimate, yielding a per-window standard
@@ -37,7 +35,7 @@ deviation for `u` and `v` separately.
 ## What the numbers mean
 
 The estimate describes the **random error of the correlation measurement at
-that window** — nothing more:
+that window**:
 
 - Systematic errors (peak locking, calibration bias) are invisible to it;
   diagnose those with [`peak_locking`](@ref) and, for ground-truthed cases,
@@ -46,8 +44,8 @@ that window** — nothing more:
   vector: it describes the original correlation, not the replacement.
 - Windows that are nearly outliers legitimately report very large σ. When
   comparing uncertainty against a reference error, use medians over
-  non-outlier vectors rather than means — a handful of near-outlier
-  windows otherwise dominates.
+  non-outlier vectors rather than means; a handful of high-uncertainty
+  windows can otherwise dominate the mean.
 
 On synthetic noise sweeps, the median estimate tracks the measured
 root-mean-square (RMS)
@@ -71,8 +69,7 @@ including for Float32 images.
 An iterative pass runs one uncertainty-quantification sweep over the final
 device-resident warped
 windows; an ensemble keeps the pooled statistics on the device until final
-analysis. The CPU finalizer remains the correctness reference. Consumer GPUs
-with weak Float64 throughput may spend more time on UQ than on correlation;
+analysis. GPUs with weak Float64 throughput may spend more time on UQ than on correlation;
 see [Run PIV on a GPU](../howto/gpu.md) for benchmarking guidance.
 
 ## Stereo propagation

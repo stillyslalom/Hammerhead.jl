@@ -6,10 +6,10 @@ CurrentModule = Hammerhead
 
 Image conditioning before correlation: background removal, intensity
 capping, high-pass filtering, and contrast equalization, plus affine
-registration utilities. The mutating forms (`f!`) are the implementations
-and operate in place on floating-point buffers; the allocating names accept
-any real-valued matrix. See the
-[preprocessing how-to](../howto/preprocessing.md) for chaining recipes.
+registration utilities. The mutating forms (`f!`) modify floating-point
+buffers in place; the allocating forms accept any real-valued matrix and
+return a processed copy. See the
+[preprocessing how-to](../howto/preprocessing.md) for combining operations.
 
 ```@index
 Pages = ["preprocessing.md"]

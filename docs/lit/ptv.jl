@@ -2,18 +2,17 @@
 #
 # Particle image velocimetry (PIV) reports one vector per interrogation window.
 # Particle tracking velocimetry (PTV) instead follows identifiable particles.
-# When the seeding is sparse — near a wall, in a dilute spray, or wherever you want
-# paths that follow individual particles (*Lagrangian* measurements) rather
-# than velocities reported at fixed spatial locations (an *Eulerian* field) —
-# it is better to track individual particles. Hammerhead's PTV pipeline detects
-# particles in each frame, matches them across a pair, and links them across a sequence.
-# Everything here is synthetic and self-contained, so the ground truth is known
-# exactly.
+# With sparse seeding, such as near a wall or in a dilute spray, you can
+# follow individual particles and measure their paths (*Lagrangian*
+# measurements). PIV reports velocities at fixed grid locations (an
+# *Eulerian* field). Hammerhead's PTV pipeline detects particles, matches
+# them between frames, and links matches across a sequence. This synthetic
+# example supplies known particle positions for checking the matches.
 #
 # ## A tracked image pair
 #
-# We start from the same kind of synthetic pair as the PIV tutorials, but at a
-# lower seeding density — the regime where tracking shines.
+# Generate a pair at lower seeding density than the PIV examples, leaving
+# enough separation to identify individual particles.
 
 using Hammerhead
 using Hammerhead.SyntheticData
@@ -29,14 +28,14 @@ imgA, imgB, truthA, truthB = generate_synthetic_piv_pair(
 )
 size(imgA)
 
-# [`run_ptv`](@ref) does the whole two-frame analysis. By default it is
-# *hybrid*: a coarse [`run_piv`](@ref) runs internally to predict where each
-# particle goes, so nearest-neighbor matching stays reliable even when the
-# displacement (here ~6 px) is larger than the particle spacing
+# [`run_ptv`](@ref) analyzes both frames. By default, it uses a coarse
+# [`run_piv`](@ref) field to predict where each particle goes. This helps
+# nearest-neighbor matching when the
+# displacement (here about 6 px) approaches the particle spacing
 # [Keane1995](@cite). Matched vectors are then validated with a scattered
 # normalized-median test [Duncan2010](@cite) that *flags* outliers but never
-# replaces them — a tracked displacement is a measurement of one particle,
-# with nothing meaningful to substitute.
+# replaces them. Each tracked displacement belongs to one particle; replacing
+# it with a neighboring value would erase that measurement.
 
 ptv = run_ptv(imgA, imgB)
 
@@ -52,11 +51,10 @@ plot_vector_field(ptv; axis = (title = "PTV: one vector per particle",))
 #
 # `generate_synthetic_piv_pair` returns index-aligned truth
 # (`truthA[i]` ↔ `truthB[i]`), and PTV attributes each vector to the *frame-A*
-# particle position — exactly matching the forward-Euler contract of the
-# generator. So unlike PIV's symmetric deformation (which needs a midpoint
-# correction), the comparison is direct, with no interpolation error. We map
-# each detection to its nearest truth particle and measure the displacement
-# error over correct matches:
+# particle position. The generator also advances each particle from its
+# frame-A position, so no midpoint correction is needed. Match each
+# detection to its nearest reference particle, then measure displacement
+# error for correct matches:
 
 using Statistics: median
 
@@ -89,18 +87,18 @@ end
 (correct_fraction = correct / count(>(0), mA[ptv.index_a]),
  median_error_px = median(errs))
 
-# Almost every match is a correct correspondence, and the displacement error
-# is a few hundredths of a pixel.
+# Check the correct-match fraction and median displacement error. For this
+# pair, nearly all matches are correct and the median error is a few
+# hundredths of a pixel.
 #
 # ## Scattered vectors versus a gridded field
 #
-# PIV and PTV answer different questions. PIV gives a dense field on a regular
-# grid (spatially smoothed by the window size); PTV gives sparse, unsmoothed
-# measurements exactly where particles happen to be. [`ptv_to_grid`](@ref) bins
-# the tracked vectors back onto an interrogation grid — a median per cell —
-# when you need a field-shaped result (it plugs into
+# PIV gives a regular grid, with spatial smoothing set by the interrogation
+# windows. PTV gives scattered measurements at detected particle positions.
+# [`ptv_to_grid`](@ref) bins tracked vectors by their median in each grid
+# cell. The resulting field works with
 # [`field_statistics`](@ref), plotting, and predictors like any masked
-# [`PIVResult`](@ref)):
+# [`PIVResult`](@ref):
 
 piv = run_piv(imgA, imgB, multipass_parameters([64, 32]; padding = true, apodization = :gauss))
 gridded = ptv_to_grid(ptv, size(imgA); window_size = (32, 32), overlap = (16, 16))
@@ -115,9 +113,9 @@ fig
 # ## Linking a sequence into trajectories
 #
 # Given more than two frames, [`track_particles`](@ref) chains matches into
-# Lagrangian tracks. Each track head is predicted by constant velocity once it
-# has two points, so long paths stay locked onto their particle. We build a
-# short sequence by stepping a particle field through the vortex:
+# Lagrangian tracks. Once a track has two positions, a constant-velocity
+# prediction guides its next match. Build a short sequence by stepping the
+# particles through the vortex:
 
 sheet = GaussianLaserSheet(0.0, 40.0, 1.0)     # thick sheet: no dropout
 field = generate_particle_field((256, 256), 0.008; z_range = (-0.5, 0.5),
@@ -147,13 +145,13 @@ end
 Colorbar(fig2[1, 2]; colorrange = (0, 6), colormap = :viridis, label = "speed (px/frame)")
 fig2
 
-# The circular streaks trace the vortex; every line is one particle followed
-# across the whole sequence.
+# Each line shows one tracked particle. Together the tracks show the vortex
+# circulation across the sequence.
 #
 # ## Where to go next
 #
-# - When PTV beats PIV, and the frame-A attribution and flag-don't-replace
-#   conventions: [Coordinates, signs, and units](../explanation/conventions.md).
+# - For frame-A positions and outlier handling, see
+#   [Coordinates, signs, and units](../explanation/conventions.md).
 # - Detection, matching, and tracking parameters: the
 #   [PTV reference](../reference/ptv.md).
 # - Batch tracking over many pairs: [`run_ptv_sequence`](@ref) mirrors

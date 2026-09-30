@@ -31,7 +31,6 @@ from real plates.
 
 ## Dewarping to a common plane
 
-Rather than correlating raw images and reconciling geometry afterwards,
 Hammerhead resamples both cameras' images onto one regular grid of world
 coordinates in the measurement plane (a [`DewarpGrid`](@ref) shared by the
 rig, one [`ImageDewarper`](@ref) per camera). After dewarping, the same
@@ -68,10 +67,10 @@ only and call [`physical`](@ref) — see the
 
 ## Self-calibration
 
-Calibration assumed the plate sat exactly in the light sheet. In practice
-it never does — millimeter offsets and small tilts are routine — and the
-error contaminates `w` directly. The fix is *disparity self-calibration*
-[Wieneke2005](@citet), implemented as [`self_calibrate`](@ref):
+Calibration uses the plate position as the measurement plane. If the light
+sheet is offset or tilted relative to the plate, the reconstruction can be
+biased. [`self_calibrate`](@ref) corrects this misalignment using disparity
+self-calibration [Wieneke2005](@cite):
 
 1. **Measure the disparity.** Dewarp both cameras' images of the *same
    instant* and cross-correlate them (ensemble sum-of-correlation over
@@ -91,15 +90,15 @@ error contaminates `w` directly. The fix is *disparity self-calibration*
    disparity attribution is second-order exact, and iteration absorbs the
    rest), then a final measurement verifies convergence.
 
-The returned dewarpers are drop-in replacements for
-[`run_piv_stereo`](@ref), and the [`SelfCalibrationReport`](@ref) records
+Use the returned dewarpers with [`run_piv_stereo`](@ref). The
+[`SelfCalibrationReport`](@ref) records
 per-pass disparity statistics, fitted planes, and the cumulative world
 transform. Well-corrected setups converge to a residual disparity
 root-mean-square (RMS) below
-0.1 px on real recordings [Wieneke2005](@cite); the synthetic test fixtures
-reach 0.01 px.
+0.1 px on thin-sheet recordings [Wieneke2005](@cite). Your residual may be
+higher when the sheet is thicker or the two camera views decorrelate.
 
-One caveat: self-calibration moves the world frame's Z origin onto the
+Self-calibration moves the world frame's Z origin onto the
 actual light sheet, anchored so that camera 1's view barely moves. If your
 downstream analysis depends on the original plate-defined frame, the
 cumulative transform in the report (`R`, `t`) maps corrected-frame

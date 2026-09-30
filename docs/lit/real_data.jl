@@ -1,22 +1,16 @@
 # # A real recording: tip vortex with seeding dropout
 #
-# The [first tutorial](first_vector_field.md) generated its own images, so
-# every claim could be checked against ground truth. Real measurements
-# offer no such luxury — and that changes how you work. This tutorial
-# analyzes a genuine wind-tunnel recording and shows how to judge a
-# measurement using only what the analysis itself reports: validation
-# flags, peak ratios, and per-vector uncertainty.
+# Analyze a wind-tunnel image pair to calculate a vector field and identify
+# where its measurements are less reliable. You will inspect the images,
+# then compare validation flags, peak ratios, and per-vector uncertainty.
 #
 # The data is case A of the first International Particle Image Velocimetry
 # (PIV) Challenge
 # [Stanislas2003](@cite): a wing-tip vortex 1.64 m behind a transport
 # aircraft half-model in the German–Dutch Wind Tunnels Large Low-Speed
 # Facility (DNW-LLF), recorded by C. Kähler of the German Aerospace Center
-# (DLR). The Challenge organizers chose it because it concentrates common
-# large-facility problems in one image pair — strong velocity gradients,
-# varying particle image sizes, and loss of seeding in the vortex core.
-# The pair ships with Hammerhead's test suite, so this tutorial runs on
-# the real recording with no download step.
+# (DLR). The images contain strong velocity gradients, varying particle
+# image sizes, and loss of seeding in the vortex core.
 #
 # ## Load and inspect
 #
@@ -30,7 +24,8 @@ imgA = load_image(joinpath(dir, "A001_1.tif"))
 imgB = load_image(joinpath(dir, "A001_2.tif"))
 size(imgA), extrema(imgA)
 
-# Always look at real images before correlating them:
+# Inspect the particle images and illumination before choosing analysis
+# settings:
 
 using CairoMakie
 
@@ -44,14 +39,11 @@ let
     fig
 end
 
-# Three things stand out. The seeding is dense and the particle images are
-# large and bright — good news for correlation. The illumination is far
-# from uniform: the light sheet is much brighter near the top and bottom
-# edges (the row-wise mean intensity varies by a factor of four across the
-# frame). And near the center sits a dark disk roughly 200 px across:
-# the vortex core, nearly empty of particles because the swirl centrifuges
-# the seeding out of it. No preprocessing can restore information that was
-# never recorded there — keep that disk in mind throughout.
+# Most of the image has dense seeding and large, bright particle images.
+# Illumination varies across the frame: the row-wise mean intensity changes
+# by a factor of four. The dark disk near the center is the vortex core,
+# roughly 200 px across. Swirling flow has pushed most particles out of
+# that region, so its vectors will have less particle information to use.
 #
 # ## Run the analysis
 #
@@ -72,33 +64,32 @@ result = run_piv(imgA, imgB, passes)
 
 plot_vector_field(result)
 
-# A clean tip vortex, its center sitting exactly on the dark disk. The
-# free-stream flow is perpendicular to the light sheet, so the in-plane
-# field is almost pure swirl.
+# The in-plane field shows a tip vortex centered on the dark disk. The
+# free-stream flow is perpendicular to the light sheet, so the measured
+# in-plane motion is mostly swirl.
 #
 # ## Judging a measurement without ground truth
 #
-# With synthetic data we verified accuracy by subtraction. Here the only
-# evidence is what the correlation itself reports, and Hammerhead records
-# three layers of it in the [`PIVResult`](@ref):
+# There is no reference displacement field for this recording. Use these
+# three diagnostics in [`PIVResult`](@ref) to assess the calculated vectors:
 #
-# 1. **`result.outliers`** — binary validation verdicts (universal outlier
-#    detection plus peak-ratio checks by default).
-# 2. **`result.peak_ratio`** — the height ratio of the primary to the
-#    secondary correlation peak, the classic detectability metric.
-# 3. **`result.uncertainty_u` / `uncertainty_v`** — the Wieneke (2015)
+# 1. **`result.outliers`**: vectors rejected by validation (universal outlier
+#    detection by default; peak-ratio rejection requires an explicit threshold).
+# 2. **`result.peak_ratio`**: the height ratio of the primary to the
+#    secondary correlation peak. A low ratio means the displacement peak
+#    has a strong competitor.
+# 3. **`result.uncertainty_u` / `uncertainty_v`**: the Wieneke (2015)
 #    per-vector random-error estimate [Wieneke2015](@cite).
 #
 # Start with the flags:
 
 count(result.outliers), length(result.outliers)
 
-# Under one percent of nearly 5000 vectors — scattered single vectors,
-# mostly near the frame edges, and (perhaps surprisingly) *not* clustered
-# in the empty core. Validation is a binary verdict on catastrophic
-# failure; a window that still contains a handful of particles produces a
-# plausible, neighbor-consistent vector and passes. To see the *quality*
-# of what passed, look at the continuous metrics:
+# Fewer than one percent of the nearly 5000 vectors are flagged. Most flags
+# are near the frame edges, with few in the sparsely seeded core. A core
+# window can still pass validation if its remaining particles produce a
+# vector consistent with its neighbors. Peak ratio and uncertainty show
+# differences among the vectors that pass:
 
 valid = .!(result.outliers .| result.mask);
 
@@ -117,10 +108,9 @@ let
     fig
 end
 
-# Both maps point at the core without being told where it is: the peak
-# ratio dips and the estimated uncertainty flares exactly on the dark
-# disk. Quantitatively (medians, because near-outlier windows can
-# legitimately report enormous σ):
+# In the core, peak ratios are lower and estimated uncertainty is higher.
+# Compare the core with the far field using medians, which are less affected
+# by the very large estimates in a few near-outlier windows:
 
 using Statistics: median, quantile
 
@@ -135,25 +125,23 @@ function region_quality(sel)
 end
 (core = region_quality(r_core .< 120), far_field = region_quality(r_core .> 300))
 
-# In the far field the estimator reports a typical random error near
-# 0.09 px. Inside the core the median rises by half and the upper decile
-# roughly doubles — the sparse windows correlate on fewer, weaker particle
-# images, and the uncertainty says so honestly, vector by vector. This is
-# the division of labor on real data: validation removes the wreckage,
-# uncertainty grades everything that survives. See
+# In the far field, the median estimated random error is near 0.09 px.
+# Inside the core, the median is about 50% higher and the 90th percentile
+# roughly doubles because fewer particle images contribute to each
+# correlation. The validation flags identify rejected vectors; the
+# uncertainty estimates help assess the vectors that remain. See
 # [Uncertainty quantification](../explanation/uncertainty.md) for what the
 # estimate does and doesn't cover.
 #
-# ## Preprocessing: measure, don't assume
+# ## Compare preprocessing options
 #
-# The [preprocessing guide](../howto/preprocessing.md) ends with a rule:
-# check a chain's effect before committing to it, using the peak-ratio
-# distribution as the judge. This recording suggests three candidates —
+# Compare each processing option on the same image pair using peak ratios
+# and outlier counts. The [preprocessing guide](../howto/preprocessing.md)
+# describes the methods. Here, try
 # [`highpass_filter`](@ref) for the illumination gradient,
 # [`intensity_cap`](@ref) for the bright particles [Shavit2007](@cite),
 # and contrast-limited adaptive histogram equalization ([`clahe`](@ref),
-# commonly abbreviated CLAHE) for the dim core. Run the same analysis behind
-# each and compare:
+# commonly abbreviated CLAHE) for the dim core:
 
 candidates = [
     "raw"              => identity,
@@ -172,24 +160,19 @@ function chain_quality(f)
 end
 [name => chain_quality(f) for (name, f) in candidates]
 
-# The result upends the assumptions. The high-pass filter — the textbook
-# response to illumination gradients — *lowers* the median peak ratio and
-# triples the outlier count: these particle images are large, so a filter
-# tuned to remove smooth background removes particle energy too, and the
-# smooth gradient never bothered the correlator in the first place (each
-# window subtracts its own mean). Intensity capping doubles the outliers
-# for the same reason: the brightest particles are signal here, not noise.
-# Only CLAHE helps, and modestly — it flattens the visible banding and
-# nudges peak ratios up in the dim regions.
+# High-pass filtering lowers the median peak ratio and triples the outlier
+# count. These large particle images lose signal along with the smooth
+# background, while each correlation window already subtracts its own mean
+# intensity. Intensity capping doubles the outlier count because the bright
+# particle images contribute useful signal. CLAHE provides a modest gain:
+# it reduces the visible banding and raises peak ratios in dim regions.
 #
-# The lesson is not that preprocessing is useless — on recordings with
-# static glare or genuinely low contrast it is decisive. The lesson is
-# that every step must pay for itself in measured correlation quality on
-# *your* images. Here the honest conclusion is that the recording is
-# already good, and the elevated uncertainty in the core is a property of
-# the flow (the particles really are missing), not a defect any filter can
-# repair. With more than one image pair, ensemble correlation can pool the
-# few particles that do transit the core across many instants — see
+# For this pair, use the raw images or consider CLAHE for the dim regions;
+# the tested high-pass and intensity-cap settings make the correlations
+# worse. The core remains less certain because it contains few particles.
+# If you have a sequence of a statistically stationary flow, ensemble
+# correlation can combine information from particles passing through the
+# core at different times; see
 # [Ensemble correlation for low signal-to-noise ratio (SNR)](../howto/ensemble.md).
 #
 # ## Where to go next

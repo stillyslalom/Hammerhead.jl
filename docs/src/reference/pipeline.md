@@ -43,8 +43,8 @@ Private = false
 
 ## Masks
 
-Analysis masks are image-sized `Bool` matrices, `true` marking excluded
-pixels — see the [masking how-to](../howto/masking.md) and
+Analysis masks are image-sized `Bool` matrices with `true` marking excluded
+pixels. See the [masking how-to](../howto/masking.md) and
 [the masking model](../explanation/masking.md). Masks built from image files
 use [`load_mask`](@ref).
 
@@ -68,8 +68,8 @@ Private = false
 
 ## Plotting
 
-Provided by a package extension — load a Makie backend (e.g. `using GLMakie`
-or `using CairoMakie`) to activate the methods.
+Load a Makie backend (e.g. `using GLMakie` or `using CairoMakie`) to enable
+the plotting methods.
 
 ```@autodocs
 Modules = [Hammerhead]

@@ -1,9 +1,8 @@
 # Run PIV on a GPU
 
 **Goal:** run particle image velocimetry (PIV) on a graphics processing unit
-(GPU), select and validate the backend, and understand which work stays on
-the device, and avoid configurations where transfer or Float64 cost outweighs
-the acceleration.
+(GPU), check that your settings are supported, and compare performance with
+the CPU on your workload.
 
 Hammerhead's default `backend = :cpu` uses the central processing unit (CPU)
 and remains the complete reference
@@ -33,16 +32,15 @@ result = run_piv(imgA, imgB; effort = :high, backend = :amdgpu)
 ```
 
 For NVIDIA, use `using CUDA`, check `CUDA.functional()`, and pass
-`backend = :cuda`. The built-in `backend = :ka` runs the same portable
-KernelAbstractions kernels on the CPU. It is a correctness and development
-tier, not a faster replacement for the FFTW-backed `:cpu` path.
+`backend = :cuda`. The built-in `backend = :ka` runs the portable
+KernelAbstractions kernels on the CPU. Use `:cpu` for ordinary CPU analysis.
 
 The available selectors are:
 
 | Selector | Provider | Intended use |
 |---|---|---|
 | `:cpu` | Hammerhead | Default, complete FFTW reference path |
-| `:ka` | Hammerhead | Hardware-free test of the portable kernels |
+| `:ka` | Hammerhead | Run the device kernels on a CPU for comparison |
 | `:amdgpu` | AMDGPU.jl extension | AMD GPUs through ROCm |
 | `:cuda` | CUDA.jl extension | NVIDIA GPUs through CUDA |
 

@@ -1,67 +1,43 @@
 # HammerheadGUI.jl
 
-Desktop GUI for [Hammerhead.jl](https://github.com/stillyslalom/Hammerhead.jl)
-(particle image velocimetry), built on GLMakie + NativeFileDialog.
+**HammerheadGUI** provides desktop tools for [Hammerhead.jl](https://github.com/stillyslalom/Hammerhead.jl)
+particle image velocimetry (PIV). It uses GLMakie and NativeFileDialog and
+lives in the repository's `HammerheadGUI/` subdirectory.
 
-Lives in the Hammerhead monorepo as a subdirectory package (Makie-style):
-the core package stays at the repo root and never gains GUI dependencies;
-this package is where the GLMakie hard dependency lives.
+Start with `batch_runner()` to select frames, choose an effort preset or a
+multi-pass schedule, and run planar PIV. The form shows progress, supports
+cancellation between pairs, and can save results incrementally in JLD2
+format. Open "view results" as soon as the first pair completes; the explorer
+adds later results as the batch runs. You can also open saved results with
+`result_explorer(results_or_path)`.
 
-## Status
+## Tools
 
-Phase 7 in the repo [ROADMAP](../ROADMAP.md), in progress.
+- **Result explorer:** Browse planar PIV, stereo PIV, PTV, and particle tracks,
+  including mixed sequences. Inspect vectors, components, diagnostics, and
+  uncertainty; scrub through frames; and adjust color limits. Planar fields
+  also offer derived quantities such as vorticity and interactive profile and
+  circulation measurements. A `PhysicalScale` supplies physical-unit labels.
+- **Mask editor:** Draw and edit exclusion polygons over an image with
+  `mask_editor(image_or_path)`. Export the mask with `polygon_mask(editor)` or
+  save an image that `load_mask` can read.
+- **Preprocessing preview:** Use `preprocess_preview(image_or_path)` to compare
+  raw and processed images. Supply the paired frame, then click a location
+  to inspect its single-window displacement and correlation peak ratio as
+  you adjust processing steps.
+- **Scale tool:** Use `scale_tool(image_or_path)` to measure a feature of known
+  length and attach its `PhysicalScale` to a batch with `apply_scale!`.
+- **Stereo workflow:** Review dot detection and reprojection errors across
+  calibration planes with `calibration_review`. Build a shared dewarping grid
+  with `stereo_calibration`, then process synchronized camera frames with
+  `stereo_batch_runner()`. Use `selfcal_review(report)` to inspect disparity
+  maps and the self-calibration report.
 
-- **Result explorer** (done) — `result_explorer(results_or_path)` opens a
-  read-only viewer for all four persisted result types (`PIVResult`,
-  `StereoPIVResult`, `PTVResult`, `TrackingResult`), mixed sequences
-  included: gridded scalar-field heatmap (magnitude, components,
-  diagnostics, uncertainty) with a fast quiver-style vector overlay, PTV
-  particle scatter with displacement arrows, tracking polylines colored by
-  mean speed (gap-aware), robust percentile color limits with manual
-  override, frame scrubbing, click-to-inspect, live appending
-  (`push_result!`) while a batch runs, and physical-unit labels when a
-  `PhysicalScale` is attached; planar results add the derived fields
-  (vorticity, divergence, strain rate, swirling strength, Q, unit-labelled)
-  and interactive profile/circulation tools
-- **Mask editor** (done) — `mask_editor(image_or_path)` draws exclusion
-  polygons over the image (left-click add/select, right-click close);
-  `polygon_mask(editor)` exports the package mask convention and
-  "save mask…" writes a mask image `load_mask` reads back
-- **Parameter form + batch runner** (done) — `batch_runner()` picks frames,
-  edits the multi-pass `PIVParameters` schedule (or an effort preset), sets
-  an optional physical scale and preprocessing pipeline, runs
-  `run_piv_sequence` with live progress, cancellation, incremental JLD2
-  output, and a "view results" hand-off that opens mid-run and follows the
-  batch live
-- **Preprocessing preview** (done) — `preprocess_preview(image_or_path)`
-  composes the core preprocessing set into an ordered, toggleable pipeline
-  with a live raw/processed comparison and a single-window correlation
-  probe (click a location; du/dv/peak-ratio recompute as steps change);
-  `build_preprocess` exports the batch-driver closure (frame-copying,
-  snapshot semantics)
-- **Scale tool** (done) — `scale_tool(image_or_path)` derives a
-  `PhysicalScale` from a two-point calibration line of known separation;
-  `apply_scale!` hands it into a batch form
-- **Stereo batch** (done) — `stereo_calibration(cr1, cr2)` builds the
-  dewarper pair from two fitted calibration reviews (embedded side by side
-  via `calibration_review!`); `stereo_batch_runner()` runs
-  `run_piv_stereo_sequence` over two synchronized frame lists with native
-  between-acquisition cancellation, a dt-only scale, incremental output,
-  and the live explorer hand-off
-- **Fast startup** (done) — a PrecompileTools workload brings
-  time-to-first-window to ~1 s after loading; a PackageCompiler app bundle
-  for non-Julia users is still to be evaluated
-- **Calibration & self-calibration diagnostics** (done) —
-  `calibration_review(images, zs; spacing, …)` reviews grid detection and
-  reprojection errors plane by plane; `selfcal_review(report)` summarizes a
-  `SelfCalibrationReport` and browses its disparity maps
-
-## Architecture rule
-
-All application state and logic live in a framework-free controller layer
-(plain Julia + Observables). Makie code renders controllers and pushes user
-input into them, but controllers never depend on Makie, so the logic is
-testable without a GL context and the widget shell stays swappable.
+Each window has a Julia controller for its state and actions. The view sends
+user input to that controller, so the same operations are available from code
+without opening a window. See the
+[GUI tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/gui_tour/)
+for a worked example and the [GUI guide](../docs/src/howto/gui.md) for task recipes.
 
 ## Development
 

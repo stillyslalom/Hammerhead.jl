@@ -15,14 +15,14 @@ the returned [`PIVResult`](@ref)`{T}`. Feed `Float64` matrices (the
 window loads, resampling — runs in single precision, halving memory traffic
 on large recordings.
 
-## Why not just always Float64?
+## Choosing Float32 or Float64
 
 Particle image velocimetry (PIV) is bandwidth-bound: the dominant costs are
 fast Fourier transforms (FFTs) over interrogation
-windows and B-spline resampling over whole images. Single precision is
-plenty for image data quantized to 8–16 bits, and choosing precision at the
-input keeps the choice in the caller's hands with zero configuration
-surface — there is no `precision` parameter to document or misuse.
+windows and B-spline resampling over whole images. Float32 is generally
+sufficient for image data quantized to 8–16 bits and reduces memory use.
+Choose precision by loading or converting the input images to the desired
+element type.
 
 On graphics processing unit (GPU) backends, image deformation, FFTs, and
 correlation planes still follow
@@ -31,11 +31,10 @@ uncertainty exception below remains Float64 on the GPU as well; see
 [Run PIV on a GPU](../howto/gpu.md) for the resulting memory and performance
 tradeoffs.
 
-## Deliberate Float64 islands
+## Computations that use Float64
 
-A few computations always run in double precision regardless of the image
-type, because they are far from the per-pixel hot path and benefit from the
-extra headroom. They convert back to `T` when stored:
+Some computations use Float64 regardless of image type. Their stored results
+are converted back to `T`:
 
 - **Camera calibration and stereo geometry** — offline, once-per-experiment
   fits ([`calibrate_camera`](@ref), [`detect_calibration_grid`](@ref)), the
@@ -48,6 +47,7 @@ extra headroom. They convert back to `T` when stored:
   and field statistics accumulate in Float64.
 - **The iterative `:gauss2d` subpixel fit** (an LsqFit solve).
 
-The practical consequence: a `Float32` pipeline produces `Float32` results
-whose *accuracy* is limited by the PIV method (≳ 0.03 px), not by the
-arithmetic — the islands make sure of it.
+A `Float32` analysis returns `Float32` fields. For the accuracy configuration
+described in [Correlation accuracy](correlation.md), measured error on
+synthetic data is about 0.03 px root-mean-square. The Float64 computations
+above preserve precision where sums or fits need it.

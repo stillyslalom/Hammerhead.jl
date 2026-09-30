@@ -13,9 +13,9 @@ core provides multi-pass image deformation, vector validation, per-vector
 uncertainty quantification, ensemble correlation, camera calibration with
 disparity self-calibration, physical-unit scaling, batch processing with
 incremental result files, and optional GPU execution. A companion desktop
-package, **HammerheadGUI**, wraps the same API in interactive tools — result
-explorer, mask editor, preprocessing preview with a correlation probe, and
-batch forms ([take the tour](tutorials/gui_tour.md)).
+package, **HammerheadGUI**, provides interactive tools for exploring results,
+drawing masks, previewing preprocessing, and running batches
+([take the tour](tutorials/gui_tour.md)).
 
 PIV starts from two images of tracer particles separated by a known time
 interval. By finding how the particle pattern moves from the first image to
@@ -32,7 +32,7 @@ pkg> add HammerheadGUI     # optional: the desktop GUI tools
 
 ## Quick example
 
-The simplest complete analysis is one call with an *effort* preset.
+Use an *effort* preset to select a multi-pass analysis schedule.
 [`run_piv`](@ref) operates on in-memory image pairs (any equally sized
 real-valued matrices); [`load_image`](@ref) loads image files as grayscale
 `Matrix{Float64}`:
@@ -47,8 +47,8 @@ result = run_piv(imgA, imgB; effort = :high)   # or :low / :medium
 ```
 
 `effort` picks a full multi-pass schedule sized to the images (see
-[Choose an effort level](howto/effort.md)). When your data needs specific
-knobs, pass an explicit schedule instead:
+[Choose an effort level](howto/effort.md)). To choose window sizes and
+processing options yourself, pass an explicit schedule:
 
 ```julia
 # Multi-pass with symmetric image deformation: each pass uses the previous
@@ -76,16 +76,17 @@ persists results incrementally in the JLD2 Julia data format ([`save_results`](@
 
 ## Where to go next
 
-The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
+Choose a tutorial for a worked example, a how-to guide for a specific task,
+or an explanation or reference page for more detail:
 
-- **Tutorials** — guided, executable walkthroughs. Start with
+- **Tutorials:** guided walkthroughs. Start with
   [Your first vector field](tutorials/first_vector_field.md) or the
   point-and-click path, [a tour of the GUI](tutorials/gui_tour.md); continue
   with a [real wind-tunnel recording](tutorials/real_data.md), then
   [stereo PIV end to end](tutorials/stereo.md),
   [stereo on a real recording](tutorials/stereo_real.md), and
   [particle tracking velocimetry](tutorials/ptv.md).
-- **How-to guides** — recipes for specific jobs:
+- **How-to guides:** instructions for specific tasks:
   [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
   [effort selection](howto/effort.md),
   [physical-unit scaling](howto/scaling.md),
@@ -95,7 +96,7 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
   [batch processing](howto/batch.md),
   [working with the GUI](howto/gui.md), and
   [calibrating a real stereo rig](howto/stereo_rig.md).
-- **Explanation** — how and why Hammerhead works the way it does:
+- **Explanation:** the methods and conventions behind the analysis:
   [coordinate conventions](explanation/conventions.md),
   [correlation accuracy](explanation/correlation.md),
   [multi-pass deformation](explanation/multipass.md),
@@ -105,6 +106,6 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
   [the GUI's controller–view split](explanation/gui.md),
   the [numeric precision policy](explanation/precision.md), and the
   [compatibility policy](explanation/compatibility.md).
-- **Reference** — the API, one page per topic, starting at
+- **Reference:** the API, one page per topic, starting at
   [Core pipeline and parameters](reference/pipeline.md); the GUI's API is
   under [GUI (HammerheadGUI)](reference/gui.md).

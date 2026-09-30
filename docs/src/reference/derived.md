@@ -17,8 +17,7 @@ omitted; `include_invalid=true` admits outliers but still excludes masks.
 For [`result_spectrum`](@ref), pass `dt` as the interval between successive
 results. The delay between images within a pair, stored in
 `PhysicalScale.dt`, is a velocity conversion factor and may differ from the
-sequence cadence. This explicit sampling interval is a pre-1.0 API correction;
-existing result types and stored results are unchanged.
+sequence cadence.
 
 ```@index
 Pages = ["derived.md"]

@@ -1,9 +1,8 @@
 # The graphical user interface (GUI) controller–view split
 
-Every HammerheadGUI tool is two pieces with a strict boundary between
-them: a **controller** that owns all state and logic, and a **view** that
-renders it. Knowing the boundary is what turns the GUI from a set of
-windows into something you can script, test, and embed.
+Each HammerheadGUI tool has a **controller** that holds its state and a
+**view** that displays it. You can control a view from Julia code or embed it
+in a larger figure.
 
 ## Controllers own the state
 
@@ -14,10 +13,8 @@ object whose fields are
 the current frame, the displayed field, the polygons drawn so far, the
 batch progress. Everything the tool *does* is an ordinary function on the
 controller: `set_field!`, `close_active!`, `start!`. The controllers live
-in a `HammerheadGUI.Controllers` submodule that never imports Makie, so
-none of this needs a GL context — constructing a `MaskEditor`, feeding it
-click gestures, and exporting the mask works headless, on a server, or in
-a test suite.
+in `HammerheadGUI.Controllers`, which does not import Makie. You can create
+and use a controller on a server without opening a window.
 
 User gestures are controller methods too. When you left-click in the mask
 editor, the view calls `click!(me, x, y)`; the decision of whether that
@@ -37,10 +34,9 @@ open two views on one controller and they stay in sync.
 
 Three practical consequences:
 
-- **Any open window can be driven from the REPL.** Update an observable or
-  call a controller function and the figure follows —
-  [the GUI tour](../tutorials/gui_tour.md) is rendered exactly this way,
-  and the same technique automates screenshots or demo recordings.
+- **Drive an open window from the REPL.** Update an observable or call a
+  controller function and the figure follows. See
+  [the GUI tour](../tutorials/gui_tour.md) for examples.
 - **GUI sessions are reproducible.** A sequence of clicks is a sequence of
   controller calls, so an interactive session can be replayed as a script.
 - **Views compose.** [`result_explorer!`](@ref) builds into a
@@ -49,8 +45,8 @@ Three practical consequences:
 
 ## The boundary to the core package
 
-The controllers speak the core API and nothing else. The mask editor's
-export *is* [`polygon_mask`](@ref) — the same rasterization, the same
+Controllers use the core API. The mask editor exports a mask made with
+[`polygon_mask`](@ref), using the same
 `true` = excluded convention described in
 [the masking model](masking.md); its "save" writes the image
 [`load_mask`](@ref) reads. The batch runner *is*
@@ -58,11 +54,8 @@ export *is* [`polygon_mask`](@ref) — the same rasterization, the same
 output file is an ordinary JLD2-format Julia data file written by
 [`save_results`](@ref). The calibration
 review calls [`detect_calibration_grid`](@ref) and
-[`calibrate_camera`](@ref) verbatim. Nothing you produce in the GUI is in
-a GUI-only format, and any GUI workflow has a line-for-line scripted
-equivalent.
+[`calibrate_camera`](@ref). GUI output can therefore be read and processed
+with the same functions you use in a script.
 
-The dependency boundary mirrors the conceptual one: Hammerhead never
-depends on the GUI or on GLMakie — HammerheadGUI is a separate package
-that depends on Hammerhead, so headless installations (clusters, CI)
-never pay for it.
+HammerheadGUI is a separate package that depends on Hammerhead. The core
+package does not require GLMakie, so it can run without a display.

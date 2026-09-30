@@ -1,11 +1,11 @@
 # Multi-pass interrogation and image deformation
 
-In particle image velocimetry (PIV), a single correlation pass faces a hard
-trade-off: small windows resolve
-fine flow structure but can only measure small displacements reliably (the
-quarter-window rule), while large windows measure large displacements but
-average over structure. Multi-pass interrogation with window refinement
-gets both, and image deformation extends it to strongly sheared flows
+In particle image velocimetry (PIV), small windows resolve fine flow structure
+but measure only small displacements reliably (the quarter-window rule).
+Large windows can measure larger displacements but average over more of the
+flow. Multi-pass interrogation starts with large windows and refines the
+measurement with smaller ones. Image deformation helps in strongly sheared
+flows
 [Scarano2002](@cite).
 
 ## The predictor–corrector loop
@@ -39,42 +39,32 @@ bias in curved or sheared flow.
 
 ## Convergence sweeps and iterative passes
 
-A pass with `max_iterations > 1` adds convergence sweeps at that window size:
-it feeds its own validated field back as the deformation predictor and
-re-correlates, sweep after sweep, until the field converges or the budget is
-spent. Residual displacements shrink toward zero and the measurement
-approaches the deformation-limited accuracy —
+A pass with `max_iterations > 1` repeats correlation at that window size,
+using its latest validated field as the next deformation predictor. It stops
+when the field converges or reaches `max_iterations`:
 
 ```julia
 multipass_parameters([64, 32, 16]; final = (max_iterations = 3,))
 ```
 
-This iterates the 16-px stage and stops as soon as continuing would not change
-the answer. Repeating the final window size explicitly —
-`multipass_parameters([64, 32, 16, 16, 16])` — is the older equivalent form
-when the early exit is disabled. Convergence means the 95th percentile of the
+This iterates the 16-px stage. With early exit disabled,
+`multipass_parameters([64, 32, 16, 16, 16])` gives the same number of sweeps.
+Convergence means the 95th percentile of the
 per-vector displacement change between successive sweeps drops below
-`convergence_tol` (0.05 px by default). The criterion is a
-percentile rather than a maximum deliberately: a few bistable low-signal
-windows flicker between correlation peaks for arbitrarily many sweeps (on
-synthetic test scenes the maximum change stays near a pixel while the median
-falls below 10⁻³ px), and those windows are validation's problem — a
-max-norm would never converge and the early exit would be dead. Setting
+`convergence_tol` (0.05 px by default). This percentile lets the pass stop
+when most vectors have settled, even if a few low-signal windows alternate
+between peaks. Inspect or reject those windows through validation. Setting
 `convergence_tol = 0` disables the early exit, making the pass run exactly
-`max_iterations` sweeps — exactly equivalent to repeating the pass that many
+`max_iterations` sweeps, equivalent to repeating the pass that many
 times in the schedule.
 
-Iteration also stops validation failures from cascading: within an
-iterating pass a flagged vector's local-median replacement seeds the next
-sweep's deformation, and the window is then *re-measured* — so replacement
-artifacts relax toward measured data within the stage instead of leaking
-into the next (smaller-window) pass's predictor, where a corrupted
-predictor would spoil every window it touches.
+Within an iterating pass, a flagged vector's local-median replacement seeds
+the next deformation, and the window is measured again. This gives that
+window another chance to produce a valid measurement before the next,
+smaller-window pass uses the field as its predictor.
 
-Each extra sweep costs one full-image re-deformation plus one re-correlation
-of every window (roughly the cost of an extra pass; the deformation is
-O(image) no matter how few windows still change, which is why Hammerhead
-re-correlates the whole field rather than tracking per-vector convergence).
+Each extra sweep deforms both images and correlates every window, so budget
+roughly the time of another pass for each sweep.
 
 Two features **require** a converged schedule:
 

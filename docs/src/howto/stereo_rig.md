@@ -60,15 +60,14 @@ plate roughly half the dots should report `level == 1`.
 
 ## What residuals to expect
 
-Judge the fit with [`calibration_quality`](@ref) — but know what you're
-looking at. On the real 4E plates:
+Check the fit with [`calibration_quality`](@ref). For the 4E plates, expect:
 
 - Per-dot reprojection residuals of **~0.5–1 px root-mean-square (RMS)** that are
-  *repeatable across plate positions* reflect the plate's dot-position
-  manufacturing tolerance, not detection error. Don't chase them with
-  model changes; they are a property of the target.
+  *repeatable across plate positions* can reflect the plate's dot-position
+  manufacturing tolerance. Compare residual patterns across positions before
+  changing the model.
 - Plane-to-plane detection *repeatability* is **0.15–0.3 px** — that is
-  the level of the actual measurement noise.
+  an estimate of detection variability.
 
 A pinhole fit that trails the Soloff fit badly indicates lens distortion or
 refraction along the optical path — expected through windows or liquid;
@@ -78,8 +77,8 @@ stay with Soloff.
 
 Build the shared grid and per-camera dewarpers, then correct the
 plate-to-sheet misregistration with [`self_calibrate`](@ref) **on the
-actual particle recordings** — the plate never sits exactly in the light
-sheet:
+particle recordings**. The calibration plate position may differ from the
+light-sheet position:
 
 ```julia
 grid = DewarpGrid(x = -40.0:0.1:40.0, y = -30.0:0.1:30.0)   # mm, finer than the vector spacing
@@ -92,19 +91,19 @@ dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2)
 
 Inspect the report before trusting it:
 
-- Don't judge by `report.converged` alone: on real data the residual
+- Check more than `report.converged`: on real data the residual
   disparity RMS floors at the sheet-thickness decorrelation level (0.1 px
   on thin-sheet setups [Wieneke2005](@cite); ~0.5 px on the 4E
   recordings), which can sit above the default `tol`. Misalignment is
-  *systematic*, so the signed median disparity components — computed from
-  the maps with `keep_disparity_maps = true` — are the sharper test; the
+  *systematic*, so inspect the signed median disparity components, computed
+  from the maps with `keep_disparity_maps = true`. The
   [real-recording tutorial](../tutorials/stereo_real.md) walks through
   this judgment.
-- The first pass's `plane` — its offset and tilt tell you how far the
-  plate actually was from the sheet; millimeters are normal.
-- A large `triangulation_rms` with a small final disparity suggests
-  calibration errors rather than sheet misalignment — revisit the plate
-  detections.
+- Check the first pass's `plane` for the estimated offset and tilt between
+  the calibration plate and light sheet.
+- A large `triangulation_rms` means the measured disparity is inconsistent
+  with the camera geometry. Check the plate detections and disparity maps
+  for calibration or correlation errors.
 - Pass `keep_disparity_maps = true` to inspect the raw disparity fields
   when convergence is poor (check the stereo overlap region, seeding
   density, and window size).
@@ -117,7 +116,6 @@ stereo = run_piv_stereo(A1, B1, A2, B2, dw1c, dw2c, passes)
 
 For large per-camera analyses, `backend = :amdgpu` or `:cuda` forwards GPU
 execution to both two-component (2C) PIV calls. Dewarping the four raw images
-and reconstructing the final three-component (3C) field remain CPU operations,
-so stereo does not yet form a fully
-device-resident pipeline. See [Run PIV on a GPU](gpu.md) for setup and the
+and reconstructing the final three-component (3C) field remain CPU operations.
+See [Run PIV on a GPU](gpu.md) for setup and the
 supported PIV option matrix.

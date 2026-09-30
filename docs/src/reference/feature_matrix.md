@@ -11,7 +11,8 @@
 | PTV and trajectory linking | yes | CPU | CPU | CPU |
 | Retained correlation planes | yes | no | no | no |
 
-`KA CPU` is the hardware-free proving backend selected by `backend = :ka`.
+`KA CPU`, selected by `backend = :ka`, runs the shared KernelAbstractions
+kernels on the CPU.
 CUDA and AMDGPU accelerate correlation, deformation, peak analysis, and the
 Wieneke uncertainty statistics; image loading, dewarping, 3C reconstruction,
 PTV, validation, exports, and statistics remain host operations. GPU backends

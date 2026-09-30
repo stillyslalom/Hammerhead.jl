@@ -37,7 +37,7 @@ inside windows.
 - Batch drivers with incremental JLD2-format Julia data output, dynamic masking,
   in-place preprocessing, physical-unit metadata, and Makie plotting
 
-New to velocimetry? Start with the executable
+Start with the
 [first-vector-field tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/first_vector_field/),
 then analyze a
 [real wind-tunnel recording](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/real_data/).
@@ -47,9 +47,9 @@ tutorials, and the full API reference.
 
 ## Planar PIV
 
-`run_piv` operates on in-memory image pairs — any equally sized real-valued
-matrices. Load image files with `load_image` (TIFF including 16-bit, PNG, and
-anything else FileIO can dispatch):
+`run_piv` accepts a pair of equally sized, real-valued matrices. Use
+`load_image` to read TIFF (including 16-bit), PNG, and other formats supported
+by FileIO:
 
 ```julia
 using Hammerhead
@@ -89,11 +89,11 @@ Sign convention: a particle at `(row, col)` in the first image found at
 `padding = true` with `apodization = :gauss` is the accuracy configuration
 (unbiased, ~0.03 px RMS on synthetic data) at roughly four times the fast
 Fourier transform (FFT) cost per window.
-Vectors failing validation are first re-tested against their
-secondary/tertiary correlation peaks — a locally consistent alternative is
-accepted as measured data — and otherwise replaced with the local median and
-marked in `result.outliers`. Peak locking can be diagnosed with
-`peak_locking(result.u)`.
+For vectors that fail validation, the pipeline checks the secondary and
+tertiary correlation peaks. It accepts a locally consistent alternative as
+measured data. If no peak passes validation, it replaces the vector with the
+local median and marks it in `result.outliers`. Use `peak_locking(result.u)`
+to check for peak locking.
 
 The pipeline's numeric precision follows the images: loading with
 `load_image(Float32, path)` runs the correlators, deformation, and validation
@@ -181,8 +181,7 @@ valid pixels only, with no intensity step at the mask edge.
 
 ## Preprocessing
 
-Each operation has a mutating form that reuses the image buffer, so a chained
-pipeline allocates nothing per step — the pattern for batch loops:
+Use the mutating forms to apply several operations to the same image buffer:
 
 ```julia
 bg = compute_background(images)            # ensemble :min (or :mean) background
@@ -213,10 +212,10 @@ With Unitful loaded (a weak dependency),
 
 ## Graphics processing unit (GPU) and alternative backends
 
-Correlation can run through portable KernelAbstractions kernels:
-`backend = :ka` (CPU, built in) is bitwise-checked against the default
-engine, and loading a device package enables the matching GPU backend —
-`using AMDGPU` for `backend = :amdgpu`, `using CUDA` for `backend = :cuda`.
+Correlation can run through portable KernelAbstractions kernels.
+`backend = :ka` runs these kernels on the CPU. To run them on a GPU, load
+the device package: `using AMDGPU` enables `backend = :amdgpu`, and
+`using CUDA` enables `backend = :cuda`.
 The GPU backends batch whole passes on the device, including subpixel peak
 analysis, and currently cover cross- and phase correlation with
 `:gauss3`/`:gauss9` subpixel fits, multi-pass deformation, ensemble
@@ -227,7 +226,7 @@ device-memory sizing, validation, and performance guidance.
 
 ## Visualization
 
-Plotting is provided as a package extension — load any Makie backend first:
+Load a Makie backend to enable plotting:
 
 ```julia
 using GLMakie  # or CairoMakie
@@ -236,12 +235,12 @@ plot_vector_field!(ax, result)               # into an existing Axis
 ```
 
 Result methods label axes in physical units when a `PhysicalScale` is
-attached. A desktop GUI (result explorer, polygon mask editor, batch runner,
-calibration review) is developed in this repository as the
-[`HammerheadGUI/`](HammerheadGUI/) subdirectory package.
+attached. The companion [`HammerheadGUI`](HammerheadGUI/) package provides
+interactive tools for exploring results, drawing masks, running batches,
+and reviewing calibrations.
 
 The lower-level building blocks (`CrossCorrelator`, `PhaseCorrelator`,
 `correlate`, `correlate_deformable`, `warp_image`, `smoothn`,
 `error_statistics`, `universal_outlier_detection`, ...) are also exported for
-custom pipelines — see the
+custom pipelines. See the
 [API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/).

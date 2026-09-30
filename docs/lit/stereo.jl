@@ -1,11 +1,10 @@
 # # Stereo particle image velocimetry (PIV) end to end
 #
-# Ordinary planar PIV measures two in-plane displacement components. Two
+# Planar PIV measures two in-plane displacement components. Two
 # cameras viewing the same light sheet from different angles provide enough
-# information to recover the third, out-of-plane component as well. This
-# tutorial walks the entire stereo chain
-# on a synthetic rig — calibration plate to three-component vector field —
-# so every step has a known ground truth:
+# information to recover the out-of-plane component. This tutorial uses a
+# synthetic rig to take calibration-plate images through to a three-component
+# vector field. The known geometry and displacement let you check each step:
 #
 # 1. photograph a calibration target ([`render_calibration_target`](@ref)),
 # 2. detect and index its dots ([`detect_calibration_grid`](@ref)),
@@ -21,10 +20,9 @@
 #
 # ## A synthetic stereo rig
 #
-# The "true" optics: two pinhole cameras in a standard stereo arrangement,
-# yawed ±20° about the vertical axis, looking at the world origin from
-# 500 mm. In a real experiment these exist as hardware; here they render
-# our images and provide the ground truth.
+# The rig has two pinhole cameras yawed ±20° about the vertical axis,
+# looking at the world origin from 500 mm. Their known geometry provides
+# a reference for the camera models fitted below.
 
 using Hammerhead
 using Random, LinearAlgebra
@@ -47,8 +45,7 @@ true_cams = (make_camera(-20.0), make_camera(20.0))
 # The target is a LaVision-style two-level dot plate: dots every 15 mm on
 # each level, the back level 3 mm behind the front, plus a filled square
 # marker that anchors the origin and a triangle for orientation
-# diagnostics. We image it at three traverse positions (z = −3, 0, +3 mm),
-# as one would with a real traverse:
+# diagnostics. Render it at three traverse positions (z = −3, 0, +3 mm):
 
 zs = [-3.0, 0.0, 3.0]
 target_kwargs = (spacing = 15.0, two_level = true, level_separation = 3.0,
@@ -68,17 +65,17 @@ let
     fig
 end
 
-# The perspective differs between the cameras — that difference is what
-# encodes the out-of-plane component.
+# The cameras see different perspectives of the same dots. That difference
+# lets stereo reconstruction resolve out-of-plane motion.
 #
 # ## Detect the grid and calibrate
 #
 # [`detect_calibration_grid`](@ref) finds the dots (subpixel
 # intensity-weighted centroids), indexes them on the lattice, and anchors
 # the world frame to the square marker. `origin_offset = (30.0, 7.5)` says
-# "the origin dot sits 30 mm right of and 7.5 mm above the marker" — the
-# same convention as PIV Challenge case 4E. Both cameras therefore agree on
-# the world frame. One (default Soloff) model per camera:
+# "the origin dot sits 30 mm right of and 7.5 mm above the marker." This
+# matches the PIV Challenge case 4E convention and places both cameras in
+# the same world frame. Fit a default Soloff model to each camera:
 
 grids = map(plates) do cam_plates
     [detect_calibration_grid(img; spacing = 15.0,
@@ -89,10 +86,9 @@ end
 cams = [calibrate_camera(g, zs) for g in grids]
 cams[1]
 
-# Always check the fit. On these noise-free synthetic plates the residual
-# is tiny; on real plates expect ~0.5–1 px root-mean-square (RMS) error
-# dominated by the plate's
-# manufacturing tolerance (see the
+# Check the calibration residuals. They are small for these synthetic plates.
+# Physical plates may give ~0.5–1 px root-mean-square (RMS) error, often
+# dominated by manufacturing tolerance (see the
 # [stereo-rig how-to](../howto/stereo_rig.md)):
 
 [calibration_quality(cam, gs, zs) for (cam, gs) in zip(cams, grids)]
@@ -105,10 +101,10 @@ cams[1]
 #
 # The dewarped image is indexed `out[r, c] = world (x[c], y[r], z)` in the
 # order the ranges are given, so a **descending** `y` range puts world +Y at
-# the top — the image displays upright. (An ascending `y` would flip it, with
-# +Y running *down* the image; PIV downstream is unaffected either way because
-# `dv * step(y)` carries the sign — see
-# [Stereo geometry and self-calibration](../explanation/stereo.md).)
+# the top and displays the image upright. An ascending `y` would put +Y
+# down the image. Displacements remain consistent because `dv * step(y)`
+# carries the sign; see
+# [Stereo geometry and self-calibration](../explanation/stereo.md).
 
 grid = DewarpGrid(x = -25.0:0.2:25.0, y = 25.0:-0.2:-25.0)
 dw1 = ImageDewarper(cams[1], grid, image_size)
@@ -124,17 +120,17 @@ let
     fig
 end
 
-# After dewarping, the two cameras' views of the z = 0 plate coincide dot
+# After dewarping, the two cameras' views of the z = 0 plate align dot
 # for dot: the same world point sits at the same pixel in both images.
 # Zero-filled corners are regions that camera cannot see; they are recorded
 # in `dw.mask` and excluded from the analysis automatically.
 #
 # ## Self-calibration: find the actual light sheet
 #
-# In a real experiment the plate never sits exactly in the light sheet.
-# We simulate that: particles live on a sheet that is offset by 0.8 mm and
-# slightly tilted relative to the calibrated z = 0 plane. Both cameras
-# record the *same* instants (this is what makes the disparity measurable):
+# Calibration uses the plate position, while measurement uses the light sheet.
+# Here the particle sheet is offset by 0.8 mm and tilted relative to the
+# calibrated z = 0 plane. Both cameras record the *same* instants so their
+# image disparity can locate the sheet:
 
 sheet = (a = 0.8, b = 0.010, c = -0.006)   # z = a + b·X + c·Y
 sheet_z(X, Y) = sheet.a + sheet.b * X + sheet.c * Y
@@ -161,19 +157,17 @@ frames2 = [render_sheet(true_cams[2], pts) for pts in instants]
 dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2)
 report
 
-# The report tells the story: the first pass measured a systematic
-# disparity of several dewarped pixels, triangulated it to the true sheet,
-# fitted a plane, and rigidly moved both camera models onto it; the final
-# verification pass confirms sub-tolerance residual disparity. The fitted
-# plane matches the one we simulated:
+# Inspect the measured disparity, fitted plane, and final residual in the
+# report. Self-calibration triangulates the initial disparity and adjusts
+# both camera models to the fitted sheet. The final pass checks the residual
+# disparity. Compare the fitted plane with the simulated sheet:
 
 report.passes[1].plane
 
 # ## Reconstruct three components
 #
-# Now the actual measurement: a frame pair in which every particle moves by
-# a known world displacement, including 0.25 mm *out of plane* — invisible
-# to either camera alone:
+# Render a frame pair in which every particle moves by a known world
+# displacement, including 0.25 mm *out of plane*:
 
 truth = (0.30, -0.20, 0.25)   # (dx, dy, dz) in mm per frame interval
 pts = [(56 * rand(rng) - 28, 56 * rand(rng) - 28) for _ in 1:400]
@@ -191,9 +185,8 @@ sel = .!stereo.mask .& .!stereo.outliers
 (u = median(stereo.u[sel]), v = median(stereo.v[sel]), w = median(stereo.w[sel]),
  truth = truth)
 
-# All three components are recovered to a few hundredths of a millimeter —
-# including `w`, thanks to the self-calibrated geometry. Had we skipped
-# self-calibration, the sheet offset would have biased the reconstruction.
+# Compare all three medians with `truth`. The self-calibrated geometry lets
+# the reconstruction account for the sheet offset, including in `w`.
 #
 # The in-plane field with the out-of-plane component as background:
 
@@ -211,12 +204,12 @@ end
 
 # ## Where to go next
 #
-# - The same chain on a real experiment — plate-tolerance residuals,
-#   judging self-calibration without a convergence flag, reading σw/σu:
+# - Apply the same steps to recorded images and interpret the calibration
+#   residuals, self-calibration report, and σw/σu:
 #   [Stereo on a real recording](stereo_real.md).
 # - The rig-calibration checklist, including what residuals to expect
 #   from physical plates: [Calibrate a real stereo rig](../howto/stereo_rig.md).
-# - What the disparity self-calibration actually does:
+# - How disparity self-calibration works:
 #   [Stereo geometry and self-calibration](../explanation/stereo.md).
 # - Per-vector uncertainty propagation into ``(u, v, w)``: enable
 #   `uncertainty = true` with a converged multi-pass schedule — see

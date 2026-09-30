@@ -58,8 +58,7 @@ edge effects.
 
 The combination `padding = true, apodization = :gauss` is the accuracy
 configuration: on noise-free synthetic data with a converged multi-pass
-schedule it reaches about **0.03 px root-mean-square (RMS)** error. All
-tutorials use it.
+schedule it reaches about **0.03 px root-mean-square (RMS)** error.
 
 ## Subpixel peak fitting and peak locking
 

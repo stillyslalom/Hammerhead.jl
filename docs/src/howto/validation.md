@@ -27,8 +27,8 @@ Every [`run_piv`](@ref) pass applies, in order:
 
 - **Raise `uod_threshold`** (e.g. 2.0 → 3.0). Higher is less sensitive.
 - **Keep `uod_neighborhood = 2`.** The 5×5 neighborhood exists because 3×3
-  falsely flags smooth gradients at field edges — shrinking it is rarely
-  the right fix.
+  can falsely flag smooth gradients at field edges. Try adjusting the
+  threshold before shrinking the neighborhood.
 - **Don't lower `epsilon` below ~0.1 px.** It represents the physical
   subpixel noise floor; with near-zero `epsilon`, a *uniform* flow field
   gets flagged wholesale because the neighbor residuals are pure noise.
@@ -93,7 +93,7 @@ Count flags, and look at *where* they are:
 count(result.outliers) / length(result.outliers)   # flag fraction
 ```
 
-A well-tuned setup flags a few percent, concentrated where the image data
-is genuinely poor (edges, reflections, dropout), not tracing the contours
-of real flow structures. If flags follow your shear layers, validation is
-too tight.
+Look for flags concentrated where image quality is poor, such as reflections
+or particle dropout. If flags follow shear layers or other plausible flow
+structures, compare those vectors with the images before changing the
+validation settings.

@@ -1,9 +1,8 @@
 # Build a preprocessing chain
 
-**Goal:** condition raw recordings — static glare, uneven illumination,
-overexposed particles, low contrast — before correlation. Applied well,
-preprocessing is often the difference between an unusable and a clean
-vector field on real data.
+**Goal:** reduce static glare, uneven illumination, saturation, or low
+contrast before correlation. Check each change against the resulting vectors;
+processing that helps one recording may hurt another.
 
 ## The building blocks
 
@@ -11,7 +10,7 @@ vector field on real data.
 |---|---|---|
 | [`subtract_background`](@ref) | static background (walls, glare) | first, with a [`compute_background`](@ref) image |
 | [`highpass_filter`](@ref) | low-frequency illumination gradients | sheet inhomogeneity; `sigma` a few × particle diameter |
-| [`intensity_cap`](@ref) | overexposed particles and reflections [Shavit2007](@cite) | before correlation, cheap and safe |
+| [`intensity_cap`](@ref) | overexposed particles and reflections [Shavit2007](@cite) | limit unusually bright pixels before correlation |
 | [`clahe`](@ref) (contrast-limited adaptive histogram equalization, CLAHE) | poor local contrast | dim regions next to bright ones |
 
 Each has a mutating form (`subtract_background!`, `highpass_filter!`,
@@ -65,9 +64,9 @@ allocation-light and reuse batch-driver workspaces as described in
 
 ## Check the effect before committing
 
-Preprocessing that helps correlation can also destroy information (an
-aggressive high-pass erases large particles). Sanity-check on one pair
-before running a batch: process with and without the chain and compare
-`result.peak_ratio` distributions — the chain should raise it. The
-[real-data tutorial](../tutorials/real_data.md) works this comparison on a
-real wind-tunnel recording, where the textbook chain turns out to *hurt*.
+An aggressive high-pass filter can remove large particle images along with
+the background. Before running a batch, process one pair with and without
+the chain. Compare the vector fields, outlier flags, and `result.peak_ratio`
+distributions. Keep a step only if it improves the measurements you need.
+The [real-data tutorial](../tutorials/real_data.md) shows this comparison on
+a wind-tunnel recording.

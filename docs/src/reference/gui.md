@@ -4,10 +4,10 @@ CurrentModule = HammerheadGUI
 
 # Graphical user interface (GUI; HammerheadGUI)
 
-The desktop GUI companion package, built on GLMakie. Each component is a
-framework-free controller (plain Julia + Observables, in the
-`HammerheadGUI.Controllers` submodule) paired with a GLMakie view
-function that renders it and forwards user input into it.
+The desktop GUI companion package uses GLMakie. Each component has a
+controller (plain Julia + Observables, in the
+`HammerheadGUI.Controllers` submodule) and a GLMakie view that renders it
+and forwards user input.
 
 ```@index
 Pages = ["gui.md"]
@@ -22,8 +22,8 @@ Order = [:module, :type, :function, :constant, :macro]
 
 ## Controllers
 
-Application state and logic, testable without a GL context — the submodule
-never imports Makie.
+Controllers hold application state and logic. You can use them without
+opening a window or creating a GL context.
 
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]

@@ -4,12 +4,12 @@ CurrentModule = Hammerhead
 
 # Calibration, dewarping, and stereo
 
-Everything stereoscopic: two-dimensional, three-component (2D3C) particle
-image velocimetry (PIV), including camera calibration models and fitting,
+Two-dimensional, three-component (2D3C) particle image velocimetry (PIV):
+camera calibration models and fitting,
 dot-grid target detection, image dewarping onto a common world plane,
 three-component reconstruction, synchronized sequence processing, stereo
 ensemble correlation, and disparity self-calibration. The
-[stereo tutorial](../tutorials/stereo.md) walks the whole chain;
+[stereo tutorial](../tutorials/stereo.md) works through each step;
 [Stereo geometry and self-calibration](../explanation/stereo.md) explains
 the method. [`run_piv_stereo`](@ref), [`run_piv_stereo_sequence`](@ref), and
 [`run_piv_stereo_ensemble`](@ref) can forward a GPU backend to their two

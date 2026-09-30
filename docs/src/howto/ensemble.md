@@ -1,7 +1,7 @@
 # Ensemble correlation for low signal-to-noise ratio
 
 **Goal:** extract a mean displacement field from recordings whose
-individual pairs are too noisy for reliable peaks — micro-scale particle
+individual pairs are too noisy for reliable peaks, as in micro-scale particle
 image velocimetry (micro-PIV), weak seeding, or low laser power (for example,
 PIV Challenge case 4A). This is the low signal-to-noise ratio (SNR) regime.
 
@@ -10,9 +10,9 @@ PIV Challenge case 4A). This is the low signal-to-noise ratio (SNR) regime.
 Ensemble (sum-of-correlation) PIV [Meinhart2000](@cite) averages each
 interrogation window's *correlation planes* across many pairs before
 locating the peak once. Random noise peaks average out; the displacement
-peak reinforces. The catch: it assumes **statistically stationary flow** —
-the result is the ensemble-mean field, and pair-to-pair fluctuation is
-averaged away, not measured.
+peak reinforces. Use it when the flow is **statistically stationary**: the
+result is the ensemble-mean field, while pair-to-pair fluctuations are
+averaged away.
 
 ## Basic use
 
@@ -72,11 +72,10 @@ terms are required.
 
 ## Practical notes
 
-- **More pairs beat bigger windows.** The whole point is that window size
-  no longer has to compensate for noise; keep windows sized to the flow
-  structure and add pairs until the field is clean.
-- **`peak_ratio` describes the ensemble planes**, so it improves with pair
-  count — a rising ensemble peak ratio is your convergence indicator.
+- **Add pairs before enlarging windows.** Keep windows small enough to
+  resolve the flow structure, then add pairs until the field is stable.
+- **Check `peak_ratio` as you add pairs.** It describes the ensemble
+  correlation plane; a rising ratio indicates a clearer peak.
 - **File paths are reloaded once per pass.** For many passes over slow
   storage, load frames into memory first and pass matrices.
 - **Preprocessing** (`preprocess`, `image_type`) and **masking** (`mask`,

@@ -1,7 +1,6 @@
 # Coordinates, signs, and units
 
-Every quantity Hammerhead produces follows one consistent coordinate
-convention. This page states it once, so the other pages don't have to.
+Hammerhead uses the coordinate and unit conventions below for its results.
 
 ## Image coordinates
 
@@ -27,8 +26,7 @@ displacement `(du, dv)`:
 - `u` is the x-displacement (along columns; positive = image-right),
 - `v` is the y-displacement (along rows; positive = image-down).
 
-This is the natural convention for image data, but note that +v points
-*down* in the usual display orientation. The Makie plotting extension
+In the usual display orientation, +v points *down*. The Makie plotting extension
 ([`plot_vector_field`](@ref)) reverses the y-axis so vector plots match the
 image orientation.
 
@@ -86,42 +84,35 @@ attach a [`PhysicalScale`](@ref) with `dt` and the unit labels only
 
 ## Particle tracking velocimetry (PTV)
 
-Particle tracking velocimetry measures the same displacement as particle
-image velocimetry (PIV) but per *particle*
-instead of per *window*, and it is the better tool wherever the seeding is
-sparse or Lagrangian information matters: low-density flows, the near-wall
-region where large windows straddle a velocity gradient, or any case where you
-want individual particle paths rather than an Eulerian field. Everything on
-this page still holds — `u` along x, `v` along y, pixels per frame interval,
-physical units via an attached [`PhysicalScale`](@ref) and
-[`physical`](@ref) — with three PTV-specific conventions. (One tracking
-nuance: a [`TrackingResult`](@ref) stores only positions, velocities being
-derived by differencing, so its converted scale keeps `dt` — pass it to
-[`trajectory_velocities`](@ref) for physical velocities.)
+Particle tracking velocimetry measures displacement per *particle* instead of
+per *window*. Use it for sparse seeding or when you need individual paths,
+including near walls where a PIV window would span a velocity gradient. PTV
+uses the same x/y directions and pixels-per-frame units described above. Attach
+a [`PhysicalScale`](@ref) and call [`physical`](@ref) to convert its results.
+A [`TrackingResult`](@ref) stores positions, with velocities calculated from
+successive positions. Its converted scale retains `dt`; pass that scale to
+[`trajectory_velocities`](@ref) to obtain physical velocities.
 
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This
 differs from PIV's symmetric image deformation, which attributes each vector to
-the *midpoint* of the trajectory. Frame-A attribution matches the
-forward-Euler contract of the synthetic generator exactly (each particle's true
-displacement is the velocity at its launch point), so ground-truth comparisons
-are direct — no midpoint correction, no interpolation error.
+the *midpoint* of the trajectory. The synthetic generator uses forward-Euler
+motion, so a PTV displacement can be compared directly with the reference
+velocity at the frame-A position multiplied by the frame interval.
 
 **Flag, don't replace.** A tracked displacement is a measurement of one
-specific particle; there is nothing meaningful to substitute for it. So the
-scattered outlier test [Duncan2010](@cite) only *flags* suspicious vectors (in
+specific particle. The scattered outlier test [Duncan2010](@cite) only
+*flags* suspicious vectors (in
 `result.outliers`) and leaves `u`/`v` untouched — unlike PIV, which replaces
 flagged windows with a local median. In the multi-frame tracker, a flagged link
-is simply not made (it would poison the constant-velocity predictor
-downstream).
+is excluded from the trajectory so it does not affect later predictions.
 
 **Hybrid by default.** With sparse seeding the true displacement can exceed the
 particle spacing, and pure nearest-neighbor matching then links the wrong
 particles. [`run_ptv`](@ref) therefore runs a coarse [`run_piv`](@ref)
 internally to predict where each particle goes, and matches against that
-prediction [Keane1995](@cite) — so it works out of the box at realistic
-displacements. Pass an existing `PIVResult`, a displacement NamedTuple, or
-`nothing` (pure nearest neighbor) to override.
+prediction [Keane1995](@cite). Pass an existing `PIVResult`, a displacement
+NamedTuple, or `nothing` (pure nearest neighbor) to override.
 
 ## Grid layout
 
