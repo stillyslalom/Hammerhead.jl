@@ -1,8 +1,7 @@
 # Mask reflections and geometry
 
-**Goal:** exclude a region — model geometry, a wall, a persistent
-reflection — from the analysis so it produces no vectors and cannot
-contaminate its neighbors. Background on the semantics is in
+**Goal:** exclude model geometry, walls, or persistent reflections from
+correlation and check where the mask removes vectors. Background on the semantics is in
 [the masking model](../explanation/masking.md).
 
 ## Draw a polygon mask
@@ -40,28 +39,41 @@ pixel logic if that's easier, e.g. `mask = background .> 0.8` to exclude
 persistently bright (reflective) pixels of a
 [`compute_background`](@ref) image.
 
-For common bright reflections, dark bodies, low-texture regions, or sharp
-geometry edges, [`automatic_mask`](@ref) provides intensity-, local-contrast-,
-and edge-derived masks. Its two-frame method applies the detector to both
-frames and returns their union, the safe pair-mask convention for a moving
-boundary:
+For bright reflections, dark bodies, low-texture regions, or sharp edges,
+[`automatic_mask`](@ref) can propose an intensity-, local-contrast-, or
+edge-derived mask. Its two-frame method masks pixels selected in either
+exposure, which helps when an obstruction moves between frames:
 
 ```julia
 mask = automatic_mask(imgA, imgB; method = :intensity,
                       threshold = 0.9, side = :high, grow = 3)
-mask = grow_mask(mask, 2)       # add another safety margin
-mask = shrink_mask(mask, 1)     # trim an over-conservative mask
+larger = grow_mask(mask, 2)       # add a margin if the boundary is too tight
+smaller = shrink_mask(mask, 1)    # trim it if too much flow is excluded
 ```
+
+The numeric threshold uses the image's intensity units. Inspect the proposed
+mask over both frames: bright particles may also exceed an intensity
+threshold, while a reflective wall may extend beyond the brightest pixels.
+Choose a margin that covers the unwanted feature without removing the flow
+region you need.
 
 ## Control when a window is dropped
 
-Windows whose masked-pixel fraction reaches `mask_threshold` (default 0.5)
-are dropped entirely; windows below it correlate over their valid pixels
-only. Lower the threshold to be more conservative near edges:
+For each window, Hammerhead checks the masked fraction in the frame-A
+interrogation area and the frame-B search area. If either reaches
+`mask_threshold` (default 0.5), the window is dropped; otherwise correlation
+uses its unmasked pixels. Lower the threshold to drop more edge windows:
 
 ```julia
 result = run_piv(imgA, imgB, passes; mask, mask_threshold = 0.25)
+count(result.mask)  # number of dropped vector-grid cells
 ```
+
+Compare the dropped cells with the obstruction boundary. If valid vectors
+adjacent to it show a suspicious zero-displacement peak, enlarge the mask or
+lower `mask_threshold`; if needed flow is missing, tighten the mask or raise
+the threshold. Review both the vector field and source images after changing
+either setting.
 
 ## Read the results correctly
 
@@ -71,8 +83,8 @@ result.outliers   # true = measured but failed validation (replaced if enabled)
 valid = .!(result.mask .| result.outliers)
 ```
 
-Masked cells are *never* counted as outliers, and `NaN`s in `u`/`v` at
-masked cells are intentional — filter with `valid` before computing your
+Masked cells are not counted as outliers, and `NaN`s in `u`/`v` at
+masked cells mean no measurement was made. Filter with `valid` before computing your
 own statistics (the built-in [`field_statistics`](@ref) and
 [`error_statistics`](@ref) already do).
 

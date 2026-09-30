@@ -5,8 +5,7 @@
 the CPU on your workload.
 
 Hammerhead's default `backend = :cpu` uses the central processing unit (CPU)
-and remains the complete reference
-implementation. GPU support is optional: loading AMDGPU.jl or CUDA.jl
+and supports the full option set. GPU support is optional: loading AMDGPU.jl or CUDA.jl
 activates a package extension without adding either device stack to
 Hammerhead's normal installation.
 
@@ -48,9 +47,8 @@ Hammerhead currently supports AMDGPU.jl 2 and CUDA.jl 5 or 6. Driver and
 runtime compatibility is controlled by the device package. Follow the
 [AMDGPU.jl setup guide](https://amdgpu.juliagpu.org/stable/) or
 [CUDA.jl installation guide](https://cuda.juliagpu.org/stable/installation/overview/)
-when `functional()` is false. The AMD path is hardware-validated
-on an RX 6800 XT with ROCm 6.4; the CUDA path is hardware-validated on an
-RTX 2000 Ada with CUDA.jl 6.2.
+when `functional()` is false. Check that the selected package reports a
+functional device before processing a recording.
 
 ## Use the backend across drivers
 
@@ -100,6 +98,7 @@ currently implements:
 | Phase correlation | yes | yes, filtered normalized spectrum |
 | `:gauss3` / `:gauss9` subpixel fit | yes | yes |
 | `:gauss2d` subpixel fit | yes | no |
+| Enlarged `search_area_size` | yes | no |
 | Padding and Gaussian apodization | yes | yes |
 | Multi-pass and iterative deformation | yes | yes |
 | Correlation-statistics uncertainty | yes | yes, Float64 statistics |
@@ -107,33 +106,30 @@ currently implements:
 | Ensemble correlation | yes | yes, device-resident accumulator |
 | `keep_correlation_planes = true` | yes | no |
 
-Unsupported combinations raise an `ArgumentError` before analysis rather
-than silently switching algorithms or falling back to the CPU. Use
-`backend = :cpu` when `:gauss2d` or retained correlation
-planes are required.
+Unsupported combinations raise an `ArgumentError` before analysis. Use
+`backend = :cpu` when you need `:gauss2d`, an enlarged search area, or
+retained correlation planes.
 
 Stereo forwards the backend to both per-camera PIV analyses. Dewarping and
-three-component (3C) reconstruction remain on the CPU. Loading, preprocessing,
-validation,
-outlier replacement, smoothing, and result construction are also CPU work.
+three-component (3C) reconstruction remain on the CPU. Loading,
+preprocessing, validation, outlier replacement, smoothing, and result
+construction also use the CPU. Include those costs when comparing total time.
 
 ## Understand device residency
 
 For a non-deforming pass, each source pair is uploaded once. For deforming
-passes, Hammerhead performs the cubic B-spline prefilter on the CPU, stages
-the coefficients once, and keeps warped images on the device between
-deformation and correlation. Each correlation batch performs window gather,
-FFT, cross-power, shift/gain, peak analysis, and subpixel refinement on the
-device. Only packed per-window outputs return to the host.
+passes, the CPU prepares the resampling coefficients, while deformation and
+correlation run on the GPU. The warped images stay on the device between
+these operations; per-window vector values return to the CPU. Reusing a
+workspace avoids rebuilding large buffers and FFT plans for each pair.
 
 Uncertainty statistics use Float64 even when images are Float32. An iterative
-pass computes them once from the last converged deformation. Ensemble runs
+pass computes them once from its last deformation. Ensemble runs
 accumulate both correlation planes and uncertainty statistics on the device
 across all pairs, then transfer final packed values.
 
-Device correlation is internally tiled to bound FFT scratch memory. Ensemble
-planes, however, cover the complete vector grid for the duration of a pass.
-Their approximate footprint is:
+An ensemble keeps correlation planes for the complete vector grid on the
+device for the duration of a pass. Estimate their memory use as:
 
 ```text
 number of windows * correlation-plane rows * correlation-plane columns * sizeof(T)
@@ -143,7 +139,9 @@ Padding doubles each plane dimension and therefore quadruples this part of
 the footprint. For example, a 2048x2048 image with 32-pixel windows,
 16-pixel overlap, padding, and Float64 data has about 16,129 windows and a
 64x64 plane per window, or roughly 504 MiB for the ensemble accumulator alone.
-Pair count increases runtime but not accumulator size.
+Pair count increases runtime but not accumulator size. This estimate excludes
+images, FFT work buffers, deformation buffers, and uncertainty statistics;
+leave headroom beyond the plane estimate.
 
 ## Decide whether GPU execution pays off
 
@@ -194,14 +192,14 @@ foreach(println, rows)
 best = rows[argmin(getfield.(rows, :seconds))]
 ```
 
-This measures all-CPU, all-device, and hybrid configurations, reusing a
-workspace within each configuration and reporting numerical deltas against
-the CPU reference. Replace `:amdgpu` with `:cuda` as appropriate.
+This measures CPU, GPU, and hybrid configurations when uncertainty is
+enabled. It warms each configuration, reuses its workspace, and reports
+vector and uncertainty differences from the CPU result. Check those
+differences as well as `seconds`; replace `:amdgpu` with `:cuda` as needed.
 
 ## Validate a device and benchmark the workload
 
-The repository includes a correctness script covering single-pass,
-multi-pass, masks, ensemble accumulation, and uncertainty:
+For a new device setup, run the validation script before timing a workload:
 
 ```bash
 julia --project=/path/to/gpu-env -t 4 bench/gpu_validate.jl amdgpu
@@ -209,10 +207,10 @@ julia --project=/path/to/gpu-env -t 4 bench/gpu_benchmarks.jl amdgpu
 julia --project=/path/to/gpu-env -t 4 bench/gpu_configurations.jl amdgpu 2048 Float32 high 3
 ```
 
-Pass `cuda` for NVIDIA. GPU comparisons use scientific tolerances because
-device FFT and intrinsic order can differ from FFTW. Validate after changing
-drivers, device-package versions, or Julia versions, then benchmark the same
-image size, precision, pass schedule, mask, and pair count used in production.
+Pass `cuda` for NVIDIA. Device FFT arithmetic can differ from FFTW, so
+compare vectors within appropriate measurement tolerances. Recheck after
+driver, device-package, or Julia changes, then benchmark the image size,
+precision, schedule, mask, and pair count you plan to use.
 
 ## Troubleshoot common failures
 
@@ -225,9 +223,9 @@ image size, precision, pass schedule, mask, and pair count used in production.
   Hammerhead does not silently change the requested analysis.
 - **Workspace backend mismatch:** rebuild it with
   `piv_workspace(backend = backend)`.
-- **Out of device memory:** use Float32, reduce overlap, avoid retained full
-  grids where possible, or process a smaller region. For ensembles, padding
-  and vector-grid density are the main accumulator-memory multipliers.
+- **Out of device memory:** use Float32, reduce overlap, or process a smaller
+  region. For ensembles, padding and vector-grid density multiply the memory
+  needed for the correlation accumulator.
 - **GPU slower than CPU:** benchmark a warmed run, reuse a workspace, and test
   a production-sized workload. Small transfers and weak device Float64 are
   common causes.

@@ -1,8 +1,8 @@
 # Tune validation
 
-**Goal:** adjust outlier detection when the defaults flag too much (smooth
-fields peppered with false positives) or too little (spurious vectors
-surviving into your statistics).
+**Goal:** adjust outlier detection when plausible vectors are flagged or
+spurious vectors survive. Compare flags with the particle images and with
+the flow structures you expect to resolve.
 
 ## What runs by default
 
@@ -10,7 +10,7 @@ Every [`run_piv`](@ref) pass applies, in order:
 
 1. **Universal outlier detection (UOD)** (normalized median test,
    [WesterweelScarano2005](@cite)) — `uod_threshold = 2.0`,
-   `uod_neighborhood = 2` (a 5×5 neighborhood), noise floor
+   `uod_neighborhood = 2` (a 5×5 neighborhood), denominator floor
    `epsilon = 0.1` px.
 2. **Peak-ratio check** — disabled by default (`min_peak_ratio = 1.0`).
 3. **Peak substitution** — flagged vectors are re-tested against their
@@ -20,7 +20,7 @@ Every [`run_piv`](@ref) pass applies, in order:
    (`replace_outliers = true`; intermediate multi-pass passes always
    replace). A pass with `max_iterations > 1` then *re-measures* replaced
    vectors, re-deforming by the corrected field and re-correlating until it
-   converges — see
+   converges or reaches `max_iterations`. See
    [iterative passes](../explanation/multipass.md#Convergence-sweeps-and-iterative-passes).
 
 ## If too many good vectors are flagged
@@ -29,14 +29,16 @@ Every [`run_piv`](@ref) pass applies, in order:
 - **Keep `uod_neighborhood = 2`.** The 5×5 neighborhood exists because 3×3
   can falsely flag smooth gradients at field edges. Try adjusting the
   threshold before shrinking the neighborhood.
-- **Don't lower `epsilon` below ~0.1 px.** It represents the physical
-  subpixel noise floor; with near-zero `epsilon`, a *uniform* flow field
-  gets flagged wholesale because the neighbor residuals are pure noise.
+- **Keep `epsilon` near its 0.1 px default unless you have a reason to
+  change it.** This floor stabilizes the normalized residual when neighboring
+  vectors are nearly identical. Near zero, small measurement differences can
+  produce large scores even in a uniform field.
 
 ## If spurious vectors survive
 
-- **Enable the peak-ratio check**: `min_peak_ratio = 1.3` is a reasonable
-  starting point (a peak barely taller than the noise peak is unreliable).
+- **Try the peak-ratio check**: `min_peak_ratio = 1.3` is a starting value.
+  Compare flagged vectors with their image windows; a low ratio can also
+  occur where the flow has a steep gradient or few particle images.
 - **Add validators** via the `validation` parameter, as `Symbol => value`
   specs or validator objects:
 
@@ -67,9 +69,11 @@ The UOD and peak-ratio checks have dedicated `PIVParameters` keywords
 `validation` tuple. See [`validate_vectors!`](@ref) for how a pipeline is
 applied.
 
-- **For time-resolved sequences**, add [`validate_temporal!`](@ref) after
-  processing: a vector consistent with its spatial neighbors can still be
-  exposed by the point's time history.
+For time-resolved sequences, [`validate_temporal!`](@ref) can flag a vector
+that looks plausible spatially but disagrees with its time history. It needs
+at least three valid samples at a grid point. Use it after processing and
+before statistics; inspect newly flagged samples rather than assuming every
+transient is an error.
 
 ## Keep or replace outliers?
 
@@ -85,15 +89,23 @@ w = .!(result.outliers .| result.mask)
 u_smooth = smoothn(result.u; weights = w).z
 ```
 
+This produces an interpolated value at masked and flagged cells. Keep the
+original `result.mask` and `result.outliers` flags alongside the smoothed
+field so filled values are not mistaken for measurements.
+
 ## Judge the tuning
 
-Count flags, and look at *where* they are:
+Count flags relative to windows that produced a measurement, then look at
+*where* they occur:
 
 ```julia
-count(result.outliers) / length(result.outliers)   # flag fraction
+eligible = count(.!result.mask)
+flag_fraction = eligible == 0 ? NaN : count(result.outliers) / eligible
 ```
 
 Look for flags concentrated where image quality is poor, such as reflections
-or particle dropout. If flags follow shear layers or other plausible flow
-structures, compare those vectors with the images before changing the
-validation settings.
+or particle dropout. Compare settings on the same representative pairs and
+record both the flag fraction and the retained flow features. If flags
+follow shear layers or other plausible structures, inspect their image
+windows before changing the threshold; smooth physical gradients can differ
+from their neighbors without being bad measurements.

@@ -4,10 +4,10 @@ CurrentModule = HammerheadGUI
 
 # Graphical user interface (GUI; HammerheadGUI)
 
-The desktop GUI companion package uses GLMakie. Each component has a
-controller (plain Julia + Observables, in the
-`HammerheadGUI.Controllers` submodule) and a GLMakie view that renders it
-and forwards user input.
+The desktop GUI uses GLMakie. The application and view functions below open
+interactive tools; `HammerheadGUI.Controllers` holds their state and actions
+for scripted use without a display. Start with the
+[GUI tour](../tutorials/gui_tour.md) for a worked session.
 
 ```@index
 Pages = ["gui.md"]

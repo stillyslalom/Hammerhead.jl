@@ -24,7 +24,8 @@ input images, like [`PIVResult`](@ref).
   cameras' correlation-statistics estimates through the reconstruction —
   `NaN` unless the `uncertainty` parameter was enabled.
 - `outliers`: union of the two cameras' outlier flags. Flagged vectors were
-  reconstructed from at least one replaced/substituted 2C vector.
+  reconstructed from at least one flagged 2C vector, which may have been
+  replaced. An alternative peak accepted by validation is not flagged.
 - `mask`: windows dropped because they overlap either camera's out-of-view
   region or the user mask (`NaN` fields, never outliers).
 - `cam1`, `cam2`: the per-camera 2C [`PIVResult`](@ref)s on the dewarped

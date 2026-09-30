@@ -70,11 +70,32 @@ cam3 = calibrate_camera(grids3, zs)
 (quality1 = calibration_quality(cam1, grids1, zs),
  quality3 = calibration_quality(cam3, grids3, zs))
 
-# The calibration residuals are about 0.7 and 1.1 px root-mean-square
-# (RMS). Re-detecting the plate at different positions reproduces each
-# dot's residual within 0.15–0.3 px. The repeated pattern indicates that
-# physical dot positions dominate these residuals. A richer model could
-# fit those plate variations without improving the camera geometry. See
+# The summaries report the size of the reprojection error. Plot the errors
+# at the detected dots to see whether they cluster near an edge, grow across
+# the field, or recur at the same plate locations. The color is error
+# magnitude in pixels for the z = 0 plate, on a shared scale:
+
+let
+    fig = Figure(size = (800, 390))
+    for (i, (cam, g)) in enumerate(((cam1, grids1[2]), (cam3, grids3[2])))
+        pixels, world = calibration_points(g, 0.0)
+        residual = [hypot((world_to_pixel(cam, w) - p)...) for (p, w) in zip(pixels, world)]
+        ax = Axis(fig[1, i]; title = "camera $(i == 1 ? 1 : 3): plate residuals",
+                  xlabel = "image x (px)", ylabel = "image y (px)", yreversed = true,
+                  aspect = DataAspect())
+        scatter!(ax, first.(pixels), last.(pixels); color = residual,
+                 colorrange = (0, 2), colormap = :magma, markersize = 13)
+    end
+    Colorbar(fig[1, 3]; colorrange = (0, 2), colormap = :magma,
+             label = "reprojection error (px)")
+    fig
+end
+
+# The RMS values are about 0.7 and 1.1 px here. A repeated dot-level pattern
+# across plate positions can suggest a target-position error, but it does not
+# establish the cause: camera-model limits, refraction, indexing, and detection
+# should also be checked. Compare the residual plots across all three planes
+# if a fit looks suspicious. See
 # [Calibrate a real stereo rig](../howto/stereo_rig.md) for further checks.
 #
 # ## A common grid from the stereo overlap
@@ -140,8 +161,8 @@ report
           map(x -> round(x; sigdigits = 3), p.plane))
  for p in report.passes]
 
-# The first pass finds about 2.8 px of systematic disparity, corresponding
-# to a sheet about 0.7 mm behind z = 0 and tilted by a quarter of a degree.
+# The first pass finds about 2.8 px of disparity. Its plane fit estimates a
+# sheet about 0.7 mm behind z = 0, with a small tilt.
 # After one correction, later passes estimate offsets of only a few
 # micrometers, while disparity RMS stays near 0.5 px. Light-sheet thickness
 # and the cameras' different views of the particles can leave correlation
@@ -149,9 +170,9 @@ report
 # for remaining misalignment and the triangulation residual for consistency
 # between the camera views:
 #
-# 1. **The signed median disparity.** Misalignment is systematic; noise is
-#    not. The median *magnitude* stays at the noise floor, but the signed
-#    component medians collapse:
+# 1. **The signed median disparity.** A consistent displacement across the
+#    field can indicate misalignment. A small median can also hide opposing
+#    regional shifts, so inspect the maps as well as the summary:
 
 maps = report.disparity_maps
 [begin
@@ -160,8 +181,31 @@ maps = report.disparity_maps
       median_dv = round(median(m.v[ok]); digits = 2))
  end for m in maps]
 
-# The signed median v-disparity falls from 2.8 px to a few hundredths of a
-# pixel, far below the remaining RMS. Further plane corrections are small.
+# The signed median v-disparity falls from about 2.8 px to a few hundredths
+# of a pixel in this subset. Plot the measured maps to check where residual
+# shifts remain. Each panel has its own color range so small structure in the
+# final pass stays visible:
+
+let
+    fig = Figure(size = (1050, 350))
+    for (i, (m, component, label)) in enumerate(((first(maps), :v, "initial v"),
+                                                (last(maps), :u, "final u"),
+                                                (last(maps), :v, "final v")))
+        values = copy(getproperty(m, component))
+        values[m.mask .| m.outliers] .= NaN
+        ax = Axis(fig[1, i]; title = "$label disparity (px)",
+                  xlabel = "grid x (px)", ylabel = "grid y (px)",
+                  yreversed = true, aspect = DataAspect())
+        hm = heatmap!(ax, m.x, m.y, permutedims(values); colormap = :balance)
+        Colorbar(fig[2, i], hm; vertical = false)
+    end
+    fig
+end
+
+# Look for broad regions of one sign in the final maps. A low signed median
+# alone does not rule those out. The remaining RMS may include random
+# correlation error, sheet thickness, or differences between camera views;
+# this two-frame subset cannot separate those causes.
 #
 # 2. **The triangulation RMS** (~0.1 px here): the image-coordinate
 #    residual when the two camera observations are triangulated. A large
@@ -216,13 +260,10 @@ med(f) = round(1000 * median(filter(isfinite, f[sel])); digits = 1)  # mm → µ
 (σu = med(stereo.uncertainty_u), σv = med(stereo.uncertainty_v),
  σw = med(stereo.uncertainty_w))
 
-# The estimated uncertainty is a few micrometers for the in-plane
-# components and about four times larger for `w`. With one head-on camera
-# and one at 25°, out-of-plane motion creates relatively little image-plane
-# displacement, so reconstruction amplifies correlation noise in `w`.
-# Steeper viewing angles would reduce this ratio; a ±45° rig has a ratio
-# near 1. Compare σw with σu when deciding which component magnitudes your
-# camera geometry can resolve.
+# In this result, estimated uncertainty is larger for `w` than for the
+# in-plane components. The camera geometry gives weaker sensitivity to
+# out-of-plane motion. Compare the component uncertainties with the motions
+# you intend to measure; this estimate does not include calibration bias.
 #
 # ## Compare corrected and uncorrected reconstructions
 #
@@ -235,13 +276,12 @@ both = sel .& .!(stereo0.mask .| stereo0.outliers)
 (Δu = Δ(stereo.u, stereo0.u), Δv = Δ(stereo.v, stereo0.v),
  Δw = Δ(stereo.w, stereo0.w))
 
-# The median change in each component is below its estimated uncertainty.
-# Here the main effect of self-calibration is on position: the uncorrected
-# reconstruction uses the plate plane, about 0.7 mm and 0.25° away from
-# the light sheet, and its camera windows differ by about 2.8 px. After
-# correction, the reported positions follow the estimated light-sheet
-# plane and the windows sample the same fluid region. In a flow with
-# stronger gradients, the window offset could also change the vectors.
+# Compare these changes with the estimated uncertainty above. In this pair,
+# the median component changes are small. The corrected coordinates refer to
+# the estimated light-sheet plane, while the uncorrected ones refer to the
+# plate plane. The initial disparity shows that the two uncorrected camera
+# windows sample different locations; how much that affects vectors depends
+# on local flow gradients.
 #
 # ## Where to go next
 #

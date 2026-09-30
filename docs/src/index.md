@@ -4,30 +4,39 @@ CurrentModule = Hammerhead
 
 # Hammerhead
 
-Documentation for [Hammerhead](https://github.com/stillyslalom/Hammerhead.jl),
-a Julia package for particle image velocimetry (PIV). Hammerhead covers
-planar two-dimensional, two-component (2D2C) measurements, stereoscopic
-two-dimensional, three-component (2D3C) measurements, and two-frame particle
-tracking velocimetry (PTV) with multi-frame trajectory linking. The analysis
-core provides multi-pass image deformation, vector validation, per-vector
-uncertainty quantification, ensemble correlation, camera calibration with
-disparity self-calibration, physical-unit scaling, batch processing with
-incremental result files, and optional GPU execution. A companion desktop
-package, **HammerheadGUI**, provides interactive tools for exploring results,
-drawing masks, previewing preprocessing, and running batches
-([take the tour](tutorials/gui_tour.md)).
+[Hammerhead](https://github.com/stillyslalom/Hammerhead.jl) measures particle
+motion in images using particle image velocimetry (PIV) and particle tracking
+velocimetry (PTV). PIV estimates the displacement of particle patterns in
+small image windows; PTV follows individual detected particles. A spatial
+calibration and the delay between exposures convert displacement to velocity.
 
-PIV starts from two images of tracer particles separated by a known time
-interval. By finding how the particle pattern moves from the first image to
-the second, it estimates a displacement vector at each location in the image.
-Supplying the physical pixel size and time interval turns those displacements
-into velocities.
+Use planar PIV for two in-plane components, or stereo PIV to reconstruct
+three components in a light sheet from two calibrated camera views.
+**HammerheadGUI** provides desktop tools for running batches, drawing masks,
+and inspecting results. Start with a path that matches your task:
+
+| Task | Start here |
+|---|---|
+| Understand how images produce a vector field | [Your first vector field](tutorials/first_vector_field.md) |
+| Process and assess a recorded image pair | [A real recording](tutorials/real_data.md) and [image inspection](howto/image_quality.md) |
+| Work through the desktop interface | [GUI tour](tutorials/gui_tour.md) |
+| Analyze a sequence and its fluctuations | [From image pairs to flow statistics](tutorials/sequence_statistics.md) |
+| Reconstruct three components with two cameras | [Stereo PIV](tutorials/stereo.md), then [a real stereo recording](tutorials/stereo_real.md) |
+| Follow individual particles | [Particle tracking](tutorials/ptv.md) |
 
 ## Installation
 
+Use Julia 1.10 or later. Press `]` at the Julia prompt to enter package
+mode, then install Hammerhead:
+
 ```julia
-pkg> add Hammerhead        # `]` at the julia> prompt opens pkg>
-pkg> add HammerheadGUI     # optional: the desktop GUI tools
+pkg> add Hammerhead
+```
+
+For the optional desktop tools, add the GUI to the same environment:
+
+```julia
+pkg> add HammerheadGUI
 ```
 
 ## Quick example
@@ -65,47 +74,35 @@ result.x, result.y    # interrogation grid centers (px)
 result.outliers       # validation flags
 ```
 
-The returned `u` and `v` values are displacements, not yet physical velocities.
-See [Scale results to physical units](howto/scaling.md) when your pixel size and
-frame interval are known.
+The returned `u` and `v` values are displacements in pixels. Positive `u`
+points right and positive `v` points down the image. A finite value may be a
+replacement for a rejected vector; use `result.outliers` and `result.mask`
+to identify accepted measurements. See [validation](howto/validation.md)
+for those flags and [physical-unit scaling](howto/scaling.md) for velocity
+conversion.
 
 Whole recordings are processed with [`run_piv_sequence`](@ref), which loads
 frame pairs (see [`image_pairs`](@ref)), applies optional preprocessing, and
 persists results incrementally in the JLD2 Julia data format ([`save_results`](@ref) /
 [`load_results`](@ref)).
 
-## Where to go next
+## Work with your recording
 
-Choose a tutorial for a worked example, a how-to guide for a specific task,
-or an explanation or reference page for more detail:
+Inspect the images before choosing [window sizes and effort](howto/effort.md).
+Use [masks](howto/masking.md) for obscured regions and compare
+[preprocessing](howto/preprocessing.md) with raw-image results. Review
+[validation flags](howto/validation.md),
+[uncertainty estimates](explanation/uncertainty.md), and sensitivity to the
+chosen window size before interpreting small flow features.
 
-- **Tutorials:** guided walkthroughs. Start with
-  [Your first vector field](tutorials/first_vector_field.md) or the
-  point-and-click path, [a tour of the GUI](tutorials/gui_tour.md); continue
-  with a [real wind-tunnel recording](tutorials/real_data.md), then
-  [stereo PIV end to end](tutorials/stereo.md),
-  [stereo on a real recording](tutorials/stereo_real.md), and
-  [particle tracking velocimetry](tutorials/ptv.md).
-- **How-to guides:** instructions for specific tasks:
-  [masking](howto/masking.md), [preprocessing](howto/preprocessing.md),
-  [effort selection](howto/effort.md),
-  [physical-unit scaling](howto/scaling.md),
-  [GPU execution](howto/gpu.md),
-  [validation tuning](howto/validation.md),
-  [ensemble correlation](howto/ensemble.md),
-  [batch processing](howto/batch.md),
-  [working with the GUI](howto/gui.md), and
-  [calibrating a real stereo rig](howto/stereo_rig.md).
-- **Explanation:** the methods and conventions behind the analysis:
-  [coordinate conventions](explanation/conventions.md),
-  [correlation accuracy](explanation/correlation.md),
-  [multi-pass deformation](explanation/multipass.md),
-  [the masking model](explanation/masking.md),
-  [uncertainty quantification](explanation/uncertainty.md),
-  [stereo geometry and self-calibration](explanation/stereo.md),
-  [the GUI's controller–view split](explanation/gui.md),
-  the [numeric precision policy](explanation/precision.md), and the
-  [compatibility policy](explanation/compatibility.md).
-- **Reference:** the API, one page per topic, starting at
-  [Core pipeline and parameters](reference/pipeline.md); the GUI's API is
-  under [GUI (HammerheadGUI)](reference/gui.md).
+Once settings work on representative pairs, use [batch processing](howto/batch.md)
+for the recording. [Ensemble correlation](howto/ensemble.md) can help when
+individual pairs have weak signals and a representative displacement field
+is sufficient. [GPU execution](howto/gpu.md) provides another processing
+option for supported hardware.
+
+The [coordinate conventions](explanation/conventions.md) explain units,
+axis signs, and result locations. For arguments and return types, use the
+[pipeline reference](reference/pipeline.md) or the
+[GUI reference](reference/gui.md). The [feature matrix](reference/feature_matrix.md)
+compares the available analysis paths.

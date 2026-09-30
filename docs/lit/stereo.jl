@@ -21,24 +21,45 @@
 # ## A synthetic stereo rig
 #
 # The rig has two pinhole cameras yawed ±20° about the vertical axis,
-# looking at the world origin from 500 mm. Their known geometry provides
-# a reference for the camera models fitted below.
+# looking at the world origin from 500 mm. The camera matrices and particle
+# rendering live in the
+# [scene code](https://github.com/stillyslalom/Hammerhead.jl/blob/main/docs/lit/helpers/advanced_tutorials.jl),
+# so the steps below begin with the images those cameras would record.
 
 using Hammerhead
-using Random, LinearAlgebra
+using Random
 using Statistics: median
+include(joinpath(pkgdir(Hammerhead), "docs", "lit", "helpers", "advanced_tutorials.jl"))
 
 image_size = (384, 384)
+true_cams = (tutorial_camera(-20.0), tutorial_camera(20.0))
 
-function make_camera(yaw_deg; f = 2600.0, cx = 192.0, cy = 192.0, dist = 500.0)
-    th = deg2rad(yaw_deg)
-    R = [cos(th) 0.0 -sin(th); 0.0 1.0 0.0; sin(th) 0.0 cos(th)]
-    C = R' * [0.0, 0.0, -dist]           # camera center in world coordinates
-    K = [f 0.0 cx; 0.0 -f cy; 0.0 0.0 1.0]  # -f: world +Y points up in the image
-    return PinholeCamera(K, R, -R * C)
+# The two cameras see different in-plane shifts when a particle moves in Z.
+# The diagram is a schematic X–Z section: dashed rays show the first position,
+# solid rays the second. Since the viewing slopes differ, two measured shifts
+# can separate the common X motion from the Z motion.
+
+using CairoMakie
+
+let
+    fig = Figure(size = (620, 430))
+    ax = Axis(fig[1, 1]; xlabel = "world X", ylabel = "world Z",
+              title = "Two views of one particle displacement (schematic)",
+              aspect = DataAspect())
+    A, B = (0.0, 0.0), (2.0, 1.5)
+    for (cam, label) in (((-6.0, -8.0), "camera 1"), ((6.0, -8.0), "camera 2"))
+        lines!(ax, [cam[1], A[1]], [cam[2], A[2]]; color = :gray, linestyle = :dash)
+        lines!(ax, [cam[1], B[1]], [cam[2], B[2]]; color = :steelblue)
+        scatter!(ax, [cam[1]], [cam[2]]; color = :black, markersize = 12)
+        text!(ax, cam[1], cam[2] - 0.7; text = label, align = (:center, :top))
+    end
+    arrows2d!(ax, [A[1]], [A[2]], [B[1] - A[1]], [B[2] - A[2]];
+              color = :darkorange)
+    text!(ax, A[1] - 0.3, A[2] + 0.3; text = "A")
+    text!(ax, B[1] + 0.2, B[2]; text = "B")
+    xlims!(ax, -8, 8); ylims!(ax, -10, 4)
+    fig
 end
-
-true_cams = (make_camera(-20.0), make_camera(20.0))
 
 # ## Photograph the calibration target
 #
@@ -53,8 +74,6 @@ target_kwargs = (spacing = 15.0, two_level = true, level_separation = 3.0,
 
 plates = [[render_calibration_target(cam, image_size; z, target_kwargs...)
            for z in zs] for cam in true_cams]
-
-using CairoMakie
 
 let
     fig = Figure(size = (720, 380))
@@ -86,10 +105,11 @@ end
 cams = [calibrate_camera(g, zs) for g in grids]
 cams[1]
 
-# Check the calibration residuals. They are small for these synthetic plates.
-# Physical plates may give ~0.5–1 px root-mean-square (RMS) error, often
-# dominated by manufacturing tolerance (see the
-# [stereo-rig how-to](../howto/stereo_rig.md)):
+# Check the calibration residuals. These synthetic plates have known dot
+# positions, so the residuals mainly check detection and fitting here. With
+# recorded plates, inspect where errors occur before assigning a cause:
+# detection, indexing, camera-model limits, refraction, and target geometry
+# can all contribute (see the [stereo-rig how-to](../howto/stereo_rig.md)):
 
 [calibration_quality(cam, gs, zs) for (cam, gs) in zip(cams, grids)]
 
@@ -133,26 +153,12 @@ end
 # image disparity can locate the sheet:
 
 sheet = (a = 0.8, b = 0.010, c = -0.006)   # z = a + b·X + c·Y
-sheet_z(X, Y) = sheet.a + sheet.b * X + sheet.c * Y
-
-using Hammerhead.SyntheticData: generate_gaussian_particle!
-
-function render_sheet(cam, pts, displacement = (0.0, 0.0, 0.0))
-    img = zeros(image_size)
-    for (X, Y) in pts
-        Z = sheet_z(X, Y)
-        p = world_to_pixel(cam, (X + displacement[1], Y + displacement[2],
-                                 Z + displacement[3]))
-        generate_gaussian_particle!(img, (p[1], p[2]), 6.0)
-    end
-    return img
-end
 
 rng = MersenneTwister(7)
 instants = [[(56 * rand(rng) - 28, 56 * rand(rng) - 28) for _ in 1:400]
             for _ in 1:3]
-frames1 = [render_sheet(true_cams[1], pts) for pts in instants]
-frames2 = [render_sheet(true_cams[2], pts) for pts in instants]
+frames1 = [tutorial_sheet_image(true_cams[1], pts, image_size, sheet) for pts in instants]
+frames2 = [tutorial_sheet_image(true_cams[2], pts, image_size, sheet) for pts in instants]
 
 dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2)
 report
@@ -171,8 +177,10 @@ report.passes[1].plane
 
 truth = (0.30, -0.20, 0.25)   # (dx, dy, dz) in mm per frame interval
 pts = [(56 * rand(rng) - 28, 56 * rand(rng) - 28) for _ in 1:400]
-A1, B1 = render_sheet(true_cams[1], pts), render_sheet(true_cams[1], pts, truth)
-A2, B2 = render_sheet(true_cams[2], pts), render_sheet(true_cams[2], pts, truth)
+A1 = tutorial_sheet_image(true_cams[1], pts, image_size, sheet)
+B1 = tutorial_sheet_image(true_cams[1], pts, image_size, sheet; displacement = truth)
+A2 = tutorial_sheet_image(true_cams[2], pts, image_size, sheet)
+B2 = tutorial_sheet_image(true_cams[2], pts, image_size, sheet; displacement = truth)
 
 params = PIVParameters(window_size = 32, overlap = 16,
                        padding = true, apodization = :gauss)

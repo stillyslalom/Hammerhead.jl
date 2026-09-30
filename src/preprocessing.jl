@@ -1,8 +1,9 @@
 # Image preprocessing for PIV: background removal, intensity conditioning, and
 # contrast enhancement. The mutating versions (`subtract_background!`,
 # `intensity_cap!`, `highpass_filter!`, `clahe!`) are the core implementations
-# and operate on floating-point buffers (Float32 or Float64) so chained
-# pipelines don't allocate at each step; the non-mutating names are thin
+# and operate on floating-point buffers (Float32 or Float64) so a chain can
+# reuse its output buffer. Some operations still allocate scratch space.
+# The non-mutating names are thin
 # copying wrappers accepting any real-valued matrix and returning a matrix of
 # `float(eltype(img))` (integers promote to Float64), ready for run_piv.
 
@@ -36,7 +37,7 @@ function compute_background(images; method::Symbol = :min)
 end
 
 """
-    subtract_background(img, background) -> Matrix{Float64}
+    subtract_background(img, background) -> Matrix
     subtract_background!(img, background) -> img
 
 Subtract a background image (see [`compute_background`](@ref)), clamping the
@@ -54,13 +55,14 @@ end
     subtract_background(img, background) -> Matrix
 
 Allocating form of [`subtract_background!`](@ref): returns a new
-floating-point matrix and leaves `img` untouched.
+floating-point matrix and leaves `img` untouched. Preserves Float32 and
+Float64 input types; integer inputs are converted to floating point.
 """
 subtract_background(img::AbstractMatrix{<:Real}, background::AbstractMatrix{<:Real}) =
     subtract_background!(float_copy(img), background)
 
 """
-    intensity_cap(img; n_sigma=2) -> Matrix{Float64}
+    intensity_cap(img; n_sigma=2) -> Matrix
     intensity_cap!(img; n_sigma=2) -> img
 
 Cap pixel intensities at `median + n_sigma * std` (Shavit et al. 2007),
@@ -79,7 +81,8 @@ end
     intensity_cap(img; n_sigma=2) -> Matrix
 
 Allocating form of [`intensity_cap!`](@ref): returns a new floating-point
-matrix and leaves `img` untouched.
+matrix and leaves `img` untouched. Preserves Float32 and Float64 input
+types; integer inputs are converted to floating point.
 """
 intensity_cap(img::AbstractMatrix{<:Real}; n_sigma::Real = 2) =
     intensity_cap!(float_copy(img); n_sigma)
@@ -93,7 +96,7 @@ function gaussian_blur(img::AbstractMatrix{<:AbstractFloat}, sigma::Real)
 end
 
 """
-    highpass_filter(img; sigma=3) -> Matrix{Float64}
+    highpass_filter(img; sigma=3) -> Matrix
     highpass_filter!(img; sigma=3) -> img
 
 Remove low-frequency background (sheet inhomogeneity, glare) by subtracting a
@@ -112,7 +115,8 @@ end
     highpass_filter(img; sigma=3) -> Matrix
 
 Allocating form of [`highpass_filter!`](@ref): returns a new floating-point
-matrix and leaves `img` untouched.
+matrix and leaves `img` untouched. Preserves Float32 and Float64 input
+types; integer inputs are converted to floating point.
 """
 highpass_filter(img::AbstractMatrix{<:Real}; sigma::Real = 3) =
     highpass_filter!(float_copy(img); sigma)
@@ -122,7 +126,7 @@ highpass_filter(img::AbstractMatrix{<:Real}; sigma::Real = 3) =
 # dimensions don't divide evenly into blocks, and the interpolation round-trip
 # perturbs subpixel particle intensity distributions.
 """
-    clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix{Float64}
+    clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix
     clahe!(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> img
 
 Contrast-limited adaptive histogram equalization. The image is divided into
@@ -199,7 +203,8 @@ end
     clahe(img; tiles=(8, 8), clip_limit=2.0, nbins=256) -> Matrix
 
 Allocating form of [`clahe!`](@ref): returns a new floating-point matrix and
-leaves `img` untouched.
+leaves `img` untouched. Preserves Float32 and Float64 input types; integer
+inputs are converted to floating point.
 """
 clahe(img::AbstractMatrix{<:Real}; kwargs...) = clahe!(float_copy(img); kwargs...)
 

@@ -10,21 +10,30 @@ The suite covers:
 
 - **Correlation**: per-window cost of `CrossCorrelator` (plain and
   padded/apodized) and `PhaseCorrelator` at 16–64 px window sizes.
-- **Full pipeline**: `run_piv` on a 512×512 synthetic vortex pair —
-  single-pass, padded, and multi-pass schedules, serial vs. threaded.
+- **Full pipeline**: single-pass and multi-pass schedules on synthetic
+  vortex images, with serial and threaded execution.
+- **High effort**: configurable image sizes, final-pass iterations,
+  ensemble pair counts, and stereo dewarping and reconstruction.
 - **Validation**: per-validator cost on a 128×128 vector field.
 
-Timings are minima over several samples (no BenchmarkTools dependency, so the
-script runs with the package's own environment). For regression checks, run on
-a quiet machine and compare against a baseline log from `main`:
+Most timings report the minimum across several samples. The larger
+high-effort workloads default to one sample; control them with
+`HAMMERHEAD_BENCH_SIZES`, `HAMMERHEAD_BENCH_ENSEMBLES`, and
+`HAMMERHEAD_BENCH_SAMPLES`. Single-sample results can include compilation or
+allocation effects, so repeat a comparison before attributing a difference
+to an implementation change.
+
+For regression checks, use an existing baseline checkout and the same Julia
+version, thread count, input sizes, and environment settings for both runs:
 
 ```bash
-git stash && julia --project=. bench/run_benchmarks.jl > baseline.log && git stash pop
-julia --project=. bench/run_benchmarks.jl > new.log
+julia --project=../Hammerhead-baseline --threads=4 ../Hammerhead-baseline/bench/run_benchmarks.jl > baseline.log
+julia --project=. --threads=4 bench/run_benchmarks.jl > new.log
 ```
 
-Treat >20 % changes in the minima as signal; smaller differences are usually
-noise.
+Keep the machine otherwise idle and compare repeated runs. A percentage
+change alone does not distinguish a regression from scheduling, compilation,
+or thermal effects; inspect the affected workloads and their variability.
 
 ## GPU backends
 
@@ -33,23 +42,15 @@ noise.
 `bench/gpu_benchmarks.jl` times it (see
 the headers for the required environment; both take the backend selector as
 ARGS[1]; the benchmark optionally takes `exclusion` or `regionalmax` as
-ARGS[2], defaulting to the package's `regionalmax`). On the dev box's RX 6800
-XT (ROCm 6.4, 4 CPU threads), the
-`:amdgpu` backend matches `:cpu` to ~7e-15 (Float64) and runs a
-padded+apodized 32/16 single pass at 2.8–3.6× the threaded CPU speed with
-`:exclusion` and 1.8–3.2× with `:regionalmax` (1024²–2048²,
-Float64/Float32); regional-max multipass runs at 2.5–3.1× CPU. The `:cuda`
-backend is likewise validated on
-an RTX 2000 Ada (CUDA.jl 6.2, driver CUDA 12.8): every path matches `:cpu` to
-~1e-15 (Float64) and runs 1.7–2.8× the threaded CPU speed (1024²–2048²,
-Float64/Float32; multipass-deformation included).
+ARGS[2], defaulting to the package's `regionalmax`). Record the device,
+driver, package versions, CPU thread count, image size, numeric type, and
+peak-finding mode with the results. CPU agreement checks implementation
+consistency; it does not measure error against the true particle displacement.
 
-`bench/gpu_profile_uq.jl <backend>` (CUDA only — it uses `CUDA.@profile`)
+`bench/gpu_profile_uq.jl <backend>` (CUDA only; it uses `CUDA.@profile`)
 prints the per-kernel device-time breakdown of a UQ-enabled multipass run.
-This is how the Phase 4c UQ optimization was scoped and verified: on the RTX
-2000 Ada the smoothed-ΔC recompute (`_ka_uq_stats!`) was 44–62% of device
-time; caching the field in `_ka_uq_fill!` cut that kernel ~5–8× and halved the
-whole UQ pipeline's device time, with `:ka`↔`:cpu` UQ still matching to ~3e-15.
+Use it to identify which kernels dominate on your device. Device kernel time
+does not include the full cost of file loading, preprocessing, or transfers.
 
 The user-facing setup, support matrix, memory sizing, and troubleshooting
 guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
@@ -67,13 +68,15 @@ all-CPU, all-device, and device-correlation plus threaded-CPU uncertainty.
 For real data or a custom pass schedule, call `benchmark_piv_configurations`
 directly with a representative loaded image pair.
 
-For batch memory work, profile the real Case E sequence workload with:
+For batch memory work, `gc_profile.jl` reads a directory of camera images.
+The default points to the full Case E sequence under `cases/`, which is not
+included in the repository. Supply your recording explicitly:
 
 ```bash
-julia --project=. --threads=4 bench/gc_profile.jl --pairs=5
+julia --project=. --threads=4 bench/gc_profile.jl --camera-dir=path/to/camera --pairs=5
 ```
 
-The script defaults to the committed workflow shape:
+The script uses:
 `image_pairs(frames; mode=:chained)`, `multipass_parameters([128, 64, 32, 16])`,
 and `run_piv_sequence(...; progress=false)`. It writes a concise GC/allocation
 summary plus `Profile.Allocs` flat/tree reports under `bench/profile-output/`

@@ -1,8 +1,7 @@
 # Bibliography
 
-Hammerhead's correlation, validation, uncertainty, and stereo-calibration
-algorithms are implemented from the primary literature. Pages throughout the
-documentation cite the entries below.
+Sources cited by the methods and examples in this documentation are listed
+below. Follow a citation from a method page to find its full reference.
 
 ```@bibliography
 ```

@@ -1,8 +1,8 @@
 # Choose an effort level
 
-**Goal:** pick a particle image velocimetry (PIV) schedule quickly, then
-override only the knobs your data
-actually requires.
+**Goal:** choose a particle image velocimetry (PIV) schedule, then check
+whether its final window resolves the flow without losing too many valid
+vectors.
 
 For routine runs, omit the explicit pass vector and use `effort`:
 
@@ -16,14 +16,23 @@ The same keyword is accepted by [`run_piv_sequence`](@ref),
 [`run_piv_ensemble`](@ref), and [`run_piv_stereo`](@ref). The current presets
 are:
 
-| Effort | Schedule | Options | Typical synthetic result |
+| Effort | Schedule | Options | Use it for |
 |---|---|---|---|
-| `:low` | `[32]` | [`PIVParameters`](@ref) defaults | 1× time; ~0.10 px uniform-shift root-mean-square (RMS) error, ~0.43 px vortex RMS error |
-| `:medium` | `[64, 32]` | defaults | ~4× time; ~0.02 px uniform-shift RMS error, ~0.22 px vortex RMS error |
-| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | ~32× time; ~0.02 px uniform-shift RMS error, ~0.09 px vortex RMS error |
+| `:low` | `[32]` | [`PIVParameters`](@ref) defaults | A quick field and image-quality check when displacements are modest |
+| `:medium` | `[64, 32]` | defaults | A first analysis with a coarse predictor and finer final grid |
+| `:high` | `[128, 64, 32]` | `padding = true`, `apodization = :gauss`, `max_iterations = 2`; final pass `uncertainty = true` | A more expensive analysis with iterative deformation and per-vector uncertainty |
 
-Those numbers are typical single-threaded timings on 256×256 synthetic pairs,
-not guarantees for every seeding density or flow.
+Each added pass or convergence sweep processes the image again; padding also
+increases FFT work. On images too small for a listed window, Hammerhead
+reduces the preset's window sizes to fit. None of the presets guarantees a
+particular error on your recording.
+
+Start with `:medium` on representative pairs. Compare its field and rejected
+vectors with `:low`; use `:high` when smaller residuals or per-vector
+uncertainty matter enough to justify the extra computation. Check a profile
+through the smallest feature you need to resolve and inspect the particle
+images in windows with poor peaks. The [image-quality guide](image_quality.md)
+explains the window-size and seeding tradeoff.
 
 Effort and execution backend are independent choices. For example,
 `run_piv(imgA, imgB; effort = :high, backend = :amdgpu)` runs the same
@@ -45,15 +54,17 @@ result = run_piv(imgA, imgB;
 ```
 
 Most field keywords apply to every pass. `window_size` sets the final window
-size and rescales the pyramid, while `uncertainty`, `max_iterations`, and
+size and rescales the pyramid. `search_area_size` similarly sets the final
+search area, subject to its centered-footprint constraints; enlarged search
+areas currently require `backend = :cpu`. `uncertainty`, `max_iterations`, and
 `keep_correlation_planes` apply only to the final pass. Use `final = (;)` when
 you need an explicit last-pass override; it wins over both the preset and the
 field keywords.
 
-Final window size is a physics and image-quality choice. Smaller windows give
-denser vectors, but they also contain fewer particles and can be noisier; the
-default `:high` preset stops at 32 px for that reason. Use `window_size = 16`
-only when the seeding density and signal quality support it.
+Smaller final windows give denser vectors but contain fewer particle images.
+For example, compare 32 px and 16 px on the same pair: look at rejected
+vectors and a profile across the feature of interest. Choose 16 px only if
+it adds useful spatial detail without losing reliable coverage.
 
 Use an explicit `multipass_parameters(...)` schedule when you need per-pass
 control beyond those overrides. `effort` and an explicit `PIVParameters` or

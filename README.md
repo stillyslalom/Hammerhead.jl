@@ -1,246 +1,102 @@
-# Hammerhead
+# Hammerhead.jl
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/stable/)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/dev/)
-[![Build Status](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/stable/)
+[![Development docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/dev/)
+[![Build status](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml?query=branch%3Amain)
 
-Particle image velocimetry (PIV) in Julia: planar two-dimensional,
-two-component (2D2C) and stereoscopic two-dimensional, three-component (2D3C)
-PIV, plus 2D2C particle tracking velocimetry (PTV). Hammerhead is developed
-and validated against the
-[International PIV Challenge](https://pivchallenge.org/) cases.
+Hammerhead measures motion from images of tracer particles. Use planar
+particle image velocimetry (PIV) for two displacement components in a light
+sheet, stereo PIV for three components from two calibrated cameras, or
+particle tracking velocimetry (PTV) when particles are sparse enough to
+follow individually. Results include validation flags and measurement
+diagnostics so you can inspect where the images support the field.
 
-PIV measures fluid motion from two images of small tracer particles taken a
-known time apart. Hammerhead divides the images into small *interrogation
-windows*, finds how far each particle pattern moved, and returns a displacement
-vector at every window. Supplying the physical pixel size and time between
-frames converts those displacements into velocities. PTV is the sparse-seeding
-counterpart: it follows identifiable particles instead of comparing patterns
-inside windows.
+## Install
 
-- Multi-pass window-deformation iterative multigrid (WIDIM) analysis with
-  symmetric image deformation; zero-padded, Gaussian-apodized correlation
-  reaches ~0.03 px root-mean-square (RMS) error on synthetic benchmarks
-- Vector validation (universal outlier detection, peak ratio, correlation
-  moment) with secondary-peak substitution and local-median replacement
-- Per-vector uncertainty quantification from correlation statistics
-  ([Wieneke 2015](https://doi.org/10.1088/0957-0233/26/7/074002))
-- Ensemble (sum-of-correlation) analysis for low signal-to-noise ratio (SNR)
-  and micro-PIV recordings, plus time-series statistics and temporal validation
-- Full stereo chain: dot-grid target detection, camera calibration with
-  pinhole direct linear transformation (DLT) and Soloff polynomial models,
-  image dewarping, three-component (3C) reconstruction, and
-  disparity self-calibration
-  ([Wieneke 2005](https://doi.org/10.1007/s00348-005-0962-z))
-- Particle tracking: subpixel particle detection, hybrid PIV-guided two-frame
-  matching, and multi-frame trajectory linking
-- Batch drivers with incremental JLD2-format Julia data output, dynamic masking,
-  in-place preprocessing, physical-unit metadata, and Makie plotting
+Use Julia 1.10 or later. In Julia's package mode (`]`):
 
-Start with the
-[first-vector-field tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/first_vector_field/),
-then analyze a
-[real wind-tunnel recording](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/real_data/).
-The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/) also has
-task-oriented how-to guides, explanations of the methods, stereo and PTV
-tutorials, and the full API reference.
+```julia
+pkg> add Hammerhead
+```
 
-## Planar PIV
+For the optional desktop application, install `HammerheadGUI` in the same
+environment:
 
-`run_piv` accepts a pair of equally sized, real-valued matrices. Use
-`load_image` to read TIFF (including 16-bit), PNG, and other formats supported
-by FileIO:
+```julia
+pkg> add HammerheadGUI
+```
+
+## Measure one image pair
+
+Press Backspace to return from package mode to the Julia prompt.
+Replace the filenames with two successive exposures from your recording.
+[`load_image`](https://stillyslalom.github.io/Hammerhead.jl/dev/reference/io/)
+reads grayscale images into floating-point matrices; `run_piv` returns
+displacements in pixels between the exposures.
 
 ```julia
 using Hammerhead
 
-imgA = load_image("frame_0001.tif")  # grayscale Matrix{Float64} in [0, 1]
+imgA = load_image("frame_0001.tif")
 imgB = load_image("frame_0002.tif")
-
-# One-line presets trade speed for accuracy (:low, :medium, :high):
 result = run_piv(imgA, imgB; effort = :high)
 
-# Or spell out the multi-pass schedule: each pass uses the previous validated
-# field as a predictor and shrinks the window; repeat or iterate the final
-# size for convergence.
-passes = multipass_parameters([64, 32, 16];
-    correlation_method = :cross, # or :phase
-    padding = true,              # zero-padded (linear) correlation, overlap-normalized
-    apodization = :gauss,        # Gaussian window on each interrogation window
-    final = (; max_iterations = 3, uncertainty = true),  # iterate the final pass, estimate σ
-)
-result = run_piv(imgA, imgB, passes)  # threaded over windows when Julia has threads
-
-result.u, result.v                # displacement field (px), u along x/columns
-result.x, result.y                # interrogation grid centers (px)
-result.peak_ratio                 # per-window quality metric
-result.outliers                   # validation flags
-result.uncertainty_u              # per-vector σ (Wieneke 2015), final pass
+accepted = .!(result.mask .| result.outliers)
+(accepted_vectors = count(accepted), total_vectors = length(accepted))
 ```
 
-The `u` and `v` arrays are displacements in pixels, not yet physical
-velocities. Each entry represents the motion measured by one interrogation
-window. See [Physical units](#physical-units) when the pixel size and frame
-interval are known.
+`result.x` and `result.y` are interrogation-window centers in pixels.
+`result.u` points along image columns and `result.v` along rows; positive
+`v` points down the image. Masked windows hold no measurement. An outlier
+can still hold a finite replacement value, so use `accepted` when computing
+statistics from measured vectors. `result.peak_ratio` compares the two
+strongest correlation peaks; `result.uncertainty_u` and
+`result.uncertainty_v` estimate random correlation error when enabled by the
+chosen analysis settings. These diagnostics help locate weak measurements.
+Correlation uncertainty does not include errors in calibration or timing.
 
-Sign convention: a particle at `(row, col)` in the first image found at
-`(row + v, col + u)` in the second yields positive `(u, v)`.
-
-`padding = true` with `apodization = :gauss` is the accuracy configuration
-(unbiased, ~0.03 px RMS on synthetic data) at roughly four times the fast
-Fourier transform (FFT) cost per window.
-For vectors that fail validation, the pipeline checks the secondary and
-tertiary correlation peaks. It accepts a locally consistent alternative as
-measured data. If no peak passes validation, it replaces the vector with the
-local median and marks it in `result.outliers`. Use `peak_locking(result.u)`
-to check for peak locking.
-
-The pipeline's numeric precision follows the images: loading with
-`load_image(Float32, path)` runs the correlators, deformation, and validation
-in single precision and returns a `PIVResult{Float32}`.
-
-## Batch processing
-
-Process a whole recording with `run_piv_sequence`, which pairs up frames,
-shows progress, and persists results incrementally to a JLD2 file:
+If you know the physical pixel size and the time between the *two exposures*,
+convert the result to velocity. The values below are examples; use the
+calibration and timing measured for your setup.
 
 ```julia
-files = sort(readdir("run42"; join = true))
-pairs = image_pairs(files)               # (1,2), (3,4), ... ; :chained for time series
-results = run_piv_sequence(pairs, passes;
-    preprocess = img -> highpass_filter(img; sigma = 3),
-    output = "run42_piv.jld2")
-
-results = load_results("run42_piv.jld2") # reload later
+scale = PhysicalScale(pixel_size = 0.02, dt = 0.001,
+                      length_unit = "mm", time_unit = "s")
+velocity = physical(result, scale)
+velocity.u[accepted]  # accepted horizontal velocities in mm/s
 ```
 
-For low-SNR recordings of stationary flow (micro-PIV), `run_piv_ensemble`
-sums the correlation planes across all pairs before peak detection instead of
-averaging noisy vector fields. For time-resolved sequences,
-`validate_temporal!` runs a per-point median test across time,
-`field_statistics` computes pointwise turbulence statistics (mean, RMS,
-Reynolds stress), and `power_spectrum` gives temporal spectra.
+`result` remains in pixels. In `velocity`, positions are in millimetres,
+and displacements and their uncertainty estimates are in millimetres per
+second. The interval between *successive image pairs* is a separate value
+used for time-series analysis.
 
-## Stereo PIV
-
-Calibrate each camera from dot-grid target images at known plate positions,
-dewarp both views onto a shared world-plane grid, and reconstruct
-three-component vectors:
+To plot a field, install a Makie backend such as `CairoMakie`
+(`pkg> add CairoMakie`), then load it before calling the plotting extension:
 
 ```julia
-grids1 = [detect_calibration_grid(load_image(f)) for f in plate_files_cam1]
-cam1   = calibrate_camera(grids1, zs)            # zs: plate positions (e.g. mm)
-cam2   = calibrate_camera(grids2, zs)
-
-grid = common_dewarp_grid([cam1, cam2], size(imgA1))
-dw1, dw2 = ImageDewarper(cam1, grid), ImageDewarper(cam2, grid)
-
-# Correct sheet/plate misregistration from the particle images themselves:
-dw1, dw2, report = self_calibrate(imgA1, imgA2, dw1, dw2)
-
-result = run_piv_stereo(imgA1, imgB1, imgA2, imgB2, dw1, dw2; effort = :high)
-result.u, result.v, result.w    # world units per frame interval
+using CairoMakie
+plot_vector_field(result; show_replaced = false)
 ```
 
-Per-camera uncertainties propagate through the reconstruction into
-`uncertainty_u`/`v`/`w`. See the
-[stereo tutorials](https://stillyslalom.github.io/Hammerhead.jl/dev/) for the
-end-to-end walkthrough, including one on real PIV Challenge case-4E data.
+The [first-vector-field tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/first_vector_field/)
+explains the correlation and validation steps. The
+[real-recording tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/real_data/)
+shows how to check image quality, window-size sensitivity, and uncertainty
+when the displacement field is unknown.
 
-## Particle tracking velocimetry (PTV)
+## Choose a workflow
 
-For seeding densities too sparse for correlation windows, track individual
-particles:
+| If you need to… | Start here |
+|---|---|
+| Process many pairs and save results as they finish | [Batch processing](https://stillyslalom.github.io/Hammerhead.jl/dev/howto/batch/) |
+| Calculate means, fluctuations, and accepted-sample counts | [From image pairs to flow statistics](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/sequence_statistics/) |
+| Combine weak correlations across a stationary recording | [Ensemble correlation](https://stillyslalom.github.io/Hammerhead.jl/dev/howto/ensemble/) |
+| Calibrate two cameras and reconstruct three components | [Stereo tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/stereo/) and [real stereo recording](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/stereo_real/) |
+| Follow individual particles instead of window patterns | [PTV tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/ptv/) |
+| Draw masks, run batches, and explore results in a desktop app | [GUI tour](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/gui_tour/) and [HammerheadGUI](HammerheadGUI/) |
 
-```julia
-ptv = run_ptv(imgA, imgB)            # detect + PIV-guided matching -> PTVResult
-ptv.x, ptv.y, ptv.u, ptv.v           # scattered frame-A positions + displacements
-
-tracks = track_particles(frames)     # multi-frame trajectory linking
-gridded = ptv_to_grid(ptv, size(imgA))  # bin tracks back onto a regular grid
-```
-
-Detection (`detect_particles`), scattered outlier flagging, and batch
-processing (`run_ptv_sequence`) are included; results serialize alongside PIV
-results.
-
-## Masking
-
-Exclude model geometry or reflection regions with an image-sized `Bool` mask
-(`true` = excluded):
-
-```julia
-mask = load_mask("impeller_mask.png")   # or polygon_mask(size(img), vertices), or any Bool array
-result = run_piv(imgA, imgB, passes; mask)
-result.mask                             # windows with no measurement (NaN vectors)
-```
-
-Windows whose masked-pixel fraction reaches `mask_threshold` (default 0.5)
-produce no vector; windows below the threshold are correlated over their
-valid pixels only, with no intensity step at the mask edge.
-
-## Preprocessing
-
-Use the mutating forms to apply several operations to the same image buffer:
-
-```julia
-bg = compute_background(images)            # ensemble :min (or :mean) background
-img = load_image("frame_0001.tif")         # fresh Float64 buffer, safe to mutate
-subtract_background!(img, bg)
-intensity_cap!(img)                        # cap at median + 2σ
-highpass_filter!(img; sigma = 3)           # remove sheet inhomogeneity
-clahe!(img)                                # contrast-limited adaptive equalization
-```
-
-Allocating versions (`subtract_background`, `intensity_cap`, `highpass_filter`,
-`clahe`) accept any real-valued matrix and return a new `Matrix{Float64}`.
-
-## Physical units
-
-Result arrays stay in measured units (px/frame, or world units for stereo);
-attach a `PhysicalScale` and convert on demand:
-
-```julia
-scale = PhysicalScale(pixel_size = 22e-6, dt = 1e-3,
-                      length_unit = "m", time_unit = "s")
-result = run_piv(imgA, imgB, passes; scale)
-phys = physical(result)   # positions in m, velocities in m/s; labels for plotting
-```
-
-With Unitful loaded (a weak dependency),
-`PhysicalScale(22.0u"µm", 1.0u"ms")` carries the unit names into plot labels.
-
-## Graphics processing unit (GPU) and alternative backends
-
-Correlation can run through portable KernelAbstractions kernels.
-`backend = :ka` runs these kernels on the CPU. To run them on a GPU, load
-the device package: `using AMDGPU` enables `backend = :amdgpu`, and
-`using CUDA` enables `backend = :cuda`.
-The GPU backends batch whole passes on the device, including subpixel peak
-analysis, and currently cover cross- and phase correlation with
-`:gauss3`/`:gauss9` subpixel fits, multi-pass deformation, ensemble
-accumulation, and Float64 uncertainty statistics. The `:gauss2d` fit and
-retained correlation planes remain CPU-only. See the
-[GPU how-to](docs/src/howto/gpu.md) for installation, feature coverage,
-device-memory sizing, validation, and performance guidance.
-
-## Visualization
-
-Load a Makie backend to enable plotting:
-
-```julia
-using GLMakie  # or CairoMakie
-fig = plot_vector_field(result)              # outliers highlighted in red
-plot_vector_field!(ax, result)               # into an existing Axis
-```
-
-Result methods label axes in physical units when a `PhysicalScale` is
-attached. The companion [`HammerheadGUI`](HammerheadGUI/) package provides
-interactive tools for exploring results, drawing masks, running batches,
-and reviewing calibrations.
-
-The lower-level building blocks (`CrossCorrelator`, `PhaseCorrelator`,
-`correlate`, `correlate_deformable`, `warp_image`, `smoothn`,
-`error_statistics`, `universal_outlier_detection`, ...) are also exported for
-custom pipelines. See the
-[API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/).
+Hammerhead also provides preprocessing, physical-unit scaling, temporal
+validation, derived flow quantities, and optional GPU execution for
+supported PIV settings. The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/)
+has task guides and the [API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/reference/pipeline/).

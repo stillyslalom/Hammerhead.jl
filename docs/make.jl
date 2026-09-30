@@ -11,7 +11,7 @@ bib = CitationBibliography(joinpath(@__DIR__, "src", "refs.bib"); style=:authory
 # Tutorials are Literate.jl scripts, converted to Documenter markdown with
 # executable @example blocks — the docs build runs them, so they double as
 # integration tests.
-const TUTORIALS = ["first_vector_field.jl", "real_data.jl", "stereo.jl", "stereo_real.jl", "ptv.jl", "gui_tour.jl"]
+const TUTORIALS = ["first_vector_field.jl", "real_data.jl", "sequence_statistics.jl", "stereo.jl", "stereo_real.jl", "ptv.jl", "gui_tour.jl"]
 for tutorial in TUTORIALS
     Literate.markdown(joinpath(@__DIR__, "lit", tutorial),
                       joinpath(@__DIR__, "src", "tutorials"); documenter=true)
@@ -32,12 +32,14 @@ makedocs(;
         "Tutorials" => [
             "Your first vector field" => "tutorials/first_vector_field.md",
             "A real recording: tip vortex" => "tutorials/real_data.md",
+            "From image pairs to flow statistics" => "tutorials/sequence_statistics.md",
             "Stereo PIV end to end" => "tutorials/stereo.md",
             "Stereo on a real recording: vortex ring" => "tutorials/stereo_real.md",
             "Particle tracking (PTV)" => "tutorials/ptv.md",
             "A tour of the GUI" => "tutorials/gui_tour.md",
         ],
         "How-to guides" => [
+            "Inspect image quality" => "howto/image_quality.md",
             "Mask reflections and geometry" => "howto/masking.md",
             "Build a preprocessing chain" => "howto/preprocessing.md",
             "Choose an effort level" => "howto/effort.md",

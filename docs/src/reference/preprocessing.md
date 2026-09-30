@@ -4,12 +4,14 @@ CurrentModule = Hammerhead
 
 # Preprocessing
 
-Image conditioning before correlation: background removal, intensity
-capping, high-pass filtering, and contrast equalization, plus affine
-registration utilities. The mutating forms (`f!`) modify floating-point
-buffers in place; the allocating forms accept any real-valued matrix and
-return a processed copy. See the
-[preprocessing how-to](../howto/preprocessing.md) for combining operations.
+Choose an operation for a specific image problem: subtract a stable
+background, reduce an illumination gradient, cap unusually bright pixels,
+or raise local contrast. Compare correlation results before and after
+processing; an operation can also remove particle signal. Mutating forms
+(`f!`) modify floating-point arrays in place, while allocating forms
+return a processed array. Registration and warping functions are listed
+below. See [Build a preprocessing chain](../howto/preprocessing.md) for
+examples.
 
 ```@index
 Pages = ["preprocessing.md"]

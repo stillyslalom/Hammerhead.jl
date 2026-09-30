@@ -1,12 +1,23 @@
 # Multi-pass interrogation and image deformation
 
-In particle image velocimetry (PIV), small windows resolve fine flow structure
-but measure only small displacements reliably (the quarter-window rule).
-Large windows can measure larger displacements but average over more of the
-flow. Multi-pass interrogation starts with large windows and refines the
-measurement with smaller ones. Image deformation helps in strongly sheared
-flows
-[Scarano2002](@cite).
+In particle image velocimetry (PIV), small windows sample more local flow
+but lose more particle pairs at their boundaries for a given displacement.
+Large windows retain more particle information while averaging over a wider
+area. Multi-pass interrogation starts with large windows and refines the
+measurement with smaller ones. Image deformation reduces the remaining shift
+seen by those smaller windows [Scarano2002](@cite).
+
+For an initial pass with equal-sized windows, displacement below about one
+quarter of the window width is a useful starting guideline, not a hard
+algorithmic limit. Particle density, velocity gradients, and out-of-plane
+particle loss also affect whether a window yields a usable measurement.
+Inspect these with the [image-quality guide](../howto/image_quality.md).
+
+Window overlap sets the distance between vector locations. For example,
+32 px windows with 16 px overlap give 16 px vector spacing; the measurement
+still uses a 32 px interrogation footprint. Increasing overlap alone does
+not resolve smaller structures. Compare final window sizes and the features
+they recover, as in the [tip-vortex tutorial](../tutorials/real_data.md).
 
 ## The predictor–corrector loop
 
@@ -23,19 +34,19 @@ correlation pass per entry:
    *residual* displacement, and adds the predictor back.
 
 Because each pass only needs to measure the residual, window sizes can
-shrink across passes — `multipass_parameters([64, 32, 16])` — without
-violating the quarter-window limit, even when the total displacement is
-large.
+shrink across passes, as in `multipass_parameters([64, 32, 16])`, even when
+the total displacement would be too large for a useful single-pass
+measurement at the final size.
 
 ## Symmetric (central-difference) deformation
 
 Hammerhead deforms *both* images symmetrically: image A is resampled shifted
 by −d/2 and image B by +d/2, where d is the predictor displacement at each
 pixel (cubic B-spline resampling). Content displaced by exactly d is then
-aligned in both outputs. Compared to deforming only one image, the
-symmetric scheme is second-order accurate: the measurement is centered at
-the midpoint of the particle trajectory, which cancels the leading-order
-bias in curved or sheared flow.
+aligned in both outputs. The resulting vector is attributed to the
+trajectory midpoint. For smooth flow, this symmetric placement removes the
+leading-order position bias that would arise from assigning a displacement
+to only one endpoint.
 
 ## Convergence sweeps and iterative passes
 
@@ -66,14 +77,14 @@ smaller-window pass uses the field as its predictor.
 Each extra sweep deforms both images and correlates every window, so budget
 roughly the time of another pass for each sweep.
 
-Two features **require** a converged schedule:
+Convergence matters for two reasons:
 
 - Per-vector [uncertainty quantification](uncertainty.md) assumes the
   correlation peak of the deformed windows sits at nearly zero residual;
   it runs on the final pass only.
-- The ~0.03 px root-mean-square (RMS) accuracy figure of the
-  [padded + apodized configuration](correlation.md) is only reached once
-  the residual is small.
+- A small residual makes the final correlation easier to fit. It does not
+  establish the accuracy of the result: image quality, particle loss, and
+  unresolved velocity gradients still affect the measurement.
 
 ## Validation between passes
 

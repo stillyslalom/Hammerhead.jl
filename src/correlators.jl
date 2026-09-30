@@ -33,9 +33,10 @@ FFT-based cross-correlation of a frame-A interrogation window against a
 centered frame-B search area, with preallocated buffers and cached in-place
 FFTW plans. The search area defaults to the interrogation size.
 
-- `padding = true` zero-pads the FFT to twice the window size, replacing
-  circular with true linear correlation; this removes the wrap-around noise
-  that biases subpixel estimates toward zero, at roughly 4× the FFT cost.
+- `padding = true` zero-pads each FFT dimension to twice the search-area
+  size, replacing circular correlation with linear correlation. This avoids
+  wraparound contributions but does not eliminate all displacement bias.
+  The padded arrays have four times as many elements as the unpadded arrays.
 - `apodization = :gauss` applies a Gaussian window (σ = window/4) to the
   mean-subtracted inputs to reduce edge effects and spectral leakage.
 """

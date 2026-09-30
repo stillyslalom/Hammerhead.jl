@@ -14,36 +14,30 @@
 # julia> batch_runner()         # open an empty batch form
 # ```
 #
-# The examples call each window's Julia *controller*, which performs the
-# same actions as its widgets. At the REPL, the figures open as interactive
-# windows, so you can follow the steps with the mouse or run the code.
+# Each step first describes what to do in the window. The accompanying code
+# performs the same action through a controller. At the REPL, use the mouse
+# steps if you prefer.
 # See [the controller–view split](../explanation/gui.md) for details.
 #
 # ## First vectors
 #
-# Add your image files to the batch form with "add frames…". For this
-# walkthrough, generate a pair depicting a Lamb–Oseen vortex:
+# Add your image files to the batch form with "add frames…". This example
+# makes a synthetic vortex pair with a bright rectangular reflection in the
+# upper-left corner. The
+# [scene code](https://github.com/stillyslalom/Hammerhead.jl/blob/main/docs/lit/helpers/advanced_tutorials.jl)
+# is available if you want to change it. The reflection gives us a visible
+# reason to draw a mask.
 
 using Hammerhead
 using Hammerhead.SyntheticData
 using Random
+include(joinpath(pkgdir(Hammerhead), "docs", "lit", "helpers", "advanced_tutorials.jl"))
+imgA, imgB = tutorial_gui_pair()
 
-center, rc, Γ = (128.0, 128.0), 40.0, 1200.0
-function flow(x, y, z, t)
-    dx, dy = x - center[1], y - center[2]
-    r² = dx^2 + dy^2
-    k = r² < 1e-9 ? Γ / (2π * rc^2) : Γ / (2π * r²) * (1 - exp(-r² / rc^2))
-    return (-k * dy, k * dx, 0.0)
-end
-
-rng = MersenneTwister(42)
-imgA, imgB, _, _ = generate_synthetic_piv_pair(flow, (256, 256), 1.0;
-    particle_density = 0.05, background_noise = 0.03,
-    z_range = (-1.0, 1.0), rng)
-
-# On the [`BatchRunner`](@ref) form, add the frames, choose an effort preset
-# (`:low`/`:medium`/`:high`; see
-# [Choose an effort level](../howto/effort.md)), then press "run":
+# In the [`BatchRunner`](@ref) form, click **add frames…**, select the two
+# images in A/B order, choose **medium** in the effort menu, and press **run**.
+# To use the file picker with these generated arrays, save them as images first.
+# The equivalent controller calls are:
 
 using HammerheadGUI
 
@@ -72,51 +66,44 @@ fig = result_explorer(ex)
 #
 # ## Improve it: physical units
 #
-# [`scale_tool`](@ref) turns a calibration image into a
-# [`PhysicalScale`](@ref): click the two endpoints of a feature of known
-# physical size and enter its separation. You can open a photographed target
-# with `scale_tool("plate.png")`. This example renders a plate with dots
-# 15 mm apart ([`render_calibration_target`](@ref)):
+# [`scale_tool`](@ref) measures a known distance in an image. Open a
+# calibration image, click two neighboring marks, and enter their physical
+# separation. For this synthetic scene, we declare a scale of 0.02 mm/px and
+# a 1 ms frame interval. The two generated marks are 64 px apart, representing
+# 1.28 mm at that scale. With recorded data, photograph a target in the same
+# camera setup as the particle images.
 
-θ = deg2rad(10.0)
-R = [cos(θ) 0.0 -sin(θ); 0.0 1.0 0.0; sin(θ) 0.0 cos(θ)]
-camC = R' * [0.0, 0.0, -500.0]
-K = [3500.0 0.0 256.0; 0.0 -3500.0 256.0; 0.0 0.0 1.0]
-cam = PinholeCamera(K, R, -R * camC)
-plate = render_calibration_target(cam, (512, 512); spacing = 15.0)
+plate, dot1, dot2 = tutorial_gui_scale_plate()
 
-# In the window: click the centres of two neighbouring dots, enter the
-# separation and units, and read the derived pixel size off the status
-# line. The code below uses `Controllers.click!` for those clicks:
+# In the scale-tool window, click the centers of two neighboring dots, enter
+# 1.28 mm, set the frame interval to 1 ms, and read the pixel size in the status
+# line. These controller calls reproduce the clicks:
 
 st = ScaleTool(plate)
-dot1 = world_to_pixel(cam, (0.0, 0.0, 0.0))     # two neighbouring dots,
-dot2 = world_to_pixel(cam, (15.0, 0.0, 0.0))    # 15 mm apart in the world
 HammerheadGUI.Controllers.click!(st, dot1[1], dot1[2])
 HammerheadGUI.Controllers.click!(st, dot2[1], dot2[2])
-set_separation!(st, 15.0)                        # mm between the clicks
+set_separation!(st, 1.28)                        # mm between the clicks
 st.dt[] = 0.001                                  # 1 ms between frames
 st.time_unit[] = "s"
 scale_tool(st)
 
-# "Apply to batch" copies the pixel size, dt, and unit labels into the batch
-# form ([`apply_scale!`](@ref)). Every result the batch produces from now on
-# will carry this scale:
+# **Apply to batch** copies the pixel size, dt, and unit labels into the
+# batch form ([`apply_scale!`](@ref)). Future results display positions in mm
+# and velocities in mm/s.
 
 apply_scale!(bc, st)
 physical_scale(st)
 
 # ## Improve it: mask what should not correlate
 #
-# [`mask_editor`](@ref) draws exclusion polygons over a frame: left-click
-# adds vertices (a click inside an existing polygon selects it instead),
-# right-click closes the polygon, and buttons undo, delete, and grow or
-# shrink the mask. In code those clicks are [`add_vertex!`](@ref) and
-# [`close_active!`](@ref):
+# Open **mask editor** on frame A. The bright square in the upper-left corner
+# hides particles and should not contribute vectors. Left-click just outside
+# its four corners, then right-click to close the polygon. Turn on **show
+# mask** to check coverage. The controller calls reproduce those actions:
 
 me = MaskEditor(imgA)
 fig = mask_editor(me)
-for (x, y) in ((10, 10), (60, 10), (60, 60), (10, 60))
+for (x, y) in ((9, 9), (63, 9), (63, 63), (9, 63))
     add_vertex!(me, x, y)
 end
 close_active!(me)
@@ -133,7 +120,7 @@ count(bc.mask[])
 
 # ## Improve it: preprocessing, tuned with a correlation probe
 #
-# [`preprocess_preview`](@ref) composes the
+# Open **preprocess…** from the batch form. [`preprocess_preview`](@ref) composes the
 # [core preprocessing set](../howto/preprocessing.md) into an ordered,
 # toggleable pipeline with a live raw/processed comparison. Give the
 # [`PreprocessPreview`](@ref) controller the frame's pair partner and it
@@ -142,24 +129,40 @@ count(bc.mask[])
 # live as you toggle and tune steps. Use those values to assess how a
 # preprocessing change affects the measured displacement:
 
-pp = PreprocessPreview(imgA; pair = imgB, enabled = [:highpass_filter])
+pp = PreprocessPreview(imgA; pair = imgB)
 set_step_param!(pp, :highpass_filter, :sigma, 5)
 HammerheadGUI.Controllers.click!(pp, 190.0, 128.0)   # probe off the vortex core
 preprocess_preview(pp)
 
 #-
 
-probe_summary(pp)
+raw_probe = probe_summary(pp)
 
-# Toggle a step to recompute the probe. Here the displacement changes little,
-# while the peak ratio shifts:
+# Record the raw displacement and peak ratio, then toggle **highpass filter**
+# and compare them at the same window. Keep the step only if it improves the
+# peak ratio without changing the displacement substantially.
 
-enable_step!(pp, :percentile_stretch)
-probe_summary(pp)
+enable_step!(pp, :highpass_filter)
+filtered_probe = probe_summary(pp)
+(raw = raw_probe, highpass = filtered_probe)
+
+# Repeat the probe at several representative bright, dim, and high-gradient
+# locations before applying a step to a whole batch. The code below makes a
+# local decision for this example: keep highpass only if it raises the peak
+# ratio at this location and changes the measured displacement by less than
+# 0.5 px. That limit illustrates the comparison; choose a tolerance from your
+# measurement requirements.
+
+filtered_values = pp.probe_result[]
+enable_step!(pp, :highpass_filter, false)
+raw_values = pp.probe_result[]
+keep_highpass = filtered_values.peak_ratio > raw_values.peak_ratio &&
+                hypot(filtered_values.du - raw_values.du,
+                      filtered_values.dv - raw_values.dv) < 0.5
+enable_step!(pp, :highpass_filter, keep_highpass)
+(keep_highpass = keep_highpass, selected_probe = probe_summary(pp))
 
 #-
-
-enable_step!(pp, :percentile_stretch, false)
 
 # "Use in batch" installs the pipeline; from code that is
 # [`set_preprocess!`](@ref), which snapshots the steps so later preview
@@ -209,6 +212,31 @@ describe_selection(ex)
 #-
 
 fig
+
+# To see why derivatives need careful vectors, process the same masked pair
+# at low and medium effort, then compare vorticity on a shared color scale.
+# Open each result in the explorer and switch its field menu to **vorticity**;
+# the figure below puts the same comparison side by side. Look near the
+# reflection boundary for isolated spikes before interpreting a small vortex.
+
+using CairoMakie
+
+low = run_piv(imgA, imgB; effort = :low, mask = bc.mask[])
+medium = run_piv(imgA, imgB; effort = :medium, mask = bc.mask[])
+let
+    comparison = Figure(size = (760, 360))
+    for (i, (r, label)) in enumerate(((low, "low effort"), (medium, "medium effort")))
+        ax = Axis(comparison[1, i]; title = label, xlabel = "x (px)",
+                  ylabel = "y (px)", yreversed = true, aspect = DataAspect())
+        hm = heatmap!(ax, r.x, r.y, permutedims(vorticity(r));
+                      colorrange = (-0.2, 0.2), colormap = :balance)
+        i == 2 && Colorbar(comparison[1, 3], hm; label = "vorticity (1/frame)")
+    end
+    comparison
+end
+
+# If a small feature appears in only one run or follows flagged vectors,
+# inspect the source images and validation flags before reporting it as flow.
 
 # The *tool* menu adds analysis on planar results. `profile`
 # samples u, v, and |V| along a two-click line ([`extract_profile`](@ref)),

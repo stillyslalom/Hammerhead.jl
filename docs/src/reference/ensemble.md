@@ -4,13 +4,15 @@ CurrentModule = Hammerhead
 
 # Ensemble and statistics
 
-Ensemble (sum-of-correlation) particle image velocimetry (PIV) for recordings
-with low signal-to-noise ratio (SNR), time-series
-statistics over planar and stereo result sequences, temporal validation,
-accuracy diagnostics,
-and spectra. See the [ensemble how-to](../howto/ensemble.md). GPU backends
-keep summed planes and uncertainty statistics device-resident; setup and
-memory sizing are covered in [Run PIV on a GPU](../howto/gpu.md).
+Use [`run_piv_ensemble`](@ref) to estimate a representative displacement when individual
+image pairs have weak correlation peaks and the flow is statistically
+stationary. The peak of summed correlations need not equal the arithmetic
+mean of individual vectors. Use [`field_statistics`](@ref) on a sequence of individually
+measured fields to obtain pointwise means, fluctuation RMS, and valid-sample
+counts. This page also covers temporal validation, reference-error
+diagnostics, and spectra. The [sequence tutorial](../tutorials/sequence_statistics.md)
+compares the two approaches; the [ensemble guide](../howto/ensemble.md)
+covers setup and limitations.
 
 ```@index
 Pages = ["ensemble.md"]

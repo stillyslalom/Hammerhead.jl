@@ -1,12 +1,32 @@
 # Scale results to physical units
 
-**Goal:** turn pixel displacements into physical velocities — without giving
-up the pixel-native diagnostics.
+**Goal:** convert measured displacements to physical velocities while
+keeping the original measurements and diagnostics available.
 
-Hammerhead measures in pixels per frame interval and keeps every stored
-array in those measured units. Physical calibration is *metadata*: a
+Planar PIV and PTV measure displacement in pixels per frame interval and
+keep their stored arrays in those measured units. Stereo results use the
+dewarp grid's world units, as described below. Physical calibration is *metadata*: a
 [`PhysicalScale`](@ref) records the pixel size, the frame interval `dt`, and
 the unit names, and [`physical`](@ref) applies it on demand.
+
+## Establish the calibration and pair delay
+
+Measure a known length in the measurement plane with the same camera setup
+used for the particle images. For a uniform image scale, divide that length
+by its separation in pixels to obtain `pixel_size`. A single scalar scale
+does not correct lens distortion or perspective variation across the image;
+check calibration features across the field before using one value everywhere.
+
+Set `dt` to the delay between the two exposures or illumination pulses in
+each pair. For double-frame recordings this may differ from the camera's
+frame period. The interval between successive velocity fields belongs in
+time-series calculations; see the
+[sequence tutorial](../tutorials/sequence_statistics.md).
+
+For example, 3 px of displacement at 0.02 mm/px over 1 ms gives 60 mm/s.
+Check this calculation for a representative vector after conversion. The
+[image-quality guide](image_quality.md) explains how displacement, exposure,
+and particle loss affect the choice of delay.
 
 ## Attach a scale
 
@@ -97,8 +117,8 @@ in dewarped pixels — they are diagnostics.
 ## Particle tracking velocimetry (PTV) and trajectories
 
 [`run_ptv`](@ref) results convert like particle image velocimetry (PIV) results
-(the `match_residual` is a
-frame-A distance, so it scales with `pixel_size`), and
+(the `match_residual` is the distance between a particle's predicted and
+observed frame-B positions in pixels, so it scales with `pixel_size`), and
 [`ptv_to_grid`](@ref) carries the scale onto the binned grid — bin the raw
 result, then convert.
 

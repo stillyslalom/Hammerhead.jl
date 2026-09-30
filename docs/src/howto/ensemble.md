@@ -7,12 +7,18 @@ PIV Challenge case 4A). This is the low signal-to-noise ratio (SNR) regime.
 
 ## When it applies
 
+The [sequence tutorial](../tutorials/sequence_statistics.md) compares an
+ensemble result with the mean of separately measured vector fields.
+
 Ensemble (sum-of-correlation) PIV [Meinhart2000](@cite) averages each
 interrogation window's *correlation planes* across many pairs before
 locating the peak once. Random noise peaks average out; the displacement
 peak reinforces. Use it when the flow is **statistically stationary**: the
-result is the ensemble-mean field, while pair-to-pair fluctuations are
-averaged away.
+combined peak estimates a representative displacement field. Stationarity
+does not require every pair to have the same displacement. If displacements
+fluctuate, the combined peak need not lie at the arithmetic mean of the
+individual vectors. Use individually measured fields for fluctuation
+statistics, and inspect the ensemble's sensitivity to the selected pairs.
 
 ## Basic use
 
@@ -74,20 +80,23 @@ terms are required.
 
 - **Add pairs before enlarging windows.** Keep windows small enough to
   resolve the flow structure, then add pairs until the field is stable.
-- **Check `peak_ratio` as you add pairs.** It describes the ensemble
-  correlation plane; a rising ratio indicates a clearer peak.
+- **Check `peak_ratio` and field stability as you add pairs.** The ratio
+  describes the ensemble correlation plane; a clearer peak does not by
+  itself show that the estimated field has stopped changing. Compare results
+  from increasing counts or separate subsets of the recording.
 - **File paths are reloaded once per pass.** For many passes over slow
   storage, load frames into memory first and pass matrices.
 - **Preprocessing** (`preprocess`, `image_type`) and **masking** (`mask`,
   one static mask for all pairs) work exactly as in the batch driver.
 
-## Uncertainty of the ensemble mean
+## Uncertainty of the combined estimate
 
-With `uncertainty = true` (final pass repeated for convergence — see
-[uncertainty quantification](../explanation/uncertainty.md)), the
-correlation-statistics estimator pools its sums across all pairs, so
-`uncertainty_u`/`uncertainty_v` describe the noise-driven uncertainty of
-the ensemble-mean vector and shrink as pairs are added:
+For `uncertainty = true`, repeat the final window size to reduce its residual
+(see [uncertainty quantification](../explanation/uncertainty.md)). The
+correlation-statistics estimator then pools its sums across pairs. The reported
+`uncertainty_u`/`uncertainty_v` describe the noise-driven uncertainty of the
+combined correlation estimate under a shared-displacement assumption. More
+pairs may reduce that estimate, but the change need not be monotonic:
 
 ```julia
 passes = multipass_parameters([64, 32, 16, 16];
@@ -95,7 +104,8 @@ passes = multipass_parameters([64, 32, 16, 16];
 result = run_piv_ensemble(pairs, passes)
 ```
 
-This does **not** include genuine flow fluctuation. If the flow is not
-perfectly stationary, quantify the fluctuation separately with
-[`field_statistics`](@ref) over single-pair results — when the per-pair
-SNR allows it — and treat the ensemble uncertainty as a lower bound.
+This does **not** include genuine flow fluctuation or changes in the flow
+during the recording. When individual pairs have sufficient signal, use
+[`field_statistics`](@ref) on their results to describe fluctuation and
+compare it with the ensemble field. Do not interpret the pooled uncertainty
+as total error when displacements vary between pairs.

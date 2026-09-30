@@ -1,11 +1,11 @@
 # Stereo geometry and self-calibration
 
 Planar particle image velocimetry (PIV) measures two displacement components
-projected onto the image
-plane. With two cameras viewing the light sheet from different angles,
-the projections differ, and the difference encodes the out-of-plane
-component. This page explains Hammerhead's stereo chain: calibration →
-dewarping → reconstruction → self-calibration.
+in an image plane. Two cameras viewing the same light sheet from different
+angles provide distinct projections; their difference helps determine the
+out-of-plane component. Stereo analysis calibrates each camera, dewarps both
+views onto a common plane, corrects sheet misalignment, and reconstructs
+three displacement components.
 
 ## Camera calibration
 
@@ -15,15 +15,15 @@ Hammerhead provides two, both fit with [`calibrate_camera`](@ref) from
 calibration plate at several Z positions and running
 [`detect_calibration_grid`](@ref):
 
-- [`PinholeCamera`](@ref) — a projective model fitted by direct linear
-  transformation (DLT). Physically grounded
-  and exactly invertible, but it cannot represent lens distortion or
-  refraction. Needs points on ≥ 2 Z planes.
-- [`SoloffCamera`](@ref) — the 19-term polynomial of
-  [Soloff1997](@citet), cubic in X/Y and quadratic in Z. It absorbs
+- [`PinholeCamera`](@ref) is a projective model fitted by direct linear
+  transformation (DLT). Pixel-to-world coordinates at a specified Z plane
+  can be solved directly, but the model does not represent lens distortion
+  or refraction. It needs points on at least two Z planes.
+- [`SoloffCamera`](@ref) uses the 19-term polynomial of
+  [Soloff1997](@citet), cubic in X/Y and quadratic in Z. It can accommodate
   distortion and refraction empirically, at the cost of a Newton-iterated
-  inverse. Needs ≥ 3 Z planes. This is the default and the standard choice
-  for real rigs.
+  inverse at a specified Z plane. It needs at least three Z planes and is
+  the default model.
 
 Check any fit with [`calibration_quality`](@ref); see the
 [stereo-rig how-to](../howto/stereo_rig.md) for what residuals to expect
@@ -33,8 +33,8 @@ from real plates.
 
 Hammerhead resamples both cameras' images onto one regular grid of world
 coordinates in the measurement plane (a [`DewarpGrid`](@ref) shared by the
-rig, one [`ImageDewarper`](@ref) per camera). After dewarping, the same
-world point sits at the same pixel in both cameras' images, so the standard
+rig, one [`ImageDewarper`](@ref) per camera). After dewarping, a world-grid
+location has the same image index in both views, so the standard
 2D engine can run per camera with identical parameters, and the two vector
 grids match point for point. Nodes outside a camera's view are recorded in
 a validity mask; the analysis is restricted to the stereo overlap (see
@@ -53,9 +53,10 @@ uᵢ = dx − dz·tXᵢ,    vᵢ = dy − dz·tYᵢ.
 
 Two cameras give four equations for three unknowns;
 [`run_piv_stereo`](@ref) solves them by least squares per vector. The
-farther apart the viewing angles, the better conditioned `dz` is; with
-parallel rays (identical cameras) the system is degenerate and the vector
-comes out `NaN`. Per-camera uncertainties propagate through the same
+smaller the difference between their viewing directions, the less stable the
+`dz` estimate; with parallel rays the system is degenerate and the vector is
+`NaN`. Camera angles also affect how much particle pattern both cameras can see.
+Per-camera uncertainties propagate through the same
 operator (see [uncertainty quantification](uncertainty.md)).
 
 The result is a [`StereoPIVResult`](@ref): world-coordinate grid,
@@ -75,8 +76,9 @@ self-calibration [Wieneke2005](@cite):
 1. **Measure the disparity.** Dewarp both cameras' images of the *same
    instant* and cross-correlate them (ensemble sum-of-correlation over
    several instants, one pass with large windows). If the sheet were
-   exactly at the assumed plane, the two views would coincide; any
-   systematic disparity field measures the misregistration.
+   exactly at the assumed plane and the camera models were accurate, the
+   two views would align. A systematic disparity can indicate sheet
+   misregistration; camera-model error can contribute too.
 2. **Triangulate.** Each disparity vector, attributed symmetrically to the
    two viewing rays, is triangulated to a world point on the *true* sheet.
    Vectors with large triangulation residuals are rejected as false
@@ -86,20 +88,19 @@ self-calibration [Wieneke2005](@cite):
    becomes the measurement plane. A `PinholeCamera` absorbs the transform
    exactly into its projection matrix; other models are wrapped in a
    [`TransformedCamera`](@ref).
-4. **Iterate.** The measurement-correction loop repeats (the symmetric
-   disparity attribution is second-order exact, and iteration absorbs the
-   rest), then a final measurement verifies convergence.
+4. **Iterate.** The measurement-correction loop repeats until the residual
+   meets the stopping criterion or the correction limit is reached. A final
+   measurement records the remaining disparity.
 
 Use the returned dewarpers with [`run_piv_stereo`](@ref). The
 [`SelfCalibrationReport`](@ref) records
 per-pass disparity statistics, fitted planes, and the cumulative world
-transform. Well-corrected setups converge to a residual disparity
-root-mean-square (RMS) below
-0.1 px on thin-sheet recordings [Wieneke2005](@cite). Your residual may be
-higher when the sheet is thicker or the two camera views decorrelate.
+transform. Inspect the remaining disparity alongside calibration residuals
+and image overlap; a thick sheet or decorrelation between views can keep it
+above the requested tolerance.
 
-Self-calibration moves the world frame's Z origin onto the
-actual light sheet, anchored so that camera 1's view barely moves. If your
+Self-calibration places the corrected frame's measurement plane on the
+fitted light sheet and anchors its orientation to the original frame. If your
 downstream analysis depends on the original plate-defined frame, the
 cumulative transform in the report (`R`, `t`) maps corrected-frame
 coordinates back to it.

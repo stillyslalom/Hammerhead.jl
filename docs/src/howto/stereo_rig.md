@@ -1,11 +1,10 @@
 # Calibrate a real stereo rig
 
-**Goal:** go from calibration-plate photographs to corrected camera models
-ready for [`run_piv_stereo`](@ref). This guide describes the workflow on
-real data, using case E of the 4th International Particle Image Velocimetry
-(PIV) Challenge
-[Kahler2016](@cite) — a time-resolved stereo vortex ring recorded with a
-LaVision two-level dot-grid plate — as the running example. For
+**Goal:** detect a stereo calibration plate, check each camera fit, and
+correct the camera models to the particle light sheet before
+[`run_piv_stereo`](@ref). The example uses case E of the 4th International
+Particle Image Velocimetry (PIV) Challenge [Kahler2016](@cite), a stereo
+vortex-ring recording with a two-level dot-grid plate. For
 executable end-to-end walkthroughs, see the
 [stereo tutorial](../tutorials/stereo.md) (synthetic, with ground truth)
 and [stereo on a real recording](../tutorials/stereo_real.md) (the 4E
@@ -32,10 +31,11 @@ LaVision-style plates, single- or two-level — and needs:
   30 mm right of and 7.5 mm above the square. Without a marker, each
   detection anchors to the dot nearest the image center, which is *not*
   consistent between cameras.
-- **Roughly upright cameras.** World axes are anchored to the image
-  orientation (+X nearest image-right, +Y nearest image-up). Standard
-  stereo rigs qualify; heavily rolled cameras do not (currently
-  unsupported).
+- **An orientation convention shared by both cameras.** The default
+  `orientation = :image` chooses +X nearest image-right and +Y nearest
+  image-up, suitable for roughly upright views. For rolled cameras, use
+  `orientation = :fiducials` when both the square and triangle markers are
+  visible; the markers then determine the world axes in each view.
 
 ## Detect and calibrate
 
@@ -54,59 +54,73 @@ cam1 = calibrate_camera(grids, collect(zs))          # Soloff (default)
 ```
 
 Use `invert = true` for dark dots on a bright plate. Check each detection
-before fitting: `length(grid.pixels)` should cover the full grid,
-`grid.square !== nothing` confirms the marker was found, and on a two-level
-plate roughly half the dots should report `level == 1`.
+before fitting: compare the detected dots with the image, confirm the
+fiducial markers and lattice indices, and check that both plate levels have
+plausible counts. `grid.square !== nothing` only confirms a marker candidate
+was found; inspect its position before trusting the shared world origin.
 
 ## What residuals to expect
 
-Check the fit with [`calibration_quality`](@ref). For the 4E plates, expect:
+Check the fit with [`calibration_quality`](@ref). On the 4E plates, the
+three-plane subset gives roughly 0.7 px RMS for camera 1 and 1.1 px for
+camera 3. These are observations for this subset, not acceptance limits for
+another rig. Plot per-dot residuals against image position and compare the
+same indexed dots across plate positions, as in
+[the real-recording tutorial](../tutorials/stereo_real.md).
 
-- Per-dot reprojection residuals of **~0.5–1 px root-mean-square (RMS)** that are
-  *repeatable across plate positions* can reflect the plate's dot-position
-  manufacturing tolerance. Compare residual patterns across positions before
-  changing the model.
-- Plane-to-plane detection *repeatability* is **0.15–0.3 px** — that is
-  an estimate of detection variability.
+A pattern tied to image position may point to camera-model limits or
+refraction; a pattern tied to particular plate dots may point to target
+geometry or dot detection. Neither pattern alone identifies the cause.
+Recheck the marked origin and plate-level assignments before changing camera
+models.
 
-A pinhole fit that trails the Soloff fit badly indicates lens distortion or
-refraction along the optical path — expected through windows or liquid;
-stay with Soloff.
+If a pinhole fit has much larger residuals than a Soloff fit, inspect where
+the improvement occurs. Curved position-dependent errors can motivate the
+Soloff model, especially with lens distortion or refractive windows; a fit
+improvement alone does not prove which effect caused it.
 
 ## Dewarp and self-calibrate on the recordings
 
-Build the shared grid and per-camera dewarpers, then correct the
-plate-to-sheet misregistration with [`self_calibrate`](@ref) **on the
-particle recordings**. The calibration plate position may differ from the
-light-sheet position:
+Build a shared grid over the cameras' overlap and one dewarper per camera.
+[`common_dewarp_grid`](@ref) chooses the overlap and a default spacing from
+the camera calibrations. Inspect the resulting extent and out-of-view masks
+before correlation; reduce the grid area if it includes regions without
+usable particle images. Then run [`self_calibrate`](@ref) on **same-instant
+particle frames** from both cameras, because the plate and light sheet may
+occupy different planes:
 
 ```julia
-grid = DewarpGrid(x = -40.0:0.1:40.0, y = -30.0:0.1:30.0)   # mm, finer than the vector spacing
+grid = common_dewarp_grid((cam1, cam2),
+    (size_of_camera1_images, size_of_camera2_images), 0.0)
 dw1 = ImageDewarper(cam1, grid, size_of_camera1_images)
 dw2 = ImageDewarper(cam2, grid, size_of_camera2_images)
+count(dw1.mask .| dw2.mask)   # grid nodes outside at least one camera's view
 
-# 5–50 same-instant frame pairs give a well-shaped disparity correlation.
-dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2)
+dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2;
+                                    keep_disparity_maps = true)
 ```
+
+Use several instants when available; additional pairs can improve a weak
+disparity peak, but cannot repair an incorrect calibration or poor camera
+overlap. `frames1[i]` and `frames2[i]` must show the same instant.
 
 Inspect the report before trusting it:
 
-- Check more than `report.converged`: on real data the residual
-  disparity RMS floors at the sheet-thickness decorrelation level (0.1 px
-  on thin-sheet setups [Wieneke2005](@cite); ~0.5 px on the 4E
-  recordings), which can sit above the default `tol`. Misalignment is
-  *systematic*, so inspect the signed median disparity components, computed
-  from the maps with `keep_disparity_maps = true`. The
-  [real-recording tutorial](../tutorials/stereo_real.md) walks through
-  this judgment.
-- Check the first pass's `plane` for the estimated offset and tilt between
-  the calibration plate and light sheet.
+- Check `report.converged` **and** the initial and final disparity maps.
+  The scalar RMS can remain above `tol` when the two camera images
+  decorrelate. A small signed median may also hide positive and negative
+  regions that cancel. Look for broad spatial patterns in both displacement
+  components; the [real-recording tutorial](../tutorials/stereo_real.md)
+  shows the maps for the 4E subset.
+- If the first pass made a correction, check its `plane` for the estimated
+  offset and tilt between the calibration plate and light sheet. It is
+  `nothing` when the first measurement already meets `tol`.
 - A large `triangulation_rms` means the measured disparity is inconsistent
   with the camera geometry. Check the plate detections and disparity maps
   for calibration or correlation errors.
-- Pass `keep_disparity_maps = true` to inspect the raw disparity fields
-  when convergence is poor (check the stereo overlap region, seeding
-  density, and window size).
+- If the maps contain isolated large vectors or have little valid overlap,
+  check the seeding, camera coverage, and disparity-window size before
+  accepting the plane fit.
 
 The corrected dewarpers then drop into stereo processing of the recording:
 

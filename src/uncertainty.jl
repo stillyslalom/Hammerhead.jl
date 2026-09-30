@@ -157,8 +157,8 @@ end
 # negative members are real covariance (signal×noise anticorrelation) that
 # largely cancels against S00; truncation only guards against outer terms
 # that are pure sampling noise. Then eq (9). NaN when the window carries no
-# usable correlation signal or the noise exceeds the peak curvature (beyond
-# the ~0.3 px validity of eq 9).
+# usable correlation signal or the noise exceeds the peak curvature.
+# There is no explicit cutoff on the returned uncertainty magnitude.
 function finalize_uncertainty(::Type{T}, s::AbstractVector{Float64}) where {T}
     C0, Cp, Cm, S00 = s[1], s[2], s[3], s[4]
     σ2 = S00

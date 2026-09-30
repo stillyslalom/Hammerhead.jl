@@ -20,8 +20,7 @@ coordinates, and field matrices such as `result.u` are indexed
 ## Displacement sign convention
 
 A particle at `(row, col)` in the first image that is found at
-`(row + dv, col + du)` in the second image yields a **positive**
-displacement `(du, dv)`:
+`(row + dv, col + du)` in the second image has displacement `(du, dv)`:
 
 - `u` is the x-displacement (along columns; positive = image-right),
 - `v` is the y-displacement (along rows; positive = image-down).
@@ -30,21 +29,22 @@ In the usual display orientation, +v points *down*. The Makie plotting extension
 ([`plot_vector_field`](@ref)) reverses the y-axis so vector plots match the
 image orientation.
 
-Displacements are **measured in pixels per frame interval**, and the stored
-arrays of every result keep those measured units. Physical calibration is
-metadata: attach a [`PhysicalScale`](@ref) (pixel size, frame interval `dt`,
+Planar PIV and PTV store displacements in **pixels per frame interval**.
+Stereo reconstruction stores displacements in the calibration grid's world
+units per frame interval. Physical calibration is metadata: attach a
+[`PhysicalScale`](@ref) (pixel size, frame interval `dt`,
 and display unit labels) with the `scale` keyword of any driver or with
-[`with_scale`](@ref) — the arrays don't change — and convert explicitly with
+[`with_scale`](@ref). Attaching it leaves the arrays unchanged; convert with
 [`physical`](@ref), which returns a same-type result whose positions are
 lengths and whose displacements (and uncertainties) are velocities
 (`pixel_size / dt`). The units are whatever you put in: millimeters and
 seconds in, mm/s out. Load Unitful for quantity-based construction
 (`PhysicalScale(20.0u"µm", 0.5u"ms")`).
 
-Convert **last**: validators, [`peak_locking`](@ref), the `epsilon` floor used
-by universal outlier detection (UOD),
-and the correlation diagnostics (`peak_ratio`, `correlation_moment`) are
-pixel-native and are never converted — run them on the raw result. A
+Convert **last**: validators, [`peak_locking`](@ref), and the `epsilon` floor
+used by universal outlier detection (UOD) work with pixel displacements.
+Correlation diagnostics (`peak_ratio`, `correlation_moment`) remain unchanged
+by `physical`. Run pixel-based checks on the raw result. A
 converted result carries an identity scale with the same unit labels, so
 `physical` is idempotent and plots label their axes correctly either way.
 See the [scaling how-to](../howto/scaling.md).
@@ -95,9 +95,9 @@ successive positions. Its converted scale retains `dt`; pass that scale to
 
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This
-differs from PIV's symmetric image deformation, which attributes each vector to
-the *midpoint* of the trajectory. The synthetic generator uses forward-Euler
-motion, so a PTV displacement can be compared directly with the reference
+differs from multipass PIV with symmetric image deformation, which attributes
+each vector to the *midpoint* of the trajectory. The synthetic generator uses
+forward-Euler motion, so a PTV displacement can be compared directly with the reference
 velocity at the frame-A position multiplied by the frame interval.
 
 **Flag, don't replace.** A tracked displacement is a measurement of one

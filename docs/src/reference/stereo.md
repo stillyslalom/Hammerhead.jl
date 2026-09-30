@@ -4,17 +4,17 @@ CurrentModule = Hammerhead
 
 # Calibration, dewarping, and stereo
 
-Two-dimensional, three-component (2D3C) particle image velocimetry (PIV):
-camera calibration models and fitting,
-dot-grid target detection, image dewarping onto a common world plane,
-three-component reconstruction, synchronized sequence processing, stereo
-ensemble correlation, and disparity self-calibration. The
-[stereo tutorial](../tutorials/stereo.md) works through each step;
+Calibrate each camera, dewarp its images onto a shared world-plane grid,
+then use [`run_piv_stereo`](@ref) to reconstruct three displacement components.
+The result grid and `(u, v, w)` are in world length units per image pair;
+attach an exposure interval to convert displacements to velocities. This
+page also lists sequence and ensemble drivers, target detection, and
+[`self_calibrate`](@ref) for plate-to-sheet alignment. The
+[stereo tutorial](../tutorials/stereo.md) follows the steps, and
 [Stereo geometry and self-calibration](../explanation/stereo.md) explains
-the method. [`run_piv_stereo`](@ref), [`run_piv_stereo_sequence`](@ref), and
-[`run_piv_stereo_ensemble`](@ref) can forward a GPU backend to their two
-per-camera PIV calls; see [Run PIV on a GPU](../howto/gpu.md) for the CPU/GPU
-boundary.
+the coordinates. GPU selection applies to the per-camera PIV calculations;
+dewarping and reconstruction run on the CPU. See
+[Run PIV on a GPU](../howto/gpu.md).
 
 ```@index
 Pages = ["stereo.md"]

@@ -11,11 +11,12 @@ Wieneke 2005 disparity self-calibration via `self_calibrate`) — every planar
 and stereo Challenge case is now reachable. Case 4E data (particle +
 calibration images) sits in `cases/` (gitignored); a minimal 4E subset
 for the docs and tests is committed at `test/reference_images/E/`. Phase 6 (Diátaxis docs,
-July 2026) is also done; version is 0.1.0, awaiting first General-registry
-registration (a maintainer action). Phase 7 (HammerheadGUI) is underway:
-the monorepo conversion is done (skeleton package, CI/TagBot/CompatHelper
-subdir wiring); the GUI components (result explorer, mask editor, parameter
-form, calibration diagnostics, packaging) are next. Phase 8 (2D2C PTV,
+July 2026) is also done. Hammerhead and HammerheadGUI are registered in
+General; user installation instructions should use `pkg> add Hammerhead`
+and `pkg> add HammerheadGUI`. Phase 7 (HammerheadGUI) is underway:
+the monorepo conversion and CI/TagBot/CompatHelper subdir wiring are done;
+the result explorer, mask editor, batch forms, and calibration diagnostics
+are available. Phase 8 (2D2C PTV,
 July 2026) is done: per-frame particle detection (`detect_particles`),
 hybrid PIV-guided two-frame tracking (`run_ptv` → `PTVResult`, with
 `ptv_to_grid` binning and `run_ptv_sequence` batch), scattered validation,
@@ -26,7 +27,7 @@ docs — all synthetic-verified, no new deps.
 
 ```bash
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
-julia --project=docs docs/make.jl                    # docs, ~7 min: executes all six tutorials ("skipping deployment" warning is normal locally)
+julia --project=docs docs/make.jl                    # docs: executes all seven tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
 ```
 

@@ -1,13 +1,11 @@
 # Work interactively with the graphical user interface (GUI)
 
-**Goal:** do the common interactive jobs — browse results, draw a mask,
-run a batch, review a calibration — with the HammerheadGUI tools, and get
-their output back into scripted analyses. For a guided walkthrough with
+**Goal:** browse results, draw a mask, run a batch, and review a calibration
+with HammerheadGUI. Use the same results in Julia scripts. For a guided walkthrough with
 figures, start with [the GUI tour](../tutorials/gui_tour.md).
 
-The GUI ships as the separate `HammerheadGUI` package (the core stays free
-of GL dependencies); `using HammerheadGUI` loads GLMakie, and each call
-below opens a window.
+The GUI is the separate `HammerheadGUI` package. After installing it in your
+environment, `using HammerheadGUI` loads the window interface.
 
 ## Explore a results file
 
@@ -41,9 +39,12 @@ The colorbar defaults to a robust 2–98% percentile range over the valid
 (non-masked, non-flagged) vectors ([`color_limits`](@ref)), so outliers
 cannot wash out the display. The "color range" group switches to the full
 extrema or pins either bound; manual bounds persist across frame/field
-switches until cleared:
+switches until cleared. To make the same changes from Julia, retain the
+controller:
 
 ```julia
+ex = ResultExplorer("run_042.jld2")
+result_explorer(ex)
 set_color_mode!(ex, :full)             # extrema instead of percentiles
 set_color_limits!(ex; min = 0, max = 5)
 set_color_limits!(ex; max = "auto")    # clear one bound
@@ -52,7 +53,9 @@ set_color_limits!(ex; max = "auto")    # clear one bound
 For planar results the field menu also carries the derived fields —
 vorticity, divergence, strain rate `|S|`, swirling strength, and Q — via
 [`flow_derivatives`](@ref), computed once per frame and labelled `1/s`
-(`1/s²` for Q) when a scale is attached. The *tool* menu adds interactive
+(`1/s²` for Q) when a scale is attached. Since derivatives amplify local
+vector errors, inspect masks and flagged vectors around a small feature
+before treating it as flow. The *tool* menu adds interactive
 analysis on the same results:
 
 ```julia
@@ -117,9 +120,14 @@ preset is active the manual schedule is ignored (the summary says so). The
 batch results carry units straight into the explorer. From code:
 
 ```julia
+bc = BatchRunner(files = readdir("run42"; join = true))
 set_effort!(bc, :high)
-set_scale!(bc; pixel_size = 50.0, dt = 0.001, length_unit = "mm", time_unit = "s")
+set_scale!(bc; pixel_size = 0.02, dt = 0.001, length_unit = "mm", time_unit = "s")
 ```
+
+Set `pixel_size` from a target photographed with the same camera geometry;
+the number above is only an example. Use the exposure-pair delay for `dt`,
+which may differ from the interval between completed velocity fields.
 
 Instead of typing the pixel size, derive it from an image with the scale
 tool — click the two endpoints of a feature of known physical size (a
@@ -147,16 +155,16 @@ set_preprocess!(bc, pp)        # snapshot: later edits don't affect the run
 The exported closure copies each frame before its in-place steps, so
 in-memory arrays are never mutated.
 
-Give the preview the frame's correlation partner and it gains a
-single-window probe: click the processed image and that window's
-displacement and peak ratio recompute live with every pipeline change —
-judge a preprocessing choice by what it does to the correlation, before
-committing to a batch:
+Give the preview the frame's correlation partner to probe a single
+interrogation window. Click the processed image, then toggle a step and
+compare displacement and peak ratio at the same location. Repeat in dim,
+bright, and high-gradient regions before applying the change to a batch:
 
 ```julia
 pp = PreprocessPreview(frameA; pair = frameB)   # the batch pop-out does this
 set_probe_window!(pp, 48)
-probe_summary(pp)      # "du = …, dv = … px, peak ratio = …" after a click
+preprocess_preview(pp)                         # click the processed image
+probe_summary(pp)                              # du, dv, and peak ratio at that click
 ```
 
 Seed the form from code with a [`BatchRunner`](@ref) — every form field is
@@ -168,7 +176,7 @@ bc.output_path[] = "run_042.jld2"
 batch_runner(bc)
 ```
 
-[`start!`](@ref)`(bc; async = false)` runs the same batch without the
+`start!(bc; async = false)` runs the same batch without the
 window at all.
 
 ## Review a calibration
@@ -183,8 +191,8 @@ calibration_review(plate_images, zs; spacing = 15.0, two_level = true,
                    level_separation = 3.0, origin_offset = (30.0, 7.5))
 ```
 
-For judging the numbers it shows — what residuals a physical plate
-produces and when to worry — see
+Inspect residual patterns, detected indices, and marker positions on each
+plane before accepting the fit. For the 4E calibration example, see
 [Calibrate a real stereo rig](stereo_rig.md).
 
 After stereo self-calibration, [`selfcal_review`](@ref) browses the
@@ -205,11 +213,13 @@ selfcal_review(report)
 [`build_dewarpers`](@ref) over the two fitted cameras:
 
 ```julia
-cr1 = CalibrationReview(plates_cam1, zs; spacing = 15.0, ...)
-cr2 = CalibrationReview(plates_cam2, zs; spacing = 15.0, ...)
+target_options = (spacing = 15.0, two_level = true,
+                  level_separation = 3.0, origin_offset = (30.0, 7.5))
+cr1 = CalibrationReview(plates_cam1, zs; target_options...)
+cr2 = CalibrationReview(plates_cam2, zs; target_options...)
 sbc = StereoBatchRunner()
-stereo_calibration(cr1, cr2; batch = sbc)   # …or from code:
-set_dewarpers!(sbc, cr1, cr2)               # build_dewarpers + install
+stereo_calibration(cr1, cr2; batch = sbc)   # inspect fits, then build dewarpers
+set_dewarpers!(sbc, cr1, cr2)               # equivalent controller action
 ```
 
 Dewarpers you built at the REPL (e.g. after [`self_calibrate`](@ref)) go

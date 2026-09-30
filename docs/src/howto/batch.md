@@ -1,13 +1,13 @@
 # Batch processing and result files
 
-**Goal:** process a whole recording to a results file, survive crashes
-mid-batch, and read everything back later.
+**Goal:** pair frames in acquisition order, save completed results as a batch
+runs, and read them back for validation and statistics.
 
 ## Build the pair list
 
 [`image_pairs`](@ref) groups an ordered frame list (file paths and/or
 in-memory matrices) into correlation pairs. Build the list by filtering a
-directory with `readdir` and Julia's own predicates — no extra dependency:
+directory with `readdir` and Julia's predicates:
 
 ```julia
 using Hammerhead
@@ -23,8 +23,13 @@ pairs = image_pairs(files)                   # double-frame: (1,2), (3,4), ...
 pairs = image_pairs(files; mode = :chained)  # time-resolved: (1,2), (2,3), ...
 ```
 
+Check the first and last few pairs before processing. `readdir` sorts names
+lexically, so filenames such as `frame_1.tif`, `frame_10.tif`, and
+`frame_2.tif` are out of acquisition order unless their indices are padded
+or you sort them numerically.
+
 For sampled or multi-delay recordings, use `stride`, zero-based `offset`, and
-one or more `deltas`:
+one or more `deltas` (frame-index differences):
 
 ```julia
 pairs = image_pairs(files; mode=:chained, stride=2, offset=1, deltas=(1, 4))
@@ -36,9 +41,9 @@ does not read frames. Optional `timestamps` travel with the pairs; when a
 `PhysicalScale` is passed to the sequence driver, each result receives the
 pair's actual `dt`. Use `TIFFStack("recording.tif")` for multi-page TIFFs.
 
-For true shell-style `*` globbing across nested directories, add
-[Glob.jl](https://github.com/vtjnash/Glob.jl) (`Glob.glob("cam1/*.tif")`);
-the predicate filter above covers most batch needs without a dependency.
+For shell-style `*` matching across nested directories, you can use
+[Glob.jl](https://github.com/vtjnash/Glob.jl) (`Glob.glob("cam1/*.tif")`).
+Sort and inspect its output before pairing, too.
 
 ## Run the sequence with incremental output
 
@@ -52,26 +57,32 @@ results = run_piv_sequence(pairs, passes;
 ```
 
 With `output` set, each result is written to the JLD2-format Julia data file
-**as it completes** — a crashed batch keeps its finished pairs. For file-path pairs
+**as it completes**. If a later pair fails, the file keeps the finished
+prefix. For file-path pairs
 the source image paths are stored alongside the results. Threading applies
 within each pair (the window grid is split across tasks); results are
 bitwise identical to serial processing.
 
-To halve memory traffic on large recordings, load frames in single
-precision with `image_type = Float32` (see the
-[precision policy](../explanation/precision.md)).
+For file-path pairs, `image_type = Float32` loads frames in single precision
+and reduces memory traffic. In-memory matrices keep their existing element
+type. See the [precision policy](../explanation/precision.md).
 
 For synchronized stereo recordings, pass one pair list per camera and reuse
 the calibrated dewarpers across the run:
 
 ```julia
+stop_requested = Ref(false)
 stereo = run_piv_stereo_sequence(cam1_pairs, cam2_pairs, dw1, dw2, passes;
     preprocess = (preprocess_cam1, preprocess_cam2),
     output = "run_042_stereo.jld2",
-    progress = (done, total) -> update_progress(done, total),
-    cancel = () -> cancellation_requested[],
+    progress = true,
+    cancel = () -> stop_requested[],
 )
 ```
+
+Change `stop_requested[]` to `true` from your control code to stop between
+acquisitions. For a blocking script
+without a stop control, omit `cancel`.
 
 `mask` may also be a vector with one entry per pair or a callback
 `(i, frameA, frameB) -> mask`. Return `(maskA, maskB)` when geometry moves
@@ -135,8 +146,8 @@ named by index. The same `output` function works for
 results = load_results("run_042_piv.jld2")   # Vector of results, in order
 ```
 
-[`load_results`](@ref) returns [`PIVResult`](@ref) and/or
-[`StereoPIVResult`](@ref) entries in sequence order. An empty saved vector, or
+[`load_results`](@ref) returns result entries in sequence order; planar,
+stereo, PTV, and tracking results can share a file. An empty saved vector, or
 a batch stopped before its first result, loads as an empty vector. Files with
 an unknown `format_version` raise an error. Stored source paths, when present,
 are retrievable directly with JLD2:
@@ -167,12 +178,26 @@ grid's unnamed world units.
 
 ## Post-process the sequence
 
+For a worked example of sampling intervals, valid counts, and convergence
+of a mean field, follow [From image pairs to flow statistics](../tutorials/sequence_statistics.md).
+
 Sequences of same-grid results feed the statistics utilities directly:
 
 ```julia
-validate_temporal!(results)                  # flag temporal outliers in place
-stats = field_statistics(results)            # planar or stereo mean/RMS/stresses/counts
-f, psd = power_spectrum([r.u[12, 8] for r in results]; dt = 1/10_000)
+validate_temporal!(results)                  # flag temporal outliers in memory
+stats = field_statistics(results)            # mean/RMS/stresses/counts on valid vectors
+spectrum = result_spectrum(results, 12, 8; dt = 1/10_000)
+```
+
+For this spectrum, `dt` is the time between successive velocity results,
+not the delay within an image pair. [`result_spectrum`](@ref) checks masks
+and outlier flags and errors on invalid samples by default; choose an
+explicit `invalid` policy only if filling those samples is justified.
+`validate_temporal!` changes the in-memory flags. Save the checked results
+to a new file if you need those flags later:
+
+```julia
+save_results("run_042_checked.jld2", results)
 ```
 
 ## A note on failure
@@ -180,6 +205,8 @@ f, psd = power_spectrum([r.u[12, 8] for r in results]; dt = 1/10_000)
 If a pair fails (unreadable file, size mismatch), `run_piv_sequence` logs
 which pair and rethrows — the incremental output file retains everything
 processed up to that point, so you can fix the offending frame and resume
-from a trimmed pair list.
+from a trimmed pair list. The driver does not automatically resume or append
+to an existing output file, so choose a new output path for the remaining
+pairs and keep the original completed prefix.
 The driver waits for any started frame prefetch before it returns, including
 when processing or a callback fails.

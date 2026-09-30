@@ -17,6 +17,8 @@
 using Hammerhead
 using Hammerhead.SyntheticData
 using Random
+using Statistics: median
+include(joinpath(pkgdir(Hammerhead), "docs", "lit", "helpers", "advanced_tutorials.jl"))
 
 vortex = vortex_flow(128.0, 128.0, 6.0, 0.0)   # constant 6 px azimuthal speed
 imgA, imgB, truthA, truthB = generate_synthetic_piv_pair(
@@ -47,49 +49,44 @@ using CairoMakie
 
 plot_vector_field(ptv; axis = (title = "PTV: one vector per particle",))
 
+# Before trusting the vectors, check what was detected. Overlay the detected
+# centers on frame A. Orange marks linked detections; red marks detections
+# without a frame-B match. Inspect bright particles without a marker and
+# markers that sit on noise or merged images.
+
+let
+    fig = Figure(size = (550, 500))
+    ax = Axis(fig[1, 1]; title = "frame A: detected particle centers",
+              xlabel = "x (px)", ylabel = "y (px)", yreversed = true,
+              aspect = DataAspect())
+    image!(ax, imgA'; colormap = :grays)
+    linked = falses(length(ptv.particles_a))
+    linked[ptv.index_a] .= true
+    scatter!(ax, ptv.particles_a.x[linked], ptv.particles_a.y[linked];
+             color = (:orange, 0.7), markersize = 7, label = "linked")
+    scatter!(ax, ptv.particles_a.x[.!linked], ptv.particles_a.y[.!linked];
+             color = :red, markersize = 9, label = "unmatched")
+    axislegend(ax; position = :rb)
+    fig
+end
+
 # ### Frame-A attribution makes the ground-truth check exact
 #
 # `generate_synthetic_piv_pair` returns index-aligned truth
-# (`truthA[i]` ↔ `truthB[i]`), and PTV attributes each vector to the *frame-A*
-# particle position. The generator also advances each particle from its
-# frame-A position, so no midpoint correction is needed. Match each
-# detection to its nearest reference particle, then measure displacement
-# error for correct matches:
+# (`truthA[i]` ↔ `truthB[i]`). Since PTV attributes vectors to frame A and
+# the generator advances particles from frame A, we can compare displacements
+# directly. The reference-matching bookkeeping is in the small tutorial
+# [matching helper](https://github.com/stillyslalom/Hammerhead.jl/blob/main/docs/lit/helpers/advanced_tutorials.jl)
+# loaded above. Read **detections**, **linked**, and **unmatched_a**
+# alongside **correct_fraction**: the error statistic includes only correctly
+# identified links. A method that reports a tiny error for a few easy links
+# but misses most particles is not sufficient.
 
-using Statistics: median
+tutorial_ptv_diagnostics(ptv, truthA, truthB)
 
-function nearest_truth(p, tx, ty; tol = 0.5)
-    map = fill(-1, length(p))
-    for i in 1:length(p)
-        best, bj = Inf, 0
-        for j in eachindex(tx)
-            d2 = (p.x[i] - tx[j])^2 + (p.y[i] - ty[j])^2
-            d2 < best && ((best, bj) = (d2, j))
-        end
-        sqrt(best) < tol && (map[i] = bj)
-    end
-    return map
-end
-
-mA = nearest_truth(ptv.particles_a, truthA.x, truthA.y)
-mB = nearest_truth(ptv.particles_b, truthB.x, truthB.y)
-errs = Float64[]
-correct = 0
-for k in eachindex(ptv.index_a)
-    ta, tb = mA[ptv.index_a[k]], mB[ptv.index_b[k]]
-    (ta > 0 && tb > 0) || continue
-    if ta == tb
-        global correct += 1
-        push!(errs, hypot(ptv.u[k] - (truthB.x[tb] - truthA.x[ta]),
-                          ptv.v[k] - (truthB.y[tb] - truthA.y[ta])))
-    end
-end
-(correct_fraction = correct / count(>(0), mA[ptv.index_a]),
- median_error_px = median(errs))
-
-# Check the correct-match fraction and median displacement error. For this
-# pair, nearly all matches are correct and the median error is a few
-# hundredths of a pixel.
+# Task: compare `linked` with `detections_a`, then inspect the unlinked
+# particles in the overlay. If missed particles cluster in dim or crowded
+# regions, tune detection before changing the match search radius.
 #
 # ## Scattered vectors versus a gridded field
 #
@@ -147,6 +144,45 @@ fig2
 
 # Each line shows one tracked particle. Together the tracks show the vortex
 # circulation across the sequence.
+#
+# ### What a missed frame does to a track
+#
+# Use a small controlled sequence so only one particle is absent in frame 4.
+# The other four particles provide context for the matcher. All particles
+# move one pixel right per frame; the upper-right one disappears once.
+
+starts = [(20.0, 20.0), (50.0, 20.0), (80.0, 20.0),
+          (20.0, 70.0), (80.0, 70.0)]
+frames_gap = [begin
+    img = zeros(128, 128)
+    for (i, (x, y)) in enumerate(starts)
+        k == 4 && i == 3 && continue
+        generate_gaussian_particle!(img, (x + k - 1, y), 6.0)
+    end
+    img
+end for k in 1:8]
+gap_params = PTVParameters(search_radius = 3.0, uod_enable = false)
+gapped = track_particles(frames_gap, gap_params; predictor = nothing,
+                         min_track_length = 5, max_gap = 1, progress = false)
+target_bridge = only(filter(t -> hypot(t.x[1] - 80, t.y[1] - 20) < 1,
+                            gapped.trajectories))
+target_bridge.frames
+
+# Compare frame 3 with frame 4. The upper-right particle is missing in frame
+# 4 while the other four remain. Inspect `target_bridge.frames`: it should
+# skip frame 4 and resume at frame 5. A bridge is a predicted association, so
+# check it carefully when trajectories cross.
+
+let
+    fig = Figure(size = (620, 300))
+    for (i, (img, label)) in enumerate(((frames_gap[3], "frame 3"),
+                                        (frames_gap[4], "frame 4: one missing")))
+        ax = Axis(fig[1, i]; title = label, yreversed = true, aspect = DataAspect())
+        image!(ax, img'; colormap = :grays)
+        xlims!(ax, 10, 100); ylims!(ax, 85, 10)
+    end
+    fig
+end
 #
 # ## Where to go next
 #

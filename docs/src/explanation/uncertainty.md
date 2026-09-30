@@ -28,9 +28,10 @@ deviation for `u` and `v` separately.
   [iterative passes](multipass.md#Convergence-sweeps-and-iterative-passes)) —
   an iterating final pass estimates the uncertainty once, from the deformed
   windows of its last sweep.
-- **Moderate noise.** The method is accurate for uncertainties up to about
-  0.3 px; beyond that (or when the window has no usable correlation
-  signal) the fields hold `NaN`.
+- **Moderate noise.** The linearization is intended for uncertainties up to
+  about 0.3 px. A finite estimate above that range needs caution; it is not
+  automatically clipped or rejected. The estimator returns `NaN` when the
+  correlation statistics do not give a valid estimate.
 
 ## What the numbers mean
 
@@ -42,24 +43,62 @@ that window**:
   [`error_statistics`](@ref).
 - The estimate is *not updated* when validation replaces or substitutes a
   vector: it describes the original correlation, not the replacement.
-- Windows that are nearly outliers legitimately report very large σ. When
-  comparing uncertainty against a reference error, use medians over
-  non-outlier vectors rather than means; a handful of high-uncertainty
-  windows can otherwise dominate the mean.
+- Some low-quality windows report very large σ. When comparing uncertainty
+  against a reference error, report the valid-vector selection and inspect
+  the distribution as well as its median. A few large estimates can dominate
+  a mean.
 
-On synthetic noise sweeps, the median estimate tracks the measured
-root-mean-square (RMS)
-error within about ±25% up to 20% image noise.
+Synthetic images with known displacements let you compare estimated
+uncertainty with measured error. Agreement depends on the image conditions;
+it does not establish the accuracy of estimates for a different recording.
+
+## Use uncertainty alongside validation and sensitivity checks
+
+A validation flag marks a rejected vector. A replacement supplies a value
+from neighboring measurements. An uncertainty estimate describes the
+original correlation measurement. Check the flags before interpreting the
+uncertainty of a displayed or exported value.
+
+Repeat an analysis with another reasonable final window size and compare
+profiles at the same locations. Differences can reveal spatial averaging
+or sensitivity to processing even when the reported random uncertainty is
+small. This comparison does not by itself identify which result is closer
+to the true field; it helps determine whether the feature you need is
+stable under those choices.
+
+For a velocity component ``U = s d / \Delta t``, `physical` scales the
+displacement uncertainty by ``s / \Delta t``. It does not add uncertainty in
+the spatial calibration ``s`` or pair delay ``\Delta t``. Under a first-order,
+independent-input approximation, their contributions combine as
+
+```math
+\sigma_U^2 \approx
+\left(\frac{s}{\Delta t}\right)^2 \sigma_d^2 +
+\left(\frac{d}{\Delta t}\right)^2 \sigma_s^2 +
+\left(\frac{s d}{\Delta t^2}\right)^2 \sigma_{\Delta t}^2.
+```
+
+Correlated inputs require covariance terms. Tracer response, unresolved flow
+structure, and calibration-model errors also need separate assessment;
+the correlation estimator does not provide a complete uncertainty budget
+[Sciacchitano2019](@cite). Start with the
+[image-quality guide](../howto/image_quality.md) and the worked
+[window-size comparison](../tutorials/real_data.md).
 
 ## Ensemble pooling
 
 In [`run_piv_ensemble`](@ref), the per-window statistics are summed across
-all pairs — the ensemble correlation plane is itself such a sum — so the
-reported uncertainty describes the *ensemble-mean* vector and shrinks as
-pairs are added. Like ensemble correlation itself, this assumes the same
-displacement in every pair; genuine pair-to-pair flow fluctuation is not
-captured. Quantify fluctuation with [`field_statistics`](@ref) over
-single-pair results instead.
+all pairs. The reported uncertainty describes the displacement estimated
+from the combined correlation plane. Adding pairs can reduce random
+uncertainty, but a decrease at every sample count is not guaranteed.
+
+The uncertainty model assumes a common displacement. If the flow fluctuates,
+the combined peak can broaden or become asymmetric, and its position need
+not equal the arithmetic mean of separately measured vectors. This
+uncertainty estimate does not describe the flow's fluctuation amplitude.
+Use [`field_statistics`](@ref) over single-pair results to quantify that
+variation; the [sequence tutorial](../tutorials/sequence_statistics.md)
+compares the two calculations.
 
 ## Execution precision on GPU backends
 
@@ -81,7 +120,9 @@ reconstruction, assuming independent per-camera errors, into
 
 ## Cheap proxies
 
-Every result also carries two always-on quality indicators: `peak_ratio`
-(primary-to-secondary correlation peak ratio; higher is more reliable) and
-`correlation_moment` (peak second moment; lower is sharper). They rank
-vectors well but are not calibrated uncertainties.
+Every PIV result also carries two correlation diagnostics: `peak_ratio`
+compares the primary and secondary peaks, while `correlation_moment`
+describes peak spread. A higher ratio or narrower peak can make a vector
+easier to interpret, but neither is a calibrated uncertainty or a guarantee
+that the displacement is correct. Inspect them with the vector field and
+validation flags.

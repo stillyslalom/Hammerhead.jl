@@ -4,16 +4,18 @@ CurrentModule = Hammerhead
 
 # Core pipeline and parameters
 
-The single-pair and multi-pass particle image velocimetry (PIV) engine:
-[`run_piv`](@ref) and its
-configuration ([`PIVParameters`](@ref), [`multipass_parameters`](@ref)),
-the [`PIVResult`](@ref) container, analysis masks, correlators, and
-plotting. See the [first tutorial](../tutorials/first_vector_field.md) for a
-guided walkthrough.
+Use [`run_piv`](@ref) for one image pair. Pass [`PIVParameters`](@ref) for
+one interrogation pass or [`multipass_parameters`](@ref) for a sequence of
+window sizes. The returned [`PIVResult`](@ref) stores window centers, pixel
+displacements, validation flags, and correlation diagnostics on the same
+grid. See the [first tutorial](../tutorials/first_vector_field.md) for a
+worked measurement.
 
-All public PIV drivers accept an execution-backend selector. See
-[Run PIV on a GPU](../howto/gpu.md) for optional package setup, the supported
-feature matrix, device-memory behavior, and validation commands.
+Exclude `result.mask` and `result.outliers` when summarizing measured vectors.
+Flagged `u` and `v` entries may hold replacement values; masked entries are
+`NaN`. The [validation guide](../howto/validation.md) explains the checks.
+For backend selection and supported options, see
+[Run PIV on a GPU](../howto/gpu.md).
 
 ```@index
 Pages = ["pipeline.md"]
@@ -29,9 +31,11 @@ Private = false
 
 ## Physical units
 
-Results carry an optional [`PhysicalScale`](@ref) as metadata; the stored
-arrays stay in measured units (pixels, or world units for stereo) until
-[`physical`](@ref) converts them. See the
+Attach a [`PhysicalScale`](@ref) with the exposure separation and spatial
+calibration for planar PIV. The stored arrays stay in pixels until
+[`physical`](@ref) converts positions to length and displacements to
+velocity. Stereo arrays start in world length units, so they need the
+exposure separation for velocity conversion. See the
 [scaling how-to](../howto/scaling.md) and
 [the conventions page](../explanation/conventions.md).
 

@@ -10,9 +10,10 @@
 
 Ensemble PIV over a sequence of image pairs: each interrogation window's
 correlation planes are summed across all pairs and the displacement peak is
-located once on the ensemble plane, so a peak too weak to detect in any
-single pair emerges from the average. Assumes statistically stationary flow;
-the result is the ensemble-mean displacement field.
+located once on the ensemble plane. Combining pairs can reveal a peak that
+is too weak to detect in individual pairs. Use a statistically stationary
+interval and inspect the combined peak: if displacements vary widely, its
+position need not equal the arithmetic mean of separately measured vectors.
 
 `pairs` is as in [`run_piv_sequence`](@ref) (2-tuples of file paths and/or
 matrices; paths are reloaded once per pass). `params` may be a single
@@ -25,14 +26,12 @@ predictor for every pair. `peak_ratio` and `correlation_moment` describe the
 ensemble planes.
 
 With `uncertainty = true` the correlation-statistics estimator (Wieneke 2015,
-see [`PIVParameters`](@ref)) pools its per-window sums over all pairs — the
-ensemble correlation plane is itself such a sum — so `uncertainty_u` /
-`uncertainty_v` describe the noise-driven uncertainty of the ensemble-mean
-vector and shrink as pairs are added. Like ensemble correlation itself, this
-assumes the displacement is the same in every pair: genuine pair-to-pair flow
-fluctuation is not captured (its coherent window-wide shifts violate the
-estimator's short-range pixel-covariance assumption); quantify it with
-[`field_statistics`](@ref) over single-pair results instead.
+see [`PIVParameters`](@ref)) pools its per-window sums over all pairs.
+`uncertainty_u` / `uncertainty_v` describe random uncertainty in the combined
+displacement estimate. Adding pairs can reduce this uncertainty; a decrease
+at every sample count is not guaranteed. The estimator assumes a common
+displacement across pairs and does not quantify flow fluctuations. Use
+[`field_statistics`](@ref) over single-pair results for those statistics.
 
 Keyword arguments: `threaded`, `predictor_smoothing`, `mask`,
 `mask_threshold`, `backend`, and `scale` (attach a [`PhysicalScale`](@ref) to
@@ -41,7 +40,7 @@ as in [`run_piv_sequence`](@ref). On the KA-family backends (`:ka` and the
 device selectors) the summed correlation planes stay resident on the device —
 only the final vector grid returns to the host. With `uncertainty = true`,
 the additive Float64 statistics also remain device-resident until finalization.
-Phase correlation, `subpixel_method = :gauss2d`, and retained correlation
+`subpixel_method = :gauss2d` and retained correlation
 planes still require `backend = :cpu`.
 """
 function run_piv_ensemble(pairs::AbstractVector,

@@ -313,8 +313,8 @@ end
 
 Result of [`run_piv`](@ref). The numeric precision `T` follows the input
 images: `float(promote_type(eltype(imgA), eltype(imgB)))`, e.g. `Float32`
-images produce a `PIVResult{Float32}` and the whole pipeline runs in
-single precision.
+images produce a `PIVResult{Float32}`. Correlation and deformation use this
+precision; uncertainty accumulation uses Float64 internally.
 
 # Fields
 - `x`, `y`: window-center coordinates of the interrogation grid (`x` along
@@ -323,16 +323,18 @@ single precision.
   the column (x) displacement and `v` the row (y) displacement, in pixels. A
   particle at `(row, col)` in the first image is found at `(row + v, col + u)`
   in the second.
-- `peak_ratio`: primary-to-secondary correlation peak ratio per window (higher
-  is more reliable).
+- `peak_ratio`: primary-to-secondary correlation peak ratio per window.
+  A higher ratio indicates a more distinct primary peak, not a calibrated
+  probability that the vector is correct.
 - `correlation_moment`: second moment of the correlation peak per window (an
   uncertainty proxy; lower is sharper).
 - `uncertainty_u`, `uncertainty_v`: per-vector measurement uncertainty (one
   standard deviation, in pixels) of `u` and `v`, estimated from correlation
   statistics (Wieneke 2015) when the `uncertainty` parameter is enabled.
   `NaN` when disabled, for masked windows, and where the estimate is
-  undefined (no usable correlation signal, or noise beyond the ~0.3 px
-  validity of the method). The estimate describes the correlation
+  undefined because the correlation statistics are unusable. Finite estimates
+  can exceed 0.3 px; there is no automatic cutoff at that value. The estimate
+  describes the correlation
   measurement at the window; it is not updated when validation replaces or
   substitutes the vector.
 - `outliers`: `BitMatrix` marking vectors that failed validation (UOD,
