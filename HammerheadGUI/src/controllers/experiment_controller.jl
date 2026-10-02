@@ -282,6 +282,40 @@ function experiment_summary(ec::ExperimentController)
 end
 
 """
+    experiment_quality_report(controller) -> RunQualityReport
+
+Summarize the latest completed run using the core report contract. Verify the
+captured record/run identities and output content before scanning one result at
+a time. The report distinguishes current flags and finite output from unavailable
+measurement/replacement history; stored uncertainty availability is not accuracy.
+Busy, missing, failed, or changed runs are refused. No input images or saved
+scripts are executed to generate the report.
+"""
+function experiment_quality_report(ec::ExperimentController)
+    _experiment_idle(ec)
+    record,run=deepcopy(ec.record[]),deepcopy(ec.last_run[])
+    record!==nothing && run!==nothing ||
+        throw(ArgumentError("no completed experiment run to report"))
+    quality_report(record,run)
+end
+
+"""
+    save_experiment_quality_report(path, controller) -> RunQualityReport
+
+Generate and save the shared core TOML quality report. In addition to the core
+report's protected sources, preserve the controller's selected result and run
+record destinations. A rejected report or destination leaves existing files
+unchanged. This scans completed output and does not modify the experiment.
+"""
+function save_experiment_quality_report(path::AbstractString,ec::ExperimentController)
+    _experiment_idle(ec)
+    protected=filter(!isempty,[ec.output_path[],ec.run_record_path[]])
+    report=experiment_quality_report(ec)
+    save_quality_report(path,report;protected_paths=protected)
+    report
+end
+
+"""
     experiment_run_history(controller) -> String
 
 Read-only run IDs, statuses, pair counts, output locations and failure summaries.

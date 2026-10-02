@@ -102,5 +102,8 @@ supported PIV settings. The [documentation](https://stillyslalom.github.io/Hamme
 has task guides and the [API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/reference/pipeline/).
 
 Development priorities and outstanding work are tracked in [ROADMAP.md](ROADMAP.md).
+The development checkout also includes [saved planar experiments](docs/src/howto/experiments.md),
+[checkpoint/resume](docs/src/howto/checkpoints.md), and
+[shared script/GUI quality reports](docs/src/howto/run_quality.md).
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

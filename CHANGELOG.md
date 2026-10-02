@@ -8,13 +8,27 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added separate version-1 planar checkpoints with immutable per-pair native
+  results and verified commit records. Built-in CPU/KA recipes resume only with
+  matching ordered inputs, recipe, and software identity. Interrupted writers
+  require explicit recovery; partial files are not adopted. Lazy committed
+  prefixes and native aggregate export preserve earlier committed results.
+  Same-directory publication does not promise power-loss durability.
 - Non-informative correlation planes (flat, nonpositive, or nonfinite) now
   produce unavailable measurements instead of arbitrary boundary displacements.
   Exact constant windows are centered without roundoff texture before
   apodization. Unmasked missing measurements remain rejected independently of
   optional validators; UOD and deformation predictors exclude nonfinite donors.
-  Originally flat patches deformed by nonzero neighboring motion can still gain
-  interpolation texture; original-source support tracking remains open.
+  Deformed windows now require exact contrast in both original sampled raw
+  stencil unions. Distant B-spline coefficient leakage and virtual boundary
+  zeros alone do not establish source information. This convention preserves
+  any contrast present in the sampled original pixels, without an amplitude
+  threshold; uninformative correlation and UQ contributions are skipped.
+- `RunQualityReport` summarizes planar/stereo stored fields with node-weighted
+  counts and explicit denominator/availability rules, then saves validated TOML.
+  Completed experiment outputs can be associated by verified content identity.
+  Current flags are not replacement histories, and numerical uncertainty
+  availability does not establish accuracy, coverage, or measurement association.
 - `recipe_diff` reports deterministic, readable processing-setting changes
   between verified planar recipe snapshots. Large mask/background payloads use
   shape/precision/content summaries; script paths, inputs, and run environments
@@ -63,6 +77,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- The saved-experiment workflow generates, saves, and displays the shared core
+  quality report after verifying the completed run. Report saves protect known
+  inputs, outputs, and experiment records; changed/failed/busy runs are refused.
 - Added a dedicated saved-experiment controller and workflow, accessible from
   the batch form. Supported form settings export complete recipes; imported
   recipes retain fields that the ordinary form cannot edit. Replay records run
@@ -87,7 +104,8 @@ validation and the core-first, GUI-second release sequence.
 
 Native JLD2 `format_version` remains **1**; persisted result structures are
 unchanged. Experiment records have their own `experiment_format_version = 1`
-and do not change the native result schema. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
+and do not change the native result schema. Checkpoints and quality reports use
+separate version-1 metadata formats. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.
 

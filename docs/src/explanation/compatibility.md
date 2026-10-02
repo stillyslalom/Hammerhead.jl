@@ -27,6 +27,18 @@ from historical planning files or result-only files: those files do not contain
 the complete processing recipe. See [experiment replay](../howto/experiments.md)
 for the supported planar scope and environment compatibility checks.
 
+Checkpoint metadata has its own `checkpoint_format_version = 1`, separate from
+experiment records and native result files. It binds immutable per-pair native
+outputs to an ordered recipe/input identity and execution environment. Unknown
+versions are rejected; existing result-only prefixes are not adopted as
+checkpoints. See [checkpoint recovery](../howto/checkpoints.md) for supported
+interruptions and filesystem limits.
+
+Quality reports use `quality_report_format_version = 1` in language-neutral
+TOML. Readers validate explicit counters, denominators, provenance, and unavailable
+diagnostic reasons. These summaries do not change native result structures or
+reconstruct missing measurement history. See [the report schema](../reference/run_quality.md).
+
 The long-form table contract is identified by `TABLE_SCHEMA_VERSION` and the
 ordered `TABLE_COLUMNS` constant. Columns are a backward-compatible superset
 across planar, stereo, PTV, and tracking results: unavailable values are empty rather

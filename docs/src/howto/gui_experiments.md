@@ -73,8 +73,11 @@ mktempdir() do work
     controller.output_path[] = joinpath(work, "vectors.jld2")
     start!(controller; async=false)
     explorer = experiment_results(controller)
+    report_path = joinpath(work, "quality.toml")
+    save_experiment_quality_report(report_path, controller)
     (state=controller.state[], pairs=nframes(explorer),
-     saved_runs=length(controller.record[].runs))
+     saved_runs=length(controller.record[].runs),
+     quality_report_saved=isfile(report_path))
 end
 ```
 
@@ -83,6 +86,20 @@ opens a lazy `ResultExplorer`. It retains one display result plus key metadata,
 rather than collecting the whole sequence. Reused or overwritten output is
 refused because it no longer represents that recorded run. Keep result files
 unchanged while browsing and use distinct outputs to retain earlier runs.
+
+**Save quality report…** verifies the completed run and saves the same TOML
+report available to scripts through `quality_report`. Its readable summary
+appears in the **quality report** pages. The report scans one result at a time
+and records explicit denominators for mask, current-flag, finite-vector, and
+stored-uncertainty availability fractions. A flagged finite value is not evidence
+of replacement, and finite uncertainty is not an accuracy or coverage claim.
+Unavailable measurement history and sensitivity metrics are identified explicitly.
+See [saved run-quality reports](run_quality.md) for the complete contract.
+The controller equivalents are `experiment_quality_report(controller)` and
+`save_experiment_quality_report(path, controller)`; saving protects the experiment
+record and known input/result paths. The scan is synchronous and can delay the UI
+on large recordings. Opening another experiment or running again clears the
+displayed summary.
 
 ## Handle refusals and custom processing
 

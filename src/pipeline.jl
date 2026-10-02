@@ -394,6 +394,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     deforms = length(passes) > 1 || any(p -> p.max_iterations > 1, passes)
     workspace === nothing || ws_prepare!(workspace, size(imgA), T)
+    source_context = deforms ? _original_support_context(imgA, imgB, mask, T, workspace) : nothing
     if !deforms
         itpA = itpB = nothing
         warp_buffers = nothing
@@ -434,7 +435,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           predictor_smoothing, mask, mask_threshold,
                           warp_buffers, backend = be, workspace,
                           uncertainty_backend,
-                          deform_context = dctx)
+                          deform_context = dctx, source_context)
     end
     return scale === nothing ? result : with_scale(result, scale)
 end
@@ -690,9 +691,11 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
                   workspace::Union{Nothing,PIVWorkspace} = nothing,
                   uncertainty_backend::Symbol = :same,
-                  deform_context = nothing)
+                  deform_context = nothing, source_context = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
+    source_context === nothing &&
+        (source_context = _original_support_context(imgA, imgB, mask, T, workspace))
     grid = pass_grid(T, size(imgA), params, mask, mask_threshold)
     ny, nx = length(grid.y), length(grid.x)
     # Reuse the deformation output buffers across passes when supplied (each
@@ -754,11 +757,14 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     change_buf = Vector{T}()
     maxiter > 2 && params.convergence_tol > 0 && sizehint!(change_buf, ny * nx)
     local result, warpA, warpB
+    source_gate = nothing
     for it in 1:maxiter
         warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
                                              warpA = bufA, warpB = bufB,
                                              ctx = deform_context)
+        source_gate = _original_source_gate(source_context, predictor, grid, params, mask;
+                                           gate = source_gate, threaded)
         if it > 1
             fill!(residual_u, zero(T))
             fill!(residual_v, zero(T))
@@ -769,7 +775,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
             process_windows!(residual_u, residual_v, peak_ratio, correlation_moment,
                              alt_u, alt_v, fused_unc ? uncertainty_u : nothing,
                              fused_unc ? uncertainty_v : nothing, grid.jobs, warpA,
-                             warpB, params, engines[1], mask, planes)
+                             warpB, params, engines[1], mask, planes; source_gate)
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn process_windows!(residual_u, residual_v, peak_ratio,
@@ -777,7 +783,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                                                 fused_unc ? uncertainty_u : nothing,
                                                 fused_unc ? uncertainty_v : nothing,
                                                 chunk, warpA, warpB, params,
-                                                engines[ci], mask, planes)
+                                                engines[ci], mask, planes; source_gate)
             end
         end
         if alt_u !== nothing
@@ -827,12 +833,12 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         host_chunk_size = cld(length(grid.jobs), max(host_nchunks, 1))
         if host_nchunks == 1
             uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
-                               hostA, hostB, params, host_apod, mask)
+                               hostA, hostB, params, host_apod, mask; source_gate)
         elseif host_nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs,
                                                                    host_chunk_size))
                 Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
-                                                  hostA, hostB, params, host_apod, mask)
+                                                  hostA, hostB, params, host_apod, mask; source_gate)
             end
         end
     elseif unc && !fused_unc
@@ -841,13 +847,13 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         if nchunks == 1
             uncertainty_sweep!(uncertainty_u, uncertainty_v, grid.jobs,
                                warpA, warpB, params, _correlation_apod(engines[1]), mask,
-                               engines[1])
+                               engines[1]; source_gate)
         elseif nchunks > 1
             @sync for (ci, chunk) in enumerate(Iterators.partition(grid.jobs, chunk_size))
                 Threads.@spawn uncertainty_sweep!(uncertainty_u, uncertainty_v, chunk,
                                                   warpA, warpB, params,
                                                   _correlation_apod(engines[ci]), mask,
-                                                  engines[ci])
+                                                  engines[ci]; source_gate)
             end
         end
     end
@@ -902,12 +908,18 @@ end
 function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs,
                             imgA::AbstractMatrix, imgB::AbstractMatrix,
                             params::PIVParameters, apod::AbstractMatrix,
-                            mask::Union{Nothing,AbstractMatrix{Bool}} = nothing)
+                            mask::Union{Nothing,AbstractMatrix{Bool}} = nothing;
+                            source_gate = nothing)
     wr, wc = params.window_size
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     uscratch = uncertainty_scratch(T, params.window_size)
     ustats = zeros(2, UQ_NSTATS)
     for (gi, gj, rs, cs) in jobs
+        if !_source_informative(source_gate, gi, gj)
+            uncertainty_u[gi, gj] = T(NaN)
+            uncertainty_v[gi, gj] = T(NaN)
+            continue
+        end
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         submask = mask === nothing ? nothing :
@@ -923,9 +935,9 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs,
 end
 
 uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
-                   apod, mask, engine) =
+                   apod, mask, engine; source_gate = nothing) =
     uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
-                       params, apod, mask)
+                       params, apod, mask; source_gate)
 
 """
     image_interpolant(img, ::Type{T}) -> extrapolation
@@ -1000,7 +1012,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                           engine::_CPUCorrelationEngine,
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                          planes = nothing)
+                          planes = nothing; source_gate = nothing)
     wr, wc = params.window_size
     sr, sc = params.search_area_size
     mr, mc = div.(params.search_area_size .- params.window_size, 2)
@@ -1011,6 +1023,22 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     uscratch = uncertainty_u === nothing ? nothing : uncertainty_scratch(T, params.window_size)
     ustats = uncertainty_u === nothing ? nothing : zeros(2, UQ_NSTATS)
     for (gi, gj, rs, cs) in jobs
+        if !_source_informative(source_gate, gi, gj)
+            u[gi, gj] = T(NaN)
+            v[gi, gj] = T(NaN)
+            peak_ratio[gi, gj] = T(NaN)
+            correlation_moment[gi, gj] = T(NaN)
+            if alt_u !== nothing
+                alt_u[gi, gj, :] .= T(NaN)
+                alt_v[gi, gj, :] .= T(NaN)
+            end
+            if uncertainty_u !== nothing
+                uncertainty_u[gi, gj] = T(NaN)
+                uncertainty_v[gi, gj] = T(NaN)
+            end
+            planes === nothing || (planes[gi, gj] = zeros(T, size(engine.correlator.R)))
+            continue
+        end
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB_uq = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         srs, scs = rs - mr, cs - mc
@@ -1033,6 +1061,8 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         peak_ratio[gi, gj] = res.ratio
         correlation_moment[gi, gj] = res.moment
         if alt_u !== nothing
+            alt_u[gi, gj, :] .= T(NaN)
+            alt_v[gi, gj, :] .= T(NaN)
             # Alternatives use the cheap 3-point fit regardless of the
             # primary's subpixel method — they are fallback candidates.
             for m in 2:min(res.found, params.n_peaks)
@@ -1057,10 +1087,10 @@ process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                  imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                  correlator::Correlator,
                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                 planes = nothing) =
+                 planes = nothing; source_gate = nothing) =
     process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                      uncertainty_u, uncertainty_v, jobs, imgA, imgB, params,
-                     _make_correlation_engine(correlator), mask, planes)
+                     _make_correlation_engine(correlator), mask, planes; source_gate)
 
 """
     benchmark_piv_configurations(imgA, imgB, params = nothing;

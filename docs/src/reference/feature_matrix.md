@@ -18,6 +18,8 @@ reconstruction remain CPU operations.
 | Enlarged search areas | yes | no | no | no |
 | `:gauss2d` peak fit | yes | no | no | no |
 | Retained correlation planes | yes | no | no | no |
+| File-based planar experiment replay | yes | yes | no | no |
+| Built-in planar recipe checkpoint/resume | yes | yes | no | no |
 
 *Device uncertainty estimation uses Float64 accumulation and requires a GPU
 with suitable Float64 support. A backend rejects an unsupported setting
@@ -29,3 +31,11 @@ the PIV backend selector. Planar PIV accepts `Float32` and `Float64` images.
 See [Run PIV on a GPU](../howto/gpu.md) for setup and performance tradeoffs,
 or [KernelAbstractions and GPU backends](backends.md) for the execution
 boundary.
+
+[Experiment records](../howto/experiments.md) and
+[checkpoints](../howto/checkpoints.md) currently cover planar file-based recipes;
+the broader stereo/PTV/GPU pipelines above do not imply saved-recipe support.
+[Quality reports](../howto/run_quality.md) summarize stored planar/stereo results
+on the CPU, independently of the backend that produced them. The shared
+original-stencil guard has CPU/KA regression coverage; its vendor GPU paths
+still need fresh hardware validation after this change.

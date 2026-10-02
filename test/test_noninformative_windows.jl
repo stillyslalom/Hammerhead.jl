@@ -185,11 +185,9 @@ end
         @test !any(clean.outliers)
     end
 
-    @testset "Unresolved constant-patch deformation precision" begin
-        # Evidence for the documented boundary, not a claim that all originally
-        # blank regions stay invalid after deformation. Correlation inputs can
-        # acquire numerical texture; distinguishing it without rejecting real
-        # weak texture requires original-support metadata.
+    @testset "Original stencil rejects deformation texture" begin
+        # Warped intensities retain spline roundoff; original-stencil evidence
+        # prevents it becoming a measurement in the blank interior.
         for T in (Float32, Float64), backend in (:cpu, :ka)
             A, B = noninformative_texture(T; background = T(0.1))
             A[:, 1:32] .= T(0.1); B[:, 1:32] .= T(0.1)
@@ -211,9 +209,8 @@ end
             rows = (final.y .>= 24) .& (final.y .<= 41)
             col = final.x .== T(16.5)
             @test !any(final.mask[rows, col])
-            # Record yield without requiring acceptance of fabricated values.
-            # This is evidence of an unresolved limit, not an accuracy gate.
-            @info "Constant-patch deformation limit" precision=T backend=backend accepted=count(.!final.outliers[rows, col]) eligible=count(rows)*count(col)
+            @test all(final.outliers[rows, col])
+            @test all(isnan, final.u[rows, col]) && all(isnan, final.peak_ratio[rows, col])
         end
     end
 

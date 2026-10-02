@@ -60,8 +60,18 @@ apparently valid field with artificial displacement. After adding exact-constant
 input and non-informative-plane guards, the expanded Windows CPU rerun on
 2026-10-02 reports `no_valid_vectors` (0/225) for this pair. Translation/shear
 error metrics and A/4E smoke yields remain unchanged. This fixes the wholly empty
-pair; [originally flat patches under nonzero deformation](../explanation/noninformative_windows.md)
-remain a separate limitation. Use the generated status to assess later changes.
+pair. [Original-stencil contrast checks](../explanation/noninformative_windows.md)
+also guard originally flat patches under nonzero deformation; their separate
+regressions define the scientific convention and weak-contrast guarantees.
+Use the generated status to assess later changes.
+
+The expanded source-stencil rerun on 2026-10-02 retained the translation/shear
+errors and A/4E smoke yields. The sparse synthetic case changed from 205/225
+to 195/225 accepted nodes: ten previously accepted nodes lacked contrast in
+at least one sampled original-source stencil union. Predictor and validation
+effects also changed some retained vectors. Its reported RMS changed from
+0.037549/0.020701 px to 0.032888/0.020575 px (u/v); these statistics use different
+accepted populations and do not establish a general accuracy improvement.
 
 ## Compare processing time and expand the conditions
 

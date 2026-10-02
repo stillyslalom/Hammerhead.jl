@@ -305,7 +305,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                           engine::_CUDACorrelationEngine{T},
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                          planes = nothing) where {T}
+                          planes = nothing; source_gate = nothing) where {T}
     planes === nothing ||
         throw(ArgumentError("backend :cuda does not support correlation-plane storage yet; " *
                             "use backend = :cpu"))
@@ -330,7 +330,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         nreal = min(bs, njobs - start + 1)
         @inbounds for m in 1:nreal
             job = jobvec[start + m - 1]
-            engine.origins_host[m, 1] = job[3]   # rs
+            engine.origins_host[m, 1] = Hammerhead._source_origin(source_gate, job)
             engine.origins_host[m, 2] = job[4]   # cs
         end
         copyto!(engine.origins_d, engine.origins_host)
@@ -386,6 +386,8 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                     view(engine.uqstats_host, 2, :, m))
             end
             if alt_u !== nothing
+                alt_u[gi, gj, :] .= T(NaN)
+                alt_v[gi, gj, :] .= T(NaN)
                 found = Int(engine.out_host[5, m])   # small integer, exact in T
                 for mm in 2:min(found, params.n_peaks)
                     alt_u[gi, gj, mm - 1] = engine.out_host[5 + (mm - 1), m]
@@ -399,7 +401,7 @@ end
 
 function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
                             params::PIVParameters, apod, mask,
-                            engine::_CUDACorrelationEngine{T}) where {T}
+                            engine::_CUDACorrelationEngine{T}; source_gate = nothing) where {T}
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     isempty(jobvec) && return nothing
     wr, wc = engine.wsize
@@ -411,7 +413,7 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
         nreal = min(bs, length(jobvec) - start + 1)
         for m in 1:nreal
             job = jobvec[start + m - 1]
-            engine.origins_host[m, 1] = job[3]
+            engine.origins_host[m, 1] = Hammerhead._source_origin(source_gate, job)
             engine.origins_host[m, 2] = job[4]
         end
         copyto!(engine.origins_d, engine.origins_host)
@@ -467,7 +469,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                             engine::_CUDACorrelationEngine{T},
                             imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
                             params::PIVParameters, mask,
-                            uacc = nothing, uscratch = nothing) where {T}
+                            uacc = nothing, uscratch = nothing; source_gate = nothing) where {T}
     njobs = length(jobrange)
     njobs == 0 && return nothing
 
@@ -485,7 +487,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         nreal = min(bs, njobs - start + 1)
         @inbounds for m in 1:nreal
             job = jobs[jobrange[start + m - 1]]
-            engine.origins_host[m, 1] = job[3]   # rs
+            engine.origins_host[m, 1] = Hammerhead._source_origin(source_gate, job)
             engine.origins_host[m, 2] = job[4]   # cs
         end
         copyto!(engine.origins_d, engine.origins_host)

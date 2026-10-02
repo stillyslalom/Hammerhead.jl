@@ -155,6 +155,9 @@ end
         sameA = true
         sameB = true
         n = 0
+        # Row zero is an internal original-stencil skip marker, never an image
+        # coordinate. This leaves means and both gathered signals exactly zero.
+        if rs != 0
         for j in 1:wc, i in 1:wr
             (hasmask && mask[rs + i - 1, cs + j - 1]) && continue
             a = T(imgA[rs + i - 1, cs + j - 1])
@@ -168,6 +171,7 @@ end
             sA += a
             sB += b
             n += 1
+        end
         end
         meanA[k] = n == 0 ? zero(T) : (sameA ? firstA : sA / n)
         meanB[k] = n == 0 ? zero(T) : (sameB ? firstB : sB / n)
@@ -187,7 +191,7 @@ end
     @inbounds begin
         r = origins[k, 1] + i - 1
         c = origins[k, 2] + j - 1
-        if hasmask && mask[r, c]
+        if origins[k, 1] == 0 || (hasmask && mask[r, c])
             CA[i, j, k] = 0
             CB[i, j, k] = 0
         else
@@ -705,6 +709,9 @@ end
     @inbounds if tid == 1
         found = nf[1]
         out[5, k] = T(found)
+        for m in 6:(5 + 2 * (K - 1))
+            out[m, k] = T(NaN)
+        end
         if found == 0
             # No measurement and no alternatives. Never read stale scratch.
             out[1, k] = T(NaN)
@@ -870,7 +877,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                           imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParameters,
                           engine::_KACorrelationEngine{T},
                           mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                          planes = nothing) where {T}
+                          planes = nothing; source_gate = nothing) where {T}
     planes === nothing ||
         throw(ArgumentError("backend :ka does not support correlation-plane storage yet; " *
                             "use backend = :cpu"))
@@ -895,7 +902,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
         nreal = min(bs, njobs - start + 1)
         @inbounds for m in 1:nreal
             job = jobvec[start + m - 1]
-            engine.origins[m, 1] = job[3]   # rs
+            engine.origins[m, 1] = _source_origin(source_gate, job)
             engine.origins[m, 2] = job[4]   # cs
         end
         fill!(engine.CA, 0)
@@ -941,6 +948,8 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                 uncertainty_v[gi, gj] = finalize_uncertainty(T, view(engine.uqstats, 2, :, m))
             end
             if alt_u !== nothing
+                alt_u[gi, gj, :] .= T(NaN)
+                alt_v[gi, gj, :] .= T(NaN)
                 found = Int(engine.out[5, m])   # small integer, exact in T
                 for mm in 2:min(found, params.n_peaks)
                     alt_u[gi, gj, mm - 1] = engine.out[5 + (mm - 1), m]
@@ -954,7 +963,7 @@ end
 
 function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
                             params::PIVParameters, apod, mask,
-                            engine::_KACorrelationEngine{T}) where {T}
+                            engine::_KACorrelationEngine{T}; source_gate = nothing) where {T}
     jobvec = jobs isa AbstractVector ? jobs : collect(jobs)
     njobs = length(jobvec)
     njobs == 0 && return nothing
@@ -967,7 +976,7 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
         nreal = min(bs, njobs - start + 1)
         for m in 1:nreal
             job = jobvec[start + m - 1]
-            engine.origins[m, 1] = job[3]
+            engine.origins[m, 1] = _source_origin(source_gate, job)
             engine.origins[m, 2] = job[4]
         end
         _ka_window_means!(engine.ka)(engine.meanA, engine.meanB, imgA, imgB,
@@ -1074,7 +1083,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                             engine::_KACorrelationEngine{T},
                             imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
                             params::PIVParameters, mask,
-                            uacc = nothing, uscratch = nothing) where {T}
+                            uacc = nothing, uscratch = nothing; source_gate = nothing) where {T}
     njobs = length(jobrange)
     njobs == 0 && return nothing
 
@@ -1092,7 +1101,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         nreal = min(bs, njobs - start + 1)
         @inbounds for m in 1:nreal
             job = jobs[jobrange[start + m - 1]]
-            engine.origins[m, 1] = job[3]   # rs
+            engine.origins[m, 1] = _source_origin(source_gate, job)
             engine.origins[m, 2] = job[4]   # cs
         end
         fill!(engine.CA, 0)

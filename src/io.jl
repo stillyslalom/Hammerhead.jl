@@ -148,14 +148,15 @@ Write one result or a vector of results to a JLD2 file at `path`, replacing
 an existing file. The vector may mix [`PIVResult`](@ref),
 [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
 [`TrackingResult`](@ref). Read it with [`load_results`](@ref).
-Copying a [`ResultFile`](@ref) or its views to a different path streams the
-entries; overwriting that lazy source file is rejected before opening output.
+Copying a [`ResultFile`](@ref), [`CheckpointResults`](@ref), or their standard
+array views to a different path streams the entries; overwriting a known lazy
+source file is rejected before opening output.
 """
 function save_results(path::AbstractString,
                       results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
-    source = _result_file_source(results)
-    if source !== nothing && isfile(path) && Base.samefile(path, source.path)
-        throw(ArgumentError("cannot save lazy results over their source file: $(source.path); save to a different path or load eagerly first"))
+    sources = _result_protected_paths(results)
+    if isfile(path) && any(source -> isfile(source) && Base.samefile(path, source), sources)
+        throw(ArgumentError("cannot save lazy results over a source file; save to a different path or load eagerly first"))
     end
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
@@ -214,6 +215,14 @@ _result_file_source(index::ResultFile) = index
 _result_file_source(results::SubArray) = _result_file_source(parent(results))
 _result_file_source(results::Base.ReshapedArray) = _result_file_source(parent(results))
 _result_file_source(results::PermutedDimsArray) = _result_file_source(parent(results))
+
+# Lazy indexes may read multiple files without having one ResultFile source.
+# Keep destination protection separate from single-file provenance detection.
+_result_protected_paths(results) = String[]
+_result_protected_paths(index::ResultFile) = [index.path]
+_result_protected_paths(results::SubArray) = _result_protected_paths(parent(results))
+_result_protected_paths(results::Base.ReshapedArray) = _result_protected_paths(parent(results))
+_result_protected_paths(results::PermutedDimsArray) = _result_protected_paths(parent(results))
 
 function ResultFile(path::AbstractString)
     fullpath = abspath(path)

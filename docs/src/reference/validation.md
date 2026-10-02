@@ -17,6 +17,6 @@ Pages = ["validation.md"]
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["quality.jl"]
+Pages = ["src/quality.jl"]
 Private = false
 ```

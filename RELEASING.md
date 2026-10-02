@@ -76,6 +76,8 @@ links to logs and artifacts. Record what was not exercised as well as what passe
 | GUI workflow | OS/display configuration, setup/preprocessing/ROI/mask/scale, batch completion/cancellation, saved-result reopen, and export checks. Include a lab-user walkthrough when available. |
 | Persistence | Current round trips, unknown-version rejection, promised historical fixtures, cancellation/failure behavior, and any documented recovery limits. |
 | Planar experiment replay | Recipe/input hashes, creation and run environments, native-result parity, changed-input/unknown-version refusal, and completed/failed run records. Record any explicit environment override. |
+| Checkpoint recovery | Filesystem/OS, exact identities, handled failure, cancellation, hard process termination at publication boundaries, unchanged committed prefix, and explicit interrupted-writer recovery. Same-directory rename evidence is not power-loss durability. |
+| Quality reports | Counter/denominator correctness, unavailable diagnostics, verified output association, protected destinations, and shared script/GUI report behavior. |
 
 Do not present unavailable GPU runs, large-recording benchmarks, known-motion
 experiments, or an untested GUI/stereo saved-experiment workflow as validated. The

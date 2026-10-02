@@ -27,7 +27,7 @@ docs — all synthetic-verified, no new deps.
 ## Commands
 
 ```bash
-julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
+julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, including subprocess recovery checks
 julia --project=docs docs/make.jl                    # docs: executes all seven tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
 julia --project=. --threads=4 bench/validation_scorecard.jl  # provenance + synthetic accuracy / real-data smoke report
@@ -62,6 +62,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
   added to one of the reference pages (and every documented binding must
   appear somewhere) or `makedocs` fails its checkdocs pass.
+  `Pages` uses suffix matching; use `"src/quality.jl"` rather than `"quality.jl"`
+  when another source such as `run_quality.jl` shares that suffix.
   `reference/internals.md` catches all non-exported docstrings via
   `Public = false`.
 - Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
@@ -110,6 +112,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`, intensity/contrast/edge `automatic_mask`,
   and circular `grow_mask`/`shrink_mask`
+- `source_support.jl` — lazy original-pixel stencil evidence for deformed
+  windows, using exact comparisons in processing precision. Compact UInt8 maps
+  identify constant/empty/variable raw stencils; uninformative pair contributions
+  are skipped consistently by CPU/shared KA correlation and uncertainty paths.
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
   image deformation; a pass with `max_iterations > 1` iterates against its
   own validated field until the *q95* per-vector change drops below
@@ -223,10 +229,24 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   output; an environment change requires an explicit override. Scripts are never
   evaluated automatically. The experiment format is separate from result format
   1; unknown versions are rejected. Rerunning is not resuming/checkpoint recovery.
+- `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
+  protocol: disjoint metadata/result directories, immutable singleton native
+  payloads and commit descriptors, strict ordered input/recipe/environment
+  identity, explicit interrupted-writer recovery, lazy committed-prefix access,
+  and native aggregate export. Publish closed/validated files by same-directory
+  rename with no copy fallback; do not claim power-loss durability. Cancellation,
+  handled failure, and unmatched attempts have distinct metadata. Committed data
+  counts come from descriptors; memory counters cannot define recovery state.
 - `experiment_comparison.jl` — `recipe_diff` verifies both snapshots and returns
   deterministic field changes, retaining scalar/tuple settings and summarizing
   embedded mask/background payloads by shape, precision, and canonical SHA-256.
   Recipe comparisons exclude script locators, input identities, and run metadata.
+- `run_quality.jl` — `RunQualityReport` scans planar/stereo results without
+  retaining payloads and saves validated version-1 TOML. Counts are node-weighted
+  with explicit denominators; flags/finite values are not replacement history,
+  and numerical UQ availability is not coverage or measurement association.
+  Record/run reports verify output content and identities; anonymous iterators
+  make no association claim. Protect hidden source paths explicitly when saving.
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -364,6 +384,9 @@ Replay captures state before notification, records completed/failed metadata,
 and checks recorded output content before lazy exploration. Live replay progress,
 cancellation, stereo/GPU recipes, and full recipe editing remain open. The batch
 form links to this workflow; its API reference is split into `gui_experiments.md`.
+The same workflow saves and displays core quality reports through
+`experiment_quality_report` / `save_experiment_quality_report`. These synchronous
+scans protect the selected result and run record, and refuse busy/changed runs.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
@@ -382,8 +405,8 @@ controllers never import Makie. The mask editor is the framework proving
 ground for pure-GLMakie widget chrome.
 
 Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
-(only Hammerhead + Observables + Printf in scope — the module boundary
-enforces the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
+(Hammerhead and nonvisual dependencies only — the module boundary enforces
+the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
 GLMakie shells. Components so far (each = controller + view pair, same
 naming): `ResultExplorer`/`result_explorer` (browses all four persisted
 result types — `PIVResult`/`StereoPIVResult` grids, `PTVResult` particle
@@ -466,9 +489,12 @@ nonpositive, or completely flat planes yield NaN diagnostics/displacement and
 unmasked outlier flags regardless of optional validators. Exact constant valid
 pixels are centered before apodization without averaging roundoff. Predictors
 exclude nonfinite donors and use neutral zero only where no finite fill exists;
-this does not convert missing results into measurements. Originally constant
-patches under nonzero deformation can still acquire interpolation texture;
-source-support propagation remains in ROADMAP.md. Keep tiny true contrast valid.
+this does not convert missing results into measurements. Deformed windows also
+require exact contrast in both original raw stencil unions sampled by the
+predictor. This is an explicit scientific convention: B-spline prefiltering has
+nonlocal influence, and remote coefficient leakage alone does not establish
+source contrast. Ignore virtual extrapolated zeros and original masked pixels
+as contrast evidence; preserve any genuine processing-precision difference.
 
 - **Sign convention (package-wide):** a particle at `(row, col)` in image A
   found at `(row + dv, col + du)` in B yields positive `(du, dv)`; `u` is
@@ -671,7 +697,14 @@ source-support propagation remains in ROADMAP.md. Keep tiny true contrast valid.
   content summaries, scientific versus locator identity, and no retained arrays.
   `test_noninformative_windows.jl` checks degenerate planes, exact constant
   inputs, tiny contrast, masks, nonfinite donors, predictors, and UQ on CPU/KA;
-  it also records deformation's unresolved constant-patch limitation.
+  `test_original_source_support.jl` covers deformed constant patches and the
+  original-stencil convention. `test_run_quality.jl` checks stored-field metrics,
+  detached bounded-memory summaries, verified run association, primitive schema
+  validation, and alias-protected TOML persistence.
+  `test_experiment_checkpoint.jl` covers identity/alias guards, exact resumed
+  prefixes, handled failure/cancellation, and hidden child-process termination
+  at lock/data/commit/terminal boundaries. Source must remain unchanged during
+  strict environment-identity tests.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

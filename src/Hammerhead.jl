@@ -15,6 +15,7 @@ using JLD2: jldopen
 using ProgressMeter: Progress, next!
 import Pkg
 import SHA
+import TOML
 import UUIDs
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
@@ -25,6 +26,9 @@ export ResultFile
 export PreprocessStep, ScriptReference, PIVRecipe, ExperimentRecord, ExperimentRun
 export recipe_identity, save_experiment, load_experiment, replay_experiment
 export recipe_diff, RecipeDiff, RecipeChange, RecipeArraySummary
+export RunQualityReport, quality_report, quality_report_data, save_quality_report, load_quality_report
+export ExperimentCheckpoint, CheckpointAttempt, CheckpointResults
+export create_checkpoint, load_checkpoint, resume_checkpoint!, checkpoint_state, checkpoint_results, save_checkpoint_results
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask
@@ -68,6 +72,7 @@ include("target_detection.jl")
 include("dewarp.jl")
 include("quality.jl")
 include("masking.jl")
+include("source_support.jl")
 include("pipeline.jl")
 include("ka_backend.jl")
 include("particles.jl")
@@ -82,7 +87,9 @@ include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
 include("experiments.jl")
+include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
+include("run_quality.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the
 # 0.99-quantile magnitude among the selected vectors to `target_length` (the

@@ -62,13 +62,15 @@ existing implementation is preferable; they are not commitments to add an API.
   cover stale peak scratch, masks, tiny real contrast, wholly blank multipass/
   ensemble inputs, finite predictors, and unavailable uncertainty. These guards
   repair the original empty-image scorecard failure.
-- [ ] Preserve original-source support information through deformation and
-  ensemble processing so originally constant patches beside real motion cannot
-  become apparent measurements from interpolation roundoff. Exact constant
-  centering of already warped windows cannot distinguish that artifact from
-  true weak contrast. Keep this limitation separate from the repaired empty-pair
-  case; [the explanation](docs/src/explanation/noninformative_windows.md)
-  records the bounded guarantees and remaining evidence.
+- [x] Carry original-source contrast evidence through deformation and ensemble
+  processing. Both sampled raw stencil unions must contain exact contrast in
+  processing precision; virtual boundary zeros and distant B-spline coefficient
+  leakage alone do not count. This explicit [stencil convention](docs/src/explanation/noninformative_windows.md)
+  preserves genuine weak contrast and gates correlation, alternatives, and UQ
+  consistently. [Regressions](test/test_original_source_support.jl) cover the
+  formerly fabricated flat-patch vectors, masks, boundaries, precision, CPU/KA,
+  and mixed ensemble contributions. New vendor-device hardware evidence remains
+  open separately; shared-kernel tests do not establish that coverage.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -170,10 +172,22 @@ incompatible combined fields with actionable diagnostics.
   types and navigation failures. Key metadata remains O(number of results);
   live file following, resumability, and production-size memory evidence remain
   separate work.
-- [ ] Resume using input and recipe identities, recording completed entries and
-  explicit run status. Prevent accidental duplication or mixing of analyses.
-- [ ] Define atomic per-result writes/checkpoints and recovery behavior for
-  handled failure, cancellation, and process termination; test each separately.
+- [x] Resume built-in file-based planar recipes using exact ordered input,
+  recipe, and software identities. [Version-1 checkpoints](docs/src/howto/checkpoints.md)
+  retain immutable native per-pair outputs and verified contiguous commit
+  descriptors; completed entries are not recomputed or replaced. Lazy prefixes
+  and ordinary native aggregate export preserve existing result workflows.
+- [x] Define and test per-result publication/recovery separately for handled
+  failure, cancellation, and hard process termination. Same-directory rename,
+  exclusive writers/export destinations, explicit interrupted-writer recovery,
+  and descriptor-authoritative counts cover tested local filesystems. This is
+  not power-loss durability or support for concurrent external mutation.
+  [Checkpoint tests](test/test_experiment_checkpoint.jl) exercise lock, staging,
+  commit, and terminal-status boundaries, changed identities, and source aliases.
+- [ ] Extend checkpoints to GUI controls and additional experiment kinds/
+  backends as their recipe contracts become available. Establish production
+  memory/disk evidence and platform/filesystem recovery evidence beyond this
+  Windows validation; do not infer crash durability from ordinary round trips.
 - [ ] Port aggregate workspace batch budgeting, fair sharing, LRU eviction, and
   explicit no-workspace cleanup from AMDGPU to CUDA, with CUDA-specific pool/FFT
   behavior. [BATCH_HANDOFF.md](bench/BATCH_HANDOFF.md) supplies implementation and
@@ -195,9 +209,15 @@ and GPU memory in the documented ownership modes.
   Make diagnostic/uncertainty association clear after peak substitution or filling.
 - [ ] Expose actual pass iteration counts, convergence outcomes, and residual
   displacement summaries rather than only requested settings.
-- [ ] Generate a saved run-quality report shared by scripts and the GUI, including
-  rejection/replacement fractions, unavailable uncertainty, peak locking, and
-  representative window-size/preprocessing sensitivity comparisons.
+- [x] Generate a [saved run-quality report](docs/src/howto/run_quality.md) shared
+  by scripts and the GUI for stored planar/stereo fields. Version-1 TOML reports
+  preserve explicit node-weighted counts/denominators, numerical uncertainty
+  availability, source/recipe/run provenance, and unavailable diagnostic reasons.
+  Reports scan bounded result payloads and protect known source/record aliases.
+- [ ] Extend reports with actual rejection/replacement history, uncertainty
+  association, peak locking, and representative window-size/preprocessing
+  sensitivity comparisons after the required measurement evidence is available.
+  Current flags and finite values must not be presented as replacement counts.
 - [ ] Add per-particle position and displacement uncertainty with validated
   detection-fit and match semantics, then add GUI uncertainty overlays.
 - [ ] Propagate uncertainty into derived quantities after specifying spatial
@@ -280,7 +300,9 @@ evidence.
   snapshots supported batch/preprocessing/mask/ROI/scale settings and reopens
   complete recipes in a separate read-only controller. It replays exact settings,
   retains run history, and verifies completed output content before lazy browsing.
-  Stereo calibration, revision-result comparison, quality reports, live replay
+  It also saves and displays the shared core quality report with the same
+  provenance checks and metric definitions used by scripts.
+  Stereo calibration, revision-result comparison, live replay
   progress/cancellation, and broader workflow integration remain open.
 - [x] Add editable GUI ROI selection using the existing core `ROI` semantics.
   The editor supports two-corner selection, numeric bounds, and full-image reset;

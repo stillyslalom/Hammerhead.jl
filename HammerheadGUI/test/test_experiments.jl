@@ -117,9 +117,34 @@ using ImageCore: Gray, N0f8
             @test occursin(ec.last_run[].run_id,experiment_run_history(ec))
             @test occursin("No recorded runs",experiment_run_history(ExperimentController(record)))
             @test_throws ArgumentError experiment_results(ExperimentController())
+            @testset "shared quality report" begin
+                report=experiment_quality_report(ec)
+                from_gui=quality_report_data(report)
+                from_core=quality_report_data(quality_report(ec.record[],ec.last_run[]))
+                @test all(from_gui[key]==from_core[key] for key in ("groups","unavailable","provenance"))
+                report_path=joinpath(dir,"run-quality.toml")
+                saved_report=save_experiment_quality_report(report_path,ec)
+                @test quality_report_data(load_quality_report(report_path))==quality_report_data(saved_report)
+                @test_throws ArgumentError experiment_quality_report(ExperimentController())
+                @test_throws ArgumentError experiment_quality_report(ExperimentController(record))
+                before_history=read(saved)
+                @test_throws ArgumentError save_experiment_quality_report(saved,ec)
+                @test read(saved)==before_history
+                before_output=read(ec.last_run[].output)
+                @test_throws ArgumentError save_experiment_quality_report(ec.last_run[].output,ec)
+                @test read(ec.last_run[].output)==before_output
+                ec.running[]=true
+                @test_throws ArgumentError experiment_quality_report(ec)
+                ec.running[]=false
+            end
             preserved=read(ec.last_run[].output)
             save_results(ec.last_run[].output,[expected[2]])
             @test_throws ArgumentError experiment_results(ec)
+            @test_throws ArgumentError experiment_quality_report(ec)
+            report_path=joinpath(dir,"preserved-quality.toml")
+            write(report_path,"preserve")
+            @test_throws ArgumentError save_experiment_quality_report(report_path,ec)
+            @test read(report_path,String)=="preserve"
             write(ec.last_run[].output,preserved)
             @test nframes(experiment_results(ec))==2
 

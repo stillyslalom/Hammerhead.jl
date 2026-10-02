@@ -55,7 +55,8 @@ export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
 export ROIEditor, set_roi!, clear_roi!, apply_roi!, roi_summary
 export preprocess_steps, experiment_record, save_batch_experiment,
        ExperimentController, open_experiment!, save_experiment_record!,
-       experiment_results, experiment_summary, experiment_run_history
+       experiment_results, experiment_summary, experiment_run_history,
+       experiment_quality_report, save_experiment_quality_report
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -85,6 +86,7 @@ export ROIEditor, roi_editor, roi_editor!, set_roi!, clear_roi!, apply_roi!
 export preprocess_steps, experiment_record, save_batch_experiment,
        ExperimentController, open_experiment!, save_experiment_record!,
        experiment_results, experiment_summary, experiment_run_history,
+       experiment_quality_report, save_experiment_quality_report,
        experiment_workflow, experiment_workflow!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!

@@ -5,9 +5,8 @@ provide a displacement measurement. Hammerhead rejects a completely flat plane,
 a plane with no positive value, or a plane containing any nonfinite value. An
 exactly empty or constant window presented to the correlator therefore cannot
 produce a valid displacement merely because a peak finder chooses a deterministic
-corner of the plane. This guarantee concerns correlation inputs, including
-deformed inputs; it does not establish that a deformed window contains genuine
-particle texture in the original images.
+corner of the plane. For deformed windows, Hammerhead additionally checks for
+contrast in the original images under the stencil convention below.
 
 The check applies to single-pair and ensemble processing on CPU and the shared
 KernelAbstractions kernels. It uses no absolute intensity or correlation-amplitude
@@ -39,24 +38,58 @@ Outlier detection excludes nonfinite vectors from neighboring medians. These
 steps let repeated passes proceed through missing-data regions without treating
 missing displacements as measurements.
 
-There is a remaining precision limit for a constant patch beside moving texture.
-A nonzero predictor can resample that patch with small floating-point intensity
-variations. The resulting correlation input is no longer exactly constant, and
-these checks cannot distinguish its numerical texture from real low-contrast
-texture. A targeted two-pass test scene (constant `0.1` on the left half of a
-64 × 64 image, moving particles on the right) demonstrates this away from both
-the image and texture boundaries. Local Float64 CPU and KA runs accepted blank
-interior nodes after deformation. Mask known unseeded regions when possible;
-outlier detection is not guaranteed to reject these artifacts. Carrying original
-source-support information through deformation and ensemble accumulation remains
-open work. An arbitrary intensity threshold would also discard real weak signals
-and is deliberately not used as a substitute.
+Nonzero deformation can introduce floating-point texture into an originally
+constant patch. Before correlating a deformed window, the automatic original
+stencil guard evaluates its predictor at every unmasked destination pixel. Frame
+A samples at `(row - v/2, col - u/2)` and frame B at `(row + v/2, col + u/2)`.
+For each in-image query, the guard examines the clipped 4 × 4 neighborhood of
+original pixels around that cubic cell, using the images and mask supplied to
+PIV after preprocessing and ROI cropping. It combines the eligible original values
+from these neighborhoods; any exact difference establishes contrast. Differing
+constant neighborhood levels count as contrast too. CPU and portable predictor
+evaluation orders are both checked, so a rounding difference at a cell boundary
+cannot remove real contrast present in either sampled stencil.
 
-An empty image pair contributes zero correlation to an ensemble. It cannot
-produce a measurement by itself, but does not erase information contributed by
-other pairs. A completely uninformative ensemble remains flagged. This does not
-establish per-pair validity counts or normalize an ensemble by informative-pair
-yield.
+The comparison uses the processing precision: one representable intensity step
+is enough, and no intensity threshold is applied. Originally masked pixels and
+masked destination pixels do not supply evidence. Queries outside the image
+supply no original evidence, so virtual extrapolated zeros cannot make a constant
+source informative. With genuine original contrast and some outside-image
+samples, correlation retains its existing zero-extrapolation behavior. The
+user's mask remains static and its node geometry is unchanged.
+
+A window is skipped if either frame supplies no original contrast. Its
+displacement, ratio, moment, alternatives, and uncertainty are unavailable.
+Vector replacement may fill its displacement but retains its outlier flag.
+Retained correlation planes contain a logical zero contribution for skipped
+windows; that zero is not a computed correlation diagnostic. Raw warped image
+values are unchanged. The same guard runs against the original images on every
+iteration, with the current predictor, and on every deformed ensemble pair.
+
+This is a bounded scientific convention, not the mathematical support of the
+cardinal B-spline interpolant. Its coefficient prefilter has nonlocal influence.
+When every eligible original stencil is constant, Hammerhead treats distant
+coefficient tails, ringing, and resampling roundoff as insufficient evidence of
+local displacement. Contrast inside any sampled stencil survives regardless of
+amplitude; an informative window's correlation calculation is unchanged. Near a
+feature boundary, distant interpolant influence can be material, so this guard
+should not be read as an accuracy guarantee. Known unseeded regions can still be
+masked explicitly. A nonfinite original pair bypasses the stencil proof and
+retains the existing nonfinite correlation-plane rejection instead of being
+silently discarded from an ensemble.
+
+Metadata is built lazily only when a nonzero predictor deforms the images. The
+compact map stores one byte per cubic cell per frame, referencing original
+intensities without duplicating them; a frame whose every stencil varies needs
+no map. The metadata stays on the CPU for all backends. Device engines receive
+only per-window skip markers through their existing origin upload.
+
+An empty image pair, including a deformed window skipped by the original stencil
+guard, contributes zero correlation and zero uncertainty statistics to an
+ensemble. It cannot produce a measurement by itself, but does not erase
+information contributed by other pairs. A completely uninformative ensemble
+remains flagged. This does not establish per-pair validity counts or normalize an
+ensemble by informative-pair yield.
 
 The generic [`find_peaks`](@ref) function retains its plateau and nonpositive
 candidate behavior; finding a candidate does not establish a measurement. The

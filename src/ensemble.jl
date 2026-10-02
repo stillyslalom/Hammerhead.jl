@@ -132,6 +132,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                        backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND)
     local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
+    source_gate = nothing
     for pair in pairs
         frameA, frameB = pair
         imgA = load_frame(frameA, image_type)
@@ -216,17 +217,20 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                                                grid.x, grid.y, T; threaded,
                                                warpA = warpbufs[1], warpB = warpbufs[2],
                                                ctx = dctx)
+        source_context = _original_support_context(imgA, imgB, mask, T, workspace)
+        source_gate = _original_source_gate(source_context, predictor, grid, params, mask;
+                                           gate = source_gate, threaded)
         u, v = pu, pv  # identical for every pair (shared predictor)
         if length(chunks) == 1
             accumulate_planes!(accum, chunks[1], engines[1], warpA, warpB,
                                grid.jobs, params, mask, uacc,
-                               uscratch === nothing ? nothing : uscratch[1])
+                               uscratch === nothing ? nothing : uscratch[1]; source_gate)
         elseif !isempty(chunks)
             @sync for (ci, cr) in enumerate(chunks)
                 Threads.@spawn accumulate_planes!(accum, cr, engines[ci],
                                                   warpA, warpB, grid.jobs, params, mask,
                                                   uacc,
-                                                  uscratch === nothing ? nothing : uscratch[ci])
+                                                  uscratch === nothing ? nothing : uscratch[ci]; source_gate)
             end
         end
         next!(meter)
@@ -312,12 +316,13 @@ end
 # and (when enabled) pool each window's uncertainty statistics across pairs.
 function accumulate_planes!(accum, jobrange, engine, imgA, imgB, jobs,
                             params::PIVParameters, mask,
-                            uacc = nothing, uscratch = nothing)
+                            uacc = nothing, uscratch = nothing; source_gate = nothing)
     wr, wc = params.window_size
     sr, sc = params.search_area_size
     mr, mc = div.(params.search_area_size .- params.window_size, 2)
     for j in jobrange
         gi, gj, rs, cs = jobs[j]
+        _source_informative(source_gate, gi, gj) || continue
         subA = @view imgA[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         subB_uq = @view imgB[rs:(rs + wr - 1), cs:(cs + wc - 1)]
         srs, scs = rs - mr, cs - mc

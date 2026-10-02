@@ -184,17 +184,28 @@
     ws = piv_workspace(; backend = :ka)
     r_ka_ws = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws.u, m_ka.u) && isequal(r_ka_ws.v, m_ka.v)
-    # The workspace pools engines per window configuration (one per pass of
-    # the 64/32 schedule) plus the deform context (staged coefficients + warp
-    # buffers); a second run reuses the identical objects — and with them the
-    # batch buffers and FFT plans — with identical results.
-    @test length(ws.engines) == 3
+    # Count KA engines separately from lazily cached original-stencil metadata.
+    # The 64/32 schedule has two correlation configurations and one deform
+    # context. Constant neighborhoods may additionally create byte maps.
+    ka_keys = Set(k for k in keys(ws.engines) if first(k) in (:ka, :ka_deform))
+    correlation_keys = Set(k for k in ka_keys if first(k) === :ka)
+    @test length(ka_keys) == 3 && length(correlation_keys) == 2
+    @test Set(k[4] for k in correlation_keys) == Set(p.window_size for p in schedule)
+    @test all(length(ws.engines[k]) == 1 &&
+              ws.engines[k][1] isa Hammerhead._KACorrelationEngine for k in correlation_keys)
     @test haskey(ws.engines, (:ka_deform, Float64, size(imgA)))
-    engine_ids = Dict(k => map(objectid, v) for (k, v) in ws.engines)
+    stencil_keys = Set(k for k in keys(ws.engines) if first(k) === :original_stencil)
+    @test issubset(stencil_keys, Set(((:original_stencil, :A), (:original_stencil, :B))))
+    @test all(length(ws.engines[k]) == 1 && ws.engines[k][1] isa Matrix{UInt8} &&
+              size(ws.engines[k][1]) == size(imgA) .- 1 for k in stencil_keys)
+    cache_keys = Set(keys(ws.engines))
+    engine_ids = Dict(k => map(objectid, ws.engines[k]) for k in ka_keys)
+    stencil_ids = Dict(k => objectid(ws.engines[k][1]) for k in stencil_keys)
     r_ka_ws2 = run_piv(imgA, imgB, schedule; backend = :ka, workspace = ws, threaded = false)
     @test isequal(r_ka_ws2.u, m_ka.u) && isequal(r_ka_ws2.v, m_ka.v)
-    @test length(ws.engines) == 3
+    @test Set(keys(ws.engines)) == cache_keys
     @test all(map(objectid, ws.engines[k]) == engine_ids[k] for k in keys(engine_ids))
+    @test all(objectid(ws.engines[k][1]) == stencil_ids[k] for k in stencil_keys)
 
     @testset "ensemble on :ka" begin
         # Same flow in every pair (the ensemble assumption); different particle

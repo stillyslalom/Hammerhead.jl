@@ -4,8 +4,9 @@
 Open a dedicated saved planar-experiment workflow. Recipes and run history are
 read-only and retain all core fields. Open/save records, choose native result
 output, explicitly allow environment changes, replay, and explore completed
-output lazily. With `batch=BatchRunner(...)`, snapshot supported current form
-settings; unsupported callbacks produce an error without saving a partial recipe.
+output lazily, and save a shared run-quality report. With `batch=BatchRunner(...)`,
+snapshot supported current form settings; unsupported callbacks produce an error
+without saving a partial recipe.
 
 Replay has a busy/completed/failed status, without live progress or cancellation.
 Referenced custom scripts require a caller-supplied controller function and are
@@ -49,31 +50,33 @@ function experiment_workflow!(target,ec::ExperimentController;
     snapshot_btn=Button(controls[4,1];label="snapshot batch",tellwidth=false)
     output_btn=Button(controls[5,1];label="choose result output…",tellwidth=false)
     mono=GLMakie.Makie.assetpath("fonts","DejaVuSansMono.ttf")
-    output_label=lift(p->_experiment_wrap_text(isempty(p) ? "No result output selected." : p;max_lines=4),ec.output_path)
+    output_label=lift(p->_experiment_wrap_text(isempty(p) ? "No result output selected." : p;max_lines=3),ec.output_path)
     Label(controls[6,1],output_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
     history_btn=Button(controls[7,1];label="choose run record…",tellwidth=false)
-    history_label=lift(p->_experiment_wrap_text(isempty(p) ? "Run history is not persisted." : "Run record: $p";max_lines=4),ec.run_record_path)
+    history_label=lift(p->_experiment_wrap_text(isempty(p) ? "Run history is not persisted." : "Run record: $p";max_lines=3),ec.run_record_path)
     Label(controls[8,1],history_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
     override_toggle=Toggle(controls[9,1];active=ec.allow_environment_change[],halign=:left)
     Label(controls[10,1],"allow environment changes";halign=:left)
     run_btn=Button(controls[11,1];label="replay exact recipe",tellwidth=false)
     explore_btn=Button(controls[12,1];label="view completed results",tellwidth=false)
-    status_label=lift(s->_experiment_wrap_text(s;max_lines=4),ec.status)
-    Label(controls[13,1],status_label;halign=:left,justification=:left,
+    quality_btn=Button(controls[13,1];label="save quality report…",tellwidth=false)
+    status_label=lift(s->_experiment_wrap_text(s;max_lines=3),ec.status)
+    Label(controls[14,1],status_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    Label(controls[14,1],"Replay starts from pair 1.\nLive progress and cancellation\nare unavailable.";
+    Label(controls[15,1],"Replay starts from pair 1.\nLive progress and cancellation\nare unavailable.";
           halign=:left,justification=:left,word_wrap=true,width=240,tellwidth=false)
 
     content=GridLayout(gl[1,2];valign=:top,tellheight=false)
     section=Observable(:recipe)
     page=Observable(1)
-    tabs=Menu(content[1,1:3];options=[("complete recipe",:recipe),("run history",:history)])
+    report_text=Observable("Save a quality report to inspect its summary here.")
+    tabs=Menu(content[1,1:3];options=[("complete recipe",:recipe),("run history",:history),("quality report",:quality)])
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
-    fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status) do _,which,output,history,status
-        details=which===:recipe ? experiment_summary(ec) : experiment_run_history(ec)
+    fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
+        details=which===:recipe ? experiment_summary(ec) : which===:history ? experiment_run_history(ec) : report
         "selected output: $output\nrun record: $history\nstatus: $status\n\n"*details
     end
     # Wrap long full-pass descriptions explicitly so every field is reachable,
@@ -146,6 +149,22 @@ function experiment_workflow!(target,ec::ExperimentController;
         end
     end
     on(_->start!(ec),run_btn.clicks)
+    on(ec.record) do _
+        report_text[]="Experiment changed. Save a new quality report to inspect its summary."
+    end
+    on(ec.last_run) do _
+        report_text[]="Run changed. Save a new quality report to inspect its summary."
+    end
+    on(quality_btn.clicks) do _
+        guarded() do
+            path=save_file(;filterlist="toml")
+            isempty(path) && return
+            report=save_experiment_quality_report(path,ec)
+            report_text[]="Saved report: $path\n\n"*sprint(show,MIME"text/plain"(),report)
+            section[]=:quality
+            ec.status[]="quality report saved"
+        end
+    end
     on(explore_btn.clicks) do _
         guarded() do
             display(GLMakie.Screen(),result_explorer(experiment_results(ec)))
