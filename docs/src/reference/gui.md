@@ -30,6 +30,12 @@ For planar image selection, `ROIEditor` edits core `ROI` bounds and
 also operate directly on a batch controller. The `roi_editor!` view can
 be embedded alongside an image or result comparison.
 
+`ResultExplorer(path; lazy = true)` or `ResultExplorer(ResultFile(path))`
+browses a closed results file with one cached display result. Only the current
+frame's derived fields are retained; lazy navigation errors set `status` and
+preserve the prior frame. The key index has O(number of entries) metadata and
+does not follow live writes. Each complete selected result must fit memory.
+
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]

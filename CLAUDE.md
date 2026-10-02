@@ -162,7 +162,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
   (JLD2: `format_version` 1 + `results/000001`… + optional `sources/…`;
   entries may be `PIVResult`, `StereoPIVResult`, `PTVResult`, or
-  `TrackingResult`; the
+  `TrackingResult`; `ResultFile(path)` / `load_results(path; lazy = true)`
+  indexes sorted keys and loads one entry per access, without a retained
+  payload cache or open handle. The index is for completed files; size/mtime
+  checks reject detectable changes but do not support concurrent writers. The
   pre-registration dev formats were retired without a load shim when the
   `scale` field landed),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
@@ -184,6 +187,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   IDs, original frame indices, derived elapsed time, gaps, and numerical validity;
   no gap rows or acquisition timestamps are invented. Elapsed time assumes
   uniform input-frame spacing when derived from `PhysicalScale.dt`.
+  Raw planar-grid exports accept `PlanarTransform` with explicit units and
+  optional pair delay. Attached scales are rejected to avoid double conversion;
+  mixed-axis uncertainty is unavailable unless independence is explicitly
+  assumed. Geometry/topology and vector basis are transformed together.
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor; one
   `PIVWorkspace` reuses the interpolant/deform buffers across pairs)
@@ -191,7 +198,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   ensemble cam1↔cam2 disparity map → triangulation → sheet-plane fit →
   rigid world transform of both cameras) + `SelfCalibrationReport`
 - `statistics.jl` — planar/stereo `field_statistics`, 2C/3C
-  `validate_temporal!`, `power_spectrum`
+  `validate_temporal!`, `power_spectrum`; `FieldStatisticsAccumulator` with
+  `update_statistics!` and independent `field_statistics(acc)` snapshots
+  computes population moments with O(grid nodes) retained memory. Updates
+  validate grid/component dimensions and scale factors/unit labels before
+  mutating; convert inputs through `physical` for velocity statistics.
 - `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
   swirling strength/Q, profile/region extraction, circulation, and
   results-vector spectra with an explicit sampling interval (`dt`, independent
@@ -346,8 +357,12 @@ GLMakie shells. Components so far (each = controller + view pair, same
 naming): `ResultExplorer`/`result_explorer` (browses all four persisted
 result types — `PIVResult`/`StereoPIVResult` grids, `PTVResult` particle
 scatter, `TrackingResult` gap-aware polylines colored by mean speed — mixed
-sequences included; routes each entry through `physical` at construction so a
+sequences included; routes each displayed entry through `physical` so a
 `PhysicalScale` gives physical-unit axis/colorbar/inspection labels;
+path constructors accept `lazy = true` and `ResultFile` inputs retain only
+one converted display payload; all explorers evict derived fields on frame
+changes. Lazy navigation failures preserve the prior display and report
+status; file snapshots reject live appends. The default remains eager;
 selection is a `CartesianIndex` for grids, a linear `Int` for scattered
 types; the vector overlay is quiver-style linesegments + rotated-triangle
 scatter heads, NOT arrows2d — arrows2d's per-frame pixel-space tip sizing
@@ -356,7 +371,7 @@ robust 2–98% percentile band over valid vectors (`color_limits`) with
 bound-wise manual overrides persisting across frames; `push_result!`
 appends live and grows the view's slider via the `count` observable;
 planar results add derived fields (:vorticity/:divergence/:strain_rate/
-:swirling_strength/:q_criterion via flow_derivatives, cached per frame,
+:swirling_strength/:q_criterion via flow_derivatives, cached for the current frame,
 unit-labelled 1/time — physical-at-construction keeps the gradients
 exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
@@ -599,6 +614,13 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   `test_tracking_export.jl` checks CSV compatibility, gaps, numerical validity,
   and physical conversion. `test_sequence_sink.jl` checks non-collecting sequence
   delivery/persistence/cancellation and weak-reference release of old results.
+- `test_transformed_export.jl` checks calibrated planar CSV/VTK geometry,
+  vector bases, uncertainty assumptions, and refusal before output overwrite.
+  `test_incremental_statistics.jl` checks population moments, incompatible
+  update rejection, independent snapshots, and fixed retained memory.
+  `test_lazy_results.jl` checks indexing, file changes, and lazy payload access;
+  `test_streaming_workflow.jl` combines non-collecting output, live statistics,
+  variable pair delay, physical conversion, and lazy replay.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
@@ -643,3 +665,5 @@ the historical decision to keep all widget chrome in Makie is open for review.
 Preserve the framework-free controller boundary when evaluating a new shell.
 Keep this file focused on current architecture, commands, and implementation
 conventions rather than maintaining a second backlog.
+Record user-visible changes in `CHANGELOG.md`; `RELEASING.md` describes the
+core-first/GUI-second release procedure and required validation evidence.

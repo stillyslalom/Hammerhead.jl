@@ -132,3 +132,69 @@ u, v = trajectory_velocities(tracks.trajectories[1], tracks.scale)   # mm/s
 
 This works identically on a raw or a `physical`-converted tracking result:
 the converted result's scale keeps `dt` (its positions are already lengths).
+
+## Export in a calibrated planar coordinate frame
+
+A scalar pixel size preserves the image's axis directions and origin.
+Use [`PlanarTransform`](@ref) to export a raw planar PIV grid with an origin,
+rotation, reflection, or different length scales along the two axes. Both
+[`export_table`](@ref) and [`export_vtk`](@ref) apply the same affine map to
+coordinates and its linear part to vector components. Supply the length unit
+and, for velocities, the exposure delay and its time unit explicitly.
+
+This example builds a small raw grid and calibrates a physical x axis along
+the line between two image points, with a reflected perpendicular axis:
+
+```@example transformed_export
+using Hammerhead
+
+raw = PIVResult([5.0, 10.0], [5.0, 10.0],
+    fill(2.0, 2, 2), fill(1.0, 2, 2), fill(2.0, 2, 2), fill(0.2, 2, 2),
+    fill(0.1, 2, 2), fill(0.2, 2, 2), falses(2, 2), falses(2, 2),
+    PIVParameters())
+calibration = planar_calibration((1.0, 1.0), (11.0, 11.0), 2.0;
+    origin=(0.0, 0.0), reflection=true, perpendicular_scale=0.1)
+
+mktempdir() do directory
+    options = (transform=calibration, length_unit="mm", dt=0.005,
+               time_unit="s", uncertainty_assumption=:independent)
+    csv = export_table(joinpath(directory, "calibrated.csv"), raw; options...)
+    export_vtk(joinpath(directory, "calibrated.vtk"), raw; options...)
+    readlines(csv)[1:2]
+end
+```
+
+The position uses `A * [x, y] + b`, while the velocity uses
+`A * [u, v] / dt`: translation changes the physical origin without changing
+vectors. Omitting `dt` exports calibrated displacements per frame interval.
+Units are labels, so the transform's numeric factors and the delay must agree
+with the supplied labels. No resampling is performed; masks and outlier flags
+refer to the same original grid nodes.
+
+The example explicitly assumes independent errors in the original `u` and
+`v` components. Under that assumption the exported marginal standard deviation
+for row `k` of `A` is `hypot(A[k,1] * σu, A[k,2] * σv) / dt`. Output axes can
+still have correlated errors. The default `uncertainty_assumption = :unknown`
+instead exports `NaN` for uncertainty when a component mixes both input axes,
+because the result does not retain their covariance. A pure axis permutation,
+reflection, or diagonal scale needs no covariance assumption. These estimates
+include neither calibration nor timing error. Save the transform and chosen
+assumption with your processing recipe; they are not stored in the table or
+VTK file.
+
+Transform export accepts planar PIV grids with no attached `PhysicalScale`.
+For a **raw, unconverted** result that already carries scale metadata, reuse
+only its delay and remove its metadata before export:
+
+```julia
+delay = result.scale.dt
+time_unit = result.scale.time_unit
+export_table("calibrated.csv", with_scale(result, nothing);
+             transform=calibration, length_unit="mm", dt=delay, time_unit)
+```
+
+The affine calibration supplies the spatial scale. Removing metadata does not
+undo `physical(result)`, so start from the raw pixel result. Already converted
+results and attached-scale combinations are rejected. Stereo grids, PTV, and
+tracking results currently do not accept this export transform; their existing
+untransformed exports remain available.

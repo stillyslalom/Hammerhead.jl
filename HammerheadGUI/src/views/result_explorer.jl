@@ -4,11 +4,15 @@
 
 """
     result_explorer(source; size = (1000, 700)) -> Figure
+    result_explorer(path::AbstractString; lazy = false, size = (1000, 700)) -> Figure
 
 Open results from a `PIVResult`, `StereoPIVResult`, `PTVResult`, or
 `TrackingResult`, a sequence of results, a saved-results path, or a
 [`ResultExplorer`](@ref). Pass a controller to control the open view through
 its observables.
+Use `lazy = true` for a completed file, or supply a [`ResultFile`](@ref),
+to retain only the selected display result while navigating. Read failures
+appear below the inspection panel and leave the previous frame displayed.
 
 For a gridded (`PIVResult` / `StereoPIVResult`) result the view shows a
 scalar field (magnitude, components, diagnostics, or available uncertainty)
@@ -20,6 +24,8 @@ frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel
 summarizes the selected item in physical units when a scale is attached.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
+result_explorer(path::AbstractString; lazy::Bool = false, kwargs...) =
+    result_explorer(ResultExplorer(path; lazy); kwargs...)
 
 function result_explorer(ex::ResultExplorer; size = (1000, 700))
     fig = Figure(; size)
@@ -69,6 +75,8 @@ function result_explorer!(target, ex::ResultExplorer)
                       word_wrap = true, width = 210, tellwidth = false)
     Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
     info = Label(controls[10, 1], ""; halign = :left, justification = :left)
+    Label(controls[11, 1], ex.status; halign = :left, justification = :left,
+          word_wrap = true, width = 210, tellwidth = false)
     colsize!(gl, 3, Fixed(230))
 
     Label(gl[2, 1:3][1, 1], "frame")
@@ -85,7 +93,14 @@ function result_explorer!(target, ex::ResultExplorer)
     _sync_toggle!(vec_toggle, ex.show_vectors)
     _sync_toggle!(out_toggle, ex.highlight_outliers)
     on(slider.value) do i
-        i == ex.frame[] || set_frame!(ex, i)
+        i == ex.frame[] && return
+        try
+            set_frame!(ex, i)
+        catch err
+            # The controller reports the error and keeps the prior result.
+            isempty(ex.status[]) && (ex.status[] = Controllers._errmsg(err))
+            set_close_to!(slider, ex.frame[])
+        end
     end
     on(ex.frame) do i
         i == slider.value[] || set_close_to!(slider, i)

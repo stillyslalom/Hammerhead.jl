@@ -202,13 +202,85 @@ run_piv_sequence(pairs, passes;
 Use a callback that processes each result without retaining it for constant
 result-storage memory. Input lists, accumulated summaries, output-file metadata,
 workspaces, and memory retained by the callback have their own costs. Loading
-the saved file with `load_results` still materializes the entire result vector.
-The GUI's live explorer also retains results; this option does not make its
+the saved file with the default `load_results(path)` materializes the entire
+result vector; `load_results(path; lazy = true)` indexes a completed file
+without retaining its payloads. See [completed-file GUI browsing](gui.md).
+The GUI's live explorer retains results; this option does not make live
 browsing disk-backed.
 
 Exceptions and prefetch cleanup follow the same contract as collecting runs.
 Stereo cancellation returns `nothing` in this mode; completed acquisitions
 remain available through the callback or configured output.
+
+### Accumulate field statistics as results arrive
+
+[`FieldStatisticsAccumulator`](@ref) keeps only grid-sized online moments
+and valid counts. It accepts planar and stereo results, and returns the
+same statistics as `field_statistics(results)` when finalized:
+
+```julia
+acc = FieldStatisticsAccumulator()
+run_piv_sequence(pairs, passes;
+    collect_results = false,
+    on_result = (i, r) -> update_statistics!(acc, r))
+stats = field_statistics(acc)  # independent means/RMS/stresses/counts snapshot
+```
+
+The first update establishes the grid and result kind. Later updates must
+have matching coordinates, component/mask/outlier dimensions, and attached
+scale factors and unit labels; these checks happen before changing the
+accumulator. An incompatible field leaves the completed prefix's statistics
+intact. Finalizing before the first update raises an error. Snapshots do not
+reset the accumulator and share no mutable arrays with it, so independent
+progress snapshots can be inspected during processing. These finalized
+statistics are not a checkpoint/restart API.
+
+Statistics use the stored components. To calculate velocities, supply a
+scale to the driver and update with `physical(r)`:
+
+```julia
+acc = FieldStatisticsAccumulator()
+run_piv_sequence(pairs, passes;
+    scale = PhysicalScale(pixel_size = 0.02, dt = 0.001,
+                          length_unit = "mm", time_unit = "s"),
+    collect_results = false,
+    on_result = (i, r) -> update_statistics!(acc, physical(r)))
+velocity_stats = field_statistics(acc)
+```
+
+Conversion before updating also supports pair-specific delays, provided
+the resulting physical grid and unit labels agree. The accumulator checks
+scale compatibility more strictly than the vector statistics API; it does
+not combine absent scales with attached ones or different numeric factors.
+Masks and nonfinite components always exclude a sample. Outliers are
+excluded by default; construct with `include_invalid = true` to include
+finite flagged vectors. Each node has its own valid count, and an unsampled
+node has `NaN` moments. Fluctuation RMS includes measurement noise and is
+not an uncertainty estimate for the mean. Use the same callback pattern
+with `run_piv_stereo_sequence`; one accumulator must hold only one result
+kind. Callbacks run serially, which suits the accumulator's serial updates.
+
+### Replay a completed file without collecting its fields
+
+[`ResultFile`](@ref), also returned by `load_results(path; lazy = true)`,
+loads one result per indexed access or iteration and closes the file after
+each read. For a completed file containing same-grid planar or stereo fields:
+
+```julia
+saved = load_results("large_run.jld2"; lazy = true) # or ResultFile("large_run.jld2")
+replay = FieldStatisticsAccumulator()
+for r in saved
+    update_statistics!(replay, physical(r))
+end
+velocity_stats = field_statistics(replay)
+```
+
+This retains only the grid-sized accumulator and the field currently being
+read, plus O(number of results) entry-key metadata; it does not retain a
+payload for every saved result. Use the index only after the writer closes,
+and do not change or replace the file while reading. The index does not
+follow live writes or resume interrupted processing. For interactive access,
+see [completed-file GUI browsing](gui.md).
 
 ### Analyze collected results
 

@@ -96,9 +96,15 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Support actual sample times for tracking and reject or explicitly handle
   irregular sampling in analyses that assume a fixed interval. Validate unit and
   coordinate compatibility before combining results.
-- [ ] Apply `PlanarTransform` consistently to exported coordinates and vector
-  components in table and VTK output, including origin, rotation, reflection,
-  anisotropic scaling, and the effect on uncertainty components.
+- [x] Apply `PlanarTransform` consistently to planar-grid table and VTK exports,
+  including origin, rotation, reflection, anisotropic scaling, and vector basis.
+  Raw pixel results require explicit units and optional pair delay; attached
+  scales are rejected. Mixed-axis uncertainty is unavailable unless independence
+  is explicitly assumed. [Transform export tests](test/test_transformed_export.jl)
+  check geometry, uncertainty, default compatibility, and rejection before writes.
+- [ ] Extend calibrated table export to PTV and tracking after defining how
+  anisotropic transforms affect particle diagnostics, trajectory velocities,
+  and their units. Current transformed exports accept planar PIV grids only.
 - [ ] Provide a documented calibrated registration/resampling workflow for
   simultaneous PIV/PLIF data, preserving vector basis and validity masks; this
   follows the use case recorded in [Design.md](reference/Design.md).
@@ -115,8 +121,20 @@ incompatible combined fields with actionable diagnostics.
   persistence, cancellation, and failure cleanup. [Sequence sink tests](test/test_sequence_sink.jl)
   check delivery and weak-reference release; lazy browsing and restart remain
   separate items below.
-- [ ] Add incremental field statistics and indexed/lazy result loading for GUI
-  browsing of recordings larger than RAM.
+- [x] Add incremental planar/stereo field statistics. `FieldStatisticsAccumulator`
+  stores grid-sized online moments, validates coordinate/scale compatibility,
+  and returns independent snapshots. [Incremental tests](test/test_incremental_statistics.jl)
+  cover population moments, validity, stable accumulation, and fixed retained
+  memory; [workflow tests](test/test_streaming_workflow.jl) combine non-collecting
+  output, variable pair delays, physical conversion, and lazy replay.
+- [x] Add indexed/lazy result loading and GUI browsing without retaining an
+  entire recording. `ResultFile` indexes completed files and loads one entry
+  per access; a lazy explorer keeps one displayed result and current derivatives.
+  [Lazy I/O tests](test/test_lazy_results.jl) cover unselected-entry isolation,
+  handle closure, and detectable file changes; GUI tests cover mixed result
+  types and navigation failures. Key metadata remains O(number of results);
+  live file following, resumability, and production-size memory evidence remain
+  separate work.
 - [ ] Resume using input and recipe identities, recording completed entries and
   explicit run status. Prevent accidental duplication or mixing of analyses.
 - [ ] Define atomic per-result writes/checkpoints and recovery behavior for
@@ -273,7 +291,9 @@ Use this file for open work; archives preserve past reasoning and measurements.
 Completed entries may be summarized in the baseline or release notes instead of
 accumulating duplicate checklists.
 
-- [ ] Maintain release notes for API/native-format changes and document the
-  core-first/GUI-second release checks, including dataset and hardware evidence.
+- [x] Establish [release notes](CHANGELOG.md) for API/native-format changes and
+  document [core-first/GUI-second release checks](RELEASING.md), including
+  dataset, hardware, persistence, and desktop evidence. Update these records
+  with each release; documented checks are not claims of completed validation.
 - [ ] Exercise the saved-experiment and desktop workflow with a lab user and
   record concrete friction before promoting optional features into delivery work.

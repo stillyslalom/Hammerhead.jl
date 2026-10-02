@@ -13,12 +13,55 @@ for an end-to-end workflow. The time between images in a pair and the time
 between successive pairs serve different purposes; see the
 [sequence tutorial](../tutorials/sequence_statistics.md).
 
+For a completed native file, `ResultFile(path)` or `load_results(path; lazy=true)`
+indexes the available result keys and loads an entry only when accessed, such
+as `results[3]`. Construction retains O(N) key metadata without caching payloads
+or keeping a file handle open. This is a snapshot of a completed file's entries,
+not a live reader for a batch that is still writing.
+
 [`export_table`](@ref) writes planar, stereo, PTV, and tracking results as UTF-8
 CSV. Readers should select columns by name from `TABLE_COLUMNS` and check
 `schema_version` against `TABLE_SCHEMA_VERSION`. Strings are quoted, embedded
 quotes are doubled, and labels may contain commas or newlines. Empty fields
 mean unavailable values; nonfinite numerical values use `NaN`, `Inf`, or
 `-Inf`. [`export_vtk`](@ref) writes structured planar/stereo grids.
+
+Both writers accept a `transform = PlanarTransform(...)` for a **raw planar
+PIV grid**. The affine map exports each coordinate as `A * [x, y] + b` and
+each vector in the same physical basis as `A * [u, v]`. It supports an origin
+offset, rotation, reflection, anisotropic scale, or a general nonsingular
+affine map. Grid indices/topology, mask/outlier flags, and pixel-native quality
+values retain their meaning; rotated VTK coordinates need not form separable
+axes. `length_unit` is required because a `PlanarTransform` contains no unit
+labels. Components use that length unit per frame interval unless positive
+finite `dt` and an explicit `time_unit` are also supplied, in which case
+components and their uncertainties divide by `dt`.
+
+Transformed uncertainty defaults to `uncertainty_assumption = :unknown`:
+a component depending on just one original axis preserves its marginal
+standard deviation with the absolute scale factor, while a component mixing
+both axes reports `NaN`. The input does not store the cross-component
+covariance needed for an exact mixed-axis standard deviation. Setting
+`:independent` explicitly assumes zero input cross-component covariance and
+uses `hypot(A[k,1] * uncertainty_u, A[k,2] * uncertainty_v) / dt`. A missing
+or negative uncertainty on a contributing axis remains unavailable. A zero
+coefficient does not require that axis's uncertainty. This reports marginal
+standard deviations only: the output axes can be correlated even under the
+independence assumption, and their induced covariance is not exported.
+Calibration and timing uncertainty are not added.
+
+A transform requires `result.scale === nothing`. Attached `PhysicalScale`
+metadata, including the identity metadata on an already converted result,
+is rejected to prevent ambiguous or duplicate spatial conversion. For an
+unconverted pixel result, remove the metadata with `with_scale(raw, nothing)`
+and pass its exposure delay explicitly; removing metadata from `physical(raw)`
+does **not** recover pixels. Transform export currently rejects stereo, PTV,
+and tracking results. Invalid transform factors, unit/time options, or
+unsupported combinations are rejected before replacing the destination.
+Without a transform, the existing schema and physical export behavior are
+unchanged. Neither export format stores the affine map or the chosen covariance
+assumption; retain those in the processing recipe. See
+[Scale results to physical units](@ref) for an executable example.
 
 For a `TrackingResult`, the original table columns retain their meanings:
 `x`/`y` are observed positions, `u`/`v` are derived velocities, `point_id`

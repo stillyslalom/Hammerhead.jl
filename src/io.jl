@@ -148,9 +148,15 @@ Write one result or a vector of results to a JLD2 file at `path`, replacing
 an existing file. The vector may mix [`PIVResult`](@ref),
 [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
 [`TrackingResult`](@ref). Read it with [`load_results`](@ref).
+Copying a [`ResultFile`](@ref) or its views to a different path streams the
+entries; overwriting that lazy source file is rejected before opening output.
 """
 function save_results(path::AbstractString,
                       results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
+    source = _result_file_source(results)
+    if source !== nothing && isfile(path) && Base.samefile(path, source.path)
+        throw(ArgumentError("cannot save lazy results over their source file: $(source.path); save to a different path or load eagerly first"))
+    end
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         for (i, r) in enumerate(results)
@@ -163,25 +169,112 @@ end
 save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}) =
     save_results(path, [result])
 
-"""
-    load_results(path) -> Vector
+function _check_results_format(f, path)
+    haskey(f, "format_version") ||
+        throw(ArgumentError("$path has no format_version; not a Hammerhead results file"))
+    version = f["format_version"]
+    version == RESULTS_FORMAT_VERSION ||
+        throw(ArgumentError("$path has unsupported format_version $version (supported: $RESULTS_FORMAT_VERSION)"))
+    return nothing
+end
 
-Read results in saved order from a Hammerhead JLD2 file. The returned
-vector may contain planar PIV, stereo PIV, PTV, and tracking results.
-An empty saved sequence returns an empty vector. Unknown file-format
-versions raise an `ArgumentError`.
+const SavedResult = Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}
+
+"""
+    ResultFile(path) <: AbstractVector
+
+Index a completed native results file without deserializing its result entries.
+The read-only vector stores sorted result keys (O(number of results) metadata),
+and each indexed access opens the file, loads one result, and closes the file.
+No result payload or open file handle is retained by the index. Entries may mix
+[`PIVResult`](@ref), [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
+[`TrackingResult`](@ref); measured units and scale metadata are preserved.
+Iteration is lazy; `collect` or saving returned results in a container retains
+those payloads at the caller's request.
+
+Use only after the writer has closed the file. This is a fixed key index,
+not a live view or a checkpoint/restart API. File size and modification time
+are checked before and after reads to reject detectable changes; these checks
+do not provide concurrent-writer safety or an atomic filesystem snapshot.
+Do not modify or replace the file while using an index. Create a new index
+after a completed file changes. Format metadata is validated immediately;
+unreadable or unsupported result entries fail when selected.
+
+[`load_results`](@ref) with `lazy = true` is equivalent to this constructor.
+"""
+struct ResultFile <: AbstractVector{SavedResult}
+    path::String
+    entry_keys::Vector{String}
+    file_size::Int64
+    modified::Float64
+end
+
+_result_file_source(results) = nothing
+_result_file_source(index::ResultFile) = index
+_result_file_source(results::SubArray) = _result_file_source(parent(results))
+_result_file_source(results::Base.ReshapedArray) = _result_file_source(parent(results))
+_result_file_source(results::PermutedDimsArray) = _result_file_source(parent(results))
+
+function ResultFile(path::AbstractString)
+    fullpath = abspath(path)
+    stamp = stat(fullpath)
+    entry_keys = jldopen(fullpath, "r") do f
+        _check_results_format(f, fullpath)
+        haskey(f, "results") ? sort!(collect(String, keys(f["results"]))) : String[]
+    end
+    index = ResultFile(fullpath, entry_keys, stamp.size, stamp.mtime)
+    _check_result_file(index)
+    return index
+end
+
+Base.size(index::ResultFile) = (length(index.entry_keys),)
+Base.IndexStyle(::Type{ResultFile}) = IndexLinear()
+
+function _check_result_file(index::ResultFile)
+    stamp = stat(index.path)
+    stamp.size == index.file_size && stamp.mtime == index.modified ||
+        throw(ArgumentError("result file changed since indexing: $(index.path); create a new ResultFile after the writer closes"))
+    return nothing
+end
+
+function Base.getindex(index::ResultFile, i::Int)
+    checkbounds(index, i)
+    _check_result_file(index)
+    result = jldopen(index.path, "r") do f
+        _check_results_format(f, index.path)
+        f["results/" * index.entry_keys[i]]
+    end
+    _check_result_file(index)
+    result isa SavedResult ||
+        throw(ArgumentError("results/$(index.entry_keys[i]) in $(index.path) is not a supported Hammerhead result (got $(typeof(result)))"))
+    return result
+end
+
+function Base.show(io::IO, index::ResultFile)
+    print(io, "ResultFile(\"", index.path, "\", ", length(index), " results)")
+end
+Base.show(io::IO, ::MIME"text/plain", index::ResultFile) = show(io, index)
+
+"""
+    load_results(path; lazy = false) -> Vector or ResultFile
+
+Read results in saved order from a Hammerhead JLD2 file. The default eagerly
+loads all entries into a vector that may mix planar PIV, stereo PIV, PTV, and
+tracking results. An empty saved sequence returns an empty vector. Unknown
+file-format versions raise an `ArgumentError`.
+
+Set `lazy = true` to return a [`ResultFile`](@ref): an index into a completed
+file, loading one entry per access without retaining payloads or a file handle.
+It has O(number of results) key metadata and does not follow live writes.
 
 Sequence drivers also save source labels when available; this function
 returns result objects only. To inspect the first saved pair's labels, load
 `"sources/000001"` from the same file with JLD2.
 """
-function load_results(path::AbstractString)
+function load_results(path::AbstractString; lazy::Bool = false)
+    lazy && return ResultFile(path)
     jldopen(path, "r") do f
-        haskey(f, "format_version") ||
-            throw(ArgumentError("$path has no format_version; not a Hammerhead results file"))
-        version = f["format_version"]
-        version == RESULTS_FORMAT_VERSION ||
-            throw(ArgumentError("$path has unsupported format_version $version (supported: $RESULTS_FORMAT_VERSION)"))
+        _check_results_format(f, path)
         # An empty save or a batch stopped before its first result has no
         # `results` group: JLD2 creates groups only when a child is written.
         haskey(f, "results") || return PIVResult[]

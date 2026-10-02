@@ -433,6 +433,148 @@ const r_track = TrackingResult(
         set_frame!(ex, 4); @test current_result(ex) isa TrackingResult
     end
 
+    @testset "Lazy ResultExplorer controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+        path = joinpath(mktempdir(), "lazy-mixed.jld2")
+        scale = PhysicalScale(0.2, 0.5, "mm", "s")
+        entries = Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}[
+            with_scale(r_unc, scale), with_scale(r_stereo, scale),
+            with_scale(r_ptv, scale), with_scale(r_track, scale),
+            with_scale(r_plain, scale)]
+        save_results(path, entries)
+        eager = ResultExplorer(path)
+        ex = ResultExplorer(path; lazy = true)
+        @test eager.results isa Vector
+        @test ex.results isa C._LazyDisplayResults
+        @test nframes(ex) == 5 && ex.count[] == 5
+        @test ex.results.source isa ResultFile
+        @test ex.results.index == 1
+        @test current_result(ex) === current_result(ex) # one read/conversion per frame
+        @test current_result(ex).x == current_result(eager).x
+        @test isequal(current_result(ex).u, current_result(eager).u)
+        @test_throws ArgumentError push_result!(ex, r_plain)
+        @test nframes(ex) == 5
+        set_field!(ex, :vorticity)
+        C.current_field_values(ex)
+        @test length(ex.derived_cache) == 1
+        set_tool!(ex, :profile)
+        C.click!(ex, current_result(ex).x[1], current_result(ex).y[1])
+        select_nearest!(ex, current_result(ex).x[1], current_result(ex).y[1])
+        for i in (2, 3, 4, 5, 1)
+            set_frame!(ex, i)
+            set_frame!(eager, i)
+            @test typeof(current_result(ex)) == typeof(current_result(eager))
+            @test available_fields(current_result(ex)) == available_fields(current_result(eager))
+            @test ex.field[] == eager.field[]
+            @test isempty(ex.derived_cache)
+            @test ex.tool[] == :inspect && isempty(ex.tool_points[])
+            @test ex.results.index == i
+        end
+        @test current_result(ex).scale.length_unit == "mm"
+        # Repeated derived browsing retains only the selected derivative tensor.
+        for i in (1, 5, 1, 5)
+            set_frame!(ex, i)
+            set_field!(ex, :vorticity)
+            C.current_field_values(ex)
+            @test collect(keys(ex.derived_cache)) == [i]
+        end
+        @test occursin("one cached frame", sprint(show, MIME"text/plain"(), ex.results))
+        set_frame!(ex, 99)
+        @test ex.frame[] == 5
+        set_frame!(ex, 0)
+        @test ex.frame[] == 1
+        ex.frame[] = 3
+        @test current_result(ex) isa PTVResult
+        @test ex.field[] == :magnitude
+        @test_throws BoundsError (ex.frame[] = 99)
+        @test ex.frame[] == 3 && current_result(ex) isa PTVResult
+
+        invalid_path = joinpath(mktempdir(), "unreadable-entry.jld2")
+        Hammerhead.jldopen(invalid_path, "w") do f
+            f["format_version"] = Hammerhead.RESULTS_FORMAT_VERSION
+            f["results/000001"] = r_unc
+            f["results/000002"] = 123
+            f["results/000003"] = r_ptv
+        end
+        broken = ResultExplorer(ResultFile(invalid_path))
+        select_nearest!(broken, r_unc.x[1], r_unc.y[1])
+        selected = broken.selection[]
+        set_field!(broken, :vorticity)
+        C.current_field_values(broken)
+        set_tool!(broken, :profile)
+        C.click!(broken, r_unc.x[1], r_unc.y[1])
+        @test_throws ArgumentError set_frame!(broken, 2)
+        @test broken.frame[] == 1 && broken.selection[] == selected
+        @test broken.field[] == :vorticity && broken.tool[] == :profile
+        @test length(broken.tool_points[]) == 1 && length(broken.derived_cache) == 1
+        @test occursin("not a supported Hammerhead result", broken.status[])
+        @test_throws ArgumentError (broken.frame[] = 2)
+        @test broken.frame[] == 1 && broken.selection[] == selected
+        @test current_result(broken) isa PIVResult
+        set_frame!(broken, 3)
+        @test current_result(broken) isa PTVResult
+        @test isempty(broken.status[]) && broken.selection[] === nothing
+        @test broken.field[] == :magnitude && isempty(broken.derived_cache)
+        # A detectable external write also preserves the selected payload.
+        Hammerhead.jldopen(invalid_path, "a+") do f
+            f["results/000004"] = r_track
+        end
+        @test_throws ArgumentError set_frame!(broken, 1)
+        @test broken.frame[] == 3 && current_result(broken) isa PTVResult
+        @test occursin("changed since indexing", broken.status[])
+        empty_path = joinpath(mktempdir(), "empty.jld2")
+        save_results(empty_path, PIVResult[])
+        @test_throws ArgumentError ResultExplorer(empty_path; lazy = true)
+    end
+
+    @testset "Lazy result_explorer view (offscreen)" begin
+        path = joinpath(mktempdir(), "lazy-view.jld2")
+        entries = Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}[
+            with_scale(r_unc, PhysicalScale(0.2, 0.5, "mm", "s")),
+            r_stereo, r_ptv, r_track]
+        save_results(path, entries)
+        ex = ResultExplorer(path; lazy = true)
+        fig = result_explorer(ex; size = (900, 650))
+        initial = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(initial) == (650, 900)
+        for i in (2, 3, 4, 1)
+            set_frame!(ex, i)
+            @test size(colorbuffer(fig; px_per_unit = 1)) == size(initial)
+        end
+        @test !isempty(colorbuffer(result_explorer(path; lazy = true); px_per_unit = 1))
+        # The view and controller release the prior payload after refresh.
+        @noinline function weak_previous_display(ex)
+            weak = WeakRef(current_result(ex).u)
+            set_frame!(ex, 3)
+            return weak
+        end
+        old_array = weak_previous_display(ex)
+        colorbuffer(fig; px_per_unit = 1)
+        GC.gc(true)
+        @test old_array.value === nothing
+
+        invalid_path = joinpath(mktempdir(), "lazy-view-error.jld2")
+        Hammerhead.jldopen(invalid_path, "w") do f
+            f["format_version"] = Hammerhead.RESULTS_FORMAT_VERSION
+            f["results/000001"] = r_unc
+            f["results/000002"] = 123
+            f["results/000003"] = r_ptv
+        end
+        broken = ResultExplorer(invalid_path; lazy = true)
+        broken_fig = result_explorer(broken; size = (1000, 700))
+        before = copy(colorbuffer(broken_fig; px_per_unit = 1))
+        slider = only(filter(b -> b isa Slider, broken_fig.content))
+        set_close_to!(slider, 2)  # view catches, reports, and restores the slider
+        @test broken.frame[] == 1 && slider.value[] == 1
+        @test occursin("not a supported Hammerhead result", broken.status[])
+        @test any(b -> b isa Label && b.text[] == broken.status[], broken_fig.content)
+        @test colorbuffer(broken_fig; px_per_unit = 1) != before
+        set_close_to!(slider, 3)
+        @test broken.frame[] == 3 && slider.value[] == 3
+        @test isempty(broken.status[]) && current_result(broken) isa PTVResult
+        @test !isempty(colorbuffer(broken_fig; px_per_unit = 1))
+    end
+
     @testset "result_explorer view (offscreen)" begin
         ex = ResultExplorer([r_unc, r_plain])
         fig = result_explorer(ex; size = (900, 650))

@@ -22,6 +22,39 @@ result_explorer(ptv_result)          # a PTVResult / TrackingResult
 result_explorer([r1, r2, r3])        # a sequence — the slider scrubs frames
 ```
 
+For a completed file that is too large to load all at once, enable lazy
+browsing explicitly:
+
+```julia
+using Hammerhead: ResultFile, load_results
+
+result_explorer("run_042.jld2"; lazy = true)
+ex = ResultExplorer(ResultFile("run_042.jld2"))
+result_explorer(ex)
+set_frame!(ex, 120)                  # load only the selected saved entry
+saved = load_results("run_042.jld2"; lazy = true)
+result = saved[120]                  # measured units; core reader has no cache
+```
+
+The index stores sorted result keys, using memory proportional to the number
+of entries. The explorer retains one result in display units and only the
+current frame's derived fields and analysis state; navigation releases the
+previous payload. Each selected entry is loaded in full, so a single entry
+must fit memory. All four result types and mixed files are supported, with
+the same field menus, physical scaling, and selection behavior as eager
+browsing. A read failure leaves the prior frame displayed and reports the
+error below the inspection panel; another readable entry can still be
+selected. Scripted `set_frame!` calls also raise the error and set `ex.status`.
+
+Wait until the writer has closed the file before constructing the index.
+Its keys are fixed: it does not follow live batch writes or provide restart
+support. Size and modification-time checks reject detectable file changes,
+but they do not make concurrent reading/writing safe or create an atomic
+snapshot. Create a new index after a completed file changes. Use the existing
+in-memory explorer with `push_result!` for a live batch. The default
+`load_results(path)` and `ResultExplorer(path)` still load eagerly; collecting
+the lazy vector or retaining its returned objects also retains those payloads.
+
 For gridded results the field menu lists displacement magnitude, components,
 the validation diagnostics, and per-vector σ when the analysis ran with
 `uncertainty = true`; click any vector to inspect its numbers. A

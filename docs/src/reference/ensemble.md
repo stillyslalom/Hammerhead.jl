@@ -9,7 +9,11 @@ image pairs have weak correlation peaks and the flow is statistically
 stationary. The peak of summed correlations need not equal the arithmetic
 mean of individual vectors. Use [`field_statistics`](@ref) on a sequence of individually
 measured fields to obtain pointwise means, fluctuation RMS, and valid-sample
-counts. This page also covers temporal validation, reference-error
+counts. For recordings larger than RAM, feed each completed field to a
+[`FieldStatisticsAccumulator`](@ref), then finalize it with
+`field_statistics(acc)`. Its storage depends on the grid size rather than
+the recording length; snapshots share the vector API's validity and
+population-moment conventions. This page also covers temporal validation, reference-error
 diagnostics, and spectra. The [sequence tutorial](../tutorials/sequence_statistics.md)
 compares the two approaches; the [ensemble guide](../howto/ensemble.md)
 covers setup and limitations.

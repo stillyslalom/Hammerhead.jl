@@ -135,6 +135,188 @@ function field_statistics(results::AbstractVector{<:StereoPIVResult};
 end
 
 """
+    FieldStatisticsAccumulator(; include_invalid = false)
+
+Accumulate pointwise means, fluctuation RMS, Reynolds stresses, and valid
+counts from planar or stereo results without retaining the result sequence.
+Use [`update_statistics!`](@ref) for each result and [`field_statistics`](@ref)
+to obtain an independent snapshot. The first update establishes the result
+kind and grid; finalizing before any update raises `ArgumentError`.
+
+Validity and population-moment conventions match `field_statistics(results)`:
+all components must be finite, masks always exclude a sample, and outliers
+are excluded unless `include_invalid = true`. Computation uses stable
+Float64 online moments. Storage depends only on the grid size, including
+copied coordinates, per-node `count`, and scalar `nsamples` (updates received).
+No input result or component array is retained. Updates are serial; an
+accumulator is not safe for concurrent mutation.
+
+Values use stored units; attached scales are never applied automatically.
+Unlike the vector overload, this accumulator checks that scale factors and
+unit labels agree across updates, including the distinction between an absent
+scale and an attached one. Convert each result with [`physical`](@ref) before
+updating to calculate velocity statistics or combine different pair delays.
+Grid coordinates and physical unit labels must still agree after conversion.
+Processing parameters and quality diagnostics do not affect compatibility.
+"""
+mutable struct FieldStatisticsAccumulator
+    include_invalid::Bool
+    kind::Symbol
+    x::Vector
+    y::Vector
+    z::Union{Nothing,Float64}
+    scale_signature::Union{Nothing,Tuple{Float64,Float64,String,String}}
+    means::Vector{Matrix{Float64}}
+    moments::Vector{Matrix{Float64}}
+    covariances::Vector{Matrix{Float64}}
+    count::Matrix{Int}
+    nsamples::Int
+end
+
+FieldStatisticsAccumulator(; include_invalid::Bool = false) =
+    FieldStatisticsAccumulator(include_invalid, :unset, Float64[], Float64[],
+        nothing, nothing, Matrix{Float64}[], Matrix{Float64}[],
+        Matrix{Float64}[], zeros(Int, 0, 0), 0)
+
+_statistics_scale_signature(::Nothing) = nothing
+_statistics_scale_signature(s::PhysicalScale) =
+    (s.pixel_size, s.dt, s.length_unit, s.time_unit)
+
+function _check_statistics_update(acc::FieldStatisticsAccumulator,
+                                  r::Union{PIVResult,StereoPIVResult})
+    stereo = r isa StereoPIVResult
+    dims = (length(r.y), length(r.x))
+    components = stereo ? (r.u, r.v, r.w) : (r.u, r.v)
+    all(a -> size(a) == dims, (components..., r.mask, r.outliers)) ||
+        throw(ArgumentError("result components, mask, and outliers must match the coordinate grid $dims"))
+    all(isfinite, r.x) && all(isfinite, r.y) && (!stereo || isfinite(r.z)) ||
+        throw(ArgumentError("statistics grid coordinates must be finite"))
+    kind = stereo ? :stereo : :planar
+    signature = _statistics_scale_signature(r.scale)
+    if acc.kind !== :unset
+        acc.kind === kind ||
+            throw(ArgumentError("cannot mix planar and stereo results in one statistics accumulator"))
+        size(acc.count) == dims && acc.x == r.x && acc.y == r.y &&
+            (!stereo || acc.z == r.z) ||
+            throw(ArgumentError("all statistics updates must share the same interrogation grid"))
+        acc.scale_signature == signature ||
+            throw(ArgumentError("statistics updates must have identical scale factors and unit labels; " *
+                                "convert results with physical first to combine different pair delays"))
+    end
+    return kind, signature, dims
+end
+
+function _initialize_statistics!(acc, r, kind, signature, dims)
+    ncomponents = kind === :stereo ? 3 : 2
+    # Allocate the entire state before assigning it, and copy coordinates so
+    # later edits to an input result cannot change the established grid.
+    x, y = copy(r.x), copy(r.y)
+    means = [zeros(dims) for _ in 1:ncomponents]
+    moments = [zeros(dims) for _ in 1:ncomponents]
+    covariances = [zeros(dims) for _ in 1:(kind === :stereo ? 3 : 1)]
+    count = zeros(Int, dims)
+    acc.x, acc.y = x, y
+    acc.z = kind === :stereo ? r.z : nothing
+    acc.scale_signature = signature
+    acc.means, acc.moments, acc.covariances = means, moments, covariances
+    acc.count = count
+    acc.kind = kind
+    return acc
+end
+
+"""
+    update_statistics!(acc::FieldStatisticsAccumulator, result) -> acc
+
+Add one [`PIVResult`](@ref) or [`StereoPIVResult`](@ref). Result kind,
+coordinate grid (including stereo `z`), all component/mask/outlier dimensions,
+and scale metadata are checked before any state is changed. An incompatible
+update throws and leaves existing statistics unchanged, including `nsamples`.
+An entirely invalid result still counts as an update but contributes no
+samples to the per-node counts.
+
+Use `on_result = (i, r) -> update_statistics!(acc, r)` with
+`collect_results = false` in a sequence driver. For velocity statistics,
+update with `physical(r)` instead. Obtain a snapshot by calling
+[`field_statistics`](@ref) on the accumulator; further updates remain allowed.
+"""
+function update_statistics!(acc::FieldStatisticsAccumulator,
+                            r::Union{PIVResult,StereoPIVResult})
+    kind, signature, dims = _check_statistics_update(acc, r)
+    acc.kind === :unset && _initialize_statistics!(acc, r, kind, signature, dims)
+    _update_statistics_moments!(acc, r)
+    acc.nsamples += 1
+    return acc
+end
+
+function _update_statistics_moments!(acc, r::PIVResult)
+    mu, mv = acc.means
+    m2u, m2v = acc.moments
+    c2uv = only(acc.covariances)
+    for i in eachindex(r.u)
+        sample_valid(r, i, acc.include_invalid) || continue
+        ui, vi = Float64(r.u[i]), Float64(r.v[i])
+        acc.count[i] += 1
+        n = acc.count[i]
+        du, dv = ui - mu[i], vi - mv[i]
+        mu[i] += du / n; mv[i] += dv / n
+        m2u[i] += du * (ui - mu[i]); m2v[i] += dv * (vi - mv[i])
+        c2uv[i] += du * (vi - mv[i])
+    end
+    return acc
+end
+
+function _update_statistics_moments!(acc, r::StereoPIVResult)
+    mu, mv, mw = acc.means
+    m2u, m2v, m2w = acc.moments
+    c2uv, c2uw, c2vw = acc.covariances
+    for i in eachindex(r.u)
+        sample_valid(r, i, acc.include_invalid) || continue
+        ui, vi, wi = Float64(r.u[i]), Float64(r.v[i]), Float64(r.w[i])
+        acc.count[i] += 1
+        n = acc.count[i]
+        du, dv, dw = ui - mu[i], vi - mv[i], wi - mw[i]
+        mu[i] += du / n; mv[i] += dv / n; mw[i] += dw / n
+        m2u[i] += du * (ui - mu[i]); m2v[i] += dv * (vi - mv[i]); m2w[i] += dw * (wi - mw[i])
+        c2uv[i] += du * (vi - mv[i]); c2uw[i] += du * (wi - mw[i]); c2vw[i] += dv * (wi - mw[i])
+    end
+    return acc
+end
+
+"""
+    field_statistics(acc::FieldStatisticsAccumulator) -> NamedTuple
+
+Finalize the current online moments into the same fields and population
+statistics as `field_statistics(results)`. All returned arrays, including
+coordinates and `count`, are independent copies; changing the snapshot
+cannot affect later updates. This does not consume or reset the accumulator,
+so repeated calls provide progress snapshots. With no updates, throws `ArgumentError`.
+Nodes with no valid samples return zero counts and `NaN` statistics.
+"""
+function field_statistics(acc::FieldStatisticsAccumulator)
+    acc.kind === :unset && throw(ArgumentError("statistics accumulator has no updates"))
+    count = copy(acc.count)
+    field(f) = [count[i, j] > 0 ? f(i, j, count[i, j]) : NaN
+                for i in axes(count, 1), j in axes(count, 2)]
+    means = map(m -> field((i, j, n) -> m[i, j]), acc.means)
+    variances = map(m -> field((i, j, n) -> max(m[i, j] / n, 0.0)), acc.moments)
+    covariances = map(c -> field((i, j, n) -> c[i, j] / n), acc.covariances)
+    x, y = copy(acc.x), copy(acc.y)
+    mean_u, mean_v = means[1:2]
+    rms_u, rms_v = sqrt.(variances[1]), sqrt.(variances[2])
+    reynolds_uv = covariances[1]
+    if acc.kind === :planar
+        return (; x, y, mean_u, mean_v, rms_u, rms_v, reynolds_uv, count)
+    end
+    mean_w = means[3]
+    reynolds_uu, reynolds_vv, reynolds_ww = variances
+    rms_w = sqrt.(reynolds_ww)
+    reynolds_uw, reynolds_vw = covariances[2:3]
+    return (; x, y, z = acc.z, mean_u, mean_v, mean_w, rms_u, rms_v, rms_w,
+            reynolds_uu, reynolds_vv, reynolds_ww,
+            reynolds_uv, reynolds_uw, reynolds_vw, count)
+end
+
+"""
     validate_temporal!(results; threshold = 3, epsilon = 0.1) -> results
 
 Temporal normalized-median test across a sequence of same-grid `PIVResult`s:

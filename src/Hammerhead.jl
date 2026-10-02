@@ -18,10 +18,12 @@ export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, pi
 export benchmark_piv_configurations
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
+export ResultFile
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask
 export run_piv_ensemble, field_statistics, validate_temporal!, power_spectrum
+export FieldStatisticsAccumulator, update_statistics!
 export flow_derivatives, vorticity, divergence, strain_rate, swirling_strength, q_criterion
 export extract_profile, extract_region, circulation, result_spectrum
 export find_peaks, peak_locking, smoothn, error_statistics

@@ -6,6 +6,12 @@ are called out in release notes and backward-compatible constructors are used
 where practical. A stable release will not make an incompatible exported-API
 or native-format change without a major version bump.
 
+User-visible changes are recorded in the repository's
+[release notes](https://github.com/stillyslalom/Hammerhead.jl/blob/main/CHANGELOG.md).
+The [release procedure](https://github.com/stillyslalom/Hammerhead.jl/blob/main/RELEASING.md)
+describes core-first/GUI-second validation and the dataset, device, and workflow
+evidence associated with a candidate release.
+
 JLD2 is the lossless Julia round-trip format. Files carry `format_version`;
 readers reject unknown versions rather than silently misinterpreting data.
 An empty result vector (or a batch stopped before its first result) is a valid

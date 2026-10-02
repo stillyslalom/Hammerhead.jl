@@ -198,8 +198,70 @@ function _export_units(r)
         (s.length_unit, s.time_unit, velocity_unit(s), physical(r))
 end
 
+# Prepare the optional calibrated grid once for both language-neutral writers.
+# Keep the no-transform path untouched, including its physical() conversion.
+function _export_grid(r; transform=nothing, length_unit=nothing, dt=nothing,
+                      time_unit=nothing, uncertainty_assumption::Symbol=:unknown)
+    if transform === nothing
+        (length_unit === nothing && dt === nothing && time_unit === nothing &&
+         uncertainty_assumption === :unknown) ||
+            throw(ArgumentError("length_unit, dt, time_unit, and uncertainty_assumption require transform"))
+        lu, tu, vu, q = _export_units(r)
+        return lu, tu, vu, q, nothing
+    end
+    transform isa PlanarTransform || throw(ArgumentError("transform must be a PlanarTransform"))
+    r isa PIVResult || throw(ArgumentError("PlanarTransform export supports planar PIVResult grids only"))
+    r.scale === nothing ||
+        throw(ArgumentError("PlanarTransform requires raw pixel data with no attached PhysicalScale; " *
+                            "remove metadata only from an unconverted result, and supply dt explicitly"))
+    length_unit isa AbstractString && !isempty(length_unit) ||
+        throw(ArgumentError("transform requires a nonempty length_unit label"))
+    if dt === nothing
+        time_unit === nothing || throw(ArgumentError("time_unit requires an explicit dt"))
+        tu = "frame"
+    else
+        dt isa Real && isfinite(dt) && dt > 0 ||
+            throw(ArgumentError("dt must be a positive finite interval"))
+        time_unit isa AbstractString && !isempty(time_unit) ||
+            throw(ArgumentError("dt requires a nonempty time_unit label"))
+        tu = String(time_unit)
+    end
+    uncertainty_assumption in (:unknown, :independent) ||
+        throw(ArgumentError("uncertainty_assumption must be :unknown or :independent"))
+    all(isfinite, transform.matrix) && all(isfinite, transform.offset) &&
+        isfinite(det(transform.matrix)) && !iszero(det(transform.matrix)) ||
+        throw(ArgumentError("transform must be finite and nonsingular"))
+    T = promote_type(eltype(r.u), eltype(transform.matrix),
+                     dt === nothing ? eltype(r.u) : typeof(float(dt)))
+    interval = dt === nothing ? one(T) : T(dt)
+    nx, ny = length(r.x), length(r.y)
+    x, y, u, v, su, sv = ntuple(_ -> Matrix{T}(undef, ny, nx), 6)
+    for j in eachindex(r.x), i in eachindex(r.y)
+        x[i,j], y[i,j] = transform_point(transform, (r.x[j], r.y[i]))
+        ui, vi = transform_vector(transform, (r.u[i,j], r.v[i,j]))
+        u[i,j], v[i,j] = ui / interval, vi / interval
+        su[i,j] = _export_component_uncertainty(transform.matrix[1,1], transform.matrix[1,2],
+            r.uncertainty_u[i,j], r.uncertainty_v[i,j], interval, uncertainty_assumption)
+        sv[i,j] = _export_component_uncertainty(transform.matrix[2,1], transform.matrix[2,2],
+            r.uncertainty_u[i,j], r.uncertainty_v[i,j], interval, uncertainty_assumption)
+    end
+    lu = String(length_unit)
+    return lu, tu, lu * "/" * tu, r, (; x, y, u, v, su, sv)
+end
+
+function _export_component_uncertainty(a, b, su, sv, dt, assumption)
+    # Zero coefficients do not require an unavailable marginal from that axis.
+    iszero(a) && return sv >= 0 ? abs(b) * sv / dt : NaN
+    iszero(b) && return su >= 0 ? abs(a) * su / dt : NaN
+    assumption === :unknown && return NaN
+    su >= 0 && sv >= 0 || return NaN
+    return hypot(a * su, b * sv) / dt
+end
+
 """
-    export_table(path, result; frame_id="", source_a="", source_b="")
+    export_table(path, result; frame_id="", source_a="", source_b="",
+                 transform=nothing, length_unit=nothing, dt=nothing,
+                 time_unit=nothing, uncertainty_assumption=:unknown)
 
 Write one planar PIV, stereo PIV, PTV, or tracking result to a long-form UTF-8 CSV
 using schema `hammerhead-table-1`, replacing `path` and returning it.
@@ -236,10 +298,32 @@ has empty `u`/`v` and `velocity_valid = false`. Empty trajectories have no
 rows (their IDs are not reused); an empty result writes only the header.
 Malformed trajectories (mismatched arrays, non-increasing or out-of-range
 frames, or inconsistent `start_frame`) are rejected before replacing `path`.
+
+For a raw, unscaled planar [`PIVResult`](@ref), `transform = PlanarTransform(...)`
+exports coordinates as `A * (x, y) + b` and components as `A * (u, v)` in
+the transformed basis. Supply `length_unit` explicitly. Without `dt`, components
+remain displacements per frame interval; supplying positive finite `dt` and
+`time_unit` converts them to velocities. A transform and an attached
+[`PhysicalScale`](@ref) cannot be combined, including a scale left by
+[`physical`](@ref); stripping metadata does not undo conversion. Stereo, PTV,
+and tracking transforms are unsupported and rejected before replacing `path`.
+
+For transformed uncertainties, `:unknown` (default) writes `NaN` for a component
+mixing both input axes, because the cross-component covariance is not stored.
+Rows depending on just one axis transform its standard deviation exactly.
+`uncertainty_assumption = :independent` explicitly assumes zero input
+cross-component covariance and exports
+`hypot(A[k,1] * uncertainty_u, A[k,2] * uncertainty_v) / dt` (unit interval
+when `dt` is absent). The induced output covariance is not exported, and
+calibration/timing errors are not included. Mask/outlier flags and pixel-native
+quality metrics retain their values. See [Scale results to physical units](@ref).
 """
 function export_table(path::AbstractString, r::Union{PIVResult,StereoPIVResult,PTVResult};
-                      frame_id="", source_a="", source_b="")
-    lu, tu, vu, q = _export_units(r)
+                      frame_id="", source_a="", source_b="", transform=nothing,
+                      length_unit=nothing, dt=nothing, time_unit=nothing,
+                      uncertainty_assumption::Symbol=:unknown)
+    lu, tu, vu, q, grid = _export_grid(r; transform, length_unit, dt, time_unit,
+                                      uncertainty_assumption)
     open(path, "w") do io
         println(io, join(TABLE_COLUMNS, ','))
         emit(vals) = println(io, join(_csv.((vals..., _EMPTY_TRACKING_COLUMNS...)), ','))
@@ -247,10 +331,13 @@ function export_table(path::AbstractString, r::Union{PIVResult,StereoPIVResult,P
             k = 0
             for j in eachindex(q.x), i in eachindex(q.y)
                 k += 1
+                x, y, u, v, su, sv = grid === nothing ?
+                    (q.x[j], q.y[i], q.u[i,j], q.v[i,j], q.uncertainty_u[i,j], q.uncertainty_v[i,j]) :
+                    (grid.x[i,j], grid.y[i,j], grid.u[i,j], grid.v[i,j], grid.su[i,j], grid.sv[i,j])
                 emit((TABLE_SCHEMA_VERSION,"planar",frame_id,source_a,source_b,k,i,j,
-                    q.x[j],q.y[i],missing,q.u[i,j],q.v[i,j],missing,q.mask[i,j],q.outliers[i,j],
-                    q.peak_ratio[i,j],q.correlation_moment[i,j],q.uncertainty_u[i,j],
-                    q.uncertainty_v[i,j],missing,missing,missing,missing,lu,tu,vu))
+                    x,y,missing,u,v,missing,q.mask[i,j],q.outliers[i,j],
+                    q.peak_ratio[i,j],q.correlation_moment[i,j],su,sv,
+                    missing,missing,missing,missing,lu,tu,vu))
             end
         elseif q isa StereoPIVResult
             k = 0
@@ -289,9 +376,12 @@ function _check_tracking_table(r::TrackingResult)
 end
 
 function export_table(path::AbstractString, r::TrackingResult;
-                      frame_id="", source_a="", source_b="")
+                      frame_id="", source_a="", source_b="", transform=nothing,
+                      length_unit=nothing, dt=nothing, time_unit=nothing,
+                      uncertainty_assumption::Symbol=:unknown)
     _check_tracking_table(r)
-    lu, tu, vu, q = _export_units(r)
+    lu, tu, vu, q, _ = _export_grid(r; transform, length_unit, dt, time_unit,
+                                   uncertainty_assumption)
     dt = q.scale === nothing ? 1 : q.scale.dt
     provenance = q.scale === nothing ? "frame_index" : "physical_scale"
     open(path, "w") do io
@@ -319,7 +409,8 @@ function export_table(path::AbstractString, r::TrackingResult;
 end
 
 """
-    export_vtk(path, result)
+    export_vtk(path, result; transform=nothing, length_unit=nothing, dt=nothing,
+               time_unit=nothing, uncertainty_assumption=:unknown)
 
 Write a planar or stereo grid to a legacy ASCII VTK file, replacing `path`
 and returning it. The file includes all grid nodes, including masked and
@@ -330,15 +421,24 @@ scale, [`physical`](@ref) converts them to velocity. `FIELD` metadata stores
 `coordinate_unit` and `component_unit`; unscaled stereo uses the placeholder
 `world_unit` because the calibration's length-unit name is unavailable.
 PTV and tracking results are not structured grids and are not supported.
+For raw planar PIV grids, the transform/unit/time/uncertainty keywords follow
+[`export_table`](@ref), including refusal of attached scales and unavailable
+mixed-axis uncertainties under the default `:unknown` assumption. The affine
+map changes every point and its vector basis while retaining grid topology;
+rotation or reflection need not preserve separable coordinate axes.
 """
-function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
-    coordinate_unit, _, component_unit, q = _export_units(r)
+function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult};
+                    transform=nothing, length_unit=nothing, dt=nothing, time_unit=nothing,
+                    uncertainty_assumption::Symbol=:unknown)
+    coordinate_unit, _, component_unit, q, grid = _export_grid(r;
+        transform, length_unit, dt, time_unit, uncertainty_assumption)
     nx, ny = length(q.x), length(q.y)
     z = q isa StereoPIVResult ? q.z : 0
     open(path, "w") do io
         println(io, "# vtk DataFile Version 3.0\nHammerhead result\nASCII\nDATASET STRUCTURED_GRID")
         println(io, "DIMENSIONS $nx $ny 1\nPOINTS $(nx*ny) double")
-        for y in q.y, x in q.x
+        for i in eachindex(q.y), j in eachindex(q.x)
+            x, y = grid === nothing ? (q.x[j], q.y[i]) : (grid.x[i,j], grid.y[i,j])
             println(io, "$x $y $z")
         end
         println(io, "FIELD FieldData 2")
@@ -351,7 +451,8 @@ function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
         println(io, "POINT_DATA $(nx*ny)\nVECTORS velocity double")
         for i in eachindex(q.y), j in eachindex(q.x)
             w = q isa StereoPIVResult ? q.w[i,j] : 0
-            println(io, "$(q.u[i,j]) $(q.v[i,j]) $w")
+            u, v = grid === nothing ? (q.u[i,j], q.v[i,j]) : (grid.u[i,j], grid.v[i,j])
+            println(io, "$u $v $w")
         end
         function scalar(name, a)
             println(io, "SCALARS $name double 1\nLOOKUP_TABLE default")
@@ -361,7 +462,8 @@ function export_vtk(path::AbstractString, r::Union{PIVResult,StereoPIVResult})
             end
         end
         scalar("masked", q.mask); scalar("outlier", q.outliers)
-        scalar("uncertainty_u", q.uncertainty_u); scalar("uncertainty_v", q.uncertainty_v)
+        scalar("uncertainty_u", grid === nothing ? q.uncertainty_u : grid.su)
+        scalar("uncertainty_v", grid === nothing ? q.uncertainty_v : grid.sv)
         q isa StereoPIVResult && scalar("uncertainty_w", q.uncertainty_w)
         q isa PIVResult && (scalar("peak_ratio", q.peak_ratio); scalar("correlation_moment", q.correlation_moment))
     end

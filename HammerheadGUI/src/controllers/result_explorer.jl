@@ -11,10 +11,33 @@ const ScatteredResult = Union{PTVResult,TrackingResult}
 const AnyResult = Union{GridResult,ScatteredResult}
 const Selection = Union{Nothing,CartesianIndex{2},Int}
 
+# One physical/display payload, irrespective of recording length. Read/convert
+# before replacing the cache, so failed navigation preserves the prior frame.
+mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
+    source::Hammerhead.ResultFile
+    index::Int
+    result::Union{Nothing,AnyResult}
+end
+Base.size(results::_LazyDisplayResults) = size(results.source)
+Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
+function Base.getindex(results::_LazyDisplayResults, i::Int)
+    checkbounds(results, i)
+    if results.index != i
+        result = physical(results.source[i])
+        results.result = result
+        results.index = i
+    end
+    return results.result::AnyResult
+end
+Base.show(io::IO, results::_LazyDisplayResults) =
+    print(io, "Lazy display results (", length(results), " indexed, one cached frame)")
+Base.show(io::IO, ::MIME"text/plain", results::_LazyDisplayResults) = show(io, results)
+
 """
     ResultExplorer(results; path = nothing)
     ResultExplorer(result)
-    ResultExplorer(path::AbstractString)
+    ResultExplorer(path::AbstractString; lazy = false)
+    ResultExplorer(index::ResultFile)
 
 Browse a sequence of `PIVResult`, `StereoPIVResult`, `PTVResult`, or
 `TrackingResult` entries; result types may be mixed. View state is held in
@@ -33,15 +56,22 @@ interactive-analysis state `tool` / `tool_points` / `profile_data` /
 planar results only — tool state clears on frame switches).
 
 Results with a [`PhysicalScale`](@ref) are converted through
-[`physical`](@ref) at construction for display in physical units. Unscaled
-results retain their original units.
+[`physical`](@ref) for display in physical units. Unscaled results retain
+their original units.
 
 The string form loads a saved sequence with `Hammerhead.load_results`.
+Use `lazy = true` or pass a [`ResultFile`](@ref) to browse a completed file
+while retaining one display result and only the current frame's derived
+fields/tool data (plus O(number of results) key metadata). Lazy explorers
+cannot append live results. Selected unreadable entries raise an error,
+set `status`, and leave the previous frame and its selection displayed.
+`set_frame!` and direct `frame[]` assignments both validate before updating
+other view state. The index is fixed and does not follow a concurrent writer.
 Changing frames resets an unavailable `field` to that result's default and
 clears an invalid `selection`.
 """
 struct ResultExplorer
-    results::Vector{AnyResult}
+    results::Union{Vector{AnyResult},_LazyDisplayResults}
     path::Union{Nothing,String}
     frame::Observable{Int}
     field::Observable{Symbol}
@@ -57,6 +87,7 @@ struct ResultExplorer
     profile_data::Observable{Union{Nothing,NamedTuple}}
     circulation_result::Observable{Union{Nothing,NamedTuple}}
     derived_cache::Dict{Int,NamedTuple}
+    status::Observable{String}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -64,6 +95,16 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
     all(r -> r isa AnyResult, results) ||
         throw(ArgumentError("results must be PIVResult, StereoPIVResult, PTVResult, or TrackingResult entries"))
     conv = AnyResult[physical(r) for r in results]
+    return _result_explorer(conv, path)
+end
+
+function ResultExplorer(index::Hammerhead.ResultFile;
+                        path::Union{Nothing,AbstractString} = index.path)
+    isempty(index) && throw(ArgumentError("no results to explore"))
+    return _result_explorer(_LazyDisplayResults(index, 0, nothing), path)
+end
+
+function _result_explorer(conv, path)
     ex = ResultExplorer(conv,
                         path === nothing ? nothing : String(path),
                         Observable(1), Observable(first(available_fields(conv[1]))),
@@ -77,9 +118,22 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
                         Observable(NTuple{2,Float64}[]),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
-                        Dict{Int,NamedTuple}())
-    on(ex.frame) do _
-        r = current_result(ex)
+                        Dict{Int,NamedTuple}(), Observable(""))
+    last_frame = Ref(1)
+    # Read failures must occur before downstream view notifications. A direct
+    # observable write has already changed its value: restore silently and
+    # throw to stop that failed notification from reaching views.
+    on(ex.frame; priority = typemax(Int)) do i
+        r = try
+            current_result(ex)
+        catch err
+            ex.frame.val = last_frame[]
+            ex.status[] = first(split(sprint(showerror, err), '\n'))
+            rethrow()
+        end
+        i == last_frame[] || empty!(ex.derived_cache)
+        last_frame[] = i
+        ex.status[] = ""
         ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
         ex.selection[] = _valid_selection(r, ex.selection[])
         # tool state describes one frame's flow: clear it on a frame switch,
@@ -91,7 +145,8 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
 end
 
 ResultExplorer(result::AnyResult; kwargs...) = ResultExplorer([result]; kwargs...)
-ResultExplorer(path::AbstractString) = ResultExplorer(load_results(path); path)
+ResultExplorer(path::AbstractString; lazy::Bool = false) =
+    ResultExplorer(load_results(path; lazy); path)
 
 function Base.show(io::IO, ex::ResultExplorer)
     print(io, "ResultExplorer($(length(ex.results)) frame",
@@ -117,9 +172,19 @@ current_result(ex::ResultExplorer) = ex.results[ex.frame[]]
 """
     set_frame!(ex::ResultExplorer, i::Integer)
 
-Move to frame `i`, clamped to `1:nframes(ex)`.
+Move to frame `i`, clamped to `1:nframes(ex)`. A lazy read failure throws,
+sets `status`, and preserves the prior frame, selection, and tool state.
 """
-set_frame!(ex::ResultExplorer, i::Integer) = ex.frame[] = clamp(i, 1, nframes(ex))
+function set_frame!(ex::ResultExplorer, i::Integer)
+    frame = clamp(i, 1, nframes(ex))
+    try
+        ex.results[frame] # preflight before notifying views or changing state
+    catch err
+        ex.status[] = first(split(sprint(showerror, err), '\n'))
+        rethrow()
+    end
+    return ex.frame[] = frame
+end
 
 """
     push_result!(ex::ResultExplorer, r)
@@ -127,9 +192,11 @@ set_frame!(ex::ResultExplorer, i::Integer) = ex.frame[] = clamp(i, 1, nframes(ex
 Append a result to the explored sequence (routed through [`physical`](@ref)
 like the constructor) and notify `ex.count`, so open views extend their frame
 slider — this is how a live explorer follows a still-running batch. The
-current frame is left unchanged.
+current frame is left unchanged. Lazy file-backed explorers reject appends.
 """
 function push_result!(ex::ResultExplorer, r::AnyResult)
+    ex.results isa _LazyDisplayResults &&
+        throw(ArgumentError("cannot append to a lazy ResultFile explorer; use an in-memory explorer for a live batch"))
     push!(ex.results, physical(r))
     ex.count[] = length(ex.results)
     return ex
@@ -194,8 +261,8 @@ _derived_field(d::NamedTuple, field::Symbol) =
     field === :swirling_strength ? swirling_strength(d) :
     q_criterion(d)
 
-# The frame's velocity-gradient tensor, computed once and cached (results
-# are immutable, so the cache never invalidates).
+# Only the current frame's derivatives are cached; frame changes evict them,
+# including on eager explorers, so derived data cannot grow with a recording.
 _derived(ex::ResultExplorer) =
     get!(() -> flow_derivatives(current_result(ex)), ex.derived_cache, ex.frame[])
 

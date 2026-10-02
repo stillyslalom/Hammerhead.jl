@@ -1,0 +1,105 @@
+# Releasing Hammerhead and HammerheadGUI
+
+The core and GUI are separate registered packages in one repository. Release
+the core first when the GUI uses new core APIs, then require that core version
+in the GUI compatibility bounds before registering the GUI. A local path-based
+development environment can hide a missing dependency lower bound.
+
+## Prepare the candidate
+
+Update [CHANGELOG.md](CHANGELOG.md) with user-visible API, numerical-behavior,
+and file-format changes. Assign the candidate package versions only when
+preparing an actual release. Apply the
+[compatibility policy](docs/src/explanation/compatibility.md): describe any
+migration needed for native records, result constructors, and table readers;
+bump the relevant format/schema version if existing meanings become incompatible.
+Keep the root and GUI package versions independent.
+
+Record the candidate commit, Julia and package versions, operating system,
+thread count, and the exact commands used. First couple both development
+environments to the candidate source, as CI does. From the repository root,
+start `julia --project=HammerheadGUI` and run:
+
+```julia
+using Pkg
+ENV["JULIA_PKG_PRECOMPILE_AUTO"] = "0"
+Pkg.develop(PackageSpec(path = pwd()))
+Pkg.instantiate()
+```
+
+Exit that session, start `julia --project=docs` from the same root, and run:
+
+```julia
+using Pkg
+ENV["JULIA_PKG_PRECOMPILE_AUTO"] = "0"
+Pkg.develop([PackageSpec(path = pwd()),
+             PackageSpec(path = joinpath(pwd(), "HammerheadGUI"))])
+Pkg.instantiate()
+```
+
+This explicit setup also works on Julia 1.10, which does not use the GUI's
+`[sources]` override. The docs environment otherwise may resolve registered
+packages instead of the candidate. Precompilation is deferred until a GL
+context is available. Then run from the candidate checkout:
+
+```sh
+julia --project=. -t 4 -e 'using Pkg; Pkg.test()'
+julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'
+julia --project=docs docs/make.jl
+```
+
+The GUI and docs require a GL context. Linux CI supplies one through Xvfb;
+see the actual setup in [.github/workflows/CI.yml](.github/workflows/CI.yml).
+The docs build executes the seven tutorials and checks public docstrings.
+Expected failure-propagation logs in tests and a local skipped-deployment
+warning are not failed assertions. Record other warnings and their implications.
+
+Check the CI matrix at the candidate commit rather than assuming a local pass
+covers every supported configuration. It currently exercises single-threaded
+core tests on LTS, stable, and prerelease Julia; multithreaded stable Julia on
+Linux and Windows; and GUI tests on LTS/stable Linux. That matrix does not
+establish macOS GUI support or device-backend correctness.
+
+## Record measurement and workflow evidence
+
+Keep the evidence attached to the candidate release or its review record, with
+links to logs and artifacts. Record what was not exercised as well as what passed.
+
+| Evidence | Record |
+|---|---|
+| Synthetic accuracy | Seeds, generator/settings, reference convention, bias/RMS error, validity and uncertainty checks; identify tests changed with numerical behavior. |
+| Committed real data | Challenge A and 4E fixture identities and test/tutorial outcomes. These are real-data smoke checks, not ground-truth accuracy measurements. |
+| Larger or external data | Dataset identity/checksum, processing recipe, reference provenance, selection rules, and applicable metrics. If unavailable, state that limitation. |
+| CPU performance | Named hardware, thread/FFT configuration, precision, warmup/repeats, representative image size and sequence length; link the [benchmark procedure](bench/README.md). |
+| CUDA/AMDGPU | Device, driver/runtime/package versions, backend validation command, supported paths, accuracy comparison and memory/performance measurements. KA CPU tests do not replace hardware execution. |
+| GUI workflow | OS/display configuration, setup/preprocessing/ROI/mask/scale, batch completion/cancellation, saved-result reopen, and export checks. Include a lab-user walkthrough when available. |
+| Persistence | Current round trips, unknown-version rejection, promised historical fixtures, cancellation/failure behavior, and any documented recovery limits. |
+
+Do not present unavailable GPU runs, large-recording benchmarks, known-motion
+experiments, or an unimplemented saved-experiment workflow as validated. The
+remaining work belongs in [ROADMAP.md](ROADMAP.md).
+
+## Register in dependency order
+
+1. Finalize the core candidate and its release notes. After the core version
+   change and validation pass, request core registration with the repository's
+   Registrator workflow (`@JuliaRegistrator register`). Confirm registry
+   availability and the resulting core tag before proceeding with a dependent
+   GUI release.
+2. Set the GUI's Hammerhead compatibility lower bound to the first registered
+   core release supplying the APIs it now calls. The current development
+   `[sources]` entry points to `..`; validate the release against the registered
+   core in an isolated environment without that path override. Confirm the
+   resolved version and rerun GUI tests. Do not publish a GUI release that only
+   works against an unregistered checkout.
+3. Finalize GUI notes/version and request subdirectory registration with
+   `@JuliaRegistrator register subdir=HammerheadGUI`. Verify the GUI tag from the
+   subdirectory TagBot job in
+   [.github/workflows/TagBot.yml](.github/workflows/TagBot.yml).
+4. Verify both packages install from the registry in a fresh environment and
+   that published documentation matches the released API. Move the applicable
+   Unreleased entries into dated, package-versioned sections; retain entries for
+   changes that have not shipped.
+
+The release record should link the final commits, registry entries, validation
+evidence, and any known limitations.
