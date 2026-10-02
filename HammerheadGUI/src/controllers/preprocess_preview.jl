@@ -388,6 +388,21 @@ function build_preprocess(pp::PreprocessPreview)
 end
 
 """
+    preprocess_steps(pp::PreprocessPreview) -> Vector{PreprocessStep}
+
+Snapshot the enabled built-in operations in their current order as core recipe
+steps, with complete defaults and a copied background. This preserves the
+Float64 processing used by the preview; it does not reconstruct arbitrary
+callbacks or load a saved recipe into the narrower preview controls.
+"""
+function preprocess_steps(pp::PreprocessPreview)
+    [s.name === :subtract_background ?
+        (pp.background[] === nothing ? throw(ArgumentError("compute a background first")) :
+         PreprocessStep(s.name; background=pp.background[])) :
+        PreprocessStep(s.name; s.params...) for s in pp.steps[] if s.enabled]
+end
+
+"""
     pipeline_summary(pp::PreprocessPreview) -> String
 
 One-line summary of the enabled steps in order (\"no preprocessing\" when

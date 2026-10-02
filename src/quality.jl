@@ -503,8 +503,11 @@ function apply_validator!(result::PIVResult, v::VelocityMagnitudeValidator)
 end
 
 function apply_validator!(result::PIVResult, v::UniversalOutlierValidator)
+    nonfinite = .!isfinite.(result.u) .| .!isfinite.(result.v)
+    result.outliers .|= nonfinite .& .!result.mask
+    exclude = result.mask .| nonfinite
     result.outliers .|= universal_outlier_detection(result.u, result.v, v.threshold;
         neighborhood_size = v.neighborhood_size, epsilon = v.epsilon,
-        exclude = any(result.mask) ? result.mask : nothing)
+        exclude = any(exclude) ? exclude : nothing)
     return result
 end

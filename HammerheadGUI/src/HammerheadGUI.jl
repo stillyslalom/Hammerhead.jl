@@ -22,12 +22,14 @@ using Printf
 using LinearAlgebra: LinearAlgebra
 using FileIO: FileIO
 using ImageCore: Gray
+import SHA
 
 include("controllers/result_explorer.jl")
 include("controllers/mask_editor.jl")
 include("controllers/preprocess_preview.jl")   # before batch_runner (set_preprocess! signature)
 include("controllers/roi_editor.jl")
 include("controllers/batch_runner.jl")
+include("controllers/experiment_controller.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
 include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
@@ -51,6 +53,9 @@ export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
        set_scale!, set_preprocess!, build_parameters, build_scale, validate,
        start!, cancel!
 export ROIEditor, set_roi!, clear_roi!, apply_roi!, roi_summary
+export preprocess_steps, experiment_record, save_batch_experiment,
+       ExperimentController, open_experiment!, save_experiment_record!,
+       experiment_results, experiment_summary, experiment_run_history
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -77,6 +82,10 @@ export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
        set_effort!, set_scale!, set_pixel_size!, set_dt!, set_preprocess!,
        start!, cancel!
 export ROIEditor, roi_editor, roi_editor!, set_roi!, clear_roi!, apply_roi!
+export preprocess_steps, experiment_record, save_batch_experiment,
+       ExperimentController, open_experiment!, save_experiment_record!,
+       experiment_results, experiment_summary, experiment_run_history,
+       experiment_workflow, experiment_workflow!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,
@@ -86,6 +95,7 @@ export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
+include("views/experiment_workflow.jl")
 include("views/mask_editor.jl")
 include("views/preprocess_preview.jl")
 include("views/roi_editor.jl")

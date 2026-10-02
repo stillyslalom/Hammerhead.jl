@@ -37,6 +37,7 @@ const r_track = TrackingResult(
     4, PTVParameters())
 
 @testset "HammerheadGUI.jl" begin
+    include("test_experiments.jl")
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()
         fig = Figure(size = (400, 300))

@@ -150,15 +150,27 @@ end
         cs = origins[k, 2]
         sA = zero(T)
         sB = zero(T)
+        firstA = zero(T)
+        firstB = zero(T)
+        sameA = true
+        sameB = true
         n = 0
         for j in 1:wc, i in 1:wr
             (hasmask && mask[rs + i - 1, cs + j - 1]) && continue
-            sA += T(imgA[rs + i - 1, cs + j - 1])
-            sB += T(imgB[rs + i - 1, cs + j - 1])
+            a = T(imgA[rs + i - 1, cs + j - 1])
+            b = T(imgB[rs + i - 1, cs + j - 1])
+            if n == 0
+                firstA = a
+                firstB = b
+            end
+            sameA &= a == firstA
+            sameB &= b == firstB
+            sA += a
+            sB += b
             n += 1
         end
-        meanA[k] = n > 0 ? sA / n : zero(T)
-        meanB[k] = n > 0 ? sB / n : zero(T)
+        meanA[k] = n == 0 ? zero(T) : (sameA ? firstA : sA / n)
+        meanB[k] = n == 0 ? zero(T) : (sameB ? firstB : sB / n)
     end
 end
 
@@ -526,9 +538,46 @@ end
     tid = @index(Local, Linear)
     k = @index(Group, Linear)
     sval = @localmem T (TPW,)
+    smax = @localmem T (TPW,)
     sord = @localmem Int (TPW,)
     nf = @localmem Int (1,)
-    if use_regionalmax
+    signal = @localmem Int (1,)
+    # Check the entire plane once, cooperatively. A positive constant plane
+    # carries no lag information; nonfinite planes must not select arbitrary
+    # finite fragments. No absolute amplitude floor is used.
+    @inbounds begin
+        lo = T(Inf)
+        hi = T(-Inf)
+        finite = true
+        p = tid
+        while p <= P
+            i = (p - 1) % nr + 1
+            j = (p - 1) ÷ nr + 1
+            value = Rt[i, j, k]
+            finite &= isfinite(value)
+            lo = min(lo, value)
+            hi = max(hi, value)
+            p += TPW
+        end
+        sval[tid] = lo
+        smax[tid] = hi
+        sord[tid] = finite ? 1 : 0
+    end
+    @synchronize
+    @inbounds if tid == 1
+        lo = sval[1]
+        hi = smax[1]
+        finite = sord[1] != 0
+        for t in 2:TPW
+            lo = min(lo, sval[t])
+            hi = max(hi, smax[t])
+            finite &= sord[t] != 0
+        end
+        signal[1] = finite && hi > zero(T) && lo < hi ? 1 : 0
+        nf[1] = 0
+    end
+    @synchronize
+    if signal[1] != 0 && use_regionalmax
         @inbounds if tid == 1
             nf[1] = 0
         end
@@ -576,8 +625,8 @@ end
                     end
                 end
                 fsf = nf[1]
-                # The primary may be non-positive on a degenerate plane, but
-                # secondaries must be positive, exactly like the CPU finder.
+                # Only informative planes reach this scan. Secondary peaks
+                # must be positive, exactly like the CPU finder.
                 if bo != 0 && !(fsf > 0 && bv <= 0)
                     ii = (bo - 1) % nr + 1
                     jj = (bo - 1) ÷ nr + 1
@@ -589,7 +638,7 @@ end
             end
             @synchronize
         end
-    else
+    elseif signal[1] != 0
         @inbounds if tid == 1
             nf[1] = 0
         end
@@ -657,8 +706,7 @@ end
         found = nf[1]
         out[5, k] = T(found)
         if found == 0
-            # Degenerate all-NaN plane; the CPU path reads uninitialized
-            # scratch here, so any well-defined value is acceptable.
+            # No measurement and no alternatives. Never read stale scratch.
             out[1, k] = T(NaN)
             out[2, k] = T(NaN)
             out[3, k] = T(NaN)

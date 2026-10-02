@@ -325,11 +325,12 @@ Float64 before being stored as `T`.
   cannot yield an estimate. The estimate describes the original correlation
   measurement; validation does not update it after replacing or substituting
   a vector.
-- `outliers`: `BitMatrix` marking vectors that failed validation (UOD,
-  peak-ratio check, and/or the `validation` pipeline). When outlier
-  replacement is active, the `u`/`v` entries at
-  these positions hold the local-median replacement rather than the measured
-  displacement.
+- `outliers`: `BitMatrix` marking unmasked nodes without a finite correlation
+  measurement and vectors that failed validation (UOD, peak-ratio check, and/or
+  the `validation` pipeline). Missing measurements are rejected even with
+  optional validators disabled. When outlier replacement is active and enough
+  valid neighbors exist, the `u`/`v` entries at these positions hold a
+  local-median replacement while the flags remain set.
 - `mask`: `BitMatrix` marking nodes dropped because the masked fraction of
   their interrogation or search-area footprint reaches `mask_threshold` (see
   `mask` in [`run_piv`](@ref)). Masked windows

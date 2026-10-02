@@ -223,6 +223,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   output; an environment change requires an explicit override. Scripts are never
   evaluated automatically. The experiment format is separate from result format
   1; unknown versions are rejected. Rerunning is not resuming/checkpoint recovery.
+- `experiment_comparison.jl` — `recipe_diff` verifies both snapshots and returns
+  deterministic field changes, retaining scalar/tuple settings and summarizing
+  embedded mask/background payloads by shape, precision, and canonical SHA-256.
+  Recipe comparisons exclude script locators, input identities, and run metadata.
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -351,6 +355,16 @@ evidence from native teardown/input/platform gaps. A successful framebuffer
 capture is not a clean application-lifecycle result. Keep generated manifests
 and artifacts ignored; retain portable relative source paths in its Project.
 
+`ExperimentController` and `experiment_workflow[!]` provide a separate, read-only
+complete-recipe workflow. `experiment_record` / `save_batch_experiment` export
+file-based batch settings, exact effective preset schedules, and fingerprinted
+built-in preprocessing snapshots. Arbitrary callbacks require `ScriptReference`.
+Do not project imported recipes into the narrower batch/preprocessing widgets.
+Replay captures state before notification, records completed/failed metadata,
+and checks recorded output content before lazy exploration. Live replay progress,
+cancellation, stereo/GPU recipes, and full recipe editing remain open. The batch
+form links to this workflow; its API reference is split into `gui_experiments.md`.
+
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
@@ -446,6 +460,15 @@ before comparing renders in tests; `word_wrap` labels need an explicit
 `width` (with `tellwidth = false` they wrap at a bogus narrow width).
 
 ## Load-bearing conventions
+
+Non-informative correlation planes are unavailable measurements: nonfinite,
+nonpositive, or completely flat planes yield NaN diagnostics/displacement and
+unmasked outlier flags regardless of optional validators. Exact constant valid
+pixels are centered before apodization without averaging roundoff. Predictors
+exclude nonfinite donors and use neutral zero only where no finite fill exists;
+this does not convert missing results into measurements. Originally constant
+patches under nonzero deformation can still acquire interpolation texture;
+source-support propagation remains in ROADMAP.md. Keep tiny true contrast valid.
 
 - **Sign convention (package-wide):** a particle at `(row, col)` in image A
   found at `(row + dv, col + du)` in B yields positive `(du, dv)`; `u` is
@@ -644,6 +667,11 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   rules, population error RMS, analytic midpoint shear truth, complete recipes,
   report round trips, and output protection. Real A/4E rows have no displacement
   truth; cumulative Julia allocations are never labeled peak memory.
+- `test_experiment_comparison.jl` checks full settings, ordered changes,
+  content summaries, scientific versus locator identity, and no retained arrays.
+  `test_noninformative_windows.jl` checks degenerate planes, exact constant
+  inputs, tiny contrast, masks, nonfinite donors, predictors, and UQ on CPU/KA;
+  it also records deformation's unresolved constant-patch limitation.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

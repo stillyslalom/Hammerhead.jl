@@ -58,13 +58,15 @@
               find_peaks(nearby, 4; peak_finder = :regionalmax)
 
         plateau = ones(7, 9)
-        @test ka_regional_peaks(plateau) ==
-              find_peaks(plateau, 4; peak_finder = :regionalmax)
+        # Measurement analysis rejects a flat plane; the generic finder
+        # retains its deterministic plateau candidate contract.
+        @test isempty(ka_regional_peaks(plateau))
+        @test length(find_peaks(plateau, 4; peak_finder = :regionalmax)) == 1
 
         nonpositive = fill(-2.0, 8, 8)
         nonpositive[3, 4] = -1.0
-        @test ka_regional_peaks(nonpositive) ==
-              find_peaks(nonpositive, 4; peak_finder = :regionalmax)
+        @test isempty(ka_regional_peaks(nonpositive))
+        @test length(find_peaks(nonpositive, 4; peak_finder = :regionalmax)) == 1
 
         allnan = fill(NaN, 8, 8)
         @test isempty(ka_regional_peaks(allnan))

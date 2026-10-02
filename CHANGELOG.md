@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Non-informative correlation planes (flat, nonpositive, or nonfinite) now
+  produce unavailable measurements instead of arbitrary boundary displacements.
+  Exact constant windows are centered without roundoff texture before
+  apodization. Unmasked missing measurements remain rejected independently of
+  optional validators; UOD and deformation predictors exclude nonfinite donors.
+  Originally flat patches deformed by nonzero neighboring motion can still gain
+  interpolation texture; original-source support tracking remains open.
+- `recipe_diff` reports deterministic, readable processing-setting changes
+  between verified planar recipe snapshots. Large mask/background payloads use
+  shape/precision/content summaries; script paths, inputs, and run environments
+  remain separate from scientific recipe settings.
 - Added version-1 planar experiment records with content-addressed recipes and
   inputs, explicit built-in preprocessing, embedded backgrounds/masks/ROI,
   environment provenance, and streaming replay with optional run records.
@@ -52,6 +63,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a dedicated saved-experiment controller and workflow, accessible from
+  the batch form. Supported form settings export complete recipes; imported
+  recipes retain fields that the ordinary form cannot edit. Replay records run
+  status and opens completed results lazily, with explicit environment-change
+  consent. This first workflow has no live progress or cancellation.
 - Added an opt-in, isolated Qt6/QML prototype and desktop requirements matrix.
   Windows resolution, controller reuse, and native framebuffer capture have
   evidence; native OpenGL teardown fails and broader platform/input checks remain

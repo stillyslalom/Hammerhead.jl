@@ -12,6 +12,8 @@ image regions. "Edit ROI" opens a rectangle editor on the first frame;
 pairs to JLD2 as the run progresses. "Cancel" stops after the current pair. "View results" opens
 [`result_explorer`](@ref) after the first pair finishes; later pairs appear
 there as they complete.
+"Saved experiments" opens the dedicated recipe workflow to snapshot these
+settings or reopen a saved experiment without narrowing its settings to this form.
 
 Pass a prebuilt [`BatchRunner`](@ref) to supply in-memory frames or control
 the run programmatically.
@@ -117,6 +119,7 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
     explore_label = lift(v -> isempty(v) ? "view results" :
                               "view results ($(length(v)))", bc.completed)
     explore_btn = Button(run_col[12, 1]; label = explore_label, tellwidth = false)
+    experiment_btn = Button(run_col[13, 1]; label = "saved experiments…", tellwidth = false)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -213,6 +216,9 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
     end
     on(_ -> start!(bc), run_btn.clicks)
     on(_ -> cancel!(bc), cancel_btn.clicks)
+    on(experiment_btn.clicks) do _
+        display(GLMakie.Screen(), experiment_workflow(; batch = bc))
+    end
     # Live results hand-off: available as soon as one pair is done, opening
     # the explorer on the completed prefix; results finishing later append
     # into the open explorer (its frame slider grows). Starting a new run

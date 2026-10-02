@@ -201,8 +201,10 @@ Public fields expose the schedule, ordered built-in preprocessing, optional
 script reference, original full-image static mask, ROI, scale, backend and
 precision, plus deformation/mask options. Inputs are copied. Version 1 supports
 CPU/KA and Float32/Float64, not GPU devices, dynamic masks, custom validators,
-stereo/dewarping/self-calibration, PTV, or tracking. Resolve effort presets into
-explicit [`multipass_parameters`](@ref) before constructing a recipe.
+stereo/dewarping/self-calibration, PTV, or tracking. Supply an explicit schedule,
+for example from [`multipass_parameters`](@ref). To snapshot an effort preset
+exactly, use `Hammerhead.effort_schedule(level; image_size=selected_size)` with
+the image or ROI dimensions before constructing the recipe.
 `recipe_id` is a location-independent SHA-256 of the settings; mutation after
 construction is detected before saving or replaying.
 """

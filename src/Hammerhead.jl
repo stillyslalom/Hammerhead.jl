@@ -24,6 +24,7 @@ export load_image, image_pairs, save_results, load_results, run_piv_sequence, fr
 export ResultFile
 export PreprocessStep, ScriptReference, PIVRecipe, ExperimentRecord, ExperimentRun
 export recipe_identity, save_experiment, load_experiment, replay_experiment
+export recipe_diff, RecipeDiff, RecipeChange, RecipeArraySummary
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask
@@ -81,6 +82,7 @@ include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
 include("experiments.jl")
+include("experiment_comparison.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the
 # 0.99-quantile magnitude among the selected vectors to `target_length` (the

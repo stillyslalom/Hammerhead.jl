@@ -8,6 +8,8 @@ The desktop GUI uses GLMakie. The application and view functions below open
 interactive tools; `HammerheadGUI.Controllers` holds their state and actions
 for scripted use without a display. Start with the
 [GUI tour](../tutorials/gui_tour.md) for a worked session.
+Saved-recipe controls and views have their own
+[experiment workflow reference](gui_experiments.md).
 
 ```@index
 Pages = ["gui.md"]
@@ -18,6 +20,9 @@ Pages = ["gui.md"]
 ```@autodocs
 Modules = [HammerheadGUI]
 Order = [:module, :type, :function, :constant, :macro]
+Pages = ["HammerheadGUI.jl", "widgets.jl", "result_explorer.jl", "mask_editor.jl",
+         "preprocess_preview.jl", "roi_editor.jl", "batch_runner.jl", "scale_tool.jl",
+         "calibration_review.jl", "stereo_batch.jl"]
 ```
 
 ## Controllers
@@ -39,4 +44,6 @@ does not follow live writes. Each complete selected result must fit memory.
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
+Pages = ["result_explorer.jl", "mask_editor.jl", "preprocess_preview.jl", "roi_editor.jl",
+         "batch_runner.jl", "scale_tool.jl", "calibration_review.jl", "stereo_batch.jl"]
 ```

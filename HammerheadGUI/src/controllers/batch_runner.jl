@@ -69,6 +69,7 @@ struct BatchRunner
     results::Observable{Union{Nothing,Vector{PIVResult}}}
     completed::Observable{Vector{PIVResult}}
     preprocess::Observable{Union{Nothing,Function}}
+    preprocess_snapshot::Observable{Union{Nothing,NamedTuple}}
 end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
@@ -99,7 +100,8 @@ function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
                        Observable((0, 0)), Observable(""),
                        Observable{Union{Nothing,Vector{PIVResult}}}(nothing),
                        Observable(PIVResult[]),
-                       Observable{Union{Nothing,Function}}(nothing))
+                       Observable{Union{Nothing,Function}}(nothing),
+                       Observable{Union{Nothing,NamedTuple}}(nothing))
 end
 
 function Base.show(io::IO, bc::BatchRunner)
@@ -268,10 +270,24 @@ Attach a preprocessing pipeline applied to every frame of the batch: a
 closure is snapshotted now), a bare function `img -> img′`, or `nothing` to
 clear.
 """
-set_preprocess!(bc::BatchRunner, ::Nothing) = (bc.preprocess[] = nothing; bc)
-set_preprocess!(bc::BatchRunner, f::Function) = (bc.preprocess[] = f; bc)
-set_preprocess!(bc::BatchRunner, pp::PreprocessPreview) =
-    (bc.preprocess[] = build_preprocess(pp); bc)
+function set_preprocess!(bc::BatchRunner, ::Nothing)
+    bc.preprocess_snapshot[] = nothing
+    bc.preprocess[] = nothing
+    bc
+end
+function set_preprocess!(bc::BatchRunner, f::Function)
+    bc.preprocess_snapshot[] = nothing
+    bc.preprocess[] = f
+    bc
+end
+function set_preprocess!(bc::BatchRunner, pp::PreprocessPreview)
+    steps = preprocess_steps(pp)
+    callback = build_preprocess(pp)
+    identity = recipe_identity(PIVRecipe(PIVParameters();preprocessing=steps))
+    bc.preprocess_snapshot[] = (; callback, steps, identity)
+    bc.preprocess[] = callback
+    bc
+end
 
 """
     build_scale(bc::BatchRunner) -> Union{Nothing,PhysicalScale}

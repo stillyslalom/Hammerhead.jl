@@ -187,6 +187,29 @@ end
 # must be re-zeroed on every call. Masked pixels (submask true) are loaded at
 # the valid-pixel mean, so they contribute exactly zero after mean subtraction
 # — no intensity step at the mask edge to bias the correlation peak.
+function _window_mean(::Type{T}, sub, mask) where {T}
+    if mask === nothing
+        first_value = T(first(sub))
+        # Summing a repeated floating value can round its mean away from that
+        # value. Apodization would turn the residual into artificial texture.
+        all(v -> T(v) == first_value, sub) && return first_value
+        return T(sum(sub) / length(sub))
+    end
+    total = zero(T)
+    first_value = zero(T)
+    same = true
+    n = 0
+    @inbounds for j in axes(sub, 2), i in axes(sub, 1)
+        mask[i, j] && continue
+        value = T(sub[i, j])
+        n == 0 && (first_value = value)
+        same &= value == first_value
+        total += value
+        n += 1
+    end
+    return n == 0 ? zero(T) : (same ? first_value : total / n)
+end
+
 function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix,
                        submask = nothing)
     T = eltype(c.R)
@@ -199,10 +222,10 @@ function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix
         fill!(c.C2, zero(eltype(c.C2)))
     end
     if c.ssize == c.wsize && maskA === maskB
-        # Preserve the original equal-area path bit for bit.
+        # Preserve the original centering for nonconstant windows.
         if maskA === nothing
-            meanA = T(sum(subA) / length(subA))
-            meanB = T(sum(subB) / length(subB))
+            meanA = _window_mean(T, subA, nothing)
+            meanB = _window_mean(T, subB, nothing)
             @inbounds for j in 1:wc, i in 1:wr
                 c.C1[i, j] = c.apod[i, j] * (T(subA[i, j]) - meanA)
                 c.C2[i, j] = c.apod[i, j] * (T(subB[i, j]) - meanB)
@@ -210,13 +233,8 @@ function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix
         else
             size(maskA) == c.wsize ||
                 throw(DimensionMismatch("mask must match the window size $(c.wsize), got $(size(maskA))"))
-            sA = zero(T); sB = zero(T); n = 0
-            @inbounds for j in 1:wc, i in 1:wr
-                maskA[i, j] && continue
-                sA += T(subA[i, j]); sB += T(subB[i, j]); n += 1
-            end
-            meanA = n > 0 ? sA / n : zero(T)
-            meanB = n > 0 ? sB / n : zero(T)
+            meanA = _window_mean(T, subA, maskA)
+            meanB = _window_mean(T, subB, maskB)
             @inbounds for j in 1:wc, i in 1:wr
                 if maskA[i, j]
                     c.C1[i, j] = zero(eltype(c.C1)); c.C2[i, j] = zero(eltype(c.C2))
@@ -233,26 +251,8 @@ function load_windows!(c::Correlator, subA::AbstractMatrix, subB::AbstractMatrix
         throw(DimensionMismatch("frame-A mask must match window size $(c.wsize), got $(size(maskA))"))
     maskB === nothing || size(maskB) == c.ssize ||
         throw(DimensionMismatch("frame-B mask must match search-area size $(c.ssize), got $(size(maskB))"))
-    if maskA === nothing
-        meanA = T(sum(subA) / length(subA))
-    else
-        sA = zero(T); nA = 0
-        @inbounds for j in 1:wc, i in 1:wr
-            maskA[i, j] && continue
-            sA += T(subA[i, j]); nA += 1
-        end
-        meanA = nA > 0 ? sA / nA : zero(T)
-    end
-    if maskB === nothing
-        meanB = T(sum(subB) / length(subB))
-    else
-        sB = zero(T); nB = 0
-        @inbounds for j in 1:sc, i in 1:sr
-            maskB[i, j] && continue
-            sB += T(subB[i, j]); nB += 1
-        end
-        meanB = nB > 0 ? sB / nB : zero(T)
-    end
+    meanA = _window_mean(T, subA, maskA)
+    meanB = _window_mean(T, subB, maskB)
     @inbounds for j in 1:wc, i in 1:wr
         c.C1[off_r + i, off_c + j] = maskA !== nothing && maskA[i, j] ?
             zero(eltype(c.C1)) : c.apod[i, j] * (T(subA[i, j]) - meanA)
@@ -306,6 +306,10 @@ Returns a named tuple `(du, dv, peak, peakloc, refined_peakloc, correlation)`:
 - `peakloc`: integer `(row, col)` peak location in the correlation plane;
 - `refined_peakloc`: subpixel `(row, col)` peak location;
 - `correlation`: the real correlation plane (zero lag at `size .÷ 2 .+ 1`).
+
+A nonfinite, nonpositive, or completely flat plane carries no displacement
+measurement: `du`, `dv`, `peak`, and `refined_peakloc` are `NaN`, and
+`peakloc` is the sentinel `(0, 0)`. No absolute signal threshold is applied.
 
 `subpixel` is one of `:gauss3`, `:gauss9`, `:gauss2d`, or `:none`.
 
@@ -458,11 +462,25 @@ end
 # Analyze one correlation plane using scratch vals/locs (length ≥
 # max(params.n_peaks, 2)): subpixel primary displacement, peak ratio from the
 # top two peaks, correlation moment, and the peak list for alternatives.
+function _informative_plane(R::AbstractMatrix{T}) where {T}
+    lo, hi = T(Inf), T(-Inf)
+    @inbounds for value in R
+        isfinite(value) || return false
+        lo = min(lo, value)
+        hi = max(hi, value)
+    end
+    return hi > zero(T) && lo < hi
+end
+
 function analyze_plane!(vals, locs, R::AbstractMatrix{T}, params::PIVParameters) where {T}
+    center = size(R) .÷ 2 .+ 1
+    _informative_plane(R) || return (; du = T(NaN), dv = T(NaN),
+        ratio = T(NaN), moment = T(NaN), found = 0, center)
     found = find_peaks!(vals, locs, R, max(params.n_peaks, 2);
                         peak_finder = params.peak_finder)
+    found > 0 || return (; du = T(NaN), dv = T(NaN),
+        ratio = T(NaN), moment = T(NaN), found = 0, center)
     refined = refine_peak(R, locs[1], params.subpixel_method)
-    center = size(R) .÷ 2 .+ 1
     ratio = found >= 2 ? vals[1] / vals[2] : (vals[1] > 0 ? T(Inf) : T(NaN))
     return (; du = refined[2] - center[2], dv = refined[1] - center[1],
             ratio, moment = T(calculate_correlation_moment(R, refined)),
@@ -470,7 +488,11 @@ function analyze_plane!(vals, locs, R::AbstractMatrix{T}, params::PIVParameters)
 end
 
 # Locate the displacement peak of a correlation plane (zero lag at center).
-function locate_displacement(R::AbstractMatrix{<:AbstractFloat}, subpixel::Symbol)
+function locate_displacement(R::AbstractMatrix{T}, subpixel::Symbol) where {T<:AbstractFloat}
+    subpixel in (:gauss3, :gauss9, :gauss2d, :none) ||
+        throw(ArgumentError("unknown subpixel method :$subpixel (expected :gauss3, :gauss9, :gauss2d, or :none)"))
+    _informative_plane(R) || return (; du = T(NaN), dv = T(NaN),
+        peak = T(NaN), peakloc = (0, 0), refined_peakloc = (T(NaN), T(NaN)))
     peakidx = argmax(R)
     peak = R[peakidx]
     peakloc = Tuple(peakidx)

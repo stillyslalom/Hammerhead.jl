@@ -53,23 +53,8 @@ function load_uncertainty_windows!(wA::AbstractMatrix{T}, wB::AbstractMatrix{T},
                                    submask::Union{Nothing,AbstractMatrix{Bool}},
                                    apod::AbstractMatrix) where {T}
     wr, wc = size(wA)
-    local meanA::T, meanB::T
-    if submask === nothing
-        meanA = T(sum(subA) / length(subA))
-        meanB = T(sum(subB) / length(subB))
-    else
-        sA = zero(T)
-        sB = zero(T)
-        n = 0
-        @inbounds for j in 1:wc, i in 1:wr
-            submask[i, j] && continue
-            sA += T(subA[i, j])
-            sB += T(subB[i, j])
-            n += 1
-        end
-        meanA = n > 0 ? sA / n : zero(T)
-        meanB = n > 0 ? sB / n : zero(T)
-    end
+    meanA = _window_mean(T, subA, submask)
+    meanB = _window_mean(T, subB, submask)
     @inbounds for j in 1:wc, i in 1:wr
         if submask !== nothing && submask[i, j]
             wA[i, j] = zero(T)

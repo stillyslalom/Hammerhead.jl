@@ -56,9 +56,12 @@ count and the selection rule. An empty scene records the actual outcome:
 `no_valid_vectors`, or an explicit unexpected-valid-vectors status if the
 pipeline admits any; missing error statistics never appear as passed accuracy.
 The initial baseline exposed this latter failure: the empty pair produced an
-apparently valid field with artificial displacement. Repairing non-informative
-window handling is tracked in the roadmap; use the generated status to assess
-the current implementation rather than assuming this fixture passes.
+apparently valid field with artificial displacement. After adding exact-constant
+input and non-informative-plane guards, the expanded Windows CPU rerun on
+2026-10-02 reports `no_valid_vectors` (0/225) for this pair. Translation/shear
+error metrics and A/4E smoke yields remain unchanged. This fixes the wholly empty
+pair; [originally flat patches under nonzero deformation](../explanation/noninformative_windows.md)
+remain a separate limitation. Use the generated status to assess later changes.
 
 ## Compare processing time and expand the conditions
 

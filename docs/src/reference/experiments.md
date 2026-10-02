@@ -18,6 +18,34 @@ independent. See [Save and replay a planar experiment](../howto/experiments.md).
 contained vector/matrix/dictionary is detected on save/replay. Construct a new
 recipe to record a processing revision.
 
+`recipe_diff(before, after)` compares verified `PIVRecipe` snapshots and returns
+a `RecipeDiff` with their identities and ordered `RecipeChange` entries. Each
+change has a field `path` and detached `before`/`after` values. Dictionary fields
+are traversed in sorted order; ordered passes, preprocessing and validators use
+1-based positional paths, such as `passes[2].window_size` and
+`preprocessing[1].options.sigma`. Reorders appear as changes at the affected
+positions, rather than inferred move operations. The report supports iteration,
+integer indexing, `length`, and `isempty`, and has readable text/plain display.
+
+Small settings remain scalars/tuples; added/removed nested items become named
+tuples. A `missing` value means an absent sequence item or mapping field, while
+`nothing` remains a real optional-setting value. Embedded arrays always become
+`RecipeArraySummary(size, element_type, sha256)` values, even inside added or
+removed preprocessing steps. Digests include shape, precision and column-major
+content through the experiment identity encoding. Reports retain no mask or
+background array, and their summaries use chunked canonical hashing. Snapshot
+verification still uses `recipe_identity`, including its existing temporary
+encoding allocations. Reports compare by value and do not mutate either recipe.
+
+Only scientific recipe settings participate: referenced script digest and
+entrypoint are included; locators, experiment inputs, environments, run history
+and output paths are excluded. Relocated identical scripts compare equal even
+if their files are unavailable. Comparison verifies saved snapshot integrity,
+not current script-file bytes; recreate a `ScriptReference` for a new snapshot
+or use replay's content preflight to check the current file. Compare `input_id`
+separately when comparing experiments. This API performs no numerical execution
+and does not assess the impact of changes on representative image pairs.
+
 | Native experiment field | Meaning |
 |:------------------------|:--------|
 | `experiment_format_version` | Integer `1`; unknown versions are rejected before decoding settings. |
@@ -104,6 +132,6 @@ Pages = ["experiments.md"]
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["experiments.jl"]
+Pages = ["experiments.jl", "experiment_comparison.jl"]
 Private = false
 ```

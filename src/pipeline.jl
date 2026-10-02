@@ -439,18 +439,29 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     return scale === nothing ? result : with_scale(result, scale)
 end
 
-# Predictor for the next pass: masked cells (NaN) are filled from valid
-# neighbors so interpolation and deformation stay finite everywhere, then the
-# field is optionally smoothed.
+# Predictor conditioning never changes the measurement arrays or their flags.
+# Use finite replacements where available; missing values get a neutral zero
+# only in the predictor if too few neighbors exist for interpolation.
 function build_predictor(result::PIVResult, smoothing::Bool)
     pu, pv = result.u, result.v
-    if any(result.mask)
+    invalid = result.mask .| .!isfinite.(pu) .| .!isfinite.(pv)
+    if any(invalid)
         pu, pv = copy(pu), copy(pv)
-        replace_vectors!(pu, pv, result.mask)
+        replace_vectors!(pu, pv, invalid)
+        @inbounds for i in eachindex(pu, pv)
+            if !isfinite(pu[i]) || !isfinite(pv[i])
+                pu[i] = zero(eltype(pu))
+                pv[i] = zero(eltype(pv))
+            end
+        end
     end
     if smoothing
         pu, pv = smooth_field(pu), smooth_field(pv)
     end
+    # Avoid manufacturing roundoff texture by resampling a constant image
+    # when the displacement is exactly zero. All backends already skip this
+    # deformation when there is no predictor.
+    all(iszero, pu) && all(iszero, pv) && return nothing
     return (x = result.x, y = result.y, u = pu, v = pv)
 end
 
@@ -621,13 +632,14 @@ _deform_context(::_AbstractHammerheadBackend, workspace, itpA, itpB,
 # substitution of flagged vectors.
 function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
                                force_replace::Bool; alternatives = nothing) where {T}
+    @. result.outliers |= !isfinite(result.u) | !isfinite(result.v)
     if params.uod_enable
         apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
             neighborhood_size = params.uod_neighborhood))
     end
-    if params.min_peak_ratio > 1
-        apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
-    end
+    # NaN means no correlation measurement, even when ratio filtering uses
+    # its default threshold of one. Positive singleton peaks may have Inf.
+    apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
     validate_vectors!(result, params.validation)
     # Masked windows carry no measurement: they are dropped, not "bad".
     result.outliers .&= .!result.mask
@@ -644,6 +656,17 @@ function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
             replace_vectors!(result.u, result.v, invalid)
             result.u[result.mask] .= T(NaN)
             result.v[result.mask] .= T(NaN)
+        end
+    end
+    drop_unavailable_uncertainty!(result)
+    return result
+end
+
+function drop_unavailable_uncertainty!(result::PIVResult{T}) where {T}
+    @inbounds for i in eachindex(result.peak_ratio)
+        if isnan(result.peak_ratio[i])
+            result.uncertainty_u[i] = T(NaN)
+            result.uncertainty_v[i] = T(NaN)
         end
     end
     return result
@@ -832,6 +855,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         result.u[result.outliers] = meas_u[result.outliers]
         result.v[result.outliers] = meas_v[result.outliers]
     end
+    drop_unavailable_uncertainty!(result)
     release_piv_engines!(backend, engines, workspace)
     return result
 end

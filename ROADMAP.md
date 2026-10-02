@@ -56,10 +56,19 @@ existing implementation is preferable; they are not commitments to add an API.
   Known-motion measurements are explicitly unavailable. Reports record input
   and source hashes, complete settings, environment, warmed CPU timings, and
   cumulative Julia allocations; allocations are not peak memory.
-- [ ] Reject non-informative correlation windows consistently across backends.
-  The initial empty-image scorecard admits a full field with artificial
-  displacement; add a regression for zero/constant images and preserve valid
-  low-signal behavior. Record the repaired outcome in the scorecard.
+- [x] Reject absent, nonpositive, nonfinite, and flat correlation planes on CPU
+  and shared KA paths; center exact constant correlation-input windows without
+  artificial apodization texture. [Regressions](test/test_noninformative_windows.jl)
+  cover stale peak scratch, masks, tiny real contrast, wholly blank multipass/
+  ensemble inputs, finite predictors, and unavailable uncertainty. These guards
+  repair the original empty-image scorecard failure.
+- [ ] Preserve original-source support information through deformation and
+  ensemble processing so originally constant patches beside real motion cannot
+  become apparent measurements from interpolation roundoff. Exact constant
+  centering of already warped windows cannot distinguish that artifact from
+  true weak contrast. Keep this limitation separate from the repaired empty-pair
+  case; [the explanation](docs/src/explanation/noninformative_windows.md)
+  records the bounded guarantees and remaining evidence.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -96,11 +105,20 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [x] Save/reopen and replay a planar recipe without reconstructing settings.
   Replay verifies inputs and environment before output, streams results, and
   optionally records completed/failed runs. This is a rerun-from-start API.
-- [ ] Extend experiment records to the GUI, stereo calibration/dewarping/
-  self-calibration, PTV/tracking, and supported GPU devices. Define migrations
-  when extending the format; keep toolkit dependencies in the GUI package.
-- [ ] Compare experiment processing revisions with a human-readable settings
-  diff and representative-pair results.
+- [x] Connect planar experiment records to GUI batch snapshots, complete-recipe
+  inspection/replay, run history, and content-verified lazy result browsing.
+  [The GUI workflow](docs/src/howto/gui_experiments.md) preserves exact imported
+  settings; live progress/cancellation and full recipe editing remain open below.
+- [ ] Extend experiment records to stereo calibration/dewarping/self-calibration,
+  PTV/tracking, and supported GPU devices. Define migrations when extending the
+  format; keep toolkit dependencies in the GUI package.
+- [x] Compare experiment processing revisions with a human-readable settings
+  diff. `recipe_diff` returns deterministic field paths and before/after values,
+  with content summaries for embedded arrays and explicit added/removed items.
+  [Comparison tests](test/test_experiment_comparison.jl) cover full settings,
+  snapshot integrity, ordered operations, and location-independent script identity.
+- [ ] Compare representative-pair numerical results across recipe revisions,
+  including quality/uncertainty and preprocessing/window-size sensitivity.
 - [ ] Preserve exposure timestamps, pair delay, sample time, source frame IDs,
   time units, and calibration/coordinate-frame identity through native persistence
   and exports. Define the time assigned to a displacement measurement.
@@ -258,6 +276,12 @@ evidence.
 - [ ] Connect setup, preprocessing, mask/ROI, calibration, representative-pair
   comparison, batch, saved quality reports, and export through the shared
   experiment record from slice 2.
+  The first [saved planar GUI workflow](docs/src/howto/gui_experiments.md)
+  snapshots supported batch/preprocessing/mask/ROI/scale settings and reopens
+  complete recipes in a separate read-only controller. It replays exact settings,
+  retains run history, and verifies completed output content before lazy browsing.
+  Stereo calibration, revision-result comparison, quality reports, live replay
+  progress/cancellation, and broader workflow integration remain open.
 - [x] Add editable GUI ROI selection using the existing core `ROI` semantics.
   The editor supports two-corner selection, numeric bounds, and full-image reset;
   batches preserve mask and coordinate semantics and snapshot the selected ROI.

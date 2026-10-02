@@ -57,12 +57,40 @@ preflight rejection does not alter either destination.
 ## Record processing revisions
 
 Treat recipes as snapshots. To change the schedule or preprocessing, create
-a new `PIVRecipe` and `ExperimentRecord` from the same input pairs. Compare
-`recipe_identity(first.recipe)` with `recipe_identity(second.recipe)` and
-inspect the public recipe fields to explain a difference. Identical byte inputs
-at different paths have the same `input_id`, while altered pair order, content,
-or dimensions change it. Use a distinct result path for each run if earlier
-outputs must remain available for comparison.
+a new `PIVRecipe` and `ExperimentRecord` from the same input pairs. Use
+`recipe_diff` to inspect the processing changes before running either revision:
+
+```@example experiments
+revised = PIVRecipe(recipe.passes;
+    preprocessing=[PreprocessStep(:highpass_filter; sigma=5)],
+    mask=recipe.mask, roi=recipe.roi, scale=recipe.scale, image_type=Float64)
+changes = recipe_diff(recipe, revised)
+[(change.path, change.before, change.after) for change in changes]
+```
+
+The change paths identify image precision and the first preprocessing step's
+sigma. Display `changes` directly for a compact readable report, or use its
+`changes`, `before_id`, and `after_id` fields in scripts or GUI forms. Comparison
+checks snapshot integrity first and rejects recipes whose contained settings
+were mutated; it does not execute PIV or read input/script files.
+
+Passes, preprocessing, and validators are compared by their ordered positions.
+Window/search sizes, ROI bounds, and CLAHE tiles remain readable tuples. Changed
+embedded masks and backgrounds have `RecipeArraySummary` values containing
+size, element type, and full content digest, rather than pixel dumps. Added or
+removed sequence items use `missing`; an explicitly disabled optional mask,
+ROI, scale, or script remains `nothing`. Script content digests and entrypoints
+are compared, while relocated locators alone do not create changes. Recreate
+a `ScriptReference` to snapshot changed script content; comparison does not
+rehash files on disk.
+
+Compare experiment `input_id` values separately: `recipe_diff(first.recipe,
+second.recipe)` describes processing settings, not input, output, or environment
+changes. Identical byte inputs at different paths have the same `input_id`,
+while altered pair order, content, or dimensions change it. A configuration
+report does not predict the numerical effect on representative pairs. Use a
+distinct result path for each run if earlier outputs must remain available for
+comparison.
 
 Replay checks input and referenced-script content before opening result output.
 It also rejects overlapping input/script/record destinations, including same-file
