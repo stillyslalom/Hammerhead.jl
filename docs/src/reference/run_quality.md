@@ -70,6 +70,12 @@ explicitly labels `rejection_events`, `replacement_history`,
 `available=false`. Current finite/nonnegative UQ counts establish neither
 measurement association nor calibrated uncertainty coverage.
 
+This version summarizes result fields only. Its legacy `not_persisted` reason
+means that the needed history is absent from those fields; the report does not
+inspect optional [measurement-history companions](measurement_history.md) or
+execution diagnostics, even when the native file contains them. Use the
+companion readers for those observations. Report integration is separate work.
+
 Report snapshots retain no payload arrays and dictionary access returns a
 copy. Known protected locators are authoritative when saving, with normalized
 path and filesystem same-file checks. Anonymous iterators need explicit

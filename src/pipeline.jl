@@ -355,6 +355,14 @@ Callback exceptions propagate. With no callback, no diagnostics observations,
 summaries or source hashes are allocated/computed. Existing stopping semantics
 are preserved: the final budgeted sweep is not tolerance-checked.
 
+`on_measurement_history(history)` separately observes the final pass's final
+executed sweep through [`PIVMeasurementHistory`](@ref): primary and residual
+components, first observed rejection stages, actual accepted alternative ranks,
+median assignments/restoration and final origin. It does not change numerical
+processing or certify uncertainty applicability. The packet is detached;
+private mutation is detected after callback delivery. No history observations
+or hashes are computed when this callback is absent.
+
 Returns the [`PIVResult`](@ref) of the final pass.
 """
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
@@ -369,16 +377,12 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  workspace::Union{Nothing,PIVWorkspace} = nothing,
                  scale::Union{Nothing,PhysicalScale} = nothing,
                  roi = nothing,
-                 on_diagnostics::Union{Nothing,Function} = nothing)
+                 on_diagnostics::Union{Nothing,Function} = nothing,
+                 on_measurement_history::Union{Nothing,Function} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
-    if roi !== nothing
-        rr = roi isa ROI ? roi : ROI(roi)
-        a, b, m = roi_views(imgA, imgB, mask, rr)
-        result = run_piv(a, b, passes; backend, uncertainty_backend, threaded,
-                         predictor_smoothing, mask=m, mask_threshold, workspace, scale, on_diagnostics)
-        return offset_result(result, rr)
-    end
+    rr = roi === nothing ? nothing : roi isa ROI ? roi : ROI(roi)
+    rr === nothing || ((imgA, imgB, mask) = roi_views(imgA, imgB, mask, rr))
     be = _resolve_backend(backend)
     uncertainty_backend in (:same, :cpu) ||
         throw(ArgumentError("uncertainty_backend must be :same or :cpu, got :$uncertainty_backend"))
@@ -435,6 +439,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
 
     result = nothing
     pass_diagnostics = on_diagnostics === nothing ? nothing : PassDiagnostics[]
+    history_state = on_measurement_history === nothing ? nothing : Ref{Any}(nothing)
     for (k, params) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
@@ -446,10 +451,18 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           warp_buffers, backend = be, workspace,
                           uncertainty_backend,
                           deform_context = dctx, source_context,
-                          diagnostics = pass_diagnostics, pass_index = k)
+                          diagnostics = pass_diagnostics, pass_index = k,
+                          history_state = k == length(passes) ? history_state : nothing)
     end
     on_diagnostics === nothing || on_diagnostics(_execution_finish(pass_diagnostics, backend, T, size(imgA)))
-    return scale === nothing ? result : with_scale(result, scale)
+    result = scale === nothing ? result : with_scale(result, scale)
+    result = rr === nothing ? result : offset_result(result, rr)
+    if history_state !== nothing
+        history = _history_finish(history_state[],result,backend,size(imgA),length(passes))
+        on_measurement_history(history)
+        _history_check_result(history,result)
+    end
+    return result
 end
 
 # Predictor conditioning never changes the measurement arrays or their flags.
@@ -644,21 +657,39 @@ _deform_context(::_AbstractHammerheadBackend, workspace, itpA, itpB,
 # as a pair of (ny, nx, n_peaks-1) arrays (NaN where absent) for peak
 # substitution of flagged vectors.
 function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
-                               force_replace::Bool; alternatives = nothing) where {T}
+                               force_replace::Bool; alternatives = nothing, history = nothing) where {T}
+    history === nothing || _history_before!(history,result)
     @. result.outliers |= !isfinite(result.u) | !isfinite(result.v)
-    if params.uod_enable
-        apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
-            neighborhood_size = params.uod_neighborhood))
+    history === nothing || _history_after!(history,result,1)
+    # NaN means no correlation measurement even with the default ratio
+    # threshold of one. Positive singleton peaks may have Inf.
+    if history === nothing
+        if params.uod_enable
+            apply_validator!(result, UniversalOutlierValidator(params.uod_threshold;
+                neighborhood_size = params.uod_neighborhood))
+        end
+        apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
+        validate_vectors!(result, params.validation)
+    else
+        stage=2
+        if params.uod_enable
+            _history_validator!(history,result,UniversalOutlierValidator(params.uod_threshold;
+                neighborhood_size=params.uod_neighborhood),stage)
+            stage+=1
+        end
+        _history_validator!(history,result,PeakRatioValidator(params.min_peak_ratio),stage)
+        stage+=1
+        for spec in params.validation
+            _history_validator!(history,result,parse_validator(spec),stage)
+            stage+=1
+        end
     end
-    # NaN means no correlation measurement, even when ratio filtering uses
-    # its default threshold of one. Positive singleton peaks may have Inf.
-    apply_validator!(result, PeakRatioValidator(params.min_peak_ratio))
-    validate_vectors!(result, params.validation)
     # Masked windows carry no measurement: they are dropped, not "bad".
     result.outliers .&= .!result.mask
+    history === nothing || copyto!(history.pre_substitution,result.outliers)
 
     if alternatives !== nothing
-        substitute_alternatives!(result, alternatives[1], alternatives[2], params)
+        substitute_alternatives!(result, alternatives[1], alternatives[2], params; history)
     end
 
     if force_replace || params.replace_outliers
@@ -666,7 +697,7 @@ function validate_and_replace!(result::PIVResult{T}, params::PIVParameters,
         # flag them invalid for the fill, then restore their NaN.
         invalid = result.outliers .| result.mask
         if any(invalid)
-            replace_vectors!(result.u, result.v, invalid)
+            replace_vectors!(result.u, result.v, invalid; history, history_mask=result.mask)
             result.u[result.mask] .= T(NaN)
             result.v[result.mask] .= T(NaN)
         end
@@ -704,7 +735,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   workspace::Union{Nothing,PIVWorkspace} = nothing,
                   uncertainty_backend::Symbol = :same,
                   deform_context = nothing, source_context = nothing,
-                  diagnostics = nothing, pass_index = 1)
+                  diagnostics = nothing, pass_index = 1, history_state = nothing)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     source_context === nothing &&
@@ -772,6 +803,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     local result, warpA, warpB
     source_gate = nothing
     observation = diagnostics === nothing ? nothing : _PassObservation(maxiter)
+    history = history_state === nothing ? nothing : _HistoryObservation(T,(ny,nx),params)
     for it in 1:maxiter
         observation === nothing || (observation.executed = it)
         warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
@@ -817,11 +849,12 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         if keep_measured
             meas_u, meas_v = copy(u), copy(v)
         end
+        history === nothing || _history_begin!(history,u,v,residual_u,residual_v,it)
         result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                            uncertainty_u, uncertainty_v,
                            falses(ny, nx), grid.grid_mask, params, planes)
         validate_and_replace!(result, params, force_replace || maxiter > 1;
-                              alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
+                              alternatives = alt_u === nothing ? nothing : (alt_u, alt_v), history)
         it == maxiter && break
         # convergence_tol = 0 disables the early exit; skip the change
         # tracking entirely then.
@@ -876,8 +909,10 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     if keep_measured && any(result.outliers)
         result.u[result.outliers] = meas_u[result.outliers]
         result.v[result.outliers] = meas_v[result.outliers]
+        history === nothing || (history.primary_restored .= result.outliers .& .!result.mask)
     end
     drop_unavailable_uncertainty!(result)
+    history_state === nothing || (history_state[] = history)
     release_piv_engines!(backend, engines, workspace)
     if observation !== nothing
         # These separate correlation-output arrays have never been modified by

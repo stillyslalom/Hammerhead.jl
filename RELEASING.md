@@ -47,6 +47,7 @@ julia --project=. -t 4 -e 'using Pkg; Pkg.test()'
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'
 julia --project=docs docs/make.jl
 julia --project=. -t 4 bench/validation_scorecard.jl
+julia --project=. -t 4 bench/validation_uncertainty.jl
 ```
 
 The GUI and docs require a GL context. Linux CI supplies one through Xvfb;
@@ -79,6 +80,8 @@ links to logs and artifacts. Record what was not exercised as well as what passe
 | Checkpoint recovery | Filesystem/OS, exact identities, handled failure, cancellation, hard process termination at publication boundaries, unchanged committed prefix, and explicit interrupted-writer recovery. Same-directory rename evidence is not power-loss durability. |
 | Quality reports | Counter/denominator correctness, unavailable diagnostics, verified output association, protected destinations, and shared script/GUI report behavior. |
 | Execution diagnostics | Diagnostics-on/off numerical parity, actual stopping/check semantics, primary-residual population, callback failure cleanup, optional companion schema and replay association. |
+| Measurement history | Numerical parity, actual alternative/fill/restoration events, first-observed rejection semantics, callback mutation guards, result-content binding and bounded sequence lifetime. Keep final-sweep evidence distinct from a complete processing trace. |
+| Synthetic uncertainty | Seed/input/source identities, controlled primary-only output recipe, component populations, zero/nonfinite uncertainty handling, coverage and signed normalized errors. Synthetic observations do not establish experimental coverage or Gaussian calibration. |
 | Recipe comparisons | Selected input identities, exact common-grid populations, scale/unit compatibility, arithmetic availability, stored UQ semantics, detached report round trips and alias guards. Differences between recipes are not ground-truth errors. |
 | GUI checkpoints | Full-recipe capture, pair-boundary progress/cancellation, explicit recovery, fixed lazy prefixes, fresh aggregate export, and inspected default-size layouts. Distinguish offscreen checks from native input/responsiveness evidence. |
 

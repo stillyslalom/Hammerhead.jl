@@ -46,3 +46,9 @@ and can accompany planar sequence/replay results. CPU/KA tests establish the
 software behavior; new vendor-device execution evidence remains separate.
 Stereo needs distinct per-camera diagnostics, and ensemble iteration semantics
 require a separate model; neither currently accepts this planar diagnostics API.
+
+[Measurement history](../howto/measurement_history.md) observes the final
+planar pass's final sweep and can accompany sequence/replay results. It records
+validation, alternative-peak and filling events on the host result grid.
+Stereo, ensemble, PTV and checkpoint companions remain outside this API;
+vendor-device correctness still requires hardware evidence.

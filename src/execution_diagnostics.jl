@@ -3,6 +3,7 @@ const EXECUTION_DIAGNOSTICS_FORMAT_VERSION = 1
 function _reject_execution_diagnostics(kwargs, workflow = "stereo")
     any(k -> haskey(kwargs, k), (:on_diagnostics, :record_diagnostics, :_diagnostics_association)) &&
         throw(ArgumentError("execution diagnostics currently support planar PIV only; $workflow diagnostics are not implemented"))
+    _reject_measurement_history(kwargs,workflow)
     nothing
 end
 

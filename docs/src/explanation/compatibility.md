@@ -46,6 +46,15 @@ The diagnostics reader rejects malformed or unknown versions, while absence
 means not recorded. Generic result-only copies do not preserve companions.
 See [execution diagnostics](../reference/execution_diagnostics.md).
 
+Final-sweep measurement history uses a separate optional native companion,
+`measurement_history_format_version = 1`. It records observed validation,
+alternative-peak and filling events without changing result structures or the
+execution-diagnostics schema. Snapshot integrity and result-key binding are
+checked by the history reader; `verify_result=true` additionally loads the
+selected payload and verifies its numerical content binding. Metadata-only
+loading does not perform that payload check. Result-only copies drop this
+companion. See [measurement history](../reference/measurement_history.md).
+
 Representative-pair comparisons use independent version-1 TOML snapshots,
 identified by `pair_comparison_format_version`. They preserve selected-input
 provenance, settings differences, units and comparison populations. Loading

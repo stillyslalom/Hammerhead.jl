@@ -8,6 +8,16 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in final-sweep planar measurement history: primary values and
+  residuals, first-observed rejection stages, accepted alternative ranks,
+  observed fill/restoration events, final origin and stored uncertainty status.
+  Separate native companions bind each history to its result; callback mutation
+  cannot silently change that binding. Uncertainty is not re-estimated after
+  substitution or filling, and history does not certify uncertainty coverage.
+- Added a seeded synthetic uncertainty scorecard with component coverage,
+  signed normalized errors, explicit zero/unavailable uncertainty populations,
+  and full-population versus uncertainty-subset error metrics. Independent seeds
+  and timing repeats remain distinct; pooled moments stream across seeds.
 - Added opt-in planar execution diagnostics for actual pass sweeps, tolerance
   checks, stopping conditions, and primary residual displacement summaries.
   Sequence files can retain versioned diagnostics beside each result; replay
@@ -125,10 +135,10 @@ separate version-1 metadata formats. `TABLE_SCHEMA_VERSION` remains **`hammerhea
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.
 
-Optional execution companions and standalone recipe-comparison reports also use
-independent version-1 schemas. Existing result readers ignore companions;
-result-only copies may drop them. No execution history is inferred from older
-files' requested settings.
+Optional execution and measurement-history companions and standalone
+recipe-comparison reports also use independent version-1 schemas. Existing
+result readers ignore companions; result-only copies may drop them. No execution
+history is inferred from older files' requested settings.
 
 The production GUI framework remains GLMakie. Qt/QML and other toolkit
 candidates are evaluations in [ROADMAP.md](ROADMAP.md), not supported

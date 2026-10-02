@@ -71,6 +71,17 @@ existing implementation is preferable; they are not commitments to add an API.
   formerly fabricated flat-patch vectors, masks, boundaries, precision, CPU/KA,
   and mixed ensemble contributions. New vendor-device hardware evidence remains
   open separately; shared-kernel tests do not establish that coverage.
+- [x] Add a bounded [synthetic uncertainty sweep](docs/src/howto/validation_uncertainty.md)
+  with independent fixed seeds, controlled primary-only final output, explicit
+  component coverage/normalized-error populations, and full versus UQ-subset
+  errors. Preserve zero/nonfinite uncertainty and arithmetic-failure counts;
+  stream pooled moments and retain only per-seed quantiles. This does not close
+  experimental coverage, spatial-resolution transfer or peak-memory evidence.
+- [ ] Investigate the synthetic sweep's low baseline coverage of full error by
+  reported random uncertainty. Separate signed bias, residual/convergence
+  assumptions, estimator behavior, and rendering/interpolation effects with
+  controlled comparisons; preserve the original full-error populations and
+  report independent-seed evidence before changing estimator defaults.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -217,9 +228,17 @@ and GPU memory in the documented ownership modes.
 
 ## 4. Measurement history, uncertainty, and analysis
 
-- [ ] Preserve per-vector measurement history: primary versus alternative peak,
-  rejected/replaced status, validation reasons, and uncertainty applicability.
-  Make diagnostic/uncertainty association clear after peak substitution or filling.
+- [x] Record [final-sweep planar measurement history](docs/src/howto/measurement_history.md):
+  raw primary values/residuals, first-observed rejection stages, accepted peak
+  ranks, actual fill/restoration events, final origin/flags and numerical UQ
+  status. Bind opt-in native companions to result content and reject callback
+  mutation; preserve default numerical behavior and bounded sequence memory.
+  [Regressions](test/test_measurement_history.jl) cover CPU/KA parity, ROI and
+  scale, actual branch events, custom validators, persistence and failure cleanup.
+- [ ] Extend measurement history to stereo/ensemble semantics, checkpoint
+  companions, exports and GUI inspection. Define any earlier-pass/sweep trace
+  separately; final-grid events cannot reconstruct correspondence across grids.
+  Validate estimator applicability separately from numerical UQ availability.
 - [x] Expose actual planar pass sweeps, tolerance checks/stopping conditions and
   primary residual summaries through [execution diagnostics](docs/src/howto/execution_diagnostics.md).
   Opt-in callbacks and native sequence/replay companions preserve result structs

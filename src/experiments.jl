@@ -645,6 +645,12 @@ execution observations/persisted native companions without changing scientific
 recipe identity. Their verified recipe/input association comes from this
 snapshot; the run's output hash covers both numerical results and companions.
 The callback runs before pair persistence/progress and is not a commit notice.
+`on_measurement_history(i, history)` and `record_measurement_history=true`
+similarly opt into final-pass/final-sweep planar measurement-history companions
+with verified recipe/input association. History options do not change recipe
+identity; the output hash covers persisted companions. Private packet mutation
+is rejected before writing the current pair. This is separate from checkpoint
+execution, which does not yet support measurement history.
 Optional `run_record` saves the experiment with appended run metadata, including
 a failed run when processing fails. Preflight failures leave output and run
 records unchanged. Processing failures rethrow their original exception and
@@ -657,7 +663,9 @@ function replay_experiment(record::ExperimentRecord; output::AbstractString,
                            allow_environment_change::Bool=false,
                            run_record::Union{Nothing,AbstractString}=nothing,
                            on_diagnostics::Union{Nothing,Function}=nothing,
-                           record_diagnostics::Bool=false)
+                           record_diagnostics::Bool=false,
+                           on_measurement_history::Union{Nothing,Function}=nothing,
+                           record_measurement_history::Bool=false)
     snapshot=deepcopy(record)
     _experiment_preflight(snapshot; verify_files=true)
     _experiment_validate_environment(snapshot.creation_environment)
@@ -697,6 +705,9 @@ function replay_experiment(record::ExperimentRecord; output::AbstractString,
             uncertainty_backend=recipe.uncertainty_backend,
             on_diagnostics,record_diagnostics,
             _diagnostics_association=on_diagnostics===nothing && !record_diagnostics ? nothing :
+                (recipe_id=recipe.recipe_id,input_id=snapshot.input_id),
+            on_measurement_history,record_measurement_history,
+            _history_association=on_measurement_history===nothing && !record_measurement_history ? nothing :
                 (recipe_id=recipe.recipe_id,input_id=snapshot.input_id))
         _experiment_record_run(snapshot,output,environment,started,:completed,completed[],nothing)
     catch err

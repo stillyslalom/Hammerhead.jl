@@ -106,7 +106,10 @@ The development checkout also includes [saved planar experiments](docs/src/howto
 [checkpoint/resume](docs/src/howto/checkpoints.md) with
 [GUI controls](docs/src/howto/gui_checkpoints.md),
 [shared script/GUI quality reports](docs/src/howto/run_quality.md),
-[actual pass diagnostics](docs/src/howto/execution_diagnostics.md), and
+[actual pass diagnostics](docs/src/howto/execution_diagnostics.md),
+[final-vector measurement history](docs/src/howto/measurement_history.md), and
 [representative-pair recipe comparisons](docs/src/howto/pair_comparison.md).
+The [synthetic uncertainty scorecard](docs/src/howto/validation_uncertainty.md)
+evaluates coverage and normalized errors with explicit measurement populations.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

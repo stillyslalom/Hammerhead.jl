@@ -16,6 +16,12 @@ rules, environment, and individual timing samples. Reports inside the checkout
 must stay under `bench/profile-output`; unrelated existing report-name files
 are never overwritten.
 
+For component uncertainty coverage and signed normalized errors across seeded
+conditions, run the separate [synthetic uncertainty scorecard](validation_uncertainty.md).
+It uses a controlled final-output recipe and reports selection effects, zero
+uncertainty and arithmetic failures explicitly. The commands answer different
+questions; the synthetic sweep does not add truth to the real-data smoke rows.
+
 ## What the baseline establishes
 
 The default evaluates deterministic 128 × 128 px translation and linear-shear

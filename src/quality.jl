@@ -87,7 +87,8 @@ remains unchanged if fewer than three unflagged neighbors are available.
 This function does not separately test neighbors for finite values. Returns
 the mutated `(u, v)` arrays.
 """
-function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::AbstractMatrix{Bool})
+function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::AbstractMatrix{Bool};
+                          history = nothing, history_mask = nothing)
     size(u) == size(v) == size(invalid) ||
         throw(ArgumentError("u, v, and invalid must have the same dimensions"))
     any(invalid) || return u, v
@@ -99,6 +100,8 @@ function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::Abstrac
     max_radius = max(nr, nc) - 1
     for c in 1:nc, r in 1:nr
         invalid[r, c] || continue
+        observed = history !== nothing && !history_mask[r, c]
+        observed && (history.fill_attempted[r, c] = true)
         for radius in 1:max_radius
             empty!(bufu)
             empty!(bufv)
@@ -111,6 +114,7 @@ function replace_vectors!(u::AbstractMatrix, v::AbstractMatrix, invalid::Abstrac
             if length(bufu) >= 3
                 u[r, c] = median(bufu)
                 v[r, c] = median(bufv)
+                observed && (history.fill_assigned[r, c] = true)
                 break
             end
         end
@@ -311,7 +315,8 @@ neighbors are required. Decisions use a snapshot of the input field, so
 traversal order does not affect them. Returns the number substituted.
 """
 function substitute_alternatives!(result::PIVResult, alt_u::AbstractArray{<:Real,3},
-                                  alt_v::AbstractArray{<:Real,3}, params::PIVParameters)
+                                  alt_v::AbstractArray{<:Real,3}, params::PIVParameters;
+                                  history = nothing)
     any(result.outliers) || return 0
     nr, nc = size(result.u)
     er = params.uod_neighborhood
@@ -348,6 +353,7 @@ function substitute_alternatives!(result::PIVResult, alt_u::AbstractArray{<:Real
                 result.u[r, c] = au
                 result.v[r, c] = av
                 result.outliers[r, c] = false
+                history === nothing || (history.accepted_rank[r, c] = m + 1)
                 nsub += 1
                 break
             end

@@ -238,6 +238,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   companions without changing result structs. Callback delivery precedes result
   delivery/persistence; it is not a commit notification. Stereo/ensemble reject
   this planar API. Default calls do not collect diagnostics or hash source files.
+- `measurement_history.jl` — opt-in final-pass/final-sweep planar history,
+  separate from execution diagnostics and result structs. Record actual first
+  rejection, alternative acceptance, fill assignment and restoration events;
+  value differences and final flags cannot reconstruct these events. Bind the
+  detached snapshot to raw result content including coordinates and scale before
+  callbacks. Validate binding before persistence; metadata-only loads do not
+  verify payload content unless `verify_result=true`. UQ still describes the
+  final deformed windows and is not re-estimated for alternatives or fills.
 - `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
   protocol: disjoint metadata/result directories, immutable singleton native
   payloads and commit descriptors, strict ordered input/recipe/environment
@@ -737,6 +745,15 @@ as contrast evidence; preserve any genuine processing-precision difference.
   overflow, selected-input identities, units and detached TOML snapshots.
   GUI `test_checkpoints.jl` checks captured execution state, cancellation,
   recovery, fixed lazy browsing, protected export and offscreen layouts.
+- `test_measurement_history.jl` checks observed final-sweep origin/events,
+  first-rejection semantics, numerical parity, mutable-callback guards and
+  optional companion/result verification. Keep final-history storage bounded
+  across sweeps and non-collecting sequences.
+- `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
+  outputs across fixed seeds. Component UQ populations include zero sigma;
+  normalized errors require positive sigma. Counts retain arithmetic failures,
+  pooled moments stream, and quantiles remain per seed. Its regression file
+  checks population arithmetic, origin guards, reproducibility and output paths.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

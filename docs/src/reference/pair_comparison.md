@@ -46,6 +46,10 @@ partition common nodes. Within `unmasked_both`, `valid_both`,
 current validity states. Validity requires both stored components finite and
 the current outlier flag false. Finite filled outputs can remain flagged;
 cleared alternative-peak flags cannot recover their earlier history.
+The comparison reruns do not request the separate measurement-history
+companion; their `not_persisted` reasons describe that missing observation.
+Use [measurement history](measurement_history.md) when individual output origin
+is needed. These version-1 comparisons do not aggregate companion events.
 
 Velocity moments use precisely `valid_both`. For each component, with
 `d = after - before`, `mean` is the population mean of d and `rms` is
