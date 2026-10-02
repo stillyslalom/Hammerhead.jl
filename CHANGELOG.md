@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in planar execution diagnostics for actual pass sweeps, tolerance
+  checks, stopping conditions, and primary residual displacement summaries.
+  Sequence files can retain versioned diagnostics beside each result; replay
+  associates them with the verified recipe and inputs. Result structures and
+  numerical stopping behavior are unchanged. Residuals describe the primary
+  correlation measurement before alternatives, replacement, or predictor addition.
+- `compare_recipe_pair` evaluates two complete built-in planar recipes on an
+  explicitly selected, content-matched pair. Reports compare exact common grid
+  nodes and retain native-grid quality populations, units, settings, and input
+  provenance. Saved TOML snapshots describe recipe sensitivity, not accuracy;
+  unequal grids are not interpolated and unsupported uncertainty is explicit.
 - Added separate version-1 planar checkpoints with immutable per-pair native
   results and verified commit records. Built-in CPU/KA recipes resume only with
   matching ordered inputs, recipe, and software identity. Interrupted writers
@@ -77,6 +88,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a checkpoint workflow for creating or reopening complete planar
+  experiments, progress, cancellation between committed pairs, and explicit
+  recovery after a stopped writer. Browsing retains a fixed lazy prefix and
+  exports use the core's fresh-destination checks. Processing within a pair and
+  identity verification can still delay UI interaction.
 - The saved-experiment workflow generates, saves, and displays the shared core
   quality report after verifying the completed run. Report saves protect known
   inputs, outputs, and experiment records; changed/failed/busy runs are refused.
@@ -108,6 +124,11 @@ and do not change the native result schema. Checkpoints and quality reports use
 separate version-1 metadata formats. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.
+
+Optional execution companions and standalone recipe-comparison reports also use
+independent version-1 schemas. Existing result readers ignore companions;
+result-only copies may drop them. No execution history is inferred from older
+files' requested settings.
 
 The production GUI framework remains GLMakie. Qt/QML and other toolkit
 candidates are evaluations in [ROADMAP.md](ROADMAP.md), not supported

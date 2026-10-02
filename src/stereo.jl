@@ -143,6 +143,7 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         scale::Union{Nothing,PhysicalScale} = nothing,
                         kwargs...)
+    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     # Check the backend's option scope before the (relatively expensive)
@@ -176,6 +177,7 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         backend::Symbol = :cpu,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         kwargs...)
+    _reject_execution_diagnostics(kwargs)
     if effort === nothing
         return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, PIVParameters();
                               backend, mask, kwargs...)
@@ -273,6 +275,7 @@ function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  effort::Union{Nothing,Symbol} = nothing,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow, kwargs...)
+    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     length(pairs1) == length(pairs2) ||
@@ -290,6 +293,7 @@ function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  effort::Union{Nothing,Symbol} = nothing,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow, kwargs...)
+    _reject_execution_diagnostics(kwargs)
     length(pairs1) == length(pairs2) ||
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
@@ -378,6 +382,7 @@ function run_piv_stereo_sequence(acquisitions::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper,
                                  params::Union{PIVParameters,AbstractVector{PIVParameters}};
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params; kwargs...)
@@ -386,6 +391,7 @@ end
 function run_piv_stereo_sequence(acquisitions::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper;
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    _reject_execution_diagnostics(kwargs)
     if effort === nothing
         return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters(); kwargs...)
     end
@@ -409,6 +415,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                                   sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                   missing_timestamps::Symbol = :allow,
                                   kwargs...)
+    _reject_execution_diagnostics(kwargs)
     isempty(acquisitions) && throw(ArgumentError("acquisitions must not be empty"))
     all(a -> a isa Tuple && length(a) == 4, acquisitions) ||
         throw(ArgumentError("each stereo acquisition must be a 4-tuple (A1, B1, A2, B2)"))
@@ -564,6 +571,7 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow,
                                  kwargs...)
+    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     length(pairs1) == length(pairs2) ||
@@ -587,6 +595,7 @@ end
 function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper;
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
+    _reject_execution_diagnostics(kwargs)
     if effort === nothing
         return run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2, PIVParameters(); kwargs...)
     end

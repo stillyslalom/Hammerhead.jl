@@ -640,6 +640,11 @@ The caller is responsible for its correspondence to the referenced script and
 for external state that a function uses.
 
 Returns completed-run metadata; access numerical results with [`load_results`](@ref).
+`on_diagnostics(i, diagnostics)` and `record_diagnostics=true` opt into planar
+execution observations/persisted native companions without changing scientific
+recipe identity. Their verified recipe/input association comes from this
+snapshot; the run's output hash covers both numerical results and companions.
+The callback runs before pair persistence/progress and is not a commit notice.
 Optional `run_record` saves the experiment with appended run metadata, including
 a failed run when processing fails. Preflight failures leave output and run
 records unchanged. Processing failures rethrow their original exception and
@@ -650,7 +655,9 @@ resume API or an atomic transaction spanning the two files.
 function replay_experiment(record::ExperimentRecord; output::AbstractString,
                            custom_preprocess::Union{Nothing,Function}=nothing,
                            allow_environment_change::Bool=false,
-                           run_record::Union{Nothing,AbstractString}=nothing)
+                           run_record::Union{Nothing,AbstractString}=nothing,
+                           on_diagnostics::Union{Nothing,Function}=nothing,
+                           record_diagnostics::Bool=false)
     snapshot=deepcopy(record)
     _experiment_preflight(snapshot; verify_files=true)
     _experiment_validate_environment(snapshot.creation_environment)
@@ -687,7 +694,10 @@ function replay_experiment(record::ExperimentRecord; output::AbstractString,
             progress=(i,n)->(completed[]=i),backend=recipe.backend,image_type=recipe.image_type,
             mask=recipe.mask,roi=recipe.roi,scale=recipe.scale,threaded=recipe.threaded,
             predictor_smoothing=recipe.predictor_smoothing,mask_threshold=recipe.mask_threshold,
-            uncertainty_backend=recipe.uncertainty_backend)
+            uncertainty_backend=recipe.uncertainty_backend,
+            on_diagnostics,record_diagnostics,
+            _diagnostics_association=on_diagnostics===nothing && !record_diagnostics ? nothing :
+                (recipe_id=recipe.recipe_id,input_id=snapshot.input_id))
         _experiment_record_run(snapshot,output,environment,started,:completed,completed[],nothing)
     catch err
         failed=_experiment_record_run(snapshot,output,environment,started,:failed,completed[],sprint(showerror,err))

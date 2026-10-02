@@ -39,6 +39,19 @@ TOML. Readers validate explicit counters, denominators, provenance, and unavaila
 diagnostic reasons. These summaries do not change native result structures or
 reconstruct missing measurement history. See [the report schema](../reference/run_quality.md).
 
+Execution diagnostics are optional native-file companions with
+`execution_diagnostics_format_version = 1`. Each entry binds scalar pass
+observations to a result key; existing result readers ignore the companion.
+The diagnostics reader rejects malformed or unknown versions, while absence
+means not recorded. Generic result-only copies do not preserve companions.
+See [execution diagnostics](../reference/execution_diagnostics.md).
+
+Representative-pair comparisons use independent version-1 TOML snapshots,
+identified by `pair_comparison_format_version`. They preserve selected-input
+provenance, settings differences, units and comparison populations. Loading
+validates the saved snapshot without rerunning or reopening its image inputs.
+See [recipe comparisons](../reference/pair_comparison.md).
+
 The long-form table contract is identified by `TABLE_SCHEMA_VERSION` and the
 ordered `TABLE_COLUMNS` constant. Columns are a backward-compatible superset
 across planar, stereo, PTV, and tracking results: unavailable values are empty rather

@@ -9,6 +9,8 @@ snapshot supported current form settings; unsupported callbacks produce an error
 without saving a partial recipe.
 
 Replay has a busy/completed/failed status, without live progress or cancellation.
+Open the checkpoint workflow for resumable built-in recipes with pair-boundary
+progress and cancellation; its creation candidate preserves the complete recipe.
 Referenced custom scripts require a caller-supplied controller function and are
 never loaded by this view. Large recipe/history text can be inspected in pages.
 """
@@ -65,14 +67,15 @@ function experiment_workflow!(target,ec::ExperimentController;
     status_label=lift(s->_experiment_wrap_text(s;max_lines=3),ec.status)
     Label(controls[14,1],status_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    Label(controls[15,1],"Replay starts from pair 1.\nLive progress and cancellation\nare unavailable.";
+    Label(controls[15,1],"Replay starts from pair 1.\nUse checkpoints for progress,\ncancellation and resume.";
           halign=:left,justification=:left,word_wrap=true,width=240,tellwidth=false)
 
     content=GridLayout(gl[1,2];valign=:top,tellheight=false)
     section=Observable(:recipe)
     page=Observable(1)
     report_text=Observable("Save a quality report to inspect its summary here.")
-    tabs=Menu(content[1,1:3];options=[("complete recipe",:recipe),("run history",:history),("quality report",:quality)])
+    tabs=Menu(content[1,1:2];options=[("complete recipe",:recipe),("run history",:history),("quality report",:quality)])
+    checkpoint_btn=Button(content[1,3];label="checkpoint / resume…",tellwidth=false)
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
@@ -168,6 +171,12 @@ function experiment_workflow!(target,ec::ExperimentController;
     on(explore_btn.clicks) do _
         guarded() do
             display(GLMakie.Screen(),result_explorer(experiment_results(ec)))
+        end
+    end
+    on(checkpoint_btn.clicks) do _
+        guarded() do
+            record=deepcopy(ec.record[])
+            display(GLMakie.Screen(),checkpoint_workflow(CheckpointController();record))
         end
     end
     gl

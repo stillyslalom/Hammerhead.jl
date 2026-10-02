@@ -103,6 +103,12 @@ displayed summary.
 
 ## Handle refusals and custom processing
 
+**Checkpoint / resume…** opens the [checkpoint workflow](gui_checkpoints.md).
+It takes a copy of the complete current recipe for creating a resumable store,
+or opens an existing store. This separate path supports built-in preprocessing,
+strict software identity, progress and cancellation between committed pairs.
+Ordinary replay output is not adopted as a checkpoint.
+
 Changed inputs/scripts, incompatible software, malformed recipes, and output
 aliases are rejected before result output is opened. A preflight failure
 preserves existing destinations. Processing failures can leave a completed
@@ -135,5 +141,5 @@ The supplied function must correspond to the referenced bytes, preserve the
 saved precision/full-image dimensions, and return finite values. External
 callback state remains the caller's responsibility. The graphical snapshot
 button refuses an unreferenced callback instead of saving an incomplete recipe.
-Stereo calibration, PTV/tracking, GPU recipes, acquisition timing, complete
-recipe editing, and resume remain outside this first GUI workflow.
+Stereo calibration, PTV/tracking, GPU recipes, acquisition timing, and complete
+recipe editing remain outside this saved-planar-recipe workflow.

@@ -27,6 +27,8 @@ export PreprocessStep, ScriptReference, PIVRecipe, ExperimentRecord, ExperimentR
 export recipe_identity, save_experiment, load_experiment, replay_experiment
 export recipe_diff, RecipeDiff, RecipeChange, RecipeArraySummary
 export RunQualityReport, quality_report, quality_report_data, save_quality_report, load_quality_report
+export RecipePairComparison, compare_recipe_pair, pair_comparison_data, save_pair_comparison, load_pair_comparison
+export PIVExecutionDiagnostics, PassDiagnostics, execution_diagnostics_data, load_execution_diagnostics
 export ExperimentCheckpoint, CheckpointAttempt, CheckpointResults
 export create_checkpoint, load_checkpoint, resume_checkpoint!, checkpoint_state, checkpoint_results, save_checkpoint_results
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
@@ -87,9 +89,11 @@ include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
 include("experiments.jl")
+include("execution_diagnostics.jl")
 include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
 include("run_quality.jl")
+include("pair_comparison.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the
 # 0.99-quantile magnitude among the selected vectors to `target_length` (the

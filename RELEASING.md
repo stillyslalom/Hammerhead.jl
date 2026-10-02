@@ -78,6 +78,9 @@ links to logs and artifacts. Record what was not exercised as well as what passe
 | Planar experiment replay | Recipe/input hashes, creation and run environments, native-result parity, changed-input/unknown-version refusal, and completed/failed run records. Record any explicit environment override. |
 | Checkpoint recovery | Filesystem/OS, exact identities, handled failure, cancellation, hard process termination at publication boundaries, unchanged committed prefix, and explicit interrupted-writer recovery. Same-directory rename evidence is not power-loss durability. |
 | Quality reports | Counter/denominator correctness, unavailable diagnostics, verified output association, protected destinations, and shared script/GUI report behavior. |
+| Execution diagnostics | Diagnostics-on/off numerical parity, actual stopping/check semantics, primary-residual population, callback failure cleanup, optional companion schema and replay association. |
+| Recipe comparisons | Selected input identities, exact common-grid populations, scale/unit compatibility, arithmetic availability, stored UQ semantics, detached report round trips and alias guards. Differences between recipes are not ground-truth errors. |
+| GUI checkpoints | Full-recipe capture, pair-boundary progress/cancellation, explicit recovery, fixed lazy prefixes, fresh aggregate export, and inspected default-size layouts. Distinguish offscreen checks from native input/responsiveness evidence. |
 
 Do not present unavailable GPU runs, large-recording benchmarks, known-motion
 experiments, or an untested GUI/stereo saved-experiment workflow as validated. The

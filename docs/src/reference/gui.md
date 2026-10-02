@@ -10,6 +10,7 @@ for scripted use without a display. Start with the
 [GUI tour](../tutorials/gui_tour.md) for a worked session.
 Saved-recipe controls and views have their own
 [experiment workflow reference](gui_experiments.md).
+Resumable processing has a separate [checkpoint workflow reference](gui_checkpoints.md).
 
 ```@index
 Pages = ["gui.md"]

@@ -346,6 +346,18 @@ and parameter overrides when `effort` is set, go to [`run_piv`](@ref).
   their `dt` replaces the supplied scale's delay; timestamps alone do not
   attach a physical scale.
 
+`on_diagnostics(i, diagnostics)` optionally delivers actual planar execution
+observations before `on_result`, persistence and progress. Its exceptions
+propagate before that pair is written. `record_diagnostics=true` stores a
+version-1 primitive companion alongside each result and requires an `output`
+path/function. Per-pair files retain absolute input-sequence indices in the
+companion; their result key is still `results/000001`. A persistence-requested
+file declares the companion version even if the first pair fails. Missing entry
+metadata means not recorded, not inferred. No sweep/result history is retained
+by this feature. [`load_execution_diagnostics`](@ref) reads it separately;
+ordinary result-only copies via `save_results` omit companions. This opt-in
+feature supports planar PIV only, not PTV, stereo or ensemble execution.
+
 Pairs are analyzed serially while the next pair is loaded and preprocessed
 on a background task. Preprocessors must be safe to call from that task.
 A shared [`PIVWorkspace`](@ref) reuses buffers across pairs. If processing or
@@ -364,13 +376,20 @@ function run_piv_sequence(pairs::AbstractVector,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
+                          on_diagnostics::Union{Nothing,Function} = nothing,
+                          record_diagnostics::Bool = false,
+                          _diagnostics_association = nothing,
                           kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
+    record_diagnostics && output === nothing && throw(ArgumentError("record_diagnostics requires a native output path or function; use on_diagnostics for callback-only delivery"))
     workspace = piv_workspace(; backend)
-    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, kwargs...),
+    diagnostics_state = on_diagnostics === nothing && !record_diagnostics ? nothing : Ref{Any}(nothing)
+    capture = diagnostics_state === nothing ? nothing : d -> (diagnostics_state[] = d)
+    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, on_diagnostics = capture, kwargs...),
                   PIVResult, pairs;
-                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV",
+                  diagnostics_state, on_diagnostics, record_diagnostics, diagnostics_association = _diagnostics_association)
 end
 
 function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -383,13 +402,20 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
+                          on_diagnostics::Union{Nothing,Function} = nothing,
+                          record_diagnostics::Bool = false,
+                          _diagnostics_association = nothing,
                           kwargs...)
+    record_diagnostics && output === nothing && throw(ArgumentError("record_diagnostics requires a native output path or function; use on_diagnostics for callback-only delivery"))
     workspace = piv_workspace(; backend)
+    diagnostics_state = on_diagnostics === nothing && !record_diagnostics ? nothing : Ref{Any}(nothing)
+    capture = diagnostics_state === nothing ? nothing : d -> (diagnostics_state[] = d)
     process = effort === nothing ?
-        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, kwargs...)) :
-        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, kwargs...))
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, on_diagnostics = capture, kwargs...)) :
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, on_diagnostics = capture, kwargs...))
     _run_sequence(process, PIVResult, pairs;
-                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV",
+                  diagnostics_state, on_diagnostics, record_diagnostics, diagnostics_association = _diagnostics_association)
 end
 
 """
@@ -416,6 +442,7 @@ function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVPara
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
+    _reject_execution_diagnostics(kwargs, "PTV")
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_ptv(imgA, imgB, params; mask, scale, kwargs...), PTVResult, pairs;
                   preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PTV")
 end
@@ -442,7 +469,11 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        image_type::Type{<:AbstractFloat} = Float64,
                        label::AbstractString = "PIV",
                        mask = nothing,
-                       scale = nothing) where {R}
+                       scale = nothing,
+                       diagnostics_state = nothing,
+                       on_diagnostics = nothing,
+                       record_diagnostics = false,
+                       diagnostics_association = nothing) where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     results = collect_results ? Vector{R}(undef, length(pairs)) : nothing
     file = output isa AbstractString ? jldopen(output, "w") : nothing
@@ -455,6 +486,7 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
     failed = false
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
+        file === nothing || !record_diagnostics || (file["execution_diagnostics_format_version"] = EXECUTION_DIAGNOSTICS_FORMAT_VERSION)
         meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
         pending = load_pair(pairs[1])
         for (i, pair) in enumerate(pairs)
@@ -464,6 +496,10 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 i < length(pairs) && (pending = load_pair(pairs[i + 1]))
                 pmask = pair_mask(mask, i, pair, imgA, imgB)
                 result = process(imgA, imgB, i, pair, pmask, pair_scale(scale, pair))
+                if diagnostics_state !== nothing
+                    diagnostics_state[] = _execution_context(diagnostics_state[], i, diagnostics_association)
+                    on_diagnostics === nothing || on_diagnostics(i, diagnostics_state[])
+                end
                 collect_results && (results[i] = result)
             catch
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
@@ -474,15 +510,18 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
             on_result === nothing || on_result(i, result)
             if file !== nothing
                 file[result_key(i)] = result
+                record_diagnostics && _write_execution_diagnostics(file, result_key(i), diagnostics_state[])
                 labels = pair_source_labels(frameA, frameB)
                 if labels !== nothing
                     file[source_key(i)] = labels
                 end
             elseif output isa Function
-                write_pair_file(String(output(i, pair)), result, frameA, frameB)
+                write_pair_file(String(output(i, pair)), result, frameA, frameB;
+                    diagnostics = record_diagnostics ? diagnostics_state[] : nothing)
             end
             progress isa Function ? progress(i, length(pairs)) : next!(meter)
             result = nothing
+            diagnostics_state === nothing || (diagnostics_state[] = nothing)
         end
     catch
         failed = true
@@ -497,6 +536,7 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 end
             end
         finally
+            diagnostics_state === nothing || (diagnostics_state[] = nothing)
             if file !== nothing
                 try
                     close(file)
@@ -512,12 +552,13 @@ end
 # One-result-per-file writer for the function-`output` sequence mode: a
 # standalone results file (readable by `load_results`) recording the pair's
 # source paths when the pair entries are file paths.
-function write_pair_file(path::AbstractString, result, frameA, frameB)
+function write_pair_file(path::AbstractString, result, frameA, frameB; diagnostics = nothing)
     dir = dirname(path)
     isempty(dir) || mkpath(dir)
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         f[result_key(1)] = result
+        diagnostics === nothing || _write_execution_diagnostics(f, result_key(1), diagnostics)
         labels = pair_source_labels(frameA, frameB)
         if labels !== nothing
             f[source_key(1)] = labels

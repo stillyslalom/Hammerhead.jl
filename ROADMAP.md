@@ -119,8 +119,14 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   with content summaries for embedded arrays and explicit added/removed items.
   [Comparison tests](test/test_experiment_comparison.jl) cover full settings,
   snapshot integrity, ordered operations, and location-independent script identity.
-- [ ] Compare representative-pair numerical results across recipe revisions,
-  including quality/uncertainty and preprocessing/window-size sensitivity.
+- [x] Compare representative-pair numerical results across built-in planar
+  recipe revisions, including stored quality/UQ and preprocessing/window-size
+  sensitivity. [Selected-pair comparisons](docs/src/howto/pair_comparison.md)
+  verify ordered input content, rerun complete recipes and compare exact common
+  coordinates with explicit populations and units. Detached version-1 TOML
+  reports preserve settings/provenance; differences are not accuracy errors.
+  [Regressions](test/test_pair_comparison.jl) cover grid/mask/flag populations,
+  relocation, incompatible scales, arithmetic overflow and protected outputs.
 - [ ] Preserve exposure timestamps, pair delay, sample time, source frame IDs,
   time units, and calibration/coordinate-frame identity through native persistence
   and exports. Define the time assigned to a displacement measurement.
@@ -184,9 +190,16 @@ incompatible combined fields with actionable diagnostics.
   not power-loss durability or support for concurrent external mutation.
   [Checkpoint tests](test/test_experiment_checkpoint.jl) exercise lock, staging,
   commit, and terminal-status boundaries, changed identities, and source aliases.
-- [ ] Extend checkpoints to GUI controls and additional experiment kinds/
-  backends as their recipe contracts become available. Establish production
-  memory/disk evidence and platform/filesystem recovery evidence beyond this
+- [x] Add [GUI checkpoint controls](docs/src/howto/gui_checkpoints.md) for complete
+  built-in planar recipes: creation/open, absolute committed progress, cancellation,
+  explicit stopped-writer recovery, fixed lazy browsing and fresh native export.
+  Execution captures state before Observable notifications; progress does not
+  rescan the store. [GUI regressions](HammerheadGUI/test/test_checkpoints.jl)
+  cover state capture, failure/recovery, protected lazy sources and offscreen
+  layout. Work within a pair and initial verification can still pause rendering.
+- [ ] Extend checkpoints to additional experiment kinds/backends as their recipe
+  contracts become available, and integrate execution/quality companions.
+  Establish production memory/disk evidence and platform/filesystem recovery beyond this
   Windows validation; do not infer crash durability from ordinary round trips.
 - [ ] Port aggregate workspace batch budgeting, fair sharing, LRU eviction, and
   explicit no-workspace cleanup from AMDGPU to CUDA, with CUDA-specific pool/FFT
@@ -207,8 +220,16 @@ and GPU memory in the documented ownership modes.
 - [ ] Preserve per-vector measurement history: primary versus alternative peak,
   rejected/replaced status, validation reasons, and uncertainty applicability.
   Make diagnostic/uncertainty association clear after peak substitution or filling.
-- [ ] Expose actual pass iteration counts, convergence outcomes, and residual
-  displacement summaries rather than only requested settings.
+- [x] Expose actual planar pass sweeps, tolerance checks/stopping conditions and
+  primary residual summaries through [execution diagnostics](docs/src/howto/execution_diagnostics.md).
+  Opt-in callbacks and native sequence/replay companions preserve result structs
+  and numerical behavior. Empty comparison support and unchecked budgeted sweeps
+  remain explicit; primary residuals are not attributed to substituted/filled
+  vectors. [Tests](test/test_execution_diagnostics.jl) cover CPU/KA equivalence,
+  actual loop semantics, persistence, strict replay association and failures.
+- [ ] Extend execution diagnostics to stereo camera passes and ensemble pooled
+  sweeps, with their distinct units and iteration semantics; expose recorded
+  diagnostics in shared run-quality reports and GUI inspection.
 - [x] Generate a [saved run-quality report](docs/src/howto/run_quality.md) shared
   by scripts and the GUI for stored planar/stereo fields. Version-1 TOML reports
   preserve explicit node-weighted counts/denominators, numerical uncertainty
@@ -302,8 +323,9 @@ evidence.
   retains run history, and verifies completed output content before lazy browsing.
   It also saves and displays the shared core quality report with the same
   provenance checks and metric definitions used by scripts.
-  Stereo calibration, revision-result comparison, live replay
-  progress/cancellation, and broader workflow integration remain open.
+  Its separate checkpoint view adds resumable built-in processing with committed
+  progress and cancellation. Stereo calibration, revision-result comparison,
+  ordinary replay progress/cancellation, and broader integration remain open.
 - [x] Add editable GUI ROI selection using the existing core `ROI` semantics.
   The editor supports two-corner selection, numeric bounds, and full-image reset;
   batches preserve mask and coordinate semantics and snapshot the selected ROI.

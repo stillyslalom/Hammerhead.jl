@@ -20,6 +20,7 @@ reconstruction remain CPU operations.
 | Retained correlation planes | yes | no | no | no |
 | File-based planar experiment replay | yes | yes | no | no |
 | Built-in planar recipe checkpoint/resume | yes | yes | no | no |
+| Representative-pair recipe comparison | yes | yes | no | no |
 
 *Device uncertainty estimation uses Float64 accumulation and requires a GPU
 with suitable Float64 support. A backend rejects an unsupported setting
@@ -39,3 +40,9 @@ the broader stereo/PTV/GPU pipelines above do not imply saved-recipe support.
 on the CPU, independently of the backend that produced them. The shared
 original-stencil guard has CPU/KA regression coverage; its vendor GPU paths
 still need fresh hardware validation after this change.
+
+[Execution diagnostics](../howto/execution_diagnostics.md) observe planar passes
+and can accompany planar sequence/replay results. CPU/KA tests establish the
+software behavior; new vendor-device execution evidence remains separate.
+Stereo needs distinct per-camera diagnostics, and ensemble iteration semantics
+require a separate model; neither currently accepts this planar diagnostics API.

@@ -347,6 +347,14 @@ in single precision; uncertainty statistics still accumulate in Float64.
 frame. Effort presets size their interrogation windows to the selected ROI;
 explicit pass schedules must fit within it.
 
+`on_diagnostics`, when supplied, receives one immutable
+[`PIVExecutionDiagnostics`](@ref) after numerical completion. It observes actual
+sweeps/tolerance checks and primary residuals before substitution/filling;
+these are not measurement-validity or final-vector-association diagnostics.
+Callback exceptions propagate. With no callback, no diagnostics observations,
+summaries or source hashes are allocated/computed. Existing stopping semantics
+are preserved: the final budgeted sweep is not tolerance-checked.
+
 Returns the [`PIVResult`](@ref) of the final pass.
 """
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
@@ -360,14 +368,15 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                  mask_threshold::Real = 0.5,
                  workspace::Union{Nothing,PIVWorkspace} = nothing,
                  scale::Union{Nothing,PhysicalScale} = nothing,
-                 roi = nothing)
+                 roi = nothing,
+                 on_diagnostics::Union{Nothing,Function} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     if roi !== nothing
         rr = roi isa ROI ? roi : ROI(roi)
         a, b, m = roi_views(imgA, imgB, mask, rr)
         result = run_piv(a, b, passes; backend, uncertainty_backend, threaded,
-                         predictor_smoothing, mask=m, mask_threshold, workspace, scale)
+                         predictor_smoothing, mask=m, mask_threshold, workspace, scale, on_diagnostics)
         return offset_result(result, rr)
     end
     be = _resolve_backend(backend)
@@ -425,6 +434,7 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     end
 
     result = nothing
+    pass_diagnostics = on_diagnostics === nothing ? nothing : PassDiagnostics[]
     for (k, params) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
@@ -435,8 +445,10 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
                           predictor_smoothing, mask, mask_threshold,
                           warp_buffers, backend = be, workspace,
                           uncertainty_backend,
-                          deform_context = dctx, source_context)
+                          deform_context = dctx, source_context,
+                          diagnostics = pass_diagnostics, pass_index = k)
     end
+    on_diagnostics === nothing || on_diagnostics(_execution_finish(pass_diagnostics, backend, T, size(imgA)))
     return scale === nothing ? result : with_scale(result, scale)
 end
 
@@ -691,7 +703,8 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                   backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
                   workspace::Union{Nothing,PIVWorkspace} = nothing,
                   uncertainty_backend::Symbol = :same,
-                  deform_context = nothing, source_context = nothing)
+                  deform_context = nothing, source_context = nothing,
+                  diagnostics = nothing, pass_index = 1)
     # Pipeline precision follows the images; every per-pass array shares it.
     T = float(promote_type(eltype(imgA), eltype(imgB)))
     source_context === nothing &&
@@ -758,7 +771,9 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     maxiter > 2 && params.convergence_tol > 0 && sizehint!(change_buf, ny * nx)
     local result, warpA, warpB
     source_gate = nothing
+    observation = diagnostics === nothing ? nothing : _PassObservation(maxiter)
     for it in 1:maxiter
+        observation === nothing || (observation.executed = it)
         warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
                                              warpA = bufA, warpB = bufB,
@@ -815,6 +830,7 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
                 prev_u, prev_v = copy(u), copy(v)
             else
                 change = field_change(change_buf, u, v, prev_u, prev_v, grid.grid_mask)
+                observation === nothing || _execution_check!(observation, it, change, change_buf, grid.grid_mask, params.convergence_tol)
                 change < params.convergence_tol && break
                 copyto!(prev_u, u)
                 copyto!(prev_v, v)
@@ -863,6 +879,14 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
     end
     drop_unavailable_uncertainty!(result)
     release_piv_engines!(backend, engines, workspace)
+    if observation !== nothing
+        # These separate correlation-output arrays have never been modified by
+        # predictor addition, validation, peak substitution, or filling.
+        residual = _execution_residual(residual_u, residual_v, grid.grid_mask, predictor !== nothing)
+        push!(diagnostics, PassDiagnostics(pass_index, maxiter, observation.executed,
+            Float64(params.convergence_tol), observation.stop_reason,
+            observation.checks, observation.last_check, residual))
+    end
     return result
 end
 

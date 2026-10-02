@@ -14,12 +14,13 @@ const Selection = Union{Nothing,CartesianIndex{2},Int}
 # One physical/display payload, irrespective of recording length. Read/convert
 # before replacing the cache, so failed navigation preserves the prior frame.
 mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
-    source::Hammerhead.ResultFile
+    source::Union{Hammerhead.ResultFile,Hammerhead.CheckpointResults}
     index::Int
     result::Union{Nothing,AnyResult}
 end
 Base.size(results::_LazyDisplayResults) = size(results.source)
 Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
+Hammerhead._result_protected_paths(results::_LazyDisplayResults)=Hammerhead._result_protected_paths(results.source)
 function Base.getindex(results::_LazyDisplayResults, i::Int)
     checkbounds(results, i)
     if results.index != i
@@ -38,6 +39,7 @@ Base.show(io::IO, ::MIME"text/plain", results::_LazyDisplayResults) = show(io, r
     ResultExplorer(result)
     ResultExplorer(path::AbstractString; lazy = false)
     ResultExplorer(index::ResultFile)
+    ResultExplorer(index::CheckpointResults)
 
 Browse a sequence of `PIVResult`, `StereoPIVResult`, `PTVResult`, or
 `TrackingResult` entries; result types may be mixed. View state is held in
@@ -69,6 +71,10 @@ set `status`, and leave the previous frame and its selection displayed.
 other view state. The index is fixed and does not follow a concurrent writer.
 Changing frames resets an unavailable `field` to that result's default and
 clears an invalid `selection`.
+
+A `CheckpointResults` index browses a verified fixed committed prefix with the
+same one-frame display cache. Open a new index/explorer after resume to see
+later commits; this is not a live checkpoint reader.
 """
 struct ResultExplorer
     results::Union{Vector{AnyResult},_LazyDisplayResults}
@@ -102,6 +108,12 @@ function ResultExplorer(index::Hammerhead.ResultFile;
                         path::Union{Nothing,AbstractString} = index.path)
     isempty(index) && throw(ArgumentError("no results to explore"))
     return _result_explorer(_LazyDisplayResults(index, 0, nothing), path)
+end
+
+function ResultExplorer(index::Hammerhead.CheckpointResults;
+                        path::Union{Nothing,AbstractString}=nothing)
+    isempty(index) && throw(ArgumentError("no committed checkpoint results to explore"))
+    _result_explorer(_LazyDisplayResults(index,0,nothing),path)
 end
 
 function _result_explorer(conv, path)

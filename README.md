@@ -103,7 +103,10 @@ has task guides and the [API reference](https://stillyslalom.github.io/Hammerhea
 
 Development priorities and outstanding work are tracked in [ROADMAP.md](ROADMAP.md).
 The development checkout also includes [saved planar experiments](docs/src/howto/experiments.md),
-[checkpoint/resume](docs/src/howto/checkpoints.md), and
-[shared script/GUI quality reports](docs/src/howto/run_quality.md).
+[checkpoint/resume](docs/src/howto/checkpoints.md) with
+[GUI controls](docs/src/howto/gui_checkpoints.md),
+[shared script/GUI quality reports](docs/src/howto/run_quality.md),
+[actual pass diagnostics](docs/src/howto/execution_diagnostics.md), and
+[representative-pair recipe comparisons](docs/src/howto/pair_comparison.md).
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

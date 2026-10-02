@@ -229,6 +229,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   output; an environment change requires an explicit override. Scripts are never
   evaluated automatically. The experiment format is separate from result format
   1; unknown versions are rejected. Rerunning is not resuming/checkpoint recovery.
+- `execution_diagnostics.jl` — opt-in `PIVExecutionDiagnostics` and
+  `PassDiagnostics` store scalar observations in immutable tuples. Preserve the
+  existing loop: the final budgeted sweep is unchecked; max_iterations=2 has no
+  tolerance comparison, and an empty comparison may satisfy the condition.
+  Residuals describe primary correlation corrections before predictor addition,
+  alternatives or filling. Planar sequence/replay may persist version-1 native
+  companions without changing result structs. Callback delivery precedes result
+  delivery/persistence; it is not a commit notification. Stereo/ensemble reject
+  this planar API. Default calls do not collect diagnostics or hash source files.
 - `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
   protocol: disjoint metadata/result directories, immutable singleton native
   payloads and commit descriptors, strict ordered input/recipe/environment
@@ -247,6 +256,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   and numerical UQ availability is not coverage or measurement association.
   Record/run reports verify output content and identities; anonymous iterators
   make no association claim. Protect hidden source paths explicitly when saving.
+- `pair_comparison.jl` — `compare_recipe_pair` reruns complete built-in planar
+  recipes on explicitly selected content-matched inputs. Exact raw-coordinate
+  intersections avoid resampling; native and paired quality populations remain
+  separate. Pixel differences ignore attached scales; physical comparisons
+  require identical factors and labels. Stable scalar moments and explicit
+  arithmetic unavailability preserve denominators. Detached version-1 TOML
+  snapshots protect known source aliases and do not claim accuracy/UQ coverage.
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -387,6 +403,15 @@ form links to this workflow; its API reference is split into `gui_experiments.md
 The same workflow saves and displays core quality reports through
 `experiment_quality_report` / `save_experiment_quality_report`. These synchronous
 scans protect the selected result and run record, and refuse busy/changed runs.
+
+`CheckpointController` / `checkpoint_workflow[!]` provide a separate resumable
+built-in recipe path, linked from the saved-experiment view. Capture checkpoint,
+recipe, recovery assertion and an independent cancellation token before notifying
+Observables or yielding. Progress uses committed counts, not repeated store
+scans; cache recipe text separately from progress/status rendering. Opening and
+refreshing validate fixed prefixes; explorers retain one displayed result and
+never follow live appends. Recovery asserts the former writer has stopped and
+resets after use. Preflight and work within a pair can delay UI interaction.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
@@ -705,6 +730,13 @@ as contrast evidence; preserve any genuine processing-precision difference.
   prefixes, handled failure/cancellation, and hidden child-process termination
   at lock/data/commit/terminal boundaries. Source must remain unchanged during
   strict environment-identity tests.
+- `test_execution_diagnostics.jl` checks opt-in numerical parity, actual sweep
+  and tolerance semantics, primary residuals, native companions, callback
+  failures, unsupported-driver refusal before output, and replay association.
+  `test_pair_comparison.jl` checks exact grid/population moments, arithmetic
+  overflow, selected-input identities, units and detached TOML snapshots.
+  GUI `test_checkpoints.jl` checks captured execution state, cancellation,
+  recovery, fixed lazy browsing, protected export and offscreen layouts.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

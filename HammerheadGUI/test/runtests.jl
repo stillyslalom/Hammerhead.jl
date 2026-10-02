@@ -38,6 +38,7 @@ const r_track = TrackingResult(
 
 @testset "HammerheadGUI.jl" begin
     include("test_experiments.jl")
+    include("test_checkpoints.jl")
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()
         fig = Figure(size = (400, 300))
