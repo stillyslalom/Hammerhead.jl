@@ -2,6 +2,23 @@
 
 Performance benchmarks for regression checking. From the package root:
 
+For the quantitative validation baseline, including dataset hashes, full
+recipes, synthetic bias/RMS, valid yield, and warmed CPU-call timing, run:
+
+```bash
+julia --project=. -t 4 bench/validation_scorecard.jl
+```
+
+Add `--expanded --samples=5` for the small density/diameter/noise/shear/dropout
+sweep and a final-window comparison. Reports are written to the gitignored
+`bench/profile-output/validation-scorecard/`. Synthetic truth, real A/4E smoke
+checks, and unavailable known-motion experiments are distinguished explicitly.
+Reported Julia allocation totals are **not peak memory**. See the
+[scorecard guide](../docs/src/howto/validation_scorecard.md) for input identities,
+reference conventions, timing scope, and unsupported claims.
+
+For the performance-only suite:
+
 ```bash
 julia --project=. --threads=auto bench/run_benchmarks.jl
 ```

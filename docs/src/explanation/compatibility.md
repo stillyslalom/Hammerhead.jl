@@ -19,6 +19,14 @@ versioned file and loads as an empty vector.
 Users who need long-lived, language-neutral archives should also export the
 table or VTK form.
 
+Experiment records use a separate `experiment_format_version = 1`, with explicit
+primitive settings and identities rather than persisted recipe objects. They do
+not change the result-file schema. Unknown versions, unexpected fields, and
+changed recipe/input identities are rejected. There is no implicit migration
+from historical planning files or result-only files: those files do not contain
+the complete processing recipe. See [experiment replay](../howto/experiments.md)
+for the supported planar scope and environment compatibility checks.
+
 The long-form table contract is identified by `TABLE_SCHEMA_VERSION` and the
 ordered `TABLE_COLUMNS` constant. Columns are a backward-compatible superset
 across planar, stereo, PTV, and tracking results: unavailable values are empty rather

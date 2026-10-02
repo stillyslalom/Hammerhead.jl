@@ -13,12 +13,17 @@ using ImageCore: Colorant, Gray
 using ImageFiltering: imfilter, KernelFactors
 using JLD2: jldopen
 using ProgressMeter: Progress, next!
+import Pkg
+import SHA
+import UUIDs
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
 export benchmark_piv_configurations
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export ResultFile
+export PreprocessStep, ScriptReference, PIVRecipe, ExperimentRecord, ExperimentRun
+export recipe_identity, save_experiment, load_experiment, replay_experiment
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask
@@ -75,6 +80,7 @@ include("ensemble.jl")
 include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
+include("experiments.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the
 # 0.99-quantile magnitude among the selected vectors to `target_length` (the

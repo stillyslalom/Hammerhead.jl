@@ -374,9 +374,10 @@ function build_preprocess(pp::PreprocessPreview)
     steps = [PreprocStep(s.name, true, copy(s.params))
              for s in pp.steps[] if s.enabled]
     isempty(steps) && return nothing
-    bg = pp.background[]
-    any(s -> s.name === :subtract_background, steps) && bg === nothing &&
+    needs_background = any(s -> s.name === :subtract_background, steps)
+    needs_background && pp.background[] === nothing &&
         throw(ArgumentError("the :subtract_background step needs a background (set_background!)"))
+    bg = needs_background ? copy(pp.background[]) : nothing
     return img -> begin
         out = Matrix{Float64}(img)
         for s in steps

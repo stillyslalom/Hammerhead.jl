@@ -46,6 +46,7 @@ context is available. Then run from the candidate checkout:
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'
 julia --project=docs docs/make.jl
+julia --project=. -t 4 bench/validation_scorecard.jl
 ```
 
 The GUI and docs require a GL context. Linux CI supplies one through Xvfb;
@@ -74,9 +75,10 @@ links to logs and artifacts. Record what was not exercised as well as what passe
 | CUDA/AMDGPU | Device, driver/runtime/package versions, backend validation command, supported paths, accuracy comparison and memory/performance measurements. KA CPU tests do not replace hardware execution. |
 | GUI workflow | OS/display configuration, setup/preprocessing/ROI/mask/scale, batch completion/cancellation, saved-result reopen, and export checks. Include a lab-user walkthrough when available. |
 | Persistence | Current round trips, unknown-version rejection, promised historical fixtures, cancellation/failure behavior, and any documented recovery limits. |
+| Planar experiment replay | Recipe/input hashes, creation and run environments, native-result parity, changed-input/unknown-version refusal, and completed/failed run records. Record any explicit environment override. |
 
 Do not present unavailable GPU runs, large-recording benchmarks, known-motion
-experiments, or an unimplemented saved-experiment workflow as validated. The
+experiments, or an untested GUI/stereo saved-experiment workflow as validated. The
 remaining work belongs in [ROADMAP.md](ROADMAP.md).
 
 ## Register in dependency order

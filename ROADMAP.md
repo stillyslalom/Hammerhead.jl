@@ -48,9 +48,18 @@ existing implementation is preferable; they are not commitments to add an API.
 
 ## 1. Quantitative validation and representative workloads
 
-- [ ] Build a reproducible dataset scorecard distinguishing synthetic ground
+- [x] Build a reproducible dataset scorecard distinguishing synthetic ground
   truth, known-motion experiments, and real-data smoke checks. Record dataset
   identity, processing recipe, selection rules, and reference conventions.
+  [The scorecard command](docs/src/howto/validation_scorecard.md) covers seeded
+  translation/shear, an empty-image failure case, and committed A/4E smoke data.
+  Known-motion measurements are explicitly unavailable. Reports record input
+  and source hashes, complete settings, environment, warmed CPU timings, and
+  cumulative Julia allocations; allocations are not peak memory.
+- [ ] Reject non-informative correlation windows consistently across backends.
+  The initial empty-image scorecard admits a full field with artificial
+  displacement; add a regression for zero/constant images and preserve valid
+  low-signal behavior. Record the repaired outcome in the scorecard.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -75,15 +84,23 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 
 ## 2. Reproducible experiments, timing, and coordinates
 
-- [ ] Define a versioned experiment/run record shared by Julia scripts and the
-  GUI: input identities, full pass schedule, preprocessing, original masks/ROI,
-  calibration/dewarping/self-calibration inputs, scale, backend/precision, and
-  software environment. Define migration and compatibility behavior.
-- [ ] Serialize built-in processing recipes and reference user-supplied scripts
-  for custom callbacks; make unsupported automatic replay explicit.
-- [ ] Save/reopen an experiment, compare processing revisions, and rerun from its
-  recipe without reconstructing settings manually. Preserve existing result-only
-  workflows and the core/GUI dependency boundary.
+- [x] Establish a versioned file-based planar experiment/run record in the core:
+  input content identities, explicit pass schedule, built-in preprocessing,
+  embedded background and original mask/ROI, scale, CPU/KA precision/settings,
+  and creation/run environments. [Experiment records](docs/src/howto/experiments.md)
+  use a separate version-1 format, reject unknown versions and changed identities,
+  and preserve existing native result files and result-only workflows.
+- [x] Serialize built-in planar processing recipes and reference user-supplied
+  preprocessing scripts by content hash and entrypoint. Replay requires an
+  explicit caller-provided function; it never executes a saved script itself.
+- [x] Save/reopen and replay a planar recipe without reconstructing settings.
+  Replay verifies inputs and environment before output, streams results, and
+  optionally records completed/failed runs. This is a rerun-from-start API.
+- [ ] Extend experiment records to the GUI, stereo calibration/dewarping/
+  self-calibration, PTV/tracking, and supported GPU devices. Define migrations
+  when extending the format; keep toolkit dependencies in the GUI package.
+- [ ] Compare experiment processing revisions with a human-readable settings
+  diff and representative-pair results.
 - [ ] Preserve exposure timestamps, pair delay, sample time, source frame IDs,
   time units, and calibration/coordinate-frame identity through native persistence
   and exports. Define the time assigned to a displacement measurement.
@@ -190,9 +207,11 @@ and window management justify evaluating a dedicated application toolkit.
 
 ### Framework candidates
 
-This shortlist is based on upstream documentation checked on 2026-10-02, not on
-executed HammerheadGUI prototypes. Platform and packaging support must be proven
-for the assembled application.
+This shortlist is based on upstream documentation checked on 2026-10-02. An
+[isolated Qt/QML prototype](docs/src/explanation/gui_framework.md) now supplies
+initial Windows resolver/controller/framebuffer evidence and a concrete native
+shutdown failure. Platform and packaging support remain to be proven for the
+assembled application.
 
 | Candidate | Fit and evidence | Main questions for the prototype |
 |---|---|---|
@@ -208,18 +227,26 @@ Sources: [QML.jl](https://juliagraphics.github.io/QML.jl/dev/),
 [WGLMakie](https://docs.makie.org/stable/explanations/backends/wglmakie).
 QMLMakie's inspected [compatibility declarations](https://github.com/JuliaGraphics/QMLMakie.jl/blob/master/Project.toml)
 include Julia 1.10, GLMakie 0.13, and Observables 0.5, matching the corresponding
-HammerheadGUI requirements. This supports trying it first; it is not a resolved
-environment or runtime compatibility test.
+HammerheadGUI requirements. The prototype separately records the exact versions
+resolved and exercised on Windows; compatibility ranges alone are not runtime
+evidence.
 
-- [ ] Define the desktop interaction requirements: experiment/file browser,
+- [x] Define the desktop interaction requirements: experiment/file browser,
   editable parameter tables/forms, errors next to inputs, keyboard navigation,
   HiDPI, menus, and resizable panels. Include separate settings and visualization
   windows, consistent with the original design preference, and compare with an
   integrated layout using the same controllers.
+  The [requirements matrix](docs/src/explanation/gui_framework.md) specifies
+  acceptance exercises and distinguishes implemented wiring, automated evidence,
+  and pending desktop/platform checks.
 - [ ] Prototype a Qt/QML batch form and existing-controller result explorer,
   including image pan/zoom, dense vectors, picking, mask gestures, live results,
   cancellation, and window close/reopen. Compare against the current GLMakie
   baseline; assess GTK4 and Bonito against the same requirements if needed.
+  The isolated candidate reuses controllers and renders through QMLMakie on
+  Windows offscreen; native teardown currently fails with an OpenGL context
+  error. Complete lifecycle, native input, and responsiveness evidence before
+  claiming this prototype requirement complete.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.

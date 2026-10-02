@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added version-1 planar experiment records with content-addressed recipes and
+  inputs, explicit built-in preprocessing, embedded backgrounds/masks/ROI,
+  environment provenance, and streaming replay with optional run records.
+  Replay supports CPU/KA and Float32/Float64; custom preprocessing requires a
+  caller-provided function matching a recorded script reference. Saved scripts
+  are never automatically executed. Stereo, PTV, tracking, and GPU experiment
+  recipes remain unsupported.
+- Added a reproducible validation scorecard command covering seeded synthetic
+  truth and committed Challenge A/4E smoke data. Reports separate error claims
+  from smoke checks and record source/input hashes, full settings, warmed CPU
+  timings, and cumulative Julia allocations (not peak memory).
 - Stereo sequence and ensemble processing validate available exposure times,
   observed pair delays, and declared `FramePair.dt` before reading images or
   opening output. `sync_atol` and `sync_rtol` control tolerance relative to pair
@@ -41,6 +52,12 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added an opt-in, isolated Qt6/QML prototype and desktop requirements matrix.
+  Windows resolution, controller reuse, and native framebuffer capture have
+  evidence; native OpenGL teardown fails and broader platform/input checks remain
+  open. This adds no toolkit dependencies to the production GUI.
+- Built preprocessing pipelines now copy a background used for subtraction,
+  so later in-place preview edits cannot change a captured batch pipeline.
 - Added `ROIEditor`, `roi_editor`/`roi_editor!`, and batch ROI controls, with
   two-corner selection, numeric bounds, reset, and full-image coordinate
   preservation. Invalid or oversized custom windows are rejected before opening
@@ -53,10 +70,11 @@ validation and the core-first, GUI-second release sequence.
 ### Compatibility
 
 Native JLD2 `format_version` remains **1**; persisted result structures are
-unchanged. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
+unchanged. Experiment records have their own `experiment_format_version = 1`
+and do not change the native result schema. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.
 
-The GUI framework remains GLMakie. Qt/QML and other toolkit candidates are
-evaluations in [ROADMAP.md](ROADMAP.md), not added dependencies or supported
-replacement shells.
+The production GUI framework remains GLMakie. Qt/QML and other toolkit
+candidates are evaluations in [ROADMAP.md](ROADMAP.md), not supported
+replacement shells. Qt/QML dependencies belong only to the opt-in prototype.

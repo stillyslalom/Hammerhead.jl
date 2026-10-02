@@ -1087,6 +1087,16 @@ const r_track = TrackingResult(
         set_background!(pp2, nothing)             # clears and disables
         @test !C._step(pp2, :subtract_background).enabled
 
+        # A built pipeline owns the background, even if the preview's matrix
+        # is edited in place after it is handed to a batch.
+        snapshot_preview = PreprocessPreview(fill(0.8, 4, 4))
+        set_background!(snapshot_preview, [fill(0.2, 4, 4)])
+        enable_step!(snapshot_preview, :subtract_background)
+        frozen = build_preprocess(snapshot_preview)
+        snapshot_preview.background[] .= 0.7
+        @test frozen(fill(0.8, 4, 4)) ≈ fill(0.6, 4, 4)
+        @test apply_pipeline(snapshot_preview, fill(0.8, 4, 4)) ≈ fill(0.1, 4, 4)
+
         # batch integration: the pipeline forwards into run_piv_sequence
         pp3 = PreprocessPreview(imgA; enabled = [:intensity_cap])
         bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],

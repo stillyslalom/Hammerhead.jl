@@ -30,6 +30,7 @@ docs — all synthetic-verified, no new deps.
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, ~1 min after precompile
 julia --project=docs docs/make.jl                    # docs: executes all seven tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
+julia --project=. --threads=4 bench/validation_scorecard.jl  # provenance + synthetic accuracy / real-data smoke report
 ```
 
 `PIV sequence failed` error logs from the intentional failure-propagation
@@ -213,6 +214,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Area `circulation(result; region=...)` now errors on incomplete coverage
   by default; `coverage=:report` returns value, valid/requested area, fraction,
   and authoritative `complete` flag (no valid area gives `NaN` value).
+- `experiments.jl` — versioned file-based planar `PIVRecipe`/`ExperimentRecord`,
+  `PreprocessStep`, hash-verified `ScriptReference`, save/load, and noncollecting
+  `replay_experiment` with optional `ExperimentRun` persistence. Recipes embed
+  copied backgrounds/masks/ROI and full settings; inputs are content-addressed
+  external files. CPU/KA Float32/Float64 only in version 1. Replay checks inputs,
+  destination aliases, and creation/run environment compatibility before opening
+  output; an environment change requires an explicit override. Scripts are never
+  evaluated automatically. The experiment format is separate from result format
+  1; unknown versions are rejected. Rerunning is not resuming/checkpoint recovery.
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -334,6 +344,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
+The opt-in `HammerheadGUI/prototypes/qml/` environment evaluates Qt6/QML
+without changing production GUI dependencies. Its README and
+`docs/src/explanation/gui_framework.md` distinguish controller/rendering
+evidence from native teardown/input/platform gaps. A successful framebuffer
+capture is not a clean application-lifecycle result. Keep generated manifests
+and artifacts ignored; retain portable relative source paths in its Project.
+
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
@@ -402,7 +419,7 @@ the core preprocessing set with live raw/processed preview and a
 single-window correlation probe — `set_pair!` + `click!` place it, du/dv/
 peak-ratio recompute on every pipeline change via a border-clamped
 single-window `run_piv` at the accuracy defaults; `build_preprocess`
-exports a frame-copying, snapshot-semantics closure for
+exports a frame-copying, snapshot-semantics closure with a copied background for
 the batch drivers); `ScaleTool`/`scale_tool` (two clicked points + known
 separation → `PhysicalScale`; `apply_scale!` into a batch form);
 `StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two
@@ -621,6 +638,12 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   `test_lazy_results.jl` checks indexing, file changes, and lazy payload access;
   `test_streaming_workflow.jl` combines non-collecting output, live statistics,
   variable pair delay, physical conversion, and lazy replay.
+- `test_experiments.jl` checks explicit recipe/record round trips, content
+  identities, replay and environment guards, alias rejection, and failure records.
+  `test_validation_scorecard.jl` checks deterministic rendering/hashes, selection
+  rules, population error RMS, analytic midpoint shear truth, complete recipes,
+  report round trips, and output protection. Real A/4E rows have no displacement
+  truth; cumulative Julia allocations are never labeled peak memory.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
