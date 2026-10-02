@@ -1,4 +1,9 @@
-# Roadmap
+# Archived roadmap
+
+Historical implementation record, superseded by the root
+[ROADMAP.md](../../ROADMAP.md). Outstanding work has moved there. Statements
+below about registration, formats, capabilities, and the GUI framework reflect
+earlier development stages; the pure-GLMakie framework decision is now reopened.
 
 Hammerhead's development is organized around the [International PIV
 Challenge](https://pivchallenge.org/) cases (2001, 2003, 2005, 2014). Each case
@@ -362,7 +367,7 @@ closed.
   (runs the pipeline once and builds each view at precompile time, no GL
   context needed): time-to-first-window 26.4 s → 1.2 s after `using
   HammerheadGUI` (~6 s), for a one-time ~30 s precompile
-- [ ] Packaging pass, part 2 — evaluate a PackageCompiler app bundle for
+- Packaging pass, part 2 (moved to the active roadmap) — evaluate a PackageCompiler app bundle for
   non-Julia lab users (feasibility, size, GLMakie relocatability — see
   Makie's `_relocatability.yml` CI)
 

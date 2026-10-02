@@ -54,6 +54,44 @@ using ImageCore: Gray, N0f8
         @test any(timed[1].mask)
     end
 
+    @testset "effort presets size their windows to the ROI" begin
+        # A singleton predictor axis is constant, while the other keeps its
+        # linear interpolation and flat extrapolation.
+        for T in (Float32, Float64)
+            row = Hammerhead.predictor_interpolant(T[5], T[3, 7], T[2 6])
+            col = Hammerhead.predictor_interpolant(T[3, 7], T[5], T[2; 6;;])
+            point = Hammerhead.predictor_interpolant(T[5], T[5], fill(T(3), 1, 1))
+            @test row(-20, 5) == row(5, 5) == row(20, 5) == T(4)
+            @test row(5, -20) == T(2) && row(5, 20) == T(6)
+            @test col(5, -20) == col(5, 5) == col(5, 20) == T(4)
+            @test col(-20, 5) == T(2) && col(20, 5) == T(6)
+            @test all(point(y, x) == T(3) for y in (-20, 5, 20), x in (-20, 5, 20))
+        end
+        a = rand(MersenneTwister(418), 96, 96)
+        b = circshift(a, (1, 2))
+        rr = ROI(9:56, 17:56)
+        mask = falses(size(a)); mask[rr.rows, 17:24] .= true
+        for effort in (:low, :medium, :high)
+            expected = run_piv(a[rr.rows, rr.cols], b[rr.rows, rr.cols];
+                effort, mask = mask[rr.rows, rr.cols])
+            actual = run_piv(a, b; effort, roi = (rr.rows, rr.cols), mask)
+            @test actual.x == expected.x .+ first(rr.cols) .- 1
+            @test actual.y == expected.y .+ first(rr.rows) .- 1
+            @test isequal(actual.u, expected.u)
+            @test isequal(actual.v, expected.v)
+            @test actual.mask == expected.mask
+            @test actual.parameters.window_size == expected.parameters.window_size
+        end
+        ka = run_piv(a, b; effort = :medium, roi = rr, backend = :ka)
+        cpu = run_piv(a, b; effort = :medium, roi = rr)
+        @test ka.u ≈ cpu.u atol = 1e-10
+        @test ka.v ≈ cpu.v atol = 1e-10
+        @test_throws BoundsError run_piv(a, b; effort = :medium, roi = ROI(1:97, 1:96))
+        # Explicit schedules still reject a window exceeding the selected region.
+        @test_throws ArgumentError run_piv(a, b, PIVParameters(window_size = 64);
+                                          roi = rr)
+    end
+
     @testset "table, VTK, and tracking persistence" begin
         imgA = rand(MersenneTwister(42),48,48); imgB = copy(imgA)
         r = run_piv(imgA,imgB,PIVParameters(window_size=16,overlap=8))

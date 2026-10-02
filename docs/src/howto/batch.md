@@ -167,16 +167,50 @@ save_results("snapshot.jld2", result)        # single result or a vector
 `TrackingResult` is supported by the same lossless JLD2 persistence. For
 language-neutral exchange, `export_table("field.csv", result)` writes the
 stable `hammerhead-table-1` long-form schema. Its fixed columns are
-`TABLE_COLUMNS`; planar, stereo, and PTV rows use the same superset and leave
-inapplicable values empty. Identifiers, flags, quality values, uncertainties,
-and unit strings are included, and attached scaling is applied. Planar and
-stereo grids can also be written for ParaView with
+`TABLE_COLUMNS`; planar, stereo, PTV, and tracking rows use the same superset
+and leave inapplicable values empty. Identifiers, flags, quality values, uncertainties,
+and unit strings are included, and attached scaling is applied. Tracking rows
+preserve observed frame indices and gaps, with derived elapsed time and
+numerical validity flags; see the [I/O reference](../reference/io.md) and
+[compatibility policy](../explanation/compatibility.md) for their provenance
+and empty-track limitations. Planar and stereo grids can also be written for
+ParaView with
 `export_vtk("field.vtk", result)` (legacy ASCII structured-grid VTK).
 The VTK `FIELD` metadata records coordinate and vector-component unit labels;
 without an attached scale, stereo labels use `world_unit` for the calibration
 grid's unnamed world units.
 
 ## Post-process the sequence
+
+### Consume results without collecting the recording in RAM
+
+All three sequence drivers (`run_piv_sequence`, `run_ptv_sequence`, and
+`run_piv_stereo_sequence`) accept `collect_results = false`. They return
+`nothing`; completed results still reach the `on_result` callback and output
+file before progress is reported. The driver then releases its reference to
+that result. For example, save a large planar run while keeping only a small
+summary in memory:
+
+```julia
+accepted_counts = Int[]
+run_piv_sequence(pairs, passes;
+    collect_results = false,
+    output = "large_run.jld2",
+    on_result = (i, r) -> push!(accepted_counts, count(.!(r.mask .| r.outliers))))
+```
+
+Use a callback that processes each result without retaining it for constant
+result-storage memory. Input lists, accumulated summaries, output-file metadata,
+workspaces, and memory retained by the callback have their own costs. Loading
+the saved file with `load_results` still materializes the entire result vector.
+The GUI's live explorer also retains results; this option does not make its
+browsing disk-backed.
+
+Exceptions and prefetch cleanup follow the same contract as collecting runs.
+Stereo cancellation returns `nothing` in this mode; completed acquisitions
+remain available through the callback or configured output.
+
+### Analyze collected results
 
 For a worked example of sampling intervals, valid counts, and convergence
 of a mean field, follow [From image pairs to flow statistics](../tutorials/sequence_statistics.md).

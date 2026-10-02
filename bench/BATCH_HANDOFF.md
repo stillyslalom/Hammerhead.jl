@@ -1,5 +1,9 @@
 # Handoff: portable batch-memory architecture for the CUDA backend
 
+Implementation notes for the CUDA memory item in [ROADMAP.md](../ROADMAP.md).
+Track status and priority there; retain the backend details and validation
+procedure here.
+
 ## Goal
 
 Port the generic batch-memory lifecycle now implemented and hardware-validated

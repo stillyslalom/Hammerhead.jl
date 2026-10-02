@@ -344,7 +344,8 @@ in single precision; uncertainty statistics still accumulate in Float64.
 `roi` optionally selects an image rectangle for analysis. Pass an
 [`ROI`](@ref) or a `(rows, cols)` tuple of inclusive index ranges, such as
 `(50:200, 80:300)`. Returned grid coordinates refer to the original image
-frame.
+frame. Effort presets size their interrogation windows to the selected ROI;
+explicit pass schedules must fit within it.
 
 Returns the [`PIVResult`](@ref) of the final pass.
 """
@@ -462,11 +463,18 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
 end
 
 function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real};
-                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
-    effort === nothing && return run_piv(imgA, imgB, PIVParameters(); kwargs...)
+                 effort::Union{Nothing,Symbol} = nothing, roi = nothing, kwargs...)
+    effort === nothing && return run_piv(imgA, imgB, PIVParameters(); roi, kwargs...)
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
-    passes = effort_schedule(effort; image_size = size(imgA), piv_kwargs...)
-    return run_piv(imgA, imgB, passes; driver_kwargs...)
+    image_size = if roi === nothing
+        size(imgA)
+    else
+        rr = roi isa ROI ? roi : ROI(roi)
+        a, _, _ = roi_views(imgA, imgB, nothing, rr)
+        size(a)
+    end
+    passes = effort_schedule(effort; image_size, piv_kwargs...)
+    return run_piv(imgA, imgB, passes; roi, driver_kwargs...)
 end
 
 """
@@ -545,12 +553,24 @@ end
 # Gridded(Linear())/Flat() evaluation the CPU deformation interpolates the
 # images with, run on the host — the vector grid is tiny next to the images,
 # so every backend shares this bit (vector attribution is backend-independent).
+function predictor_interpolant(y, x, field)
+    # A coarse window can fill one or both image dimensions. There is no
+    # measured gradient on a singleton axis, so extend its value constantly.
+    # Interpolations requires two knots for Gridded(Linear()); duplicate only
+    # those axes, leaving the ordinary multi-node calculation unchanged.
+    single_y, single_x = length(y) == 1, length(x) == 1
+    if single_y || single_x
+        y = single_y ? [first(y) - 1, first(y) + 1] : y
+        x = single_x ? [first(x) - 1, first(x) + 1] : x
+        field = repeat(field; outer = (single_y ? 2 : 1, single_x ? 2 : 1))
+    end
+    return extrapolate(interpolate((y, x), field, Gridded(Linear())), Flat())
+end
+
 function predictor_node_values(predictor, x::AbstractVector, y::AbstractVector,
                                ::Type{T}) where {T}
-    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
-                                    Gridded(Linear())), Flat())
-    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
-                                    Gridded(Linear())), Flat())
+    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u)
+    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v)
     return T[itp_u(yi, xj) for yi in y, xj in x],
            T[itp_v(yi, xj) for yi in y, xj in x]
 end
@@ -566,10 +586,8 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
                          warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
     ny, nx = length(y), length(x)
     predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
-    itp_u = extrapolate(interpolate((predictor.y, predictor.x), predictor.u,
-                                    Gridded(Linear())), Flat())
-    itp_v = extrapolate(interpolate((predictor.y, predictor.x), predictor.v,
-                                    Gridded(Linear())), Flat())
+    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u)
+    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v)
     warpA, warpB = deform_images(itpA, itpB, itp_u, itp_v, size(imgA), T;
                                  threaded, warpA, warpB)
     u = T[itp_u(yi, xj) for yi in y, xj in x]

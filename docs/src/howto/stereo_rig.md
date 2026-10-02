@@ -128,6 +128,45 @@ The corrected dewarpers then drop into stereo processing of the recording:
 stereo = run_piv_stereo(A1, B1, A2, B2, dw1c, dw2c, passes)
 ```
 
+## Check exposure synchronization
+
+Both cameras must record the same A instant and the same B instant. Equal
+pair delays alone cannot detect a camera whose whole recording is offset.
+For timestamped recordings, use lazy sources and the stereo sequence driver:
+
+```julia
+# Both timestamp vectors use seconds from the same clock origin.
+source1 = FrameSource(length(cam1_paths), i -> load_image(cam1_paths[i]);
+                      timestamps = cam1_exposure_times)
+source2 = FrameSource(length(cam2_paths), i -> load_image(cam2_paths[i]);
+                      timestamps = cam2_exposure_times)
+results = run_piv_stereo_sequence(image_pairs(source1), image_pairs(source2),
+    dw1c, dw2c, passes; sync_atol = 1e-6, missing_timestamps = :error)
+```
+
+This checks both exposure times for every acquisition before loading pixels
+or opening the output file. `sync_atol` is in the timestamps' time unit;
+`sync_rtol` is a fraction of the larger available pair delay. Comparisons
+allow `sync_atol + sync_rtol * max(dt1, dt2)`, with zero for unavailable
+delays. Absolute clock values never enlarge the tolerance. Both defaults
+are zero (exact agreement), and both options must be finite and nonnegative.
+The same tolerance checks that the two cameras' pair delays agree. Available
+timestamps must be finite real numbers and delays finite and positive.
+When a `FramePair` also declares `dt`, it must agree with its observed
+timestamp difference within the same tolerance; observed delays determine
+the relative tolerance.
+Choose a tolerance from the rig's measured timing precision and acceptable
+exposure skew; it does not correct an offset between camera clocks.
+
+The default `missing_timestamps = :allow` supports paths, matrices, and
+sources without timing metadata. It checks every available comparison but
+skips comparisons with an absent (`nothing` or `missing`) exposure timestamp,
+so it cannot establish synchronization for those exposures. Select `:error`
+to require all four timestamps. The same options work for acquisitions
+passed as `(A1, B1, A2, B2)` tuples of `FrameRef`s, for effort presets, and
+for [`run_piv_stereo_ensemble`](@ref). Direct `run_piv_stereo` matrix inputs
+have no timestamps; establish their synchronization before calling it.
+
 For large per-camera analyses, `backend = :amdgpu` or `:cuda` forwards GPU
 execution to both two-component (2C) PIV calls. Dewarping the four raw images
 and reconstructing the final three-component (3C) field remain CPU operations.

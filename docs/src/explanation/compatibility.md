@@ -15,11 +15,40 @@ table or VTK form.
 
 The long-form table contract is identified by `TABLE_SCHEMA_VERSION` and the
 ordered `TABLE_COLUMNS` constant. Columns are a backward-compatible superset
-across planar, stereo, and PTV results: unavailable values are empty rather
+across planar, stereo, PTV, and tracking results: unavailable values are empty rather
 than changing shape. Existing columns will not be renamed or change meaning
 within a schema version. An incompatible contract change increments the schema
 version; additive columns may be introduced without invalidating readers that
 select columns by name.
+
+Tracking adds eight columns after the original columns, preserving the original
+column order and meaning. Each row is an **observed** trajectory position; gaps
+are metadata, not synthesized positions. Trajectory IDs follow the result's
+trajectory-vector order and are local to that result. Empty trajectories emit no
+rows, so IDs can have gaps. Observation IDs count points within a trajectory;
+the existing `point_id` counts rows across the entire result. Header-only tables
+represent results with no observations. They cannot retain empty trajectories,
+the total input frame count, or scale metadata; use JLD2 when that information
+must round-trip.
+
+`frame_index` records the input frame's one-based index, while `frame_id` remains
+a caller-supplied label for the whole result. `elapsed_time` is derived from
+input frame 1, using frame intervals without a scale or the attached scale's
+`dt` with one. `time_provenance` identifies which convention was used. Physical
+elapsed times assume uniformly spaced input frames; a tracking result does not
+retain acquisition timestamps or original frame-source indices. Supplying a
+scale after subsampling therefore requires the interval between the frames
+actually passed to tracking. This export cannot recover irregular acquisition
+timing from frame indices alone.
+
+Tracking velocity columns contain frame-aware differences of observed
+positions, using the same endpoint and central-difference convention as
+[`trajectory_velocities`](@ref). Physical conversion retains the interval and
+is idempotent. `position_valid` and `velocity_valid` report numerical finiteness;
+they make no claim about particle identity, uncertainty, or detection quality.
+Tracking does not retain mask/outlier flags, so those existing columns are
+empty rather than implying that all observations passed a validator. The
+[I/O reference](../reference/io.md) defines the added columns and edge cases.
 
 VTK export uses the legacy structured-grid contract documented by
 [`export_vtk`](@ref). `FIELD FieldData` stores `coordinate_unit` and

@@ -1,5 +1,9 @@
 # GPU Extension Plan
 
+Historical design record. Current capability is described by the
+[feature matrix](../../docs/src/reference/feature_matrix.md); remaining GPU
+memory and acceleration work is tracked in the root [ROADMAP.md](../../ROADMAP.md).
+
 ## Goal
 
 Accelerate Hammerhead's heavy workloads while preserving the current CPU

@@ -1,8 +1,9 @@
 # CLAUDE.md
 
 Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
-organized around the International PIV Challenge cases; see ROADMAP.md for
-phases and status. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
+organized around the International PIV Challenge cases; see [ROADMAP.md](ROADMAP.md)
+for the single active backlog, delivery order, and acceptance criteria. Historical
+phases live in `reference/archive/ROADMAP.md`. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
 PIV is out of scope). All five phases are done: 1 (file I/O & batch),
 2 (masking), 3 (ensemble correlation & time-series statistics),
 4 (accuracy/UQ), and 5 (stereo: camera calibration, target detection,
@@ -122,12 +123,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `multipass_parameters` (`final = (;)` overrides the last pass only),
   `effort_schedule` (internal builder for `effort = :low/:medium/:high` on
   `run_piv`, `run_piv_sequence`, `run_piv_ensemble`, and `run_piv_stereo`;
-  high effort includes final-pass UQ, and ensemble high repeats the final
+  planar presets use the ROI dimensions when supplied; high effort includes
+  final-pass UQ, and ensemble high repeats the final
   window because ensemble ignores `max_iterations`),
   `PIVWorkspace`/`piv_workspace()` (optional `workspace` kwarg reusing the
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
   the deform buffers, and a per-window-config correlator pool across `run_piv`
-  calls — bitwise-identical; the sequence/ensemble drivers hold one)
+  calls — bitwise-identical; the sequence/ensemble drivers hold one).
+  Singleton predictor axes extend constantly during deformation and vector
+  attribution, so coarse windows may fill an image or ROI dimension.
 - `ka_backend.jl` — portable KernelAbstractions correlation/analysis kernels
   + the built-in `backend = :ka` engine that runs them on the KA CPU backend
   (details and GPU kernel conventions under the GPU-extension bullet below)
@@ -146,7 +150,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `stereo.jl` — `StereoPIVResult` + `run_piv_stereo` (per-camera 2C on
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation), synchronized `run_piv_stereo_sequence`, and
-  per-camera-correlation `run_piv_stereo_ensemble`
+  per-camera-correlation `run_piv_stereo_ensemble`. Sequence/ensemble drivers
+  check matching exposure timestamps before loading or opening output;
+  `sync_atol`/`sync_rtol` scale tolerance by pair delay, never clock epoch.
+  `missing_timestamps = :error` requires metadata; default `:allow` preserves
+  path/matrix workflows without claiming synchronization. Declared `FramePair.dt`
+  must agree with available source timestamps within the same tolerance.
 - `scaling.jl` — `with_scale` (attach/strip `PhysicalScale` metadata,
   arrays shared) + `physical` (same-type conversion to physical units) +
   `plot_axis_labels` (Makie-free label helper) for all four result types
@@ -158,7 +167,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `scale` field landed),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
   `output` accepts a single path or an `(i, pair) -> path` function for
-  per-pair files; the next pair's load+preprocess is prefetched on a
+  per-pair files; `collect_results = false` returns `nothing` while delivering
+  each result to `on_result` and output, then releases its reference (also
+  supported by the stereo sequence driver); the next pair's load+preprocess is prefetched on a
   `Threads.@spawn` task while the current pair's `process` runs — overlaps
   slow-source IO with compute only under ≥2 threads, results bitwise-identical
   to serial; `run_piv_sequence` also holds one `PIVWorkspace`, reused across
@@ -169,7 +180,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `FrameRef` / timestamped `FramePair` / `TIFFStack`; flexible stride, offset,
   multi-delay pairing; dynamic static/per-frame/per-pair/callback masks with
   pair-union semantics; stable long-form `export_table` CSV and structured-grid
-  `export_vtk`
+  `export_vtk`. Tracking CSV uses additive columns for trajectory/observation
+  IDs, original frame indices, derived elapsed time, gaps, and numerical validity;
+  no gap rows or acquisition timestamps are invented. Elapsed time assumes
+  uniform input-frame spacing when derived from `PhysicalScale.dt`.
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor; one
   `PIVWorkspace` reuses the interpolant/deform buffers across pairs)
@@ -352,6 +366,10 @@ estimators; the profile panel appears as a third layout row);
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
 the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
+`ROIEditor`/`roi_editor` (two-corner and numeric inclusive pixel bounds,
+clear/reset, core `ROI` validation, and `apply_roi!` into `BatchRunner`;
+the batch snapshots its ROI, preprocesses full frames, and lets the core crop
+images/masks and retain original image coordinates);
 `BatchRunner`/`batch_runner` (runs `run_piv_sequence` with its progress
 callback inside `@async` — cooperative, so GL renders keep happening off
 `run_piv`'s internal thread-spawn yields while observables stay on the
@@ -576,6 +594,11 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   plumbing incl. the effort kwarg-split path, JLD2 round-trip, the Unitful
   ext — Unitful is a test-target dep, which is what activates the ext under
   `Pkg.test`).
+- `test_stereo_timing.jl` checks exposure synchronization, missing metadata,
+  clock-epoch-independent tolerances, and rejection before image loading/output.
+  `test_tracking_export.jl` checks CSV compatibility, gaps, numerical validity,
+  and physical conversion. `test_sequence_sink.jl` checks non-collecting sequence
+  delivery/persistence/cancellation and weak-reference release of old results.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
@@ -612,20 +635,11 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   frame (`report.R * w + report.t` must land on the sheet), and post-fix
   reconstruction.
 
-## Deferred backlog
+## Development planning
 
-Rolled-target detection still needs broader synthetic coverage and a real
-rotated-target regression fixture; `orientation = :fiducials` already provides
-the roll-invariant convention when both markers are visible. Other analysis
-deferrals are uncertainty propagation into derived quantities (Wieneke 2015
-§3.2: needs spatial error autocorrelation) and light-sheet thickness/overlap
-estimation from disparity-correlation peak widths (Wieneke 2005 §5). Multi-frame
-real-data doc demos (`compute_background` / `run_piv_ensemble` on Challenge
-sequences like 2A/4A) still need build-time download/caching within the docs CI
-budget; the committed case-A pair covers only the single-pair tutorial.
-
-PTV deferrals: relaxation-method matching, per-particle position/displacement
-uncertainty, stereo PTV, GUI explorer support for persisted
-`PTVResult`/`TrackingResult` (including trajectory gaps and unit-labeled axes),
-and the Duncan et al. distance-weighted scattered-UOD variant (v1 is the plain
-test).
+All outstanding work is tracked in [ROADMAP.md](ROADMAP.md), including the
+cross-platform GUI framework evaluation. GLMakie is the current implementation;
+the historical decision to keep all widget chrome in Makie is open for review.
+Preserve the framework-free controller boundary when evaluating a new shell.
+Keep this file focused on current architecture, commands, and implementation
+conventions rather than maintaining a second backlog.

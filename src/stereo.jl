@@ -129,6 +129,10 @@ CPU (see [Run PIV on a GPU](@ref)).
 The returned [`StereoPIVResult`](@ref) retains both per-camera fields and
 combines their mask and outlier flags. Inspect those fields when one camera
 has weak seeding or a larger uncertainty estimate.
+
+Matrix inputs contain no exposure timestamps: the caller must establish
+synchronization. To validate timestamped [`FrameRef`](@ref)s before loading
+images, use [`run_piv_stereo_sequence`](@ref).
 """
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
@@ -234,8 +238,31 @@ paths are recorded when all four inputs are paths. `progress` and
 `cancel` may be a zero-argument predicate; when it becomes true, processing
 stops between acquisitions and the completed prefix is returned (and remains
 persisted).
+Set `collect_results = false` to return `nothing` instead of retaining the
+completed results in memory, including on cancellation. `on_result`, `output`,
+and `progress` still run for each completed acquisition in the same order.
 Timestamped [`FramePair`](@ref)s attach their actual pair-specific `dt` to
 each result when `scale` is supplied; the two cameras' intervals must agree.
+
+Before loading any images or opening `output`, matching A exposures and
+matching B exposures are checked using [`FrameRef`](@ref) source timestamps.
+Both camera clocks must use the same origin and time unit. The tolerance is
+`sync_atol + sync_rtol * max(dt1, dt2)`, using the available positive pair
+delays (zero if neither is available), never the absolute clock epoch.
+`sync_atol = 0.0` and `sync_rtol = 0.0` require exact agreement; both must be
+finite and nonnegative. The same tolerance applies to the two pair delays.
+Available timestamps must be finite real numbers, and available delays must
+be finite and positive. Equal delays alone do not establish synchronization.
+When exposure timestamps and `FramePair.dt` are both supplied, the observed
+delay takes precedence for checking synchronization and must agree with the
+declared `dt` within the same tolerance.
+
+With `missing_timestamps = :allow` (default), missing exposure timestamps
+(`nothing` or `missing`) skip only their matching-exposure comparison; all
+available comparisons still run. This preserves matrix/path workflows but
+does not verify synchronization when metadata is absent. Use
+`missing_timestamps = :error` to require all four timestamps in every
+acquisition. This policy also applies to the 4-tuple overload.
 
 Pass explicit `params`, or omit them and use `effort = :low`, `:medium`, or
 `:high`. Other keywords are forwarded to [`run_piv_stereo`](@ref).
@@ -243,43 +270,105 @@ Pass explicit `params`, or omit them and use `effort = :low`, `:medium`, or
 function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper,
                                  params::Union{PIVParameters,AbstractVector{PIVParameters}};
-                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+                                 effort::Union{Nothing,Symbol} = nothing,
+                                 sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
+                                 missing_timestamps::Symbol = :allow, kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     length(pairs1) == length(pairs2) ||
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
-    _check_stereo_pair_times(pairs1, pairs2)
+    _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
     acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
-                                    scale_pairs = pairs1, kwargs...)
+                                    scale_pairs = pairs1, sync_atol, sync_rtol,
+                                    missing_timestamps, kwargs...)
 end
 
 function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper;
-                                 effort::Union{Nothing,Symbol} = nothing, kwargs...)
+                                 effort::Union{Nothing,Symbol} = nothing,
+                                 sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
+                                 missing_timestamps::Symbol = :allow, kwargs...)
     length(pairs1) == length(pairs2) ||
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
-    _check_stereo_pair_times(pairs1, pairs2)
+    _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
     acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
     if effort === nothing
         return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters();
-                                        scale_pairs = pairs1, kwargs...)
+                                        scale_pairs = pairs1, sync_atol, sync_rtol,
+                                        missing_timestamps, kwargs...)
     end
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, passes;
-                                    scale_pairs = pairs1, driver_kwargs...)
+                                    scale_pairs = pairs1, sync_atol, sync_rtol,
+                                    missing_timestamps, driver_kwargs...)
 end
 
-function _check_stereo_pair_times(pairs1, pairs2)
+# FrameRef is included later, so resolve its type only when this helper runs.
+function _stereo_frame_time(frame)
+    t = frame isa FrameRef ? frame_timestamp(frame.source, frame.index) : nothing
+    return ismissing(t) ? nothing : t
+end
+
+function _stereo_pair_delay(pair, ta, tb, i, camera)
+    declared = hasproperty(pair, :dt) ? getproperty(pair, :dt) : nothing
+    ismissing(declared) && (declared = nothing)
+    observed = nothing
+    if ta !== nothing && tb !== nothing
+        tb > ta || throw(ArgumentError("camera $camera pair $i must have increasing exposure timestamps"))
+        observed = tb - ta
+    end
+    for dt in (declared, observed)
+        dt === nothing && continue
+        dt isa Real && isfinite(dt) && dt > 0 ||
+            throw(ArgumentError("camera $camera pair $i must have a finite positive frame interval, got $dt"))
+    end
+    return observed === nothing ? declared : observed, declared
+end
+
+function _check_stereo_pair_times(pairs1, pairs2;
+                                   sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
+                                   missing_timestamps::Symbol = :allow)
+    isfinite(sync_atol) && sync_atol >= 0 ||
+        throw(ArgumentError("sync_atol must be finite and nonnegative"))
+    isfinite(sync_rtol) && sync_rtol >= 0 ||
+        throw(ArgumentError("sync_rtol must be finite and nonnegative"))
+    missing_timestamps in (:allow, :error) ||
+        throw(ArgumentError("missing_timestamps must be :allow or :error"))
     for (i, (p1, p2)) in enumerate(zip(pairs1, pairs2))
-        dt1 = hasproperty(p1, :dt) ? getproperty(p1, :dt) : nothing
-        dt2 = hasproperty(p2, :dt) ? getproperty(p2, :dt) : nothing
-        if dt1 !== nothing && dt2 !== nothing && dt1 != dt2
+        times = (_stereo_frame_time(p1[1]), _stereo_frame_time(p1[2]),
+                 _stereo_frame_time(p2[1]), _stereo_frame_time(p2[2]))
+        for t in times
+            t === nothing && continue
+            t isa Real && isfinite(t) ||
+                throw(ArgumentError("camera pair $i has a nonfinite or non-real exposure timestamp: $t"))
+        end
+        missing_timestamps === :error && any(isnothing, times) &&
+            throw(ArgumentError("camera pair $i is missing exposure timestamps; synchronization cannot be verified"))
+        dt1, declared1 = _stereo_pair_delay(p1, times[1], times[2], i, 1)
+        dt2, declared2 = _stereo_pair_delay(p2, times[3], times[4], i, 2)
+        delay = max(dt1 === nothing ? 0 : dt1, dt2 === nothing ? 0 : dt2)
+        tol = sync_atol + sync_rtol * delay
+        isfinite(tol) || throw(ArgumentError("camera pair $i synchronization tolerance is nonfinite"))
+        for (camera, dt, declared) in ((1, dt1, declared1), (2, dt2, declared2))
+            if dt !== nothing && declared !== nothing && abs(dt - declared) > tol
+                throw(ArgumentError("camera $camera pair $i has a declared frame interval $declared " *
+                                    "inconsistent with exposure timestamps (observed $dt, tolerance $tol)"))
+            end
+        end
+        if dt1 !== nothing && dt2 !== nothing && abs(dt1 - dt2) > tol
             throw(ArgumentError("camera pair $i has inconsistent frame intervals: " *
                                 "$dt1 and $dt2"))
+        end
+        for (k, exposure) in ((1, "A"), (2, "B"))
+            t1, t2 = times[k], times[k + 2]
+            if t1 !== nothing && t2 !== nothing && abs(t1 - t2) > tol
+                throw(ArgumentError("camera pair $i has unsynchronized $exposure exposures: " *
+                                    "$t1 and $t2 (tolerance $tol)"))
+            end
         end
     end
     return nothing
@@ -311,20 +400,26 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                                   output::Union{Nothing,AbstractString,Function} = nothing,
                                   progress::Union{Bool,Function} = true,
                                   on_result::Union{Nothing,Function} = nothing,
+                                  collect_results::Bool = true,
                                   cancel::Union{Nothing,Function} = nothing,
                                   image_type::Type{<:AbstractFloat} = Float64,
                                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                                   scale::Union{Nothing,PhysicalScale} = nothing,
                                   scale_pairs = nothing,
+                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
+                                  missing_timestamps::Symbol = :allow,
                                   kwargs...)
     isempty(acquisitions) && throw(ArgumentError("acquisitions must not be empty"))
     all(a -> a isa Tuple && length(a) == 4, acquisitions) ||
         throw(ArgumentError("each stereo acquisition must be a 4-tuple (A1, B1, A2, B2)"))
+    _check_stereo_pair_times(((a[1], a[2]) for a in acquisitions),
+                             ((a[3], a[4]) for a in acquisitions);
+                             sync_atol, sync_rtol, missing_timestamps)
     node_mask = _stereo_node_mask(dw1, dw2, mask)
     pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
                  (preprocess, preprocess)
     workspace = piv_workspace(; backend)
-    results = StereoPIVResult[]
+    results = collect_results ? StereoPIVResult[] : nothing
     a = b = nothing
     file = output isa AbstractString ? jldopen(output, "w") : nothing
     load_acquisition(acq) = Threads.@spawn begin
@@ -359,7 +454,8 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                 result = _run_piv_stereo!(a, b, frames..., dw1, dw2, params,
                                           node_mask; backend, workspace, kwargs...)
                 result_scale = scale_pairs === nothing ? scale : pair_scale(scale, scale_pairs[i])
-                push!(results, result_scale === nothing ? result : with_scale(result, result_scale))
+                result = result_scale === nothing ? result : with_scale(result, result_scale)
+                collect_results && push!(results, result)
             catch
                 @error "Stereo PIV sequence failed on acquisition $i of $(length(acquisitions))"
                 rethrow()
@@ -367,15 +463,16 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
             # Live-consumer hook, mirroring run_piv_sequence's on_result:
             # called on the caller's task, in acquisition order, before the
             # incremental write and the progress callback.
-            on_result === nothing || on_result(i, results[end])
+            on_result === nothing || on_result(i, result)
             if file !== nothing
-                file[result_key(i)] = results[end]
+                file[result_key(i)] = result
                 all(x -> x isa AbstractString, acq) &&
                     (file[source_key(i)] = String[String(x) for x in acq])
             elseif output isa Function
-                _write_stereo_pair_file(String(output(i, acq)), results[end], acq)
+                _write_stereo_pair_file(String(output(i, acq)), result, acq)
             end
             progress isa Function ? progress(i, length(acquisitions)) : next!(meter)
+            result = nothing
         end
     catch
         failed = true
@@ -444,6 +541,11 @@ or a two-function tuple for separate cameras. The shared dewarp overlap and
 optional world-grid `mask` apply to both cameras; other keywords follow
 [`run_piv_ensemble`](@ref), including `effort`, `backend`, and `image_type`.
 
+Exposure timestamps and pair delays are checked before loading either
+camera using the `sync_atol`, `sync_rtol`, and `missing_timestamps` options
+of [`run_piv_stereo_sequence`](@ref), with the same defaults and policy.
+Missing metadata allowed by the default does not establish synchronization.
+
 The result is a peak estimate from the pooled correlations, which can differ
 from the arithmetic mean of individual vectors when their displacements
 vary widely. Its propagated uncertainty describes correlation noise in that
@@ -459,6 +561,8 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  progress::Bool = true,
                                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                                  scale::Union{Nothing,PhysicalScale} = nothing,
+                                 sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
+                                 missing_timestamps::Symbol = :allow,
                                  kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
@@ -466,6 +570,7 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
     isempty(pairs1) && throw(ArgumentError("camera pair sequences must not be empty"))
+    _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
     node_mask = _stereo_node_mask(dw1, dw2, mask)
     pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
                  (preprocess, preprocess)

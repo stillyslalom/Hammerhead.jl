@@ -193,7 +193,8 @@ end
 """
     run_piv_sequence(pairs, params = PIVParameters();
                      preprocess = nothing, output = nothing,
-                     progress = true, backend = :cpu, kwargs...) -> Vector{PIVResult}
+                     progress = true, backend = :cpu,
+                     collect_results = true, kwargs...) -> Vector{PIVResult} or nothing
     run_piv_sequence(pairs; effort = :low/:medium/:high, kwargs...) -> Vector{PIVResult}
 
 Analyze image pairs in order and return one [`PIVResult`](@ref) per pair.
@@ -226,6 +227,10 @@ and parameter overrides when `effort` is set, go to [`run_piv`](@ref).
   `progress`. Use it to consume results during a batch. Runs on the calling
   task, in pair order. Throwing aborts the batch like a throwing `progress`
   callback; pairs already persisted stay in `output`.
+- `collect_results`: retain and return all results by default. Set `false`
+  to return `nothing` and release completed results after their `on_result`,
+  `output`, and `progress` handlers finish. Use a callback or output file to
+  consume them; callbacks that retain results still consume memory themselves.
 - `backend`: execution backend selector. The core provides `:cpu` and `:ka`;
   package extensions add device selectors (see [Run PIV on a GPU](@ref)).
 - `image_type`: element type frames are loaded as (default `Float64`);
@@ -253,6 +258,7 @@ function run_piv_sequence(pairs::AbstractVector,
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           on_result::Union{Nothing,Function} = nothing,
+                          collect_results::Bool = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
@@ -262,7 +268,7 @@ function run_piv_sequence(pairs::AbstractVector,
     workspace = piv_workspace(; backend)
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, kwargs...),
                   PIVResult, pairs;
-                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
 end
 
 function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -271,6 +277,7 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           on_result::Union{Nothing,Function} = nothing,
+                          collect_results::Bool = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
@@ -280,18 +287,19 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
         ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, kwargs...)) :
         ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, kwargs...))
     _run_sequence(process, PIVResult, pairs;
-                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PIV")
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
 end
 
 """
     run_ptv_sequence(pairs, params = PTVParameters();
                      preprocess = nothing, output = nothing,
-                     progress = true, kwargs...) -> Vector{PTVResult}
+                     progress = true, collect_results = true,
+                     kwargs...) -> Vector{PTVResult} or nothing
 
 Analyze image pairs in order with [`run_ptv`](@ref), returning one
 [`PTVResult`](@ref) per pair. Pairs may contain file paths or matrices.
 `params` controls detection and matching. `preprocess`, `output`,
-`progress`, `on_result`, and `image_type` follow
+`progress`, `on_result`, `collect_results`, and `image_type` follow
 [`run_piv_sequence`](@ref); remaining keywords such as `predictor`,
 `mask`, and `scale` go to `run_ptv`. If `output` is supplied, completed
 results are saved incrementally for [`load_results`](@ref).
@@ -301,12 +309,13 @@ function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVPara
                           output::Union{Nothing,AbstractString,Function} = nothing,
                           progress::Union{Bool,Function} = true,
                           on_result::Union{Nothing,Function} = nothing,
+                          collect_results::Bool = true,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_ptv(imgA, imgB, params; mask, scale, kwargs...), PTVResult, pairs;
-                  preprocess, output, progress, on_result, image_type, mask, scale, label = "PTV")
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PTV")
 end
 
 # Shared sequence driver: iterate `pairs`, load/preprocess each frame, run
@@ -327,12 +336,13 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        output::Union{Nothing,AbstractString,Function} = nothing,
                        progress::Union{Bool,Function} = true,
                        on_result::Union{Nothing,Function} = nothing,
+                       collect_results::Bool = true,
                        image_type::Type{<:AbstractFloat} = Float64,
                        label::AbstractString = "PIV",
                        mask = nothing,
                        scale = nothing) where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
-    results = Vector{R}(undef, length(pairs))
+    results = collect_results ? Vector{R}(undef, length(pairs)) : nothing
     file = output isa AbstractString ? jldopen(output, "w") : nothing
     load_pair(pair) = Threads.@spawn begin
         imgA = load_frame(pair[1], image_type)
@@ -351,25 +361,26 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 imgA, imgB = fetch_frames(pending)
                 i < length(pairs) && (pending = load_pair(pairs[i + 1]))
                 pmask = pair_mask(mask, i, pair, imgA, imgB)
-                results[i] = process(imgA, imgB, i, pair, pmask, pair_scale(scale, pair))
+                result = process(imgA, imgB, i, pair, pmask, pair_scale(scale, pair))
+                collect_results && (results[i] = result)
             catch
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
                 rethrow()
             end
-            # Live-consumer hook. `results[i]` is stored on this (serial)
-            # task — the prefetch task only loads frames — so the callback
-            # runs on the caller's task, in pair order.
-            on_result === nothing || on_result(i, results[i])
+            # The prefetch task only loads frames; delivery and persistence
+            # run on the caller's task, in pair order, with or without collection.
+            on_result === nothing || on_result(i, result)
             if file !== nothing
-                file[result_key(i)] = results[i]
+                file[result_key(i)] = result
                 labels = pair_source_labels(frameA, frameB)
                 if labels !== nothing
                     file[source_key(i)] = labels
                 end
             elseif output isa Function
-                write_pair_file(String(output(i, pair)), results[i], frameA, frameB)
+                write_pair_file(String(output(i, pair)), result, frameA, frameB)
             end
             progress isa Function ? progress(i, length(pairs)) : next!(meter)
+            result = nothing
         end
     catch
         failed = true

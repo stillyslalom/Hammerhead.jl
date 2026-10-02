@@ -178,7 +178,12 @@ const TABLE_SCHEMA_VERSION = "hammerhead-table-1"
 const TABLE_COLUMNS = ("schema_version", "result_type", "frame_id", "source_a", "source_b",
     "point_id", "i", "j", "x", "y", "z", "u", "v", "w", "masked", "outlier",
     "peak_ratio", "correlation_moment", "uncertainty_u", "uncertainty_v", "uncertainty_w",
-    "match_residual", "index_a", "index_b", "length_unit", "time_unit", "velocity_unit")
+    "match_residual", "index_a", "index_b", "length_unit", "time_unit", "velocity_unit",
+    "trajectory_id", "observation_id", "frame_index", "elapsed_time", "gap_before",
+    "position_valid", "velocity_valid", "time_provenance")
+
+# Trajectory-only columns are an additive extension of hammerhead-table-1.
+const _EMPTY_TRACKING_COLUMNS = ntuple(_ -> missing, 8)
 
 _csv(x::Missing) = ""
 _csv(::Nothing) = ""
@@ -196,22 +201,48 @@ end
 """
     export_table(path, result; frame_id="", source_a="", source_b="")
 
-Write one planar PIV, stereo PIV, or PTV result to a long-form UTF-8 CSV
+Write one planar PIV, stereo PIV, PTV, or tracking result to a long-form UTF-8 CSV
 using schema `hammerhead-table-1`, replacing `path` and returning it.
-Every grid node or matched particle is
+Every grid node, matched particle, or observed trajectory point is
 written, including masked and flagged entries; use the `masked` and
 `outlier` columns when filtering. Non-applicable fields are empty.
 If a [`PhysicalScale`](@ref) is attached, positions and components are
 converted with [`physical`](@ref) and the units are recorded. Otherwise
 planar PIV and PTV values remain in pixels per pair, and stereo values in
-unlabeled world length units per pair. Tracking results are not supported.
+unlabeled world length units per pair.
+
+For [`TrackingResult`](@ref), `trajectory_id` is the one-based position in
+`result.trajectories`, `observation_id` is the one-based position in that
+trajectory, and `point_id` counts all written observations. These IDs are
+local to this result. `frame_index` preserves the observed input frame index;
+`gap_before` counts missed frames since the preceding observation (zero for
+the first observation). No interpolated or predicted gap rows are written.
+`frame_id`, `source_a`, and `source_b` are caller-supplied labels for the whole
+result, not per-observation frame numbers or source filenames.
+
+`elapsed_time` is measured from input frame 1: `(frame_index - 1)` without a
+scale (`time_provenance = "frame_index"`), or `(frame_index - 1) * scale.dt`
+with one (`time_provenance = "physical_scale"`). The latter assumes `dt` is
+the uniform interval between input frames. These are derived elapsed times,
+not acquisition timestamps; original timestamps are not stored in a tracking
+result. `u` and `v` use [`trajectory_velocities`](@ref), accounting for gaps
+and retaining the scale's interval even after physical conversion.
+
+`position_valid` means both coordinates are finite; `velocity_valid` means
+the position and both derived components are finite. These are numerical
+validity checks, not uncertainty or tracking-quality estimates. Tracking
+has no retained mask/outlier flags, so those columns are empty. A singleton
+has empty `u`/`v` and `velocity_valid = false`. Empty trajectories have no
+rows (their IDs are not reused); an empty result writes only the header.
+Malformed trajectories (mismatched arrays, non-increasing or out-of-range
+frames, or inconsistent `start_frame`) are rejected before replacing `path`.
 """
 function export_table(path::AbstractString, r::Union{PIVResult,StereoPIVResult,PTVResult};
                       frame_id="", source_a="", source_b="")
     lu, tu, vu, q = _export_units(r)
     open(path, "w") do io
         println(io, join(TABLE_COLUMNS, ','))
-        emit(vals) = println(io, join(_csv.(vals), ','))
+        emit(vals) = println(io, join(_csv.((vals..., _EMPTY_TRACKING_COLUMNS...)), ','))
         if q isa PIVResult
             k = 0
             for j in eachindex(q.x), i in eachindex(q.y)
@@ -235,6 +266,52 @@ function export_table(path::AbstractString, r::Union{PIVResult,StereoPIVResult,P
                 emit((TABLE_SCHEMA_VERSION,"ptv",frame_id,source_a,source_b,k,missing,missing,
                     q.x[k],q.y[k],missing,q.u[k],q.v[k],missing,false,q.outliers[k],missing,missing,
                     missing,missing,missing,q.match_residual[k],q.index_a[k],q.index_b[k],lu,tu,vu))
+            end
+        end
+    end
+    path
+end
+
+function _check_tracking_table(r::TrackingResult)
+    r.n_frames >= 0 || throw(ArgumentError("tracking frame count must be nonnegative"))
+    for (id, t) in enumerate(r.trajectories)
+        length(t.x) == length(t.y) == length(t.frames) ||
+            throw(ArgumentError("trajectory $id has mismatched coordinate/frame lengths"))
+        isempty(t.frames) && continue
+        t.start_frame == first(t.frames) ||
+            throw(ArgumentError("trajectory $id start_frame differs from its first observation"))
+        all(f -> 1 <= f <= r.n_frames, t.frames) ||
+            throw(ArgumentError("trajectory $id has a frame outside 1:$(r.n_frames)"))
+        all(k -> t.frames[k] > t.frames[k - 1], 2:length(t.frames)) ||
+            throw(ArgumentError("trajectory $id frame indices must be strictly increasing"))
+    end
+    nothing
+end
+
+function export_table(path::AbstractString, r::TrackingResult;
+                      frame_id="", source_a="", source_b="")
+    _check_tracking_table(r)
+    lu, tu, vu, q = _export_units(r)
+    dt = q.scale === nothing ? 1 : q.scale.dt
+    provenance = q.scale === nothing ? "frame_index" : "physical_scale"
+    open(path, "w") do io
+        println(io, join(TABLE_COLUMNS, ','))
+        point_id = 0
+        for (id, t) in enumerate(q.trajectories)
+            isempty(t.x) && continue
+            u, v = length(t) >= 2 ? trajectory_velocities(t, q.scale) : (nothing, nothing)
+            for k in eachindex(t.x)
+                point_id += 1
+                uk, vk = u === nothing ? (missing, missing) : (u[k], v[k])
+                position_valid = isfinite(t.x[k]) && isfinite(t.y[k])
+                velocity_valid = u !== nothing && position_valid && isfinite(uk) && isfinite(vk)
+                gap = k == 1 ? 0 : t.frames[k] - t.frames[k - 1] - 1
+                vals = (TABLE_SCHEMA_VERSION,"tracking",frame_id,source_a,source_b,
+                    point_id,missing,missing,t.x[k],t.y[k],missing,uk,vk,missing,
+                    missing,missing,missing,missing,missing,missing,missing,missing,
+                    missing,missing,lu,tu,vu,id,k,t.frames[k],(t.frames[k] - 1) * dt,
+                    gap,position_valid,velocity_valid,provenance)
+                println(io, join(_csv.(vals), ','))
             end
         end
     end

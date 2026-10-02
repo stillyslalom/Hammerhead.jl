@@ -46,6 +46,10 @@ does not establish measurement quality.
 - **Mask editor:** Draw and edit exclusion polygons over an image with
   `mask_editor(image_or_path)`. Export the mask with `polygon_mask(editor)` or
   save an image that `load_mask` can read.
+- **ROI editor:** Choose **edit ROI** in the batch form, or call
+  `roi_editor(image_or_path; batch = controller)`. Select opposite corners or
+  enter inclusive row/column bounds, then apply the selection to the batch.
+  Results retain their original image coordinates; **full image** clears the ROI.
 - **Preprocessing preview:** Use `preprocess_preview(image_or_path)` to compare
   raw and processed images. Supply the paired frame, then click a location
   to inspect its single-window displacement and correlation peak ratio as
@@ -66,6 +70,11 @@ They store selections and settings without requiring a window. See the
 for a worked example and the [GUI guide](../docs/src/howto/gui.md) for task recipes.
 
 ## Development
+
+Outstanding work and the cross-platform GUI framework evaluation are tracked
+in the repository [roadmap](../ROADMAP.md#5-cross-platform-gui-framework-and-complete-workflows).
+The current views use GLMakie; the framework evaluation preserves the existing
+Julia controller layer and Makie scientific visualization.
 
 On Julia ≥ 1.11 the `[sources]` entry in `Project.toml` couples this package
 to the sibling core checkout automatically:

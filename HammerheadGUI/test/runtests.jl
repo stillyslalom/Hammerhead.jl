@@ -695,6 +695,179 @@ const r_track = TrackingResult(
         @test sc.pixel_size == 20.0 && sc.dt == 0.5
     end
 
+    @testset "ROI editor and batch controller (no GL)" begin
+        C = HammerheadGUI.Controllers
+        ed = ROIEditor(imgA)
+        @test ed.roi[] === nothing
+        @test occursin("full image", C.roi_summary(ed))
+        C.click!(ed, 111.6, 119.6)
+        @test ed.anchor[] == (112, 120)
+        C.click!(ed, 17.1, 24.8)   # opposite ordering, columns = x
+        @test ed.roi[].rows == 25:120
+        @test ed.roi[].cols == 17:112
+        @test ed.anchor[] === nothing
+        C.click!(ed, -100, 500)
+        @test ed.anchor[] == (1, 128)
+        @test ed.roi[].rows == 25:120   # selection retained while drawing
+        @test_throws ArgumentError apply_roi!(BatchRunner(), ed)
+        @test_throws ArgumentError C.click!(ed, NaN, 1)
+        clear_roi!(ed)
+        @test ed.roi[] === nothing && ed.anchor[] === nothing
+        set_roi!(ed, "25", "120", "17", "112")
+        previous = ed.roi[]
+        @test_throws ArgumentError set_roi!(ed, "25.5", "120", "17", "112")
+        @test_throws ArgumentError set_roi!(ed, 120, 25, 17, 112)
+        @test_throws ArgumentError set_roi!(ed, 0, 100, 1, 100)
+        @test_throws BoundsError set_roi!(ed, 1, 129, 1, 128)
+        @test ed.roi[] === previous
+        @test_throws ArgumentError ROIEditor(zeros(0, 2))
+        # File-backed editing and preflight use the same bounds as matrices.
+        frame_path = joinpath(mktempdir(), "roi-frame.png")
+        C.FileIO.save(frame_path, C.Gray.(zeros(20, 30)))
+        file_editor = ROIEditor(frame_path; roi = ROI(2:20, 3:30))
+        @test size(file_editor.image) == (20, 30)
+        file_batch = BatchRunner(files = Any[frame_path, frame_path], window_schedule = [8])
+        apply_roi!(file_batch, file_editor)
+        @test C.validate(file_batch) === nothing
+        @test_throws BoundsError set_roi!(file_batch, ROI(1:21, 1:30))
+
+        rr = ROI(25:120, 17:112)
+        mask = falses(size(imgA)); mask[25:64, 17:56] .= true
+        out = joinpath(mktempdir(), "roi-batch.jld2")
+        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
+                         window_schedule = [32], mask = mask, output_path = out,
+                         padding = false, apodization = :none,
+                         pixel_size = 0.02, dt = 0.001,
+                         length_unit = "mm", time_unit = "s")
+        apply_roi!(bc, ed)
+        @test C.validate(bc) === nothing
+        @test_throws BoundsError set_roi!(bc, ROI(1:129, 1:128))
+        @test bc.roi[] === previous
+        before_a, before_b = copy(imgA), copy(imgB)
+        seen_sizes = Tuple{Int,Int}[]
+        set_preprocess!(bc, frame -> (push!(seen_sizes, size(frame)); 0.5 .* frame))
+        # A mid-run form change affects only the next run, even with two pairs.
+        on(bc.completed) do completed
+            isempty(completed) || clear_roi!(bc)
+        end
+        start!(bc; async = false)
+        @test occursin("done", bc.status[])
+        @test length(bc.results[]) == 2
+        @test seen_sizes == fill(size(imgA), 4) # preprocess full frames, then crop
+        @test imgA == before_a && imgB == before_b
+        expected = run_piv(0.5 .* imgA, 0.5 .* imgB, C.build_parameters(bc);
+                           roi = rr, mask, scale = C.build_scale(bc))
+        local_result = run_piv(0.5 .* imgA[rr.rows, rr.cols],
+                               0.5 .* imgB[rr.rows, rr.cols], C.build_parameters(bc);
+                               mask = mask[rr.rows, rr.cols])
+        for result in bc.results[]
+            @test result.x == expected.x == local_result.x .+ 16
+            @test result.y == expected.y == local_result.y .+ 24
+            @test isequal(result.u, expected.u)
+            @test isequal(result.v, expected.v)
+            @test result.mask == expected.mask && any(result.mask)
+            @test result.scale.pixel_size == 0.02 && result.scale.dt == 0.001
+            @test physical(result).x ≈ result.x .* 0.02
+        end
+        @test load_results(out)[1].x == expected.x
+        @test load_results(out)[1].mask == expected.mask
+        @test load_results(out)[1].scale.length_unit == "mm"
+
+        # Core also accepts an already cropped mask; presets forward ROI too.
+        bp = BatchRunner(files = Any[imgA, imgB], effort = :low,
+                         roi = (rr.rows, rr.cols), mask = mask[rr.rows, rr.cols])
+        @test C.validate(bp) === nothing
+        start!(bp; async = false)
+        preset = run_piv(imgA, imgB; effort = :low, roi = rr,
+                         mask = mask[rr.rows, rr.cols])
+        @test isequal(bp.results[][1].u, preset.u)
+        @test bp.results[][1].x == preset.x
+        bp.mask[] = falses(10, 10)
+        @test occursin("mask must match", C.validate(bp))
+        bp.mask[] = nothing
+        bp.roi[] = ROI(1:129, 1:128) # direct observable edits still validate
+        @test C.validate(bp) !== nothing
+        start!(bp; async = false)
+        @test !bp.running[] && !occursin("done", bp.status[])
+        clear_roi!(bp)
+        @test C.validate(bp) === nothing
+
+        small = ROI(25:72, 17:64)
+        rejected_path = joinpath(mktempdir(), "invalid-roi.jld2")
+        small_batch = BatchRunner(files = Any[imgA, imgB], roi = small,
+                                  window_schedule = [64, 32], output_path = rejected_path)
+        @test occursin("smaller than search area", C.validate(small_batch))
+        start!(small_batch; async = false)
+        @test !small_batch.running[] && small_batch.results[] === nothing
+        @test !isfile(rejected_path)  # reject before opening incremental output
+        # Presets adapt their largest windows to the selected ROI dimensions.
+        for effort in (:medium, :high)
+            adapted = BatchRunner(files = Any[imgA, imgB], roi = small, effort = effort)
+            @test C.validate(adapted) === nothing
+            start!(adapted; async = false)
+            @test occursin("done", adapted.status[])
+            local_expected = run_piv(imgA[small.rows, small.cols],
+                                      imgB[small.rows, small.cols]; effort)
+            result = adapted.results[][1]
+            @test result.x == local_expected.x .+ 16
+            @test result.y == local_expected.y .+ 24
+            @test isequal(result.u, local_expected.u)
+            @test isequal(result.v, local_expected.v)
+            @test result.parameters.window_size == local_expected.parameters.window_size
+        end
+        # ROI capture precedes even synchronous running-state observers.
+        for async in (false, true)
+            frozen = BatchRunner(files = Any[imgA, imgB], roi = rr,
+                                 window_schedule = [32], padding = false,
+                                 apodization = :none)
+            on(running -> running && clear_roi!(frozen), frozen.running)
+            start!(frozen; async)
+            if async
+                @test timedwait(() -> !frozen.running[], 30) == :ok
+            end
+            @test occursin("done", frozen.status[])
+            @test frozen.roi[] === nothing
+            @test first(frozen.results[][1].x) == first(expected.x)
+            @test first(frozen.results[][1].y) == first(expected.y)
+        end
+    end
+
+    @testset "roi_editor view (offscreen)" begin
+        C = HammerheadGUI.Controllers
+        ed = ROIEditor(imgA)
+        bc = BatchRunner(files = Any[imgA, imgB])
+        fig = roi_editor(ed; batch = bc)
+        img1 = copy(colorbuffer(fig; px_per_unit = 1))
+        @test size(img1) == (560, 900)
+        C.click!(ed, 20, 30)
+        C.click!(ed, 110, 120)
+        @test colorbuffer(fig; px_per_unit = 1) != img1
+        boxes = filter(b -> b isa Textbox, fig.content)
+        @test [box.displayed_string[] for box in boxes] == ["30", "120", "20", "110"]
+        buttons = filter(b -> b isa Button, fig.content)
+        button(label) = only(filter(b -> b.label[] == label, buttons))
+        for (box, value) in zip(boxes, ("25", "90", "15", "100"))
+            box.displayed_string[] = value
+        end
+        button("set bounds").clicks[] += 1
+        @test ed.roi[].rows == 25:90 && ed.roi[].cols == 15:100
+        button("apply to batch").clicks[] += 1
+        @test bc.roi[].rows == 25:90 && bc.roi[].cols == 15:100
+        boxes[1].displayed_string[] = "invalid"
+        button("set bounds").clicks[] += 1
+        @test ed.roi[].rows == 25:90
+        @test any(b -> b isa Label && occursin("must be integers", b.text[]), fig.content)
+        button("full image").clicks[] += 1
+        button("apply to batch").clicks[] += 1
+        @test ed.roi[] === nothing && bc.roi[] === nothing
+        @test [box.displayed_string[] for box in boxes] == ["1", "128", "1", "128"]
+        # Embedded view constructs and renders in a composite layout.
+        embedded = Figure(size = (1100, 600))
+        roi_editor!(embedded[1, 1], ROIEditor(imgA; roi = ROI(5:80, 7:90)))
+        Label(embedded[1, 2], "comparison")
+        @test !isempty(colorbuffer(embedded; px_per_unit = 1))
+    end
+
     @testset "batch_runner view (offscreen)" begin
         bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
                          window_schedule = [32],
@@ -702,6 +875,11 @@ const r_track = TrackingResult(
         fig = batch_runner(bc)
         img1 = copy(colorbuffer(fig; px_per_unit = 1))
         @test size(img1) == (720, 960)
+        set_roi!(bc, ROI(17:112, 25:120))
+        @test colorbuffer(fig; px_per_unit = 1) != img1
+        roi_reset = only(filter(b -> b isa Button && b.label[] == "full image", fig.content))
+        roi_reset.clicks[] += 1
+        @test bc.roi[] === nothing
 
         set_schedule!(bc, "64 32")   # form summary label updates
         bc.uncertainty[] = true      # toggle syncs back into the widget

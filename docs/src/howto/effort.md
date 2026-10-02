@@ -24,7 +24,11 @@ are:
 
 Each added pass or convergence sweep processes the image again; padding also
 increases FFT work. On images too small for a listed window, Hammerhead
-reduces the preset's window sizes to fit. None of the presets guarantees a
+reduces the preset's window sizes to fit. For planar PIV with `roi`, those
+sizes are based on the selected rectangle, and output coordinates still refer
+to the full image. Explicit pass schedules must fit the rectangle. A predictor
+with only one vector along an axis is extended constantly along that axis.
+None of the presets guarantees a
 particular error on your recording.
 
 Start with `:medium` on representative pairs. Compare its field and rejected

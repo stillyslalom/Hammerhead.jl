@@ -160,6 +160,38 @@ set_preprocess!(bc, pp)        # snapshot: later edits don't affect the run
 The exported closure copies each frame before its in-place steps, so
 in-memory arrays are never mutated.
 
+Use "edit ROI…" in the batch form to limit planar analysis to a rectangle
+on the first frame. Click two opposite corners, or edit the inclusive first
+and last row/column bounds and press "set bounds". The outline follows pixel
+edges; clicks snap to pixels. "Apply to batch" copies the completed selection
+into the form. In the editor, "full image" resets the preview; apply it to
+reset the batch too. The batch form's own "full image" button resets the
+batch directly. A pending first corner must be completed before applying.
+From code:
+
+```julia
+using Hammerhead: ROI
+
+ed = ROIEditor(first_frame)
+roi_editor(ed; batch = bc)
+set_roi!(ed, 25, 120, 17, 112)       # rows 25:120, columns 17:112
+apply_roi!(bc, ed)
+set_roi!(bc, ROI(25:120, 17:112))    # equivalent direct batch setting
+clear_roi!(bc)                       # process the full image again
+```
+
+The selection uses the core [`ROI`](@ref) contract: positive, nonempty,
+inclusive integer ranges in the original image. Bounds are checked against
+the first frame before running and against each pair during processing.
+The ROI must fit every processing window; the form rejects selections smaller
+than a custom schedule before opening the output file. Effort presets adapt
+their window sizes to the selected ROI dimensions.
+Preprocessing receives full frames before the core crops them. A mask may
+match the full image or the ROI size; `true` still means excluded. Returned
+vector centers retain full-image pixel coordinates, and physical scaling
+uses those coordinates. An ROI change made during a batch takes effect on
+the next run.
+
 Give the preview the frame's correlation partner to probe a single
 interrogation window. Click the processed image, then toggle a step and
 compare displacement and peak ratio at the same location. Repeat in dim,

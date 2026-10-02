@@ -30,6 +30,9 @@ and run state are `Observables`.
   a [`PhysicalScale`](@ref) is attached to the outputs only when any of these
   differs from its default.
 - `output_path = ""` (empty = keep results in memory only), `mask = nothing`
+- `roi = nothing` (full image), or a core `ROI` / `(rows, cols)` range tuple.
+  Preprocessing receives full frames; the core crops the images and mask,
+  retaining original image coordinates in the results.
 
 Drive it with [`add_files!`](@ref), [`set_schedule!`](@ref),
 [`set_effort!`](@ref), [`set_preprocess!`](@ref) (an optional per-frame
@@ -46,6 +49,7 @@ struct BatchRunner
     pair_mode::Observable{Symbol}
     output_path::Observable{String}
     mask::Observable{Union{Nothing,BitMatrix}}
+    roi::Observable{Union{Nothing,ROI}}
     effort::Observable{Symbol}
     window_schedule::Observable{Vector{Int}}
     overlap_fraction::Observable{Float64}
@@ -68,7 +72,7 @@ struct BatchRunner
 end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
-                     output_path::AbstractString = "", mask = nothing,
+                     output_path::AbstractString = "", mask = nothing, roi = nothing,
                      effort::Symbol = :custom,
                      window_schedule::AbstractVector{<:Integer} = [64, 32, 32],
                      overlap_fraction::Real = 0.5,
@@ -82,6 +86,7 @@ function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
     return BatchRunner(Observable{Vector{Any}}(collect(Any, files)),
                        Observable(pair_mode), Observable(String(output_path)),
                        Observable{Union{Nothing,BitMatrix}}(mask === nothing ? nothing : BitMatrix(mask)),
+                       Observable{Union{Nothing,ROI}}(_as_roi(roi)),
                        Observable(effort),
                        Observable(collect(Int, window_schedule)),
                        Observable(Float64(overlap_fraction)),
@@ -119,6 +124,46 @@ end
 Empty the frame list.
 """
 clear_files!(bc::BatchRunner) = (empty!(bc.files[]); notify(bc.files); bc)
+
+"""
+    set_roi!(bc::BatchRunner, roi)
+    set_roi!(bc::BatchRunner, row_first, row_last, col_first, col_last)
+
+Set the core ROI for every batch pair (or `nothing` for the full image).
+Accept a `ROI`, range tuple, or inclusive integer/string bounds. Bounds are
+checked against the first frame when available; each pair is checked again
+by the core during processing. Changing ROI during a run affects the next run.
+"""
+function set_roi!(bc::BatchRunner, roi)
+    rr = _as_roi(roi)
+    if rr !== nothing && !isempty(bc.files[])
+        frame = first(bc.files[])
+        image = frame isa AbstractMatrix ? frame : load_image(frame)
+        _check_roi(image, rr)
+    end
+    bc.roi[] = rr
+    return bc
+end
+set_roi!(bc::BatchRunner, r1, r2, c1, c2) =
+    set_roi!(bc, ROI(_roi_index(r1):_roi_index(r2), _roi_index(c1):_roi_index(c2)))
+
+"""
+    clear_roi!(bc::BatchRunner)
+
+Reset the next batch run to use the full image.
+"""
+clear_roi!(bc::BatchRunner) = set_roi!(bc, nothing)
+
+"""
+    apply_roi!(bc::BatchRunner, editor::ROIEditor)
+
+Copy the editor's completed selection to the batch. Complete a pending
+second corner first; clearing the editor and applying resets the batch ROI.
+"""
+function apply_roi!(bc::BatchRunner, ed::ROIEditor)
+    ed.anchor[] === nothing || throw(ArgumentError("click the opposite ROI corner first"))
+    return set_roi!(bc, ed.roi[])
+end
 
 """
     frame_pairs(bc::BatchRunner)
@@ -261,9 +306,10 @@ build_parameters(bc::BatchRunner) =
     validate(bc::BatchRunner) -> Union{Nothing,String}
 
 Return `nothing` when the form has the required inputs and valid settings,
-or a message describing the first problem. Images are loaded when the run
-starts, so this does not check that every image can be read. With a
-non-`:custom` effort, the manual schedule is not consulted.
+or a message describing the first problem. With an ROI, the first frame is
+loaded to check bounds and mask dimensions; later frames are checked by the
+core during processing. With a non-`:custom` effort, the manual schedule is
+not consulted.
 """
 function validate(bc::BatchRunner)
     isempty(bc.files[]) && return "add frames first"
@@ -284,6 +330,18 @@ function validate(bc::BatchRunner)
     end
     try
         build_scale(bc)
+        if bc.roi[] !== nothing
+            frame = first(bc.files[])
+            image = frame isa AbstractMatrix ? frame : load_image(frame)
+            Hammerhead.roi_views(image, image, bc.mask[], bc.roi[])
+            roi_size = (length(bc.roi[].rows), length(bc.roi[].cols))
+            passes = bc.effort[] === :custom ? build_parameters(bc) :
+                Hammerhead.effort_schedule(bc.effort[]; image_size = roi_size)
+            for pass in passes
+                all(pass.search_area_size .<= roi_size) ||
+                    return "ROI size $roi_size is smaller than search area $(pass.search_area_size); enlarge the ROI or choose smaller windows"
+            end
+        end
     catch err
         return _errmsg(err)
     end
@@ -304,9 +362,12 @@ function start!(bc::BatchRunner; async::Bool = true)
     bc.running[] && return bc
     msg = validate(bc)
     msg === nothing || (bc.status[] = msg; return bc)
+    # Capture before notifying running or yielding to the asynchronous task.
+    # Observers may edit the form immediately when the run starts.
+    roi = bc.roi[]
     bc.cancel[] = false
     bc.running[] = true
-    async ? errormonitor(@async _run!(bc)) : _run!(bc)
+    async ? errormonitor(@async _run!(bc; roi)) : _run!(bc; roi)
     return bc
 end
 
@@ -318,7 +379,7 @@ remain in `completed` and in the output file when one is configured.
 """
 cancel!(bc::BatchRunner) = (bc.cancel[] = true; bc)
 
-function _run!(bc::BatchRunner)
+function _run!(bc::BatchRunner; roi = bc.roi[])
     try
         prs = frame_pairs(bc)
         bc.progress[] = (0, length(prs))
@@ -339,11 +400,11 @@ function _run!(bc::BatchRunner)
         results = if bc.effort[] === :custom
             run_piv_sequence(prs, build_parameters(bc);
                              progress = callback, on_result, output, scale,
-                             preprocess, maskkw...)
+                             preprocess, roi, maskkw...)
         else
             run_piv_sequence(prs; effort = bc.effort[],
                              progress = callback, on_result, output, scale,
-                             preprocess, maskkw...)
+                             preprocess, roi, maskkw...)
         end
         bc.results[] = results
         bc.status[] = "done: $(length(results)) pairs" *

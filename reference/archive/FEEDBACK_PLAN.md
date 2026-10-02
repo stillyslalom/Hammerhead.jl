@@ -1,5 +1,9 @@
 # feedback.md implementation plan — remaining Fable scope
 
+Historical implementation record. Active follow-ups, including ensemble
+iteration, dynamic peak exclusion, and prefilter allocation work, are tracked
+in the root [ROADMAP.md](../../ROADMAP.md).
+
 Source: `feedback.md`. Part A (items 2, 4, 5, 6, 7, 8, 9 — the docs and the
 non-hot-path features) was implemented on branch `feedback-batch-1`. What
 remains are the two items reserved for a later Fable session because they

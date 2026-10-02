@@ -25,6 +25,11 @@ Order = [:module, :type, :function, :constant, :macro]
 Controllers hold application state and logic. You can use them without
 opening a window or creating a GL context.
 
+For planar image selection, `ROIEditor` edits core `ROI` bounds and
+`apply_roi!` copies them into `BatchRunner`. `set_roi!` and `clear_roi!`
+also operate directly on a batch controller. The `roi_editor!` view can
+be embedded alongside an image or result comparison.
+
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]

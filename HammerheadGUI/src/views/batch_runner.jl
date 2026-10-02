@@ -7,8 +7,9 @@
 
 Open the planar PIV batch form. Add frames, choose a pairing mode, set the
 window schedule and processing options, then run. An optional mask excludes
-image regions, and an output path writes completed pairs to JLD2 as the run
-progresses. "Cancel" stops after the current pair. "View results" opens
+image regions. "Edit ROI" opens a rectangle editor on the first frame;
+"full image" resets the batch selection. An output path writes completed
+pairs to JLD2 as the run progresses. "Cancel" stops after the current pair. "View results" opens
 [`result_explorer`](@ref) after the first pair finishes; later pairs appear
 there as they complete.
 
@@ -37,6 +38,13 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
                                 ("chained: 1-2, 2-3, …", :chained)])
     add_btn = Button(files_col[4, 1]; label = "add frames…", tellwidth = false)
     clear_btn = Button(files_col[5, 1]; label = "clear frames", tellwidth = false)
+    roi_obs = lift(bc.roi) do roi
+        roi === nothing ? "ROI: full image" :
+            "ROI: rows $(first(roi.rows)):$(last(roi.rows)), columns $(first(roi.cols)):$(last(roi.cols))"
+    end
+    Label(files_col[6, 1], roi_obs; halign = :left, word_wrap = true, width = 180)
+    roi_btn = Button(files_col[7, 1]; label = "edit ROI…", tellwidth = false)
+    roi_clear_btn = Button(files_col[8, 1]; label = "full image", tellwidth = false)
 
     # -- parameters column --------------------------------------------------
     form = GridLayout(fig[1, 2]; tellheight = false, valign = :top)
@@ -164,6 +172,16 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
         isempty(paths) || add_files!(bc, paths)
     end
     on(_ -> clear_files!(bc), clear_btn.clicks)
+    on(_ -> clear_roi!(bc), roi_clear_btn.clicks)
+    on(roi_btn.clicks) do _
+        isempty(bc.files[]) && (bc.status[] = "add frames first"; return)
+        try
+            ed = ROIEditor(first(bc.files[]); roi = bc.roi[])
+            display(GLMakie.Screen(), roi_editor(ed; batch = bc))
+        catch err
+            bc.status[] = Controllers._errmsg(err)
+        end
+    end
     on(output_btn.clicks) do _
         path = save_file(; filterlist = "jld2")
         isempty(path) || (bc.output_path[] = path)

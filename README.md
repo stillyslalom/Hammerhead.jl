@@ -100,3 +100,5 @@ Hammerhead also provides preprocessing, physical-unit scaling, temporal
 validation, derived flow quantities, and optional GPU execution for
 supported PIV settings. The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/)
 has task guides and the [API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/reference/pipeline/).
+
+Development priorities and outstanding work are tracked in [ROADMAP.md](ROADMAP.md).
