@@ -122,9 +122,15 @@ using ImageCore: Gray, N0f8
                 from_gui=quality_report_data(report)
                 from_core=quality_report_data(quality_report(ec.record[],ec.last_run[]))
                 @test all(from_gui[key]==from_core[key] for key in ("groups","unavailable","provenance"))
+                @test from_gui["quality_report_format_version"]==1
+                with_history=quality_report_data(experiment_quality_report(ec;include_measurement_history=true))
+                @test with_history["quality_report_format_version"]==2
+                @test with_history["measurement_history"]["counts"]["recorded_entries"]==0 && with_history["measurement_history"]["counts"]["missing_entries"]==2
                 report_path=joinpath(dir,"run-quality.toml")
                 saved_report=save_experiment_quality_report(report_path,ec)
                 @test quality_report_data(load_quality_report(report_path))==quality_report_data(saved_report)
+                saved_v2=save_experiment_quality_report(joinpath(dir,"run-quality-history.toml"),ec;include_measurement_history=true)
+                @test quality_report_data(load_quality_report(joinpath(dir,"run-quality-history.toml")))==quality_report_data(saved_v2)
                 @test_throws ArgumentError experiment_quality_report(ExperimentController())
                 @test_throws ArgumentError experiment_quality_report(ExperimentController(record))
                 before_history=read(saved)

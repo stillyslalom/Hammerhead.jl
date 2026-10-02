@@ -143,11 +143,13 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Preserve exposure timestamps, pair delay, sample time, source frame IDs,
   time units, and calibration/coordinate-frame identity through native persistence
   and exports. Define the time assigned to a displacement measurement.
-- [ ] Add opt-in planar pair-timing companions that preserve source metadata,
+- [x] Add opt-in [planar pair-timing companions](docs/src/howto/pair_timing.md) that preserve source metadata,
   exact timestamp differences/midpoints, and the delay actually used for scaling.
   Preflight all selected pairs before loading or opening output; retain missing
   units/clocks explicitly and verify companion/result binding. Tracking, exports,
   checkpoint/replay and stereo timing persistence remain separate extensions.
+  [Timing regressions](test/test_pair_timing.jl) cover exact epochs, metadata
+  snapshots, complete preflight, callback integrity and bounded payload lifetime.
 - [x] Check stereo exposure synchronization when timestamps are available;
   matching pair delays alone does not establish simultaneous acquisition.
   Sequence and ensemble drivers now check exposure times and declared/observed
@@ -243,7 +245,7 @@ and GPU memory in the documented ownership modes.
   [Regressions](test/test_measurement_history.jl) cover CPU/KA parity, ROI and
   scale, actual branch events, custom validators, persistence and failure cleanup.
 - [ ] Extend measurement history to stereo/ensemble semantics, checkpoint
-  companions, exports and GUI inspection. Define any earlier-pass/sweep trace
+  companions and exports. Define any earlier-pass/sweep trace
   separately; final-grid events cannot reconstruct correspondence across grids.
   Validate estimator applicability separately from numerical UQ availability.
 - [x] Expose actual planar pass sweeps, tolerance checks/stopping conditions and
@@ -255,18 +257,21 @@ and GPU memory in the documented ownership modes.
   actual loop semantics, persistence, strict replay association and failures.
 - [ ] Extend execution diagnostics to stereo camera passes and ensemble pooled
   sweeps, with their distinct units and iteration semantics; expose recorded
-  diagnostics in shared run-quality reports and GUI inspection.
+  diagnostics in shared run-quality reports. Planar GUI inspection is available.
 - [x] Generate a [saved run-quality report](docs/src/howto/run_quality.md) shared
   by scripts and the GUI for stored planar/stereo fields. Version-1 TOML reports
   preserve explicit node-weighted counts/denominators, numerical uncertainty
   availability, source/recipe/run provenance, and unavailable diagnostic reasons.
   Reports scan bounded result payloads and protect known source/record aliases.
-- [ ] Add opt-in history-aware native quality reports and lazy GUI companion
-  inspection. Verify history against raw results before physical display;
+- [x] Add opt-in [history-aware native quality reports](docs/src/howto/run_quality.md) and [lazy GUI companion
+  inspection](docs/src/howto/gui_companions.md).
+  Verify history against raw results before physical display;
   distinguish recorded/missing/unsupported entries, actual events and final
   origins, and retain explicit history-covered denominators. Keep default
   version-1 reports compatible and navigation failures transactional.
-- [ ] Extend reports with actual rejection/replacement history, uncertainty
+  [Core report tests](test/test_quality_history.jl) and [GUI tests](HammerheadGUI/test/test_companions.jl)
+  cover association, missing coverage, physical display, memory release and layout.
+- [ ] Extend reports beyond final-sweep planar history with uncertainty
   association, peak locking, and representative window-size/preprocessing
   sensitivity comparisons after the required measurement evidence is available.
   Current flags and finite values must not be presented as replacement counts.

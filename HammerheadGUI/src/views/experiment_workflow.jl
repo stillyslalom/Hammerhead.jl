@@ -64,10 +64,12 @@ function experiment_workflow!(target,ec::ExperimentController;
     run_btn=Button(controls[11,1];label="replay exact recipe",tellwidth=false)
     explore_btn=Button(controls[12,1];label="view completed results",tellwidth=false)
     quality_btn=Button(controls[13,1];label="save quality report…",tellwidth=false)
+    quality_history_toggle=Toggle(controls[14,1];active=false,halign=:left)
+    Label(controls[15,1],"include recorded history in report";halign=:left)
     status_label=lift(s->_experiment_wrap_text(s;max_lines=3),ec.status)
-    Label(controls[14,1],status_label;halign=:left,justification=:left,
+    Label(controls[16,1],status_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    Label(controls[15,1],"Replay starts from pair 1.\nUse checkpoints for progress,\ncancellation and resume.";
+    Label(controls[17,1],"Replay starts from pair 1.\nUse checkpoints for progress,\ncancellation and resume.";
           halign=:left,justification=:left,word_wrap=true,width=240,tellwidth=false)
 
     content=GridLayout(gl[1,2];valign=:top,tellheight=false)
@@ -159,10 +161,11 @@ function experiment_workflow!(target,ec::ExperimentController;
         report_text[]="Run changed. Save a new quality report to inspect its summary."
     end
     on(quality_btn.clicks) do _
+        include_measurement_history=quality_history_toggle.active[]
         guarded() do
             path=save_file(;filterlist="toml")
             isempty(path) && return
-            report=save_experiment_quality_report(path,ec)
+            report=save_experiment_quality_report(path,ec;include_measurement_history)
             report_text[]="Saved report: $path\n\n"*sprint(show,MIME"text/plain"(),report)
             section[]=:quality
             ec.status[]="quality report saved"

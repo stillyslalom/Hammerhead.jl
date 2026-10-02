@@ -52,3 +52,13 @@ planar pass's final sweep and can accompany sequence/replay results. It records
 validation, alternative-peak and filling events on the host result grid.
 Stereo, ensemble, PTV and checkpoint companions remain outside this API;
 vendor-device correctness still requires hardware evidence.
+
+Opt-in quality-report version 2 aggregates verified planar history with explicit
+missing/unsupported coverage. [Lazy GUI inspection](../howto/gui_companions.md)
+verifies raw history before physical display; eager inputs and checkpoints lack
+this supported association. Numerical UQ availability is not applicability.
+
+[Pair timing](../howto/pair_timing.md) preserves supplied timestamp/source
+metadata for planar sequences through an optional native companion. It does not
+add timing-aware tracking, exports, replay, checkpoint or stereo persistence;
+those workflows require separate timing semantics.

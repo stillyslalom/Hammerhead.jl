@@ -62,6 +62,15 @@ history is retained. Explicit data copies and retained callback packets have
 their own storage cost. No observation arrays or hashes are computed when
 history is not requested.
 
+`verify_measurement_history(history, raw_result)` checks an already-loaded raw
+payload without reading it again. Perform this before physical conversion.
+`measurement_history_at(history, CartesianIndex(row, column))` returns detached
+scalar observations without copying the entire packet. Both integrity checks
+scan/hash packet data; the scalar accessor is O(grid nodes) in verification
+work but constant-size in returned storage. These are useful for streaming
+[history-aware reports](run_quality.md) and
+[GUI inspection](../howto/gui_companions.md).
+
 ```@autodocs
 Modules = [Hammerhead]
 Pages = ["measurement_history.jl"]

@@ -34,10 +34,12 @@ versions are rejected; existing result-only prefixes are not adopted as
 checkpoints. See [checkpoint recovery](../howto/checkpoints.md) for supported
 interruptions and filesystem limits.
 
-Quality reports use `quality_report_format_version = 1` in language-neutral
-TOML. Readers validate explicit counters, denominators, provenance, and unavailable
-diagnostic reasons. These summaries do not change native result structures or
-reconstruct missing measurement history. See [the report schema](../reference/run_quality.md).
+Quality reports default to `quality_report_format_version = 1` in language-neutral
+TOML. Opt-in native-file history reports use version 2, with explicit recorded,
+missing and unsupported populations and verified final-sweep event counts.
+Readers accept both versions and validate counters, denominators, provenance,
+and unavailable diagnostic reasons. These summaries do not change native result
+structures or reconstruct missing history. See [the report schema](../reference/run_quality.md).
 
 Execution diagnostics are optional native-file companions with
 `execution_diagnostics_format_version = 1`. Each entry binds scalar pass
@@ -54,6 +56,15 @@ checked by the history reader; `verify_result=true` additionally loads the
 selected payload and verifies its numerical content binding. Metadata-only
 loading does not perform that payload check. Result-only copies drop this
 companion. See [measurement history](../reference/measurement_history.md).
+
+Planar sequence timing uses optional `pair_timing_format_version = 1`
+companions. Exact rational encodings retain provided timestamp values and
+derived differences/midpoints, with separate observed and effective scaling
+delays. The reader checks schema, integrity and result-key linkage; payload
+verification is explicit through `verify_result=true`. Result-only copies and
+current table exports omit timing companions. Existing `FrameSource` positional
+construction and default processing remain compatible; new source/clock/unit
+labels are optional metadata. See [pair timing](../reference/pair_timing.md).
 
 Representative-pair comparisons use independent version-1 TOML snapshots,
 identified by `pair_comparison_format_version`. They preserve selected-input

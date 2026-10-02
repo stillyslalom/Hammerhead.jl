@@ -30,6 +30,8 @@ export RunQualityReport, quality_report, quality_report_data, save_quality_repor
 export RecipePairComparison, compare_recipe_pair, pair_comparison_data, save_pair_comparison, load_pair_comparison
 export PIVExecutionDiagnostics, PassDiagnostics, execution_diagnostics_data, load_execution_diagnostics
 export PIVMeasurementHistory, measurement_history_data, load_measurement_history
+export verify_measurement_history, measurement_history_at
+export PairTiming, pair_timing_data, load_pair_timing
 export ExperimentCheckpoint, CheckpointAttempt, CheckpointResults
 export create_checkpoint, load_checkpoint, resume_checkpoint!, checkpoint_state, checkpoint_results, save_checkpoint_results
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
@@ -92,6 +94,7 @@ include("derived.jl")
 include("experiments.jl")
 include("execution_diagnostics.jl")
 include("measurement_history.jl")
+include("pair_timing.jl")
 include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
 include("run_quality.jl")

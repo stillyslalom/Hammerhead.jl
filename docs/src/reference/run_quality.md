@@ -6,7 +6,8 @@ CurrentModule = Hammerhead
 
 Format version 1 is language-neutral TOML containing primitive mappings,
 arrays, strings, integers, booleans and finite floating-point values. It reports
-stored planar/stereo PIV arrays. PTV/tracking results are rejected.
+stored planar/stereo PIV arrays by default. PTV/tracking results are rejected
+by the default format-1 report.
 See [Save a run-quality report](../howto/run_quality.md) for usage.
 
 The root fields are `quality_report_format_version`, `generated_at_unix_s`,
@@ -74,7 +75,58 @@ This version summarizes result fields only. Its legacy `not_persisted` reason
 means that the needed history is absent from those fields; the report does not
 inspect optional [measurement-history companions](measurement_history.md) or
 execution diagnostics, even when the native file contains them. Use the
-companion readers for those observations. Report integration is separate work.
+companion readers for those observations, or explicitly request format 2 below.
+
+## Opt-in format 2
+
+`include_measurement_history=true` adds `entry_kinds` and `measurement_history`
+to the root, with generator
+`value_basis="stored_arrays_and_verified_final_sweep_history"`. The loader accepts
+both report versions. The opt-in requires a whole direct native index or the
+verified record/run overload; anonymous/converted iterators and array views are
+refused. Existing current-array groups retain their definitions. `entry_kinds`
+counts planar, stereo, PTV and tracking entries; PTV/tracking contribute no
+current-array group. Whole-file provenance counts all entry kinds.
+
+`measurement_history` records `scope="final_pass_final_executed_sweep"`,
+`binding="raw_measurement_digest_verified"`, fixed-size `counts`, and `fractions`.
+Coverage counters are `planar_entries`, `recorded_entries`, `missing_entries`,
+and `unsupported_stereo_entries`/`unsupported_ptv_entries`/
+`unsupported_tracking_entries`. `nodes`, `masked` and `unmasked` count only
+verified recorded planar packets. Missing packets reduce coverage; corrupt
+packets or packets on unsupported result kinds cause errors. Present packets
+in associated reports must match recipe/input IDs and absolute pair index;
+`association=nothing` is refused separately from an absent packet.
+
+Event counters are `first_rejected`, `pre_substitution_flagged`,
+`accepted_alternative`, `fill_attempted`, `fill_assigned` and `primary_restored`.
+First-rejection counters have fixed buckets `rejection_nonfinite_primary`,
+`rejection_implicit_uod`, `rejection_implicit_peak_ratio`,
+`rejection_configured_builtin`, `rejection_configured_custom`, and
+`rejection_unclassified`. Only recognized generated version-1 stage labels/kinds
+are classified; unfamiliar labels are never guessed. These count first observed
+flag transitions, not every failed predicate. A custom validator can clear a
+flag later, so first-rejection and pre-substitution counts need not agree.
+
+Final-origin counters are `origin_unavailable`, `origin_primary`,
+`origin_alternative`, `origin_fill` and `origin_custom_unclassified`. Their sum
+is covered `unmasked`. An internal median assignment followed by restoration
+increases `fill_assigned` and `primary_restored` while final origin is primary or
+unavailable. Assignment does not certify a finite or valid output.
+
+Each event, rejection-bucket and final-origin fraction uses covered `unmasked`
+as denominator and is named `<counter>_fraction`. `recorded_entry_fraction` uses
+`recorded_entries / planar_entries` (entry coverage); `masked_fraction` uses
+covered `masked / nodes`. The same available/value/zero-denominator convention
+applies as in format 1. Missing and unsupported entry nodes are excluded from
+event denominators, never treated as zero-event observations.
+
+Format 2 replaces the three generic unavailable event-history entries with this
+scoped section, adds `earlier_pass_and_sweep_history: not_recorded`, and labels
+`uncertainty_measurement_association: applicability_not_established`. Accuracy,
+coverage, peak locking and sensitivity remain unevaluated. Finite stored
+uncertainty never establishes applicability, including for primary-origin nodes.
+Execution tolerance counts/outcomes are not quality metrics in either version.
 
 Report snapshots retain no payload arrays and dictionary access returns a
 copy. Known protected locators are authoritative when saving, with normalized

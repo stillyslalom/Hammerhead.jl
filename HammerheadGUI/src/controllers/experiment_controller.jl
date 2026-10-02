@@ -282,7 +282,7 @@ function experiment_summary(ec::ExperimentController)
 end
 
 """
-    experiment_quality_report(controller) -> RunQualityReport
+    experiment_quality_report(controller; include_measurement_history=false) -> RunQualityReport
 
 Summarize the latest completed run using the core report contract. Verify the
 captured record/run identities and output content before scanning one result at
@@ -290,27 +290,29 @@ a time. The report distinguishes current flags and finite output from unavailabl
 measurement/replacement history; stored uncertainty availability is not accuracy.
 Busy, missing, failed, or changed runs are refused. No input images or saved
 scripts are executed to generate the report.
+Opt into `include_measurement_history=true` for core format-v2 verified
+final-sweep event counts; the default remains the stored-field v1 report.
 """
-function experiment_quality_report(ec::ExperimentController)
+function experiment_quality_report(ec::ExperimentController;include_measurement_history::Bool=false)
     _experiment_idle(ec)
     record,run=deepcopy(ec.record[]),deepcopy(ec.last_run[])
     record!==nothing && run!==nothing ||
         throw(ArgumentError("no completed experiment run to report"))
-    quality_report(record,run)
+    quality_report(record,run;include_measurement_history)
 end
 
 """
-    save_experiment_quality_report(path, controller) -> RunQualityReport
+    save_experiment_quality_report(path, controller; include_measurement_history=false) -> RunQualityReport
 
 Generate and save the shared core TOML quality report. In addition to the core
 report's protected sources, preserve the controller's selected result and run
 record destinations. A rejected report or destination leaves existing files
 unchanged. This scans completed output and does not modify the experiment.
 """
-function save_experiment_quality_report(path::AbstractString,ec::ExperimentController)
+function save_experiment_quality_report(path::AbstractString,ec::ExperimentController;include_measurement_history::Bool=false)
     _experiment_idle(ec)
     protected=filter(!isempty,[ec.output_path[],ec.run_record_path[]])
-    report=experiment_quality_report(ec)
+    report=experiment_quality_report(ec;include_measurement_history)
     save_quality_report(path,report;protected_paths=protected)
     report
 end

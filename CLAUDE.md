@@ -246,6 +246,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   callbacks. Validate binding before persistence; metadata-only loads do not
   verify payload content unless `verify_result=true`. UQ still describes the
   final deformed windows and is not re-estimated for alternatives or fills.
+- `pair_timing.jl` — opt-in planar sequence timing companions. Freeze selected
+  frame references and O(pairs) scalar metadata before loading/output; exact
+  rational encodings preserve integer epochs and timestamp midpoint halves.
+  Observed, declared and effective scaling delays remain distinct. Source IDs
+  are opaque and missing clock/unit labels remain unknown. Bind the current
+  packet to raw numerical result content; generic copies/exports omit it.
 - `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
   protocol: disjoint metadata/result directories, immutable singleton native
   payloads and commit descriptors, strict ordered input/recipe/environment
@@ -259,7 +265,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   embedded mask/background payloads by shape, precision, and canonical SHA-256.
   Recipe comparisons exclude script locators, input identities, and run metadata.
 - `run_quality.jl` — `RunQualityReport` scans planar/stereo results without
-  retaining payloads and saves validated version-1 TOML. Counts are node-weighted
+  retaining payloads and defaults to validated version-1 TOML. Opt-in native
+  version-2 reports verify final-sweep history, report missing/unsupported entry
+  populations and keep event/origin counts on history-covered denominators.
+  Associated reports also require matching packet recipe/input/pair identities.
+  Counts are node-weighted
   with explicit denominators; flags/finite values are not replacement history,
   and numerical UQ availability is not coverage or measurement association.
   Record/run reports verify output content and identities; anonymous iterators
@@ -425,6 +435,12 @@ scans; cache recipe text separately from progress/status rendering. Opening and
 refreshing validate fixed prefixes; explorers retain one displayed result and
 never follow live appends. Recovery asserts the former writer has stopped and
 resets after use. Preflight and work within a pair can delay UI interaction.
+
+Lazy native explorers can opt into recorded processing details. Verify history
+against the raw result before physical conversion and commit navigation state
+only after preflight succeeds. Retain one display payload/current packet; a
+separate display digest detects later array edits. Execution companions v1 bind
+entry keys, not numerical result content. Missing history is never inferred.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
@@ -754,6 +770,12 @@ as contrast evidence; preserve any genuine processing-precision difference.
   first-rejection semantics, numerical parity, mutable-callback guards and
   optional companion/result verification. Keep final-history storage bounded
   across sweeps and non-collecting sequences.
+- `test_pair_timing.jl` checks exact timestamp arithmetic, complete preflight,
+  frozen source selection/metadata, native companion validation, callback
+  integrity and non-collecting lifetime. Timing does not change legacy tracking.
+  `test_quality_history.jl` checks report-v2 coverage, event/origin populations,
+  packet/run association and v1 compatibility. GUI `test_companions.jl` checks
+  transactional loading, physical-display binding, release and panel layouts.
 - `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
   outputs across fixed seeds. Component UQ populations include zero sigma;
   normalized errors require positive sigma. Counts retain arithmetic failures,

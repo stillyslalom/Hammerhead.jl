@@ -8,6 +8,16 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in planar pair-timing companions with exact timestamp values,
+  observed delays/midpoints, source identifiers, and effective scaling-delay
+  provenance. All selected metadata is checked before loading or opening output;
+  callbacks cannot redirect frozen frame selections or invalidate saved binding.
+- Added opt-in version-2 quality reports for verified final-sweep history,
+  with explicit missing/unsupported coverage and actual event/origin counts.
+  Default reports remain version 1. Public history verification and per-node
+  accessors support inspection without reloading a raw result or copying a packet.
+- Recheck captured measurement history and timing after function-output callbacks,
+  including callback-only capture, before opening their destination.
 - Added opt-in final-sweep planar measurement history: primary values and
   residuals, first-observed rejection stages, accepted alternative ranks,
   observed fill/restoration events, final origin and stored uncertainty status.
@@ -98,6 +108,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added lazy inspection of recorded measurement history and execution diagnostics,
+  with raw-result verification before physical display and transactional navigation.
+  The experiment workflow can include recorded history in saved quality reports.
 - Added an isolated Qt lifecycle harness with owned child processes, bounded
   timeouts, complete logs, source identities, and render/release/exit gates.
   Prototype viewports now dispose application callbacks and use fresh figures.
@@ -135,12 +148,14 @@ validation and the core-first, GUI-second release sequence.
 
 Native JLD2 `format_version` remains **1**; persisted result structures are
 unchanged. Experiment records have their own `experiment_format_version = 1`
-and do not change the native result schema. Checkpoints and quality reports use
-separate version-1 metadata formats. `TABLE_SCHEMA_VERSION` remains **`hammerhead-table-1`** under its
+and do not change the native result schema. Checkpoints use a separate version-1
+format. Quality reports default to version 1; opt-in history-aware reports use
+version 2, and readers accept both. `TABLE_SCHEMA_VERSION` remains
+**`hammerhead-table-1`** under its
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.
 
-Optional execution and measurement-history companions and standalone
+Optional execution, measurement-history and pair-timing companions and standalone
 recipe-comparison reports also use independent version-1 schemas. Existing
 result readers ignore companions; result-only copies may drop them. No execution
 history is inferred from older files' requested settings.

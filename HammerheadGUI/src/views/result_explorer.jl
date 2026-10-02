@@ -22,6 +22,13 @@ colored particle scatter with optional displacement arrows, and a
 `TrackingResult` as trajectory polylines colored by mean speed (breaks at
 frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel
 summarizes the selected item in physical units when a scale is attached.
+The unchecked "recorded processing details" toggle opts into verified raw
+history/execution inspection for lazy native files. The paged details panel
+labels raw primary/residual measurements in pixels beside displayed units and
+returns its vertical space when disabled. It makes no uncertainty applicability
+or accuracy claim and does not infer absent history from current flags.
+While details are open, profile lines remain overlaid but their separate graph
+is hidden; closing details reveals a profile placed on the current display.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
 result_explorer(path::AbstractString; lazy::Bool = false, kwargs...) =
@@ -53,7 +60,8 @@ function result_explorer!(target, ex::ResultExplorer)
     clabel = Observable("")
     Colorbar(gl[1, 2]; colormap = :viridis, limits = crange, label = clabel)
 
-    controls = GridLayout(gl[1, 3]; tellheight = false, valign = :top)
+    controls = GridLayout(gl[1:4, 3]; tellheight = false, valign = :top)
+    rowgap!(controls,4)
     Label(controls[1, 1], "field"; halign = :left, font = :bold)
     menu = Menu(controls[2, 1]; options = [("|displacement|", :magnitude)])
     toggles = GridLayout(controls[3, 1]; halign = :left)
@@ -73,15 +81,31 @@ function result_explorer!(target, ex::ResultExplorer)
                                 ("circulation", :circulation)])
     tool_info = Label(controls[8, 1], ""; halign = :left, justification = :left,
                       word_wrap = true, width = 210, tellwidth = false)
-    Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
-    info = Label(controls[10, 1], ""; halign = :left, justification = :left)
+    inspection_hint=Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
+    info = Label(controls[10, 1], ""; halign = :left, justification = :left,fontsize=14)
     Label(controls[11, 1], ex.status; halign = :left, justification = :left,
           word_wrap = true, width = 210, tellwidth = false)
+    companion_mode=GridLayout(controls[12,1])
+    colgap!(companion_mode,6)
+    companion_toggle=Toggle(companion_mode[1,1];active=ex.companion_enabled[],halign=:left)
+    Label(companion_mode[1,2],"recorded processing details";halign=:left,word_wrap=true,width=170,fontsize=13,tellwidth=false)
+    companion_panel=GridLayout(gl[4,1:2])
+    # Reserve profile space only while a profile is displayed. An empty Auto
+    # row would otherwise share the plot's height when details add a fourth row.
+    rowsize!(gl,3,Fixed(0))
+    companion_pager=GridLayout(companion_panel[1,1:2])
+    companion_previous=Button(companion_pager[1,1];label="previous details",tellwidth=false)
+    companion_page_label=Label(companion_pager[1,2],"")
+    companion_next=Button(companion_pager[1,3];label="next details",tellwidth=false)
+    companion_info=Label(companion_panel[2,1],"";halign=:left,valign=:top,justification=:left,
+        word_wrap=true,width=300,tellwidth=false,fontsize=13)
+    companion_node=Label(companion_panel[2,2],"";halign=:left,valign=:top,justification=:left,
+        word_wrap=true,width=300,tellwidth=false,fontsize=13)
     colsize!(gl, 3, Fixed(230))
 
-    Label(gl[2, 1:3][1, 1], "frame")
-    slider = Slider(gl[2, 1:3][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
-    Label(gl[2, 1:3][1, 3], lift((i, m) -> "$i / $m", ex.frame, ex.count))
+    Label(gl[2, 1:2][1, 1], "frame")
+    slider = Slider(gl[2, 1:2][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
+    Label(gl[2, 1:2][1, 3], lift((i, m) -> "$i / $m", ex.frame, ex.count))
     # Grow the slider range as a live batch appends results (push_result!).
     on(ex.count) do m
         rng = 1:max(m, 1)
@@ -92,6 +116,64 @@ function result_explorer!(target, ex::ResultExplorer)
     # Observables notify even when the value is unchanged).
     _sync_toggle!(vec_toggle, ex.show_vectors)
     _sync_toggle!(out_toggle, ex.highlight_outliers)
+    on(companion_toggle.active) do enabled
+        enabled==ex.companion_enabled[] && return
+        try
+            set_companion_inspection!(ex,enabled)
+        catch err
+            isempty(ex.status[]) && (ex.status[]=Controllers._errmsg(err))
+            companion_toggle.active[]=ex.companion_enabled[]
+        end
+    end
+    on(ex.companion_enabled) do enabled
+        enabled==companion_toggle.active[] || (companion_toggle.active[]=enabled)
+    end
+    companion_page=Observable(1)
+    companion_pages=Ref([("","")])
+    function show_companion_page!()
+        page=clamp(companion_page[],1,length(companion_pages[]))
+        left,right=companion_pages[][page]
+        companion_info.text[]=left
+        companion_node.text[]=right
+        companion_page_label.text[]="details $page / $(length(companion_pages[]))"
+    end
+    on(_->show_companion_page!(),companion_page)
+    on(_->(companion_page[]=max(1,companion_page[]-1)),companion_previous.clicks)
+    on(_->(companion_page[]=min(length(companion_pages[]),companion_page[]+1)),companion_next.clicks)
+    function companion_chunks(text)
+        lines=String[]
+        for line in split(text,'\n')
+            current=""
+            for word in split(line)
+                if !isempty(current) && length(current)+length(word)+1>46
+                    push!(lines,current)
+                    current=word
+                else
+                    current=isempty(current) ? word : current*" "*word
+                end
+            end
+            push!(lines,current)
+        end
+        [join(lines[i:min(i+10,length(lines))],"\n") for i in 1:11:length(lines)]
+    end
+    function refresh_companions!()
+        rowsize!(gl,4,Fixed(ex.companion_enabled[] ? 220 : 0))
+        companion_info.visible[]=ex.companion_enabled[]
+        companion_node.visible[]=ex.companion_enabled[]
+        for block in (companion_previous,companion_next)
+            block.blockscene.visible[]=ex.companion_enabled[]
+        end
+        companion_page_label.visible[]=ex.companion_enabled[]
+        try
+            summary,node=Controllers._companion_text(ex)
+            left,right=companion_chunks(summary),companion_chunks(node)
+            companion_pages[]=[(i<=length(left) ? left[i] : "",i<=length(right) ? right[i] : "") for i in 1:max(length(left),length(right))]
+        catch err
+            companion_pages[]=[("Recorded companion inspection failed: $(Controllers._errmsg(err))","")]
+        end
+        companion_page[]=1
+    end
+    onany((args...)->refresh_companions!(),ex.frame,ex.selection,ex.companion_enabled)
     on(slider.value) do i
         i == ex.frame[] && return
         try
@@ -160,10 +242,11 @@ function result_explorer!(target, ex::ResultExplorer)
     sel_plot = scatter!(ax, sel_points; color = :transparent,
                         strokecolor = :cyan, strokewidth = 2.5, markersize = 16)
     translate!(sel_plot, 0, 0, 2)
-    onany(ex.selection, ex.frame) do sel, _
+    onany(ex.selection, ex.frame, ex.tool) do sel, _, tool
         pt = selection_point(current_result(ex), sel)
         sel_points[] = pt === nothing ? Point2f[] : [Point2f(pt[1], pt[2])]
-        info.text[] = describe_selection(ex)
+        info.text[] = tool===:inspect ? describe_selection(ex) : ""
+        inspection_hint.text[]=tool===:inspect ? "click a vector to inspect" : ""
     end
 
     # Tool overlay (profile line / circulation contour) and the profile
@@ -183,13 +266,15 @@ function result_explorer!(target, ex::ResultExplorer)
         tool_line[] = pts
         tool_info.text[] = tool_summary(ex)
         pd = ex.profile_data[]
-        if pd === nothing
+        if pd === nothing || ex.companion_enabled[]
             if profile_ax[] !== nothing
                 delete!(profile_ax[])
                 profile_ax[] = nothing
-                trim!(gl)
             end
+            rowsize!(gl,3,Fixed(0))
+            pd===nothing || (tool_info.text[]*="\nClose recorded details to show the profile graph.")
         else
+            rowsize!(gl,3,Fixed(150))
             if profile_ax[] === nothing
                 # span only the plot + colorbar columns: the controls column
                 # holds the (tellheight = false) info text, which would
@@ -208,7 +293,7 @@ function result_explorer!(target, ex::ResultExplorer)
         return
     end
     onany((args...) -> refresh_tools!(),
-          ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
+          ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result,ex.companion_enabled)
 
     function refresh_menu!()
         fields = available_fields(current_result(ex))
@@ -334,6 +419,7 @@ function result_explorer!(target, ex::ResultExplorer)
           ex.color_mode, ex.color_min, ex.color_max)
 
     refresh_menu!()
+    refresh_companions!()
     refresh_plots!()
     refresh_tools!()
     return gl

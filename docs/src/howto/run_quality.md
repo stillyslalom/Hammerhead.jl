@@ -85,6 +85,56 @@ snapshot. Loading a TOML report validates its schema and consistency without
 reopening any recorded files; it records a past verification rather than
 performing a new one.
 
+Opt into verified recorded events when the native file contains
+[measurement history](measurement_history.md):
+
+```@example quality_history
+using Hammerhead, Random
+a = rand(MersenneTwister(237), Float32, 48, 48)
+p = PIVParameters(window_size=16, overlap=8, n_peaks=3)
+mktempdir() do directory
+    path = joinpath(directory, "recorded.jld2")
+    run_piv_sequence([(a,a), (a,a)], p; output=path,
+        record_measurement_history=true, collect_results=false, progress=false)
+    report = quality_report(ResultFile(path); include_measurement_history=true)
+    saved = save_quality_report(joinpath(directory, "quality-v2.toml"), report)
+    data = quality_report_data(load_quality_report(saved))
+    @assert data["quality_report_format_version"] == 2
+    data["measurement_history"]["counts"]
+end
+```
+
+This emits report format 2; the default still emits format 1 and its loader
+remains compatible. `quality_report(record, run; include_measurement_history=true)`
+also verifies that every present packet has the selected recipe/input IDs and
+absolute pair index. A present but unassociated or mismatched packet is refused;
+a missing packet instead reduces coverage. A generic `ResultFile` report remains
+experiment-unassociated even when packet metadata names a recipe.
+
+History counts cover only the final pass's final executed sweep. They distinguish
+first observed rejection, flags before alternatives, accepted alternative peaks,
+attempted and assigned medians, restored primaries, and final origin. A median
+assignment can be nonfinite, numerically unchanged, or undone by restoration.
+Missing entries are coverage gaps, not zero-event observations. Event fractions
+use only history-covered unmasked nodes; entry coverage uses planar entry counts.
+Unknown rejection labels remain unclassified. Earlier-sweep history and
+uncertainty applicability/coverage remain unavailable.
+
+Opt-in reports require a direct whole-file `ResultFile` or verified record/run.
+Bare iterators, array views, converted GUI result wrappers and checkpoint indexes
+have no supported checked companion mapping. Mixed native files explicitly count
+unsupported stereo/PTV/tracking history; PTV/tracking entries have no numerical
+quality group in format 2. Existing malformed packets or a planar packet attached
+to an unsupported result kind are refused. Each selected raw result is loaded
+once and its companion verified before aggregation; neither payload is retained
+in the report. Source identities and overwrite protections apply to both formats.
+
+The GUI experiment workflow's unchecked **include recorded history in report**
+toggle selects format 2. Its default remains format 1. The GUI controller methods
+`experiment_quality_report` and `save_experiment_quality_report` expose the same
+`include_measurement_history` keyword. The result explorer offers separate
+[recorded processing details](gui_companions.md) for one selected frame/node.
+
 Saving validates and serializes before opening the destination, and rejects
 same-file aliases of known result/input/script/record paths, including hard
 links where the filesystem supports them. For an anonymous iterator, use

@@ -17,18 +17,50 @@ mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
     source::Union{Hammerhead.ResultFile,Hammerhead.CheckpointResults}
     index::Int
     result::Union{Nothing,AnyResult}
+    inspection::Bool
+    companions::NamedTuple
 end
+_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,display_sha256=nothing)
+_LazyDisplayResults(source,index,result)=_LazyDisplayResults(source,index,result,false,_empty_companions())
 Base.size(results::_LazyDisplayResults) = size(results.source)
 Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
 Hammerhead._result_protected_paths(results::_LazyDisplayResults)=Hammerhead._result_protected_paths(results.source)
 function Base.getindex(results::_LazyDisplayResults, i::Int)
     checkbounds(results, i)
     if results.index != i
-        result = physical(results.source[i])
-        results.result = result
-        results.index = i
+        result,companions=_prepare_lazy_frame(results,i,results.inspection)
+        _commit_lazy_frame!(results,i,result,companions,results.inspection)
     end
     return results.result::AnyResult
+end
+function _prepare_lazy_frame(results,i,inspection)
+    raw=results.source[i]
+    if inspection
+        results.source isa Hammerhead.ResultFile || throw(ArgumentError("checkpoint companion inspection is not supported"))
+        history=Hammerhead.load_measurement_history(results.source,i)
+        diagnostics=Hammerhead.load_execution_diagnostics(results.source,i)
+        if raw isa PIVResult
+            history===nothing || Hammerhead.verify_measurement_history(history,raw)
+            state=history===nothing ? :history_missing : :verified
+        else
+            history===nothing && diagnostics===nothing || throw(ArgumentError("planar companion attached to an unsupported result kind"))
+            state=:unsupported
+        end
+        result=physical(raw)
+        digest=result isa PIVResult ? Hammerhead._history_result_digest(result) : nothing
+        companions=(state=state,history=history,diagnostics=diagnostics,display_sha256=digest)
+    else
+        result=physical(raw)
+        companions=_empty_companions()
+    end
+    result,companions
+end
+function _commit_lazy_frame!(results,i,result,companions,inspection)
+    results.result=result
+    results.index=i
+    results.companions=companions
+    results.inspection=inspection
+    nothing
 end
 Base.show(io::IO, results::_LazyDisplayResults) =
     print(io, "Lazy display results (", length(results), " indexed, one cached frame)")
@@ -75,6 +107,15 @@ clears an invalid `selection`.
 A `CheckpointResults` index browses a verified fixed committed prefix with the
 same one-frame display cache. Open a new index/explorer after resume to see
 later commits; this is not a live checkpoint reader.
+
+[`set_companion_inspection!`](@ref) opts into recorded final-sweep history and
+execution counts for lazy native files. Verification uses raw measurements
+before physical conversion. A failed read/verification preserves the old frame,
+selection, mode and bundle. Only the current history packet is retained.
+[`companion_summary`](@ref) and [`describe_companion_selection`](@ref) provide
+readable processing details; missing/bare/checkpoint/unsupported states remain
+explicit. Private packet and physical display mutation checks are O(grid nodes)
+on each inspection refresh, not continuous mutation monitoring.
 """
 struct ResultExplorer
     results::Union{Vector{AnyResult},_LazyDisplayResults}
@@ -94,6 +135,7 @@ struct ResultExplorer
     circulation_result::Observable{Union{Nothing,NamedTuple}}
     derived_cache::Dict{Int,NamedTuple}
     status::Observable{String}
+    companion_enabled::Observable{Bool}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -130,7 +172,7 @@ function _result_explorer(conv, path)
                         Observable(NTuple{2,Float64}[]),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
-                        Dict{Int,NamedTuple}(), Observable(""))
+                        Dict{Int,NamedTuple}(), Observable(""),Observable(false))
     last_frame = Ref(1)
     # Read failures must occur before downstream view notifications. A direct
     # observable write has already changed its value: restore silently and
@@ -143,17 +185,156 @@ function _result_explorer(conv, path)
             ex.status[] = first(split(sprint(showerror, err), '\n'))
             rethrow()
         end
-        i == last_frame[] || empty!(ex.derived_cache)
+        changed=i!=last_frame[]
+        changed && empty!(ex.derived_cache)
         last_frame[] = i
         ex.status[] = ""
         ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
         ex.selection[] = _valid_selection(r, ex.selection[])
         # tool state describes one frame's flow: clear it on a frame switch,
         # and revert to :inspect when the new result has no derived analysis
-        _reset_tool!(ex)
+        changed && _reset_tool!(ex)
         r isa PIVResult || ex.tool[] === :inspect || (ex.tool[] = :inspect)
     end
+    last_mode=Ref(false)
+    on(ex.companion_enabled;priority=typemax(Int)) do enabled
+        enabled==last_mode[] && return
+        try
+            if enabled
+                ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile ||
+                    throw(ArgumentError("recorded companion inspection requires a lazy native ResultFile; eager/bare inputs and checkpoints are unsupported"))
+                result,companions=_prepare_lazy_frame(ex.results,ex.frame[],true)
+                _commit_lazy_frame!(ex.results,ex.frame[],result,companions,true)
+                _reset_tool!(ex) # enabling reloads the display; old analysis may reflect edited values
+            elseif ex.results isa _LazyDisplayResults
+                ex.results.inspection=false
+                ex.results.companions=_empty_companions()
+            end
+        catch err
+            ex.companion_enabled.val=last_mode[]
+            ex.status[]=first(split(sprint(showerror,err),'\n'))
+            rethrow()
+        end
+        last_mode[]=enabled
+        empty!(ex.derived_cache)
+        ex.frame[]=ex.frame[] # refresh the same display without retaining the raw payload
+    end
     return ex
+end
+
+"""
+    set_companion_inspection!(ex::ResultExplorer, enabled::Bool=true)
+
+Opt into recorded planar history/execution inspection for a lazy native
+`ResultFile` explorer. Raw results and companions are read and history binding
+verified before physical display conversion/cache replacement. Failure preserves
+the old mode, frame, selection and display/companion bundle, and sets `status`.
+Disabling releases the current packet. Bare/eager inputs and checkpoint indexes
+have no supported native-companion association. This retains one display result
+and one current packet, not a second raw result. Caller-retained packets cost
+additional memory. Both setter and direct `companion_enabled[]` writes preflight.
+"""
+function set_companion_inspection!(ex::ResultExplorer,enabled::Bool=true)
+    ex.companion_enabled[]=enabled
+    ex
+end
+function _checked_companions(ex)
+    result=current_result(ex)
+    c=ex.results.companions
+    try
+        c.display_sha256===nothing || Hammerhead._history_result_digest(result)==c.display_sha256 ||
+            throw(ArgumentError("physical display fields changed after companion verification; disable and reenable inspection to reload"))
+        c.history===nothing || Hammerhead._history_checked_data(c.history)
+    catch err
+        ex.status[]=first(split(sprint(showerror,err),'\n'))
+        rethrow()
+    end
+    c
+end
+
+"""
+    companion_summary(ex::ResultExplorer) -> String
+
+Describe off/missing/unsupported/verified recorded-companion states and actual
+pass execution observations. History binds raw measurement content; execution
+diagnostics v1 bind an entry key, not numerical content or the independent
+history UUID. Stored uncertainty availability never certifies applicability.
+When enabled, integrity/display checks scan/hash the current arrays (O(nodes));
+no result reload or full packet copy occurs on inspection.
+"""
+function companion_summary(ex::ResultExplorer)
+    if !(ex.results isa _LazyDisplayResults)
+        return "Recorded companions: no indexed native association (eager/bare inputs)."
+    elseif !(ex.results.source isa Hammerhead.ResultFile)
+        return "Recorded companions: checkpoint inspection is unsupported."
+    elseif !ex.companion_enabled[]
+        return "Recorded companion inspection: off."
+    end
+    c=_checked_companions(ex)
+    _companion_summary(c)
+end
+function _companion_summary(c)
+    c.state===:unsupported && return "Recorded companions: unsupported for this result kind."
+    lines=[c.history===nothing ? "Measurement history: not recorded." : "Measurement history: raw measurement binding verified."]
+    if c.diagnostics===nothing
+        push!(lines,"Execution diagnostics: not recorded.")
+    else
+        push!(lines,"Recorded execution counts; not verified against the displayed vector values.")
+        for pass in c.diagnostics.passes
+            push!(lines,"Pass $(pass.pass_index): $(pass.executed_iterations)/$(pass.requested_iterations) sweeps; $(replace(String(pass.stop_reason),'_'=>' ')); $(pass.checks) tolerance checks.")
+            check=pass.last_check
+            push!(lines,check===nothing ? "  Tolerance comparison: not evaluated." :
+                "  Last q95 component change: $(check.value_state===:finite ? _fmt(check.value) : check.value_state) px; $(check.included_count) contributing nodes (empty support can meet tolerance).")
+            residual=pass.residual
+            push!(lines,"  Primary residual mean/RMS/max: $(residual.mean_magnitude===nothing ? "unavailable" : _fmt(residual.mean_magnitude))/$(residual.rms_magnitude===nothing ? "unavailable" : _fmt(residual.rms_magnitude))/$(residual.maximum_magnitude===nothing ? "unavailable" : _fmt(residual.maximum_magnitude)) px; $(residual.finite_count) finite unmasked nodes.")
+        end
+        push!(lines,"Tolerance outcomes are not measurement validity.")
+    end
+    push!(lines,"History scope: final pass/final sweep only. Uncertainty applicability, accuracy and coverage are not established.")
+    join(lines,"\n")
+end
+
+"""
+    describe_companion_selection(ex::ResultExplorer) -> String
+
+Describe one selected grid node's recorded primary/residual displacement in
+pixels, first observed rejection stage, actual alternative/fill/restoration
+events, final origin/flag and stored uncertainty numerical status. Use the
+ordinary selection panel for final displayed physical units. No history is
+inferred from current flags or reconstructed for missing entries. Integrity
+checks are O(nodes), but the returned text/scalar accessor retains no arrays.
+"""
+function describe_companion_selection(ex::ResultExplorer)
+    ex.companion_enabled[] || return ""
+    ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile || return ""
+    c=_checked_companions(ex)
+    _companion_selection(ex,c)
+end
+function _companion_selection(ex,c)
+    c.history===nothing && return ""
+    sel=ex.selection[]
+    sel isa CartesianIndex{2} || return "Select a grid node to inspect its recorded history."
+    node=Hammerhead._history_node(c.history._data,sel) # caller checked packet integrity
+    stage=node.rejection_name===nothing ? "none observed" : node.rejection_name
+    rank=node.accepted_peak_rank==0 ? "none" : string(node.accepted_peak_rank)
+    join(["Recorded node $(Tuple(sel))", "Raw x/y: $(_fmt(node.x)), $(_fmt(node.y)) px",
+        "Primary u/v: $(_fmt(node.primary_u)), $(_fmt(node.primary_v)) px",
+        "Primary residual u/v: $(_fmt(node.primary_residual_u)), $(_fmt(node.primary_residual_v)) px",
+        "First observed rejection: $stage", "Accepted alternative rank: $rank",
+        "Median attempted/assigned: $(node.fill_attempted)/$(node.fill_assigned)",
+        "Primary restored: $(node.primary_restored)",
+        "Final origin: $(replace(node.final_origin,'_'=>' ')); outlier flag: $(node.final_outlier); masked: $(node.masked)",
+        "Stored u/v uncertainty: $(replace(node.uncertainty_u_status,'_'=>' '))/$(replace(node.uncertainty_v_status,'_'=>' '))",
+        "Numerical availability does not establish applicability."],"\n")
+end
+function _companion_text(ex)
+    if ex.companion_enabled[] && ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile
+        c=_checked_companions(ex)
+        summary=_companion_summary(c) # one display hash + one packet hash per refresh
+        summary,_companion_selection(ex,c)
+    else
+        companion_summary(ex),""
+    end
 end
 
 ResultExplorer(result::AnyResult; kwargs...) = ResultExplorer([result]; kwargs...)

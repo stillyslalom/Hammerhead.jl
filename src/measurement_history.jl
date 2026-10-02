@@ -277,7 +277,62 @@ function _history_check_result(h,result)
     _history_result_digest(result)==data["measurement_sha256"] || _experiment_error("result measurement fields changed after history capture")
     nothing
 end
+
+"""
+    verify_measurement_history(history::PIVMeasurementHistory, result::PIVResult) -> true
+
+Validate packet integrity and its numerical binding against a raw, pixel-native
+result already loaded by the caller. Throws `ArgumentError` on mutation or
+mismatch. This reads no file and retains no result. Verify before `physical`
+conversion: converted coordinates/components do not have the original binding.
+Verification does not authenticate the source or establish uncertainty validity.
+"""
+function verify_measurement_history(h::PIVMeasurementHistory,result)
+    _history_check_result(h,result)
+    true
+end
+
+"""
+    measurement_history_at(history::PIVMeasurementHistory, index::CartesianIndex{2})
+
+Return detached scalar observations for one `[row, column]` node: raw pixel
+coordinates, primary/residual components, first rejection stage/name/kind,
+accepted alternative rank, fill/restoration events, final origin/flag/mask and
+per-component uncertainty numerical status. No full packet copy or file/result
+read occurs. Integrity verification scans/hashes the packet on each call; this
+is O(grid nodes), while the returned named tuple has constant size. Stage zero
+returns `nothing` for its name/kind. Numerical availability and primary origin
+do not establish uncertainty applicability, accuracy or coverage.
+"""
+function measurement_history_at(h::PIVMeasurementHistory,index::CartesianIndex{2})
+    d=_history_checked_data(h)
+    _history_node(d,index)
+end
+function _history_node(d,index)
+    checkbounds(d["mask"],index)
+    row,column=Tuple(index)
+    stage=d["first_rejection_stage"][index]
+    reason=stage==0 ? nothing : d["rejection_stages"][stage]
+    (index=index,x=d["x"][column],y=d["y"][row],
+     primary_u=d["primary_u"][index],primary_v=d["primary_v"][index],
+     primary_residual_u=d["primary_residual_u"][index],primary_residual_v=d["primary_residual_v"][index],
+     first_rejection_stage=stage,rejection_name=reason===nothing ? nothing : reason["name"],
+     rejection_kind=reason===nothing ? nothing : reason["kind"],
+     pre_substitution_outlier=d["pre_substitution_outliers"][index],accepted_peak_rank=d["accepted_peak_rank"][index],
+     fill_attempted=d["fill_attempted"][index],fill_assigned=d["fill_assigned"][index],primary_restored=d["primary_restored"][index],
+     final_origin=d["origin_codes"][Int(d["final_origin"][index])+1],final_outlier=d["final_outliers"][index],masked=d["mask"][index],
+     uncertainty_u_status=d["uncertainty_status_codes"][Int(d["uncertainty_u_status"][index])+1],
+     uncertainty_v_status=d["uncertainty_status_codes"][Int(d["uncertainty_v_status"][index])+1])
+end
 _history_key(key)="measurement_history/"*last(split(key,'/'))
+function _check_measurement_history_format(file)
+    if !haskey(file,"measurement_history_format_version")
+        haskey(file,"measurement_history") && _experiment_error("measurement history lacks format version")
+        return false
+    end
+    file["measurement_history_format_version"]===MEASUREMENT_HISTORY_FORMAT_VERSION || _experiment_error("unsupported measurement history version")
+    true
+end
 function _write_measurement_history(file,key,h)
     data=_history_checked_data(h)
     haskey(file,"measurement_history_format_version") || (file["measurement_history_format_version"]=MEASUREMENT_HISTORY_FORMAT_VERSION)
@@ -307,11 +362,7 @@ function load_measurement_history(index::ResultFile,i::Integer;verify_result::Bo
     key="results/"*index.entry_keys[i]
     h=jldopen(index.path,"r") do file
         _check_results_format(file,index.path)
-        if !haskey(file,"measurement_history_format_version")
-            haskey(file,"measurement_history") && _experiment_error("measurement history lacks format version")
-            return nothing
-        end
-        file["measurement_history_format_version"]===MEASUREMENT_HISTORY_FORMAT_VERSION || _experiment_error("unsupported measurement history version")
+        _check_measurement_history_format(file) || return nothing
         haskey(file,_history_key(key)) || return nothing
         entry=file[_history_key(key)]
         _experiment_keys(entry,["result_key","history","history_sha256"],"measurement history entry")
