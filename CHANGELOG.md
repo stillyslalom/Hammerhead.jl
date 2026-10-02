@@ -98,6 +98,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added an isolated Qt lifecycle harness with owned child processes, bounded
+  timeouts, complete logs, source identities, and render/release/exit gates.
+  Prototype viewports now dispose application callbacks and use fresh figures.
+  The enforced Windows offscreen OpenGL trial cannot create a native context;
+  native bridge cleanup and production framework adoption remain unvalidated.
 - Added a checkpoint workflow for creating or reopening complete planar
   experiments, progress, cancellation between committed pairs, and explicit
   recovery after a stopped writer. Browsing retains a fixed lazy prefix and

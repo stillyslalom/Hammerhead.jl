@@ -2,7 +2,7 @@
 using GLMakie, Hammerhead
 using HammerheadGUI.Controllers
 
-function viewport(state)
+function viewport(state; managed = false)
     fig = Figure(size = (900, 650))
     ax = Axis(fig[1, 1]; title = "Dense planar PIV: 16,384 vectors",
               xlabel = "image x (px)", ylabel = "image y (px)", yreversed = true,
@@ -20,7 +20,7 @@ function viewport(state)
     linesegments!(ax, segments; color = :cyan, linewidth = 0.7)
     scatter!(ax, selection; color = :orange, markersize = 16, strokewidth = 2)
     lines!(ax, outline; color = :red, linewidth = 3)
-    state.refresh = () -> begin
+    refresh = () -> begin
         r = current_result(state.explorer)
         r isa Hammerhead.PIVResult || error("viewport supports planar PIV entries only")
         background.visible[] = state.explorer.path === nothing
@@ -54,14 +54,22 @@ function viewport(state)
         ax.yreversed[] = true
         nothing
     end
-    state.refresh()
+    state.refresh = refresh
+    refresh()
     # The native bridge forwards input to the ordinary Makie axis interactions.
-    on(events(fig).mousebutton) do event
+    subscription = on(events(fig).mousebutton) do event
         if event.action == Mouse.press && event.button == Mouse.left
             p = mouseposition(ax)
             Prototype.pick(state, p[1], p[2]; drawing = state.drawing)
         end
         Consume(false)
+    end
+    if managed
+        detach = () -> begin
+            state.refresh === refresh && (state.refresh = () -> nothing)
+            nothing
+        end
+        return fig, ax, refresh, [subscription], detach
     end
     fig, ax
 end

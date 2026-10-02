@@ -42,15 +42,19 @@ versions admitted by the prototype's compatibility ranges work. Production
 HammerheadGUI dependencies were not updated. The generated manifest and
 logs/images are ignored local artifacts.
 
-Every automated Qt run sets `QT_QPA_PLATFORM=offscreen`; the construction
-probe additionally leaves its window invisible. Actual framebuffer probes
-show a window only within the offscreen platform, never on the desktop.
+The lifecycle harness launches hidden child processes with
+`QT_QPA_PLATFORM=offscreen` in their startup environment. It normalizes Windows
+environment names, removes the legacy `QMLSCENE_DEVICE` selector, and explicitly
+selects `QT_QUICK_BACKEND=rhi` with `QSG_RHI_BACKEND=opengl` for native trials.
+The older scripts set Julia's `ENV` before imports; those recorded values do
+not prove which environment Qt's separate Windows C runtime observed. Their
+captures therefore do not establish a verified offscreen native lifecycle.
 Invisible construction does not establish rendering: Qt documents that
 [hidden windows stop scene-graph rendering](https://doc.qt.io/qt-6/qquickwindow.html).
 Captures use a QML-defined item's
 [grabToImage](https://doc.qt.io/qt-6/qml-qtquick-item.html#grabToImage-method).
 
-The native bridge successfully produced an inspected plot capture, but
+An earlier native bridge run produced an inspected plot capture, but
 exiting that render probe reported
 `ModernGL.ContextNotAvailable("glDeleteBuffers, ... no valid OpenGL context available")`.
 This is a concrete lifecycle gate for adoption. A passing construction or
@@ -60,7 +64,74 @@ ordinary controls and controller behavior from bridge resource management.
 That fallback is a static rendered preview refreshed on controller actions;
 it does not establish GPU bridge performance or equivalent native input.
 
-The final Windows software/offscreen shell smoke exited with status zero,
+## Lifecycle harness and application ownership
+
+`lifecycle_runner.jl` owns each offscreen child, a finite timeout and termination,
+and complete stdout/stderr files. It preserves a fresh evidence directory after
+parent exit. Reports include OS exit status, timeout/error reasons, package and
+prototype source hashes, a manifest digest, relevant Qt environment variants,
+numbered flushed stage files and captures. Parent source hashes before and after
+execution reject prototype edits during a trial. These files aid crash diagnosis;
+flushing them does not establish power-loss durability. Capture success or a
+pre-shutdown completion marker is insufficient: required stages, attached native
+screens, capture files, resource counts, logs and final exit must agree.
+
+The minimal native probe imports QML, QMLMakie, GLMakie and Observables only.
+Its environment report also identifies declared Hammerhead/GUI dependencies,
+which it does not execute; their source hashes are environment provenance rather
+than a claim about imported application code. Startup times under concurrent
+validation activity are diagnostic elapsed times, not performance measurements.
+
+The application ownership repair gives each viewport generation a fresh figure,
+removes its mouse subscription and refresh callback before detachment, and
+serializes integrated/separate transitions. It clears Makie's current-figure
+reference when that reference belongs to the departing viewport. The existing
+`run.jl` / `main.qml` shell uses this path rather than reusing one scene across
+screens. Release acknowledgement there certifies application callback disposal.
+It does **not** certify native Qt GL cleanup. The software preview owns ordinary
+hidden GLFW screens and can destroy those through their implemented context switch.
+
+Current ownership checks pass 60 application-state assertions, including a
+retained released lease, and 30 scientific viewport assertions across three
+explicitly invisible GLFW render/pick/dispose cycles. Each cycle returns the
+screen registry to its baseline and old figure weak references clear after GC.
+The hidden-process harness passes 18 checks for environment normalization,
+invalid PNG refusal, complete logs, nonzero exits and owned timeout termination.
+These checks establish application ownership bounds; they do not test Qt GL
+resource release or native pointer/keyboard behavior.
+
+The final enforced software child exits zero after five fresh viewport generations
+and five application releases including shutdown, with cancellation after one
+of three pairs. Its inspected capture has readable Qt controls and a correct
+scientific preview. Qt's offscreen font database initially supplied missing
+glyphs; an explicit FontLoader now uses an existing Makie font asset and records
+its path, digest and loaded family. No font binary is installed or committed.
+There are no recorded render, model-binding or teardown errors in this software
+run. This remains a static preview workflow, without native Qt GPU or gesture
+evidence, and its elapsed time includes compilation and concurrent validation.
+
+The opt-in native trial records the Windows `wglGetCurrentContext` handle in the
+actual render callback and attempts screen destruction in that callback only
+when the same nonzero context is current. QML item destruction waits for the
+release acknowledgement. Full render exceptions are recorded and fail the child;
+they never escape a Cvoid callback. This is a diagnostic experiment, not a
+production bridge patch. QMLMakie's empty destruction hook, its context-valid
+flag and no-op context switch remain upstream lifecycle concerns; no depot
+package is modified.
+
+With the explicit startup environment, the current Windows Qt offscreen plugin
+reports `This plugin does not support createPlatformOpenGLContext!`, fails to
+create the OpenGL RHI context, and cannot produce a native frame. Earlier trials
+that selected the software adaptation produced inspected black captures and
+zero GL screens; the harness rejects those as native evidence. The native
+single-render/release/exit gate remains failed. Reopen, resize/FBO replacement,
+separate-window transitions and injected processing-failure scenarios are defined
+but remain unvalidated and are skipped until that minimal gate passes. Nothing
+here establishes safe bridge teardown, desktop input, a threaded render loop,
+cross-platform compatibility or GPU-memory bounds.
+
+The historical Windows software-shell smoke, before the ownership repair and
+enforced child environment, exited with status zero,
 created five viewports across the integrated/separate layouts, corrected an
 invalid schedule, displayed an open failure, and cancelled after one of three
 pairs. Its inspected `software_shell.png` has readable controls and a downward
@@ -70,7 +141,7 @@ vectors, but printed `exception in render` during reopen and faulted during
 context destruction on exception unwind. Its `lifecycle_complete` report flag
 describes the smoke sequence before teardown; it is not a clean-lifecycle pass.
 
-| Measured run on Windows Julia 1.11.4 | Evidence |
+| Historical run on Windows Julia 1.11.4, before the ownership repair | Evidence |
 |:--|:--|
 | First hidden bridge import, including initial candidate precompilation | 235.66 s; QML load 0.94 s; construction only |
 | Warm software-shell process import | 8.99 s; not a production GUI comparison |
@@ -99,13 +170,15 @@ From the repository root:
 julia HammerheadGUI/prototypes/qml/setup.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/bridge_probe.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/render_probe.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/run.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/run.jl --software
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
 ```
 
-The probe README identifies expected failures and generated evidence. Native
+The lifecycle runner writes its summary before returning nonzero for failed or
+gated scenarios. The probe README identifies expected failures and generated evidence. Native
 startup, resource-lifetime, gesture, accessibility, and platform gates must
 all be satisfied before choosing Qt as the production shell. GTK4 and a
 Bonito/WGLMakie browser shell remain comparison candidates; neither has been

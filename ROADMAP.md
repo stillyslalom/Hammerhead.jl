@@ -81,7 +81,9 @@ existing implementation is preferable; they are not commitments to add an API.
   reported random uncertainty. Separate signed bias, residual/convergence
   assumptions, estimator behavior, and rendering/interpolation effects with
   controlled comparisons; preserve the original full-error populations and
-  report independent-seed evidence before changing estimator defaults.
+  report independent-seed evidence before changing estimator defaults. Account
+  separately for zero-sigma cases, including the effects of covariance-ring
+  truncation and the existing nonnegative variance clamp.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -141,6 +143,11 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Preserve exposure timestamps, pair delay, sample time, source frame IDs,
   time units, and calibration/coordinate-frame identity through native persistence
   and exports. Define the time assigned to a displacement measurement.
+- [ ] Add opt-in planar pair-timing companions that preserve source metadata,
+  exact timestamp differences/midpoints, and the delay actually used for scaling.
+  Preflight all selected pairs before loading or opening output; retain missing
+  units/clocks explicitly and verify companion/result binding. Tracking, exports,
+  checkpoint/replay and stereo timing persistence remain separate extensions.
 - [x] Check stereo exposure synchronization when timestamps are available;
   matching pair delays alone does not establish simultaneous acquisition.
   Sequence and ensemble drivers now check exposure times and declared/observed
@@ -254,6 +261,11 @@ and GPU memory in the documented ownership modes.
   preserve explicit node-weighted counts/denominators, numerical uncertainty
   availability, source/recipe/run provenance, and unavailable diagnostic reasons.
   Reports scan bounded result payloads and protect known source/record aliases.
+- [ ] Add opt-in history-aware native quality reports and lazy GUI companion
+  inspection. Verify history against raw results before physical display;
+  distinguish recorded/missing/unsupported entries, actual events and final
+  origins, and retain explicit history-covered denominators. Keep default
+  version-1 reports compatible and navigation failures transactional.
 - [ ] Extend reports with actual rejection/replacement history, uncertainty
   association, peak locking, and representative window-size/preprocessing
   sensitivity comparisons after the required measurement evidence is available.
@@ -321,10 +333,20 @@ evidence.
   including image pan/zoom, dense vectors, picking, mask gestures, live results,
   cancellation, and window close/reopen. Compare against the current GLMakie
   baseline; assess GTK4 and Bonito against the same requirements if needed.
-  The isolated candidate reuses controllers and renders through QMLMakie on
-  Windows offscreen; native teardown currently fails with an OpenGL context
-  error. Complete lifecycle, native input, and responsiveness evidence before
-  claiming this prototype requirement complete.
+  The isolated candidate reuses controllers; historical native captures on
+  Windows encountered context/teardown errors but did not verify Qt's effective
+  platform. The enforced offscreen RHI/OpenGL probe cannot create a context on
+  this machine. Complete lifecycle, native input, and responsiveness evidence
+  before claiming this prototype requirement complete.
+- [x] Add a reproducible native rendering/lifecycle harness with a parent-owned
+  child process, complete logs and final exit status, source identity, framebuffer
+  evidence, and explicit viewport ownership/release checks. Separate application
+  observer disposal from native GL cleanup; gate longer transition/resize trials
+  on a clean single-render/release/exit result.
+  Ownership and process-harness tests pass; the software shell completes five
+  fresh viewport generations/releases with readable controls. The native gate
+  remains blocked by this machine's offscreen context-creation failure, so no
+  clean native lifecycle or cross-platform support is claimed.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.

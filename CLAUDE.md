@@ -398,6 +398,11 @@ without changing production GUI dependencies. Its README and
 evidence from native teardown/input/platform gaps. A successful framebuffer
 capture is not a clean application-lifecycle result. Keep generated manifests
 and artifacts ignored; retain portable relative source paths in its Project.
+The lifecycle runner owns hidden child processes and records their final exit,
+logs, relevant Qt environment, stages and source identities. Set Qt platform/
+backend selectors in the parent process environment before launching a child;
+Julia `ENV` values alone do not prove Qt's effective C-runtime configuration on
+Windows. Application observer release is distinct from native context cleanup.
 
 `ExperimentController` and `experiment_workflow[!]` provide a separate, read-only
 complete-recipe workflow. `experiment_record` / `save_batch_experiment` export

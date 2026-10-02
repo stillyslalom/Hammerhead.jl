@@ -1,96 +1,141 @@
 # Isolated Qt6/QML shell evaluation
 
-This opt-in prototype evaluates desktop forms and window management around
-HammerheadGUI's existing framework-free controllers. It does not replace the
-production GUI or alter its dependencies. The requirements and adoption gates
-are in [the framework evaluation](../../../docs/src/explanation/gui_framework.md).
+This opt-in prototype evaluates forms and window management over HammerheadGUI's
+framework-free controllers. It does not replace the production GUI or change its
+dependencies. See [the framework evaluation](../../../docs/src/explanation/gui_framework.md)
+for requirements and adoption gates.
 
-The prototype supports synthetic raw planar PIV batches, a dense 16,384-vector
-demo over a 1024-square image, completed-file lazy browsing, vector inspection,
-mask polygon commands, inline schedule/open errors, cancellation, and integrated
-or separate visualization windows using the same controller state. Lazy browsing
-accepts **unscaled planar PIV entries only**. Other entries report an error before
-changing the displayed frame; the production explorer supports all four types
-and physical units. File views use result coordinates and hide the demo image.
-Masks apply only to the synthetic demo's 96-square images. There is no experiment
-tree, ROI form, preprocessing form, resumability, or concurrent-writer support.
+The shell supports synthetic raw planar batches, a 16,384-vector demo over a
+1024-square image, completed-file lazy browsing, picking, mask commands, inline
+errors, cancellation, and integrated/separate views. Browsing accepts unscaled
+planar PIV entries only; unsupported entries fail before replacing the display.
+The production explorer supports all four result types and physical units.
+Masks belong to the synthetic 96-square demo. There is no experiment tree, ROI
+form, preprocessing form, resumability or concurrent-writer support.
 
-## Run from the repository root
+## Reproduction
+
+Run from the repository root:
 
 ```powershell
 julia HammerheadGUI/prototypes/qml/setup.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/bridge_probe.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/render_probe.jl
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/run.jl --software
-julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/run.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
 ```
 
-All commands above use hidden GLMakie rendering or Qt's `offscreen` platform.
-`run.jl` defaults to a finite automated smoke, not a desktop window. An explicit
-`--desktop` argument opts into an interactive native desktop window; that mode
-has not been exercised in this evaluation. Do not use it in automated validation.
+The runner creates hidden child processes with Qt's offscreen platform and an
+explicit software or RHI/OpenGL adaptation in their startup environment. It
+normalizes Windows environment keys and removes inherited selectors, including
+`QMLSCENE_DEVICE`. Use it for automated Qt validation instead of relying on
+Julia ENV changes reaching Qt's separate Windows C runtime. Scientific ownership
+tests request invisible GLFW screens explicitly. No desktop probe is automated.
+An explicit `run.jl --desktop` remains an unvalidated interactive opt-in.
 
-`setup.jl` resolves only this candidate environment, develops the local core and
-GUI packages, and restores the portable project source paths after Pkg's path
-canonicalization. Its generated Manifest is ignored. `artifacts/` contains
-ignored TOML reports, logs, and PNG captures. No downloaded binary or generated
-artifact belongs in a commit. Windows PowerShell can treat redirected native
-stderr as a shell error; use `exit $LASTEXITCODE` after a redirected command when
-recording the native process status.
+`setup.jl` resolves only this environment and restores portable project source
+paths. Its Manifest is ignored. If the local core gains dependencies, refresh
+this environment offline with `Pkg.offline(true); Pkg.resolve()` before checking
+application imports. `artifacts/` contains ignored reports, logs and captures;
+no generated image, downloaded binary or machine-specific manifest belongs in
+a commit.
 
-## Evidence and limitations
+## Lifecycle evidence contract
 
-Resolved/tested on Windows with Julia 1.11.4: QML 0.13.2, QMLMakie 0.3.3,
-CxxWrap 0.17.5, jlqml_jll 0.10.4+0, Qt6Base_jll and Qt6Declarative_jll
-6.10.2+2, GLMakie 0.13.15, Makie 0.24.15, and local HammerheadGUI 0.1.1.
-These are observed versions, not a tested compatibility matrix. Linux/macOS,
-older Julia versions, packaging, HiDPI, screen readers and native input latency
-remain untested.
+The runner preserves invocation, whitelisted Qt environment variants, prototype
+source hashes before/after each child, numbered flushed stage files, complete
+stdout/stderr, captures and OS process status in a fresh
+`artifacts/lifecycle-*` directory. That directory survives parent exit.
+Timeout termination targets only the child it owns. The summary is written
+before returning nonzero when any requested case fails or is gated. Flushing
+evidence does not establish power-loss durability. Source/QML/manifest edits
+during a child invalidate its acceptance evidence.
 
-Final adapter checks passed 30/30. The corrected software/offscreen shell smoke
-exited zero after five viewport creations, error callbacks, and cancellation
-after one of three pairs; its capture has readable controls and image-down y.
-One warm run measured import 8.99 s, QML load 0.40 s, whole smoke 30.66 s,
-estimated state 231,249 bytes, figure 22,085,754 bytes, and about 1.76 GiB
-peak process memory including JIT/workload. These are single-machine
-observations, not steady-state memory or a performance comparison. The first
-hidden bridge import took 235.66 s including candidate precompilation.
+Pass requires the expected generations, first frames with attached GL screens,
+release acknowledgements and detachment, nonempty PNG capture, disposed
+subscriptions, zero retained figures, baseline screen counts where native
+release is requested, no recorded render/teardown errors, and zero final OS
+exit status. Capture or a pre-shutdown completion marker alone cannot pass.
+Inspect captures as well as their signatures and stages.
 
-`adapter_tests.jl` checks form correction without parameter mutation on errors,
-lazy frame navigation/picking, rejected scaled entries and preserved frame,
-failed open preserving the old explorer, mask application, and cooperative
-cancellation retaining the first completed pair. `viewport_tests.jl` checks
-hidden dense rendering, programmatic zoom/pan, picking without resetting the
-view, mask overlay changes, image-coordinate reversal, and file geometry.
-These programmatic checks do not measure native pointer/keyboard behavior.
+Native cases are `construction`, `baseline`, `single-context`, `single-observe`,
+`reopen-context`, `separate-context`, `resize-context`, `failure-context`
+and `reuse-observe`. Observe mode acknowledges application disposal only.
+Context mode attempts GPU disposal from the render callback after checking its
+Windows wgl context handle. Reopen/separate/resize/failure/reuse cases are skipped
+until a clean single-render/release/exit case passes; a requested matrix adds
+that prerequisite. `--cycles=20` is available for later validation, but the
+current Windows platform cannot pass the native prerequisite.
 
-`bridge_probe.jl` proves invisible component construction and an event-loop
-timer. `render_probe.jl` proves a **real embedded native framebuffer** through
-`bridge_framebuffer.png`. It also reproduces a shutdown warning/error involving
-`ModernGL.ContextNotAvailable("glDeleteBuffers, ... no valid OpenGL context available")`.
-The QMLMakie bridge catches some render errors internally and prints
-`exception in render`, so successful capture/report flags alone are insufficient
-to call a run successful. Inspect stderr and exit status.
+Native probes import QML/QMLMakie/GLMakie/Observables only. Resolved core/GUI
+dependency hashes describe declared environment packages, not imported code.
+Parent drift checks cover the prototype sources/QML/manifest. Diagnostic elapsed
+times under concurrent tests are not startup benchmarks. No depot package or
+production dependency is modified.
 
-`run.jl` exercises invalid/valid form callbacks, explicit open errors, repeated
-Loader destruction/recreation, separate/integrated windows, a cooperative batch,
-cancellation, and a shell capture. `lifecycle_complete` in a TOML report means
-the pre-shutdown smoke sequence finished; **it does not certify clean teardown**.
-The native bridge has reported render exceptions during reopen and unsafe
-context destruction on shutdown. Those are adoption blockers, not suppressed
-exceptions. The separate `--software` path uses Qt software controls plus a
-static scientific image rendered by hidden GLMakie and refreshed after controller
-actions. Wheel/drag handlers transform that preview, and picking maps through
-the saved axis rectangle. It does not establish native bridge GPU performance.
+## Current blocker and ownership repair
 
-Reports include import/load/whole-smoke timing, estimated Julia state/view sizes,
-and `Sys.maxrss()` peak process memory. Peak RSS includes JIT compilation and
-the demo workload; state/view sizes exclude native allocations and are not
-steady-state process memory. First-run precompile timing is separate from warm
-startup. No responsiveness claim follows from an event timer merely running
-between frame pairs; CPU/GPU load and cancellation latency need a desktop audit.
+Current checks pass 60 ownership-contract assertions, 18 process/environment
+harness assertions and 30 scientific ownership assertions over three explicitly
+invisible GLFW cycles. Released leases retain neither subscriptions nor their
+old figures; the screen registry returns to baseline.
 
-Keep the production GLMakie shell while the native lifetime, input, accessibility,
-distribution, and cross-platform gates remain open.
+The final software child exits zero with five fresh viewport generations, five
+application releases including shutdown, cancellation after one of three pairs,
+and no render/model/teardown errors. Its capture was inspected: Qt controls and
+scientific preview are readable. An explicit FontLoader uses Makie's existing
+TeX Gyre Heros asset; its path, SHA-256 and loaded family are recorded. The direct
+shell accepts `--font=<path>` for an existing alternative font; no font is copied
+or installed. These are software/application ownership results, not native Qt
+GPU, gesture or performance evidence.
+
+Explicit startup RHI/OpenGL reaches a platform failure on Windows:
+`This plugin does not support createPlatformOpenGLContext!`,
+`QRhiGles2: Failed to create context` and `Failed to create RHI (backend 2)`.
+The owned children time out without a native first frame. Earlier diagnostic
+trials selected Qt's software adaptation, produced inspected black PNGs and
+acquired zero GL screens; the native gate rejects those. This capability blocker
+precedes bridge teardown, so the new trial cannot establish safe native cleanup.
+
+The existing `run.jl` / `main.qml` ownership path now creates a fresh figure for
+each viewport generation, disposes its mouse subscription and refresh callback,
+clears its owned Makie current-figure reference, and serializes integrated/
+separate handoff. Acknowledgements certify application ownership only. Hidden
+GLFW preview screens have an implemented context switch; Qt native screens
+do not gain that guarantee. Retaining a released lease must not retain its old
+figure. QMLMakie's destruction hook, context-valid flag and no-op context switch
+remain separate upstream risks; the local opt-in trial is not a production fix.
+
+## Historical evidence
+
+Observed Windows versions: Julia 1.11.4, QML 0.13.2, QMLMakie 0.3.3,
+CxxWrap 0.17.5, jlqml_jll 0.10.4+0, Qt6Base_jll/Qt6Declarative_jll 6.10.2+2,
+GLMakie 0.13.15, Makie 0.24.15 and HammerheadGUI 0.1.1. These are observed versions,
+not a compatibility matrix. Linux/macOS, minimum Julia, packaging, HiDPI,
+accessibility and native input latency remain untested.
+
+Before the ownership repair and enforced process environment, adapter tests
+passed 30/30 and a software shell exited 0 after five viewport creations,
+form/open errors and cancellation after one pair. One historical warm run
+measured import 8.99 s, QML load 0.40 s and total 30.66 s; estimated controller/
+figure sizes were 231,249/22,085,754 bytes and peak RSS about 1.76 GiB including
+JIT/workload. The initial bridge import took 235.66 s including precompilation.
+These are historical single-machine observations, not current-source results
+or performance comparisons.
+
+Historical `bridge_framebuffer.png` contains a real embedded plot, but shutdown
+reported ModernGL.ContextNotAvailable during glDeleteBuffers. The native shell
+printed `exception in render` during reopen and faulted during context
+destruction on exception unwind. Those scripts recorded Julia environment flags
+without verifying Qt's native C-runtime platform/backend; their captures do not
+establish an offscreen native lifecycle. Their earlier bridge errors remain
+unresolved evidence, not a demonstrated consequence of the current platform.
+
+Programmatic viewport tests cover zoom/pan, picking, mask overlays, reversed
+image coordinates and file geometry; they do not certify native gestures.
+The software shell is a static scientific preview refreshed after controller
+actions, not GPU bridge parity. Keep the production GLMakie shell while native
+lifetime, input, accessibility, distribution and platform gates remain open.

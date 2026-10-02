@@ -9,14 +9,25 @@ ENV["QSG_RHI_BACKEND"] = "opengl"
 ENV["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 software && (ENV["QT_QUICK_BACKEND"] = "software")
 const started = time_ns()
-using QML, QMLMakie, GLMakie, Observables, TOML, Pkg
+using QML, QMLMakie, GLMakie, Observables, TOML, Pkg, SHA
 include("adapter.jl")
 include("viewport.jl")
+include("viewport_lifecycle.jl")
 const import_seconds = (time_ns() - started) / 1e9
 const state = Prototype.State()
-const fig, ax = viewport(state)
+const viewports = ViewportLifecycle.Registry()
+const application_releases = Ref(0)
+const disposed_subscriptions = Ref(0)
 const lifecycle_done = Ref(false)
 const captured = Ref(false)
+const smoke_error = Ref("")
+const qt_font_family = Ref("")
+const font_option = filter(arg -> startswith(arg, "--font="), ARGS)
+length(font_option) <= 1 || error("duplicate --font option")
+const font_path = isempty(font_option) ? GLMakie.Makie.assetpath("fonts", "TeXGyreHerosMakie-Regular.otf") :
+    abspath(String(split(only(font_option), '='; limit = 2)[2]))
+isfile(font_path) || error("Qt prototype font file does not exist: $font_path")
+const font_sha256 = open(io -> bytes2hex(sha256(io)), font_path, "r")
 const capture_path = joinpath(@__DIR__, "artifacts", software ? "software_shell.png" : "native_shell.png")
 const preview_path = joinpath(@__DIR__, "artifacts", "scientific_preview.png")
 const preview_url = Observable("")
@@ -27,6 +38,7 @@ const axis_rectangle = Ref((0., 0., 1., 1.))
 mkpath(joinpath(@__DIR__, "artifacts"))
 
 function refresh_preview()
+    fig, ax = viewports.active.payload
     save(preview_path, fig; visible = false)
     rect = ax.scene.viewport[]
     width, height = size(fig.scene)
@@ -36,12 +48,51 @@ function refresh_preview()
     preview_url[] = "file:///" * replace(preview_path, '\\' => '/') * "?v=$(preview_generation[])"
     nothing
 end
-const refresh_plot = state.refresh
-state.refresh = () -> begin
-    refresh_plot()
-    software && refresh_preview()
+function prepare_viewport()
+    lease = ViewportLifecycle.create_viewport!(viewports, () -> begin
+        fig, ax, refresh, subscriptions, detach = viewport(state; managed = true)
+        (fig, ax), refresh, subscriptions, () -> begin
+            detach()
+            state.refresh = () -> nothing
+            nothing
+        end
+    end)
+    if software
+        refresh = lease.refresh
+        state.refresh = () -> begin
+            refresh()
+            refresh_preview()
+        end
+        refresh_preview()
+    end
+    lease.generation
 end
-software && refresh_preview()
+viewport_scene() = viewports.active.payload[1]
+function release_viewport()
+    lease = viewports.active
+    lease === nothing && return nothing
+    disposed_subscriptions[] += length(lease.subscriptions)
+    ViewportLifecycle.request_release!(viewports)
+    if software
+        # These are the hidden GLFW screens created by save(preview), whose
+        # context switch is implemented. This does not release Qt native screens.
+        for screen in copy(lease.payload[1].scene.current_screens)
+            GLMakie.destroy!(screen)
+        end
+    end
+    ViewportLifecycle.acknowledge_release!(viewports, lease.generation)
+    application_releases[] += 1
+    nothing
+end
+function detach_viewport()
+    lease = viewports.active
+    lease === nothing && return nothing
+    fig = lease.payload[1]
+    GLMakie.Makie.current_figure() === fig && GLMakie.Makie.current_figure!(nothing)
+    ViewportLifecycle.detach_viewport!(viewports, lease.generation)
+    nothing
+end
+prepare_viewport()
 
 function change_schedule(text)
     success = Prototype.schedule(state, text)
@@ -59,6 +110,8 @@ cancel_batch() = Prototype.cancel_batch(state)
 close_mask() = Prototype.close_mask(state)
 set_mask_mode(drawing) = (state.drawing = Bool(drawing); nothing)
 function pick_preview(x, y, drawing)
+    viewports.active === nothing && return nothing
+    _, ax = viewports.active.payload
     left, top, width, height = axis_rectangle[]
     0 <= (x - left) / width <= 1 && 0 <= (y - top) / height <= 1 || return nothing
     limits = ax.finallimits[]
@@ -70,7 +123,18 @@ viewport_created() = (state.visualizations += 1; nothing)
 lifecycle_complete() = (lifecycle_done[] = true; nothing)
 record_capture(success) = (captured[] = Bool(success); nothing)
 shutdown_prototype() = (state.shutdown = true; nothing)
-@qmlfunction change_schedule open_results navigate_frame run_batch cancel_batch close_mask set_mask_mode pick_preview viewport_created lifecycle_complete record_capture shutdown_prototype
+function smoke_failed(message)
+    smoke_error[] = String(message)
+    state.shutdown = true
+    open(joinpath(@__DIR__, "artifacts", "software_smoke_failure.toml"), "w") do io
+        TOML.print(io, Dict("stage" => "smoke_timeout", "error" => smoke_error[],
+            "figure_generations" => viewports.generation,
+            "application_releases" => application_releases[]))
+    end
+    nothing
+end
+record_font_family(family) = (qt_font_family[] = String(family); nothing)
+@qmlfunction change_schedule open_results navigate_frame run_batch cancel_batch close_mask set_mask_mode pick_preview viewport_created lifecycle_complete record_capture shutdown_prototype prepare_viewport viewport_scene release_viewport detach_viewport smoke_failed record_font_family
 
 props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "openError" => state.open_error, "status" => state.status,
@@ -78,9 +142,10 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "count" => state.count, "selection" => state.selection,
                          "preview" => preview_url)
 const load_started = time_ns()
-const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props, plot = fig,
+const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props,
                          bridgeEnabled = !software, offscreenDisplay = true,
-                         smokeMode = !desktop, capturePath = capture_path)
+                         smokeMode = !desktop, capturePath = capture_path,
+                         fontSource = "file:///" * replace(font_path, '\\' => '/'))
 const load_seconds = (time_ns() - load_started) / 1e9
 deadline = time() + 180
 while !state.shutdown && (desktop || !(lifecycle_done[] && captured[] && !state.batch.running[]))
@@ -101,19 +166,30 @@ report = Dict("julia" => string(VERSION), "os" => string(Sys.KERNEL),
               "qt_event_ticks" => state.ticks, "visualization_creations" => state.visualizations,
               "capture_succeeded" => captured[], "lifecycle_complete" => lifecycle_done[],
               "status" => state.status[], "retained_state_bytes" => Base.summarysize(state),
-              "maxrss_bytes" => Sys.maxrss(), "viewport_bytes" => Base.summarysize(fig),
+              "maxrss_bytes" => Sys.maxrss(), "viewport_bytes" => viewports.active === nothing ? 0 : Base.summarysize(viewports.active.payload[1]),
+              "figure_generations" => viewports.generation,
+              "application_release_acknowledgements" => application_releases[],
+              "disposed_viewport_subscriptions" => disposed_subscriptions[],
+              "native_context_release_verified" => false,
+              "qt_font_path" => font_path, "qt_font_sha256" => font_sha256,
+              "qt_font_family" => qt_font_family[],
               "invalid_schedule_seen" => invalid_schedule_seen[], "open_error_seen" => open_error_seen[])
 open(joinpath(@__DIR__, "artifacts", software ? "software_shell.toml" : "native_shell.toml"), "w") do io
     TOML.print(io, report)
 end
 println(report)
 if !desktop
+    isempty(smoke_error[]) || error(smoke_error[])
+    isempty(qt_font_family[]) && error("Qt controls never acknowledged their loaded font family")
     @assert captured[] && lifecycle_done[]
     @assert state.visualizations >= 4
     @assert isempty(state.schedule_error[]) && invalid_schedule_seen[] && open_error_seen[]
 end
-# Close GL resources while Qt still owns its contexts. Native bridge teardown is
-# itself part of the feasibility probe; errors are deliberately not suppressed.
+# Dispose application callbacks first. Acknowledgement certifies application
+# ownership only; Qt ownership does not prove that a GL context is current.
+# Native GL/bridge failures are deliberately not suppressed or called a pass.
+release_viewport()
+detach_viewport()
 GLMakie.closeall()
 QML.quit(qmlengine)
 QML.quit()
