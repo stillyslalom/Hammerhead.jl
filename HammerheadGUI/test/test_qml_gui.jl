@@ -28,6 +28,25 @@ using Test, HammerheadGUI, TOML
         @test all(name -> occursin(name, sprint(showerror, error)), ("Hammerhead", "QML", "QMLMakie"))
         @test !ispath(session_path)
         @test HammerheadGUI._qml_project_file(dirname(optional_project)) == realpath(optional_project)
+        # Active package projects expose themselves without a self-dependency.
+        complete = TOML.parsefile(optional_project)
+        for name in ("HammerheadGUI", "Hammerhead")
+            package_project = deepcopy(complete)
+            package_project["name"] = name
+            package_project["uuid"] = pop!(package_project["deps"], name)
+            open(io -> TOML.print(io, package_project), partial_project, "w")
+            @test HammerheadGUI._qml_project_file(partial_project) == realpath(partial_project)
+            package_project["uuid"] = "00000000-0000-0000-0000-000000000000"
+            open(io -> TOML.print(io, package_project), partial_project, "w")
+            @test_throws ArgumentError HammerheadGUI._qml_project_file(partial_project)
+        end
+        active_gui = deepcopy(complete)
+        active_gui["name"] = "HammerheadGUI"
+        active_gui["uuid"] = pop!(active_gui["deps"], "HammerheadGUI")
+        delete!(active_gui["deps"], "QML")
+        open(io -> TOML.print(io, active_gui), partial_project, "w")
+        @test_throws ArgumentError HammerheadGUI._qml_project_file(partial_project)
+        write(partial_project, "[deps]\nHammerheadGUI = \"759a4b49-c2fc-4731-b9e2-38749bc182b9\"\n")
         mkdir(session_path)
         sentinel = joinpath(session_path, "keep.txt"); write(sentinel, "existing session")
         @test_throws Exception experimental_qml_gui(; project=optional_project,

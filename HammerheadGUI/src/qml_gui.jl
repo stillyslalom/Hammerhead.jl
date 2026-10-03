@@ -40,8 +40,16 @@ function _qml_project_file(project)
     path = abspath(String(project))
     isdir(path) && (path = joinpath(path, "Project.toml"))
     isfile(path) || throw(ArgumentError("Julia project file does not exist: $path"))
-    dependencies = get(TOML.parsefile(path), "deps", Dict())
-    missing = filter(name -> !haskey(dependencies, name), ["Hammerhead", "HammerheadGUI", "QML", "QMLMakie"])
+    project_data = TOML.parsefile(path)
+    dependencies = get(project_data, "deps", Dict())
+    required = ["Hammerhead" => string(Base.PkgId(Hammerhead).uuid),
+                "HammerheadGUI" => string(Base.PkgId(@__MODULE__).uuid),
+                "QML" => "2db162a6-7e43-52c3-8d84-290c1c42d82a",
+                "QMLMakie" => "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"]
+    # Julia makes the active package itself available alongside its dependencies.
+    available(name, uuid) = get(dependencies, name, nothing) == uuid ||
+        (get(project_data, "name", nothing) == name && get(project_data, "uuid", nothing) == uuid)
+    missing = [name for (name, uuid) in required if !available(name, uuid)]
     isempty(missing) || throw(ArgumentError(
         "Install $(join(missing, ", ")) in $path with Pkg.add before launching the experimental Qt GUI"))
     return realpath(path)
