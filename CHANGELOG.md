@@ -201,6 +201,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Saved planar replay in the isolated Qt prototype uses an owned core-only Julia
+  process on 64-bit Windows, with captured requests, acknowledged progress and
+  cancellation at written-pair boundaries. Files, Replay and Inspection sections
+  keep cancel, progress and status visible in compact layouts. Other-platform
+  worker ownership and native Qt embedding remain unvalidated.
 - Added a saved-ensemble workflow for batch snapshots, complete imported recipes,
   replay/cancellation, historical run selection, verified results and associated
   quality reports. Contribution progress is separate from pooled publication;

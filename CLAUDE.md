@@ -523,9 +523,16 @@ without changing production GUI dependencies. Its README and
 evidence from native teardown/input/platform gaps. A successful framebuffer
 capture is not a clean application-lifecycle result. Keep generated manifests
 and artifacts ignored; retain portable relative source paths in its Project.
-The saved-experiment lane delegates to `ExperimentController`; it never projects
-complete recipes into the synthetic demo form. Preserve the displayed run's own
-identity after failed actions, verify completed output before lazy inspection,
+The saved-experiment lane uses `ExperimentController` for recipe/history state
+and inspection; `worker_client.jl` and `replay_worker.jl` execute captured planar
+requests in a core-only subprocess. Only the shell owner updates Observables and
+acknowledges written-pair progress. Poll process liveness even while an observer
+defers acknowledgement; shutdown releases deferred acknowledgements and waits
+for confirmed exit. Startup cleanup retains ownership until reaping finishes.
+The native ownership implementation currently requires 64-bit Windows; unsupported
+hosts refuse explicitly. Do not turn that prerequisite into a successful fallback.
+The lane never projects complete recipes into the synthetic demo form. Preserve
+the displayed run's own identity after failed actions, verify completed output before lazy inspection,
 and use the existing physical-display helpers. Shell ownership of replay survives
 viewport close/reopen; shutdown waits for cancellation cleanup before disposing
 subscriptions. Software-shell checks do not satisfy the native rendering gate.
@@ -550,8 +557,9 @@ changes preserve manual pan/zoom. This mode still loads the QMLMakie plugin and
 does not establish embedded Qt context cleanup or native input behavior.
 The manual `.github/workflows/qml-prototype.yml` gathers isolated Julia 1.11
 evidence on three operating systems. Failed native prerequisites stay failed;
-an outer process-owner timeout/error prevents later launches because descendant
-cleanup is unverified. Workflow presence is not platform validation.
+any unsuccessful child command prevents later launches because descendant cleanup
+is unverified, including failures returned by nested owners. Workflow presence is
+not platform validation.
 
 `ExperimentController` and `experiment_workflow[!]` provide a separate, read-only
 complete-recipe workflow. `experiment_record` / `save_batch_experiment` export

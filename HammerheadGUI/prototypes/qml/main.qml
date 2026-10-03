@@ -6,11 +6,13 @@ import jlqml
 
 ApplicationWindow {
     id: root
+    objectName: "prototypeShell"
     visible: offscreenDisplay
     width: glfwPlotMode ? 650 : 1250; height: glfwPlotMode ? 900 : 820
     title: "Hammerhead: isolated Qt6 shell evaluation"
     color: "#f3f4f6"
     font.family: shellFont.status === FontLoader.Ready ? shellFont.name : ""
+    font.pixelSize: 14
     palette.window: "#f3f4f6"
     palette.windowText: "#17212b"
     palette.base: "white"
@@ -27,6 +29,9 @@ ApplicationWindow {
     property var uiModel: model
     property bool drawing: false
     property int lifecycleStep: 0
+    property bool sidebarSmallCaptured: false
+    property string workerIssuedCommand: ""
+    property int workerCommandStep: 0
     onClosing: Julia.shutdown_prototype()
     function transitionViewport() {
         if (!root.transitionsReady || root.transitionPending) return;
@@ -91,14 +96,29 @@ ApplicationWindow {
     SplitView {
         id: shell
         anchors.fill: parent; orientation: Qt.Horizontal
+        Item {
+            id: sidebarPanel
+            objectName: "sidebarPanel"
+            SplitView.preferredWidth: 350; SplitView.minimumWidth: 300
+            Rectangle { anchors.fill: parent; color: "white" }
+            ColumnLayout {
+            anchors.fill: parent; anchors.margins: 16; spacing: 8
+            ComboBox { id: analysisLane; model: ["Synthetic demo", "Saved experiment"]
+                currentIndex: experimentSmoke ? 1 : 0; Layout.fillWidth: true }
+            ComboBox { id: savedControlsSection; objectName: "savedControlsSection"
+                model: ["Files", "Replay", "Inspection"]; Layout.fillWidth: true
+                visible: analysisLane.currentIndex === 1 }
         ScrollView {
-            SplitView.preferredWidth: 350; SplitView.minimumWidth: 330
-            padding: 16
+            id: sidebarScroll
+            objectName: "sidebarScroll"
+            Layout.fillWidth: true; Layout.fillHeight: true
+            contentWidth: availableWidth
+            padding: 0
             background: Rectangle { color: "white" }
             ColumnLayout {
-                width: 304; spacing: 12
-                ComboBox { id: analysisLane; model: ["Synthetic demo", "Saved experiment"]
-                    currentIndex: experimentSmoke ? 1 : 0; Layout.fillWidth: true }
+                id: sidebarColumn
+                objectName: "sidebarColumn"
+                width: sidebarScroll.availableWidth; spacing: 8
                 ColumnLayout {
                 visible: analysisLane.currentIndex === 0; Layout.fillWidth: true
                 Label { text: "Planar demo settings"; font.pixelSize: 23 }
@@ -128,7 +148,9 @@ ApplicationWindow {
                 }
                 ColumnLayout {
                     visible: analysisLane.currentIndex === 1; Layout.fillWidth: true; spacing: 6
-                    Label { text: "Saved planar experiment"; font.pixelSize: 22 }
+                    Label { text: "Saved planar experiment"; font.pixelSize: 20; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    ColumnLayout {
+                    visible: savedControlsSection.currentIndex === 0; Layout.fillWidth: true; spacing: 6
                     TextField { id: experimentInput; Layout.fillWidth: true
                         text: root.uiModel.fixtureRecord; placeholderText: "Saved experiment .jld2"
                         Accessible.name: "Saved experiment path" }
@@ -138,17 +160,18 @@ ApplicationWindow {
                         placeholderText: "Result output .jld2"; Accessible.name: "Replay result output" }
                     TextField { id: historyInput; Layout.fillWidth: true; text: root.uiModel.experimentHistory
                         placeholderText: "Run record .jld2 (optional)"; Accessible.name: "Replay run record" }
+                    Label { text: "Complete saved settings stay read-only. Paths and options describe the next replay."; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    }
+                    ColumnLayout {
+                    visible: savedControlsSection.currentIndex === 1; Layout.fillWidth: true; spacing: 6
                     CheckBox { id: allowOverride; text: "Allow environment change (recorded)"
                         checked: root.uiModel.experimentAllow; enabled: !root.uiModel.experimentRunning }
-                    RowLayout {
-                        Button { text: "Replay saved recipe"; enabled: !root.uiModel.experimentRunning
+                        Button { id: replayButton; objectName: "replaySavedButton"; text: "Replay saved recipe"; enabled: !root.uiModel.experimentRunning
                             onClicked: Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) }
-                        Button { text: "Cancel"; enabled: root.uiModel.experimentRunning; onClicked: Julia.cancel_saved() }
+                    Label { text: "Replay uses the saved settings. Cancel takes effect after the current pair finishes and cleanup completes; no resume."; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
-                    Label { text: root.uiModel.experimentWritten; font.bold: true }
-                    Label { text: root.uiModel.experimentStatus; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
-                    Label { text: root.uiModel.experimentError; color: "#b91c1c"; wrapMode: Text.WrapAnywhere
-                        Layout.fillWidth: true; visible: text.length > 0 }
+                    ColumnLayout {
+                    visible: savedControlsSection.currentIndex === 2; Layout.fillWidth: true; spacing: 6
                     Button { text: "Inspect completed run"; enabled: !root.uiModel.experimentRunning
                         onClicked: Julia.inspect_saved() }
                     ComboBox { model: ["Complete recipe", "Run history"]; Layout.fillWidth: true
@@ -158,14 +181,18 @@ ApplicationWindow {
                         Label { text: root.uiModel.experimentPages }
                         Button { text: "Next"; onClicked: Julia.saved_page(1) }
                     }
-                    ScrollView { Layout.fillWidth: true; Layout.preferredHeight: 140
-                        TextArea { text: root.uiModel.experimentText; readOnly: true; selectByMouse: true
+                    ScrollView { id: recipeScroll; objectName: "recipeScroll"; Layout.fillWidth: true; Layout.preferredHeight: 140
+                        TextArea { id: recipeText; objectName: "recipeText"; text: root.uiModel.experimentText; readOnly: true; selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere; font.pixelSize: 12 } }
+                    }
                 }
                 Label {
                     text: root.uiModel.openError; color: "#b91c1c"; wrapMode: Text.Wrap
                     Layout.fillWidth: true; visible: text.length > 0
                 }
+                ColumnLayout {
+                visible: analysisLane.currentIndex === 0 || savedControlsSection.currentIndex === 2
+                Layout.fillWidth: true; spacing: 6
                 Label { text: "Frame " + root.uiModel.frame + " / " + root.uiModel.count }
                 Slider {
                     Layout.fillWidth: true; from: 1; to: Math.max(1, root.uiModel.count)
@@ -174,25 +201,90 @@ ApplicationWindow {
                     onMoved: Julia.navigate_frame(Math.round(value))
                 }
                 CheckBox { text: "Draw demo exclusion mask"; checked: root.drawing
+                    visible: analysisLane.currentIndex === 0
                     enabled: root.uiModel.demoDisplayed
                     onToggled: { root.drawing = checked; Julia.set_mask_mode(checked) } }
-                Button { text: "Close demo mask polygon"; enabled: root.uiModel.demoDisplayed; onClicked: Julia.close_mask() }
+                Button { text: "Close demo mask polygon"; visible: analysisLane.currentIndex === 0; enabled: root.uiModel.demoDisplayed; onClicked: Julia.close_mask() }
                 Label { text: root.uiModel.selection; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Label {
                     text: glfwPlotMode ? "Scientific window: wheel zoom, right-drag pan\nControls: arrows change frames; Esc cancels\nCtrl+W closes / reopens visualization" : "Wheel: zoom; drag: pan\nArrows: frames; Esc: cancel\nCtrl+W: close / reopen viewport"
                     wrapMode: Text.Wrap; Layout.fillWidth: true
                 }
+                }
                 Label {
+                    id: sidebarBottom
+                    objectName: "sidebarBottom"
                     text: glfwPlotMode ? "Separate interactive scientific plot" : bridgeEnabled ? "QMLMakie OpenGL bridge" : "Static image fallback: refreshed after controller actions"
                     wrapMode: Text.Wrap; color: "#555"; Layout.fillWidth: true
                 }
             }
+        }
+        ColumnLayout {
+            id: savedPersistent; objectName: "savedPersistent"
+            visible: analysisLane.currentIndex === 1; Layout.fillWidth: true; spacing: 4
+            Button { id: savedCancelButton; objectName: "savedCancelButton"; text: "Cancel replay"
+                enabled: root.uiModel.experimentRunning; onClicked: Julia.cancel_saved() }
+            Label { objectName: "savedWritten"; text: root.uiModel.experimentWritten; font.bold: true; Layout.fillWidth: true }
+            Label { objectName: "savedStatus"; text: root.uiModel.experimentStatusPreview; Layout.fillWidth: true
+                wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+            Label { text: root.uiModel.experimentError.length > 0 ? "Error: full detail in inspection pages" : "Full status and paths in inspection pages"
+                color: root.uiModel.experimentError.length > 0 ? "#b91c1c" : "#555"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.Wrap }
+        }
+        }
         }
         Loader {
             id: integrated
             SplitView.fillWidth: true
             active: root.viewportLoaded && (!root.actualSeparate || glfwPlotMode)
             sourceComponent: viewportComponent
+        }
+    }
+    // Opt-in baseline: measure scrolling before replacing tall controls. Direct
+    // contentY positioning proves geometric reachability, not desktop wheel input.
+    function sidebarProbe(stage) {
+        var bottom = sidebarBottom.mapToItem(sidebarScroll, 0, 0);
+        var persistent = savedPersistent.mapToItem(sidebarPanel, 0, 0);
+        var innerMax = Math.max(0, recipeScroll.contentHeight - recipeScroll.availableHeight);
+        Julia.record_sidebar_probe(stage, root.width, root.height,
+            sidebarScroll.availableWidth, sidebarColumn.width,
+            sidebarScroll.contentHeight, sidebarScroll.availableHeight,
+            sidebarScroll.contentItem.contentY,
+            Math.max(0, sidebarScroll.contentHeight - sidebarScroll.availableHeight),
+            bottom.y, sidebarBottom.height, recipeScroll.contentHeight,
+            recipeScroll.availableHeight, recipeScroll.contentItem.contentY, innerMax,
+            bottom.y >= -1 && bottom.y + sidebarBottom.height <= sidebarScroll.height + 1,
+            savedPersistent.visible && persistent.y >= -1 && persistent.y + savedPersistent.height <= sidebarPanel.height + 1,
+            Math.abs(recipeScroll.contentItem.contentY-innerMax) <= 2);
+    }
+    Timer {
+        property int probeStep: 0
+        interval: 120; running: sidebarProbeMode; repeat: true
+        onTriggered: {
+            if (probeStep === 3 && !root.sidebarSmallCaptured) return;
+            probeStep += 1;
+            if (probeStep === 1) { root.width = 900; root.height = 600; savedControlsSection.currentIndex = 2; }
+            if (probeStep === 2) {
+                root.sidebarProbe("small_top");
+                sidebarScroll.contentItem.contentY = Math.max(0, sidebarScroll.contentHeight-sidebarScroll.availableHeight);
+                recipeScroll.contentItem.contentY = Math.max(0, recipeScroll.contentHeight-recipeScroll.availableHeight);
+            }
+            if (probeStep === 3) {
+                root.sidebarProbe("small_bottom");
+                shell.grabToImage(function(result) {
+                    Julia.record_sidebar_capture("small", result.saveToFile(sidebarCapturePrefix + "-small.png"));
+                    root.width = 1100; root.height = 800;
+                    root.sidebarSmallCaptured = true;
+                });
+            }
+            if (probeStep === 4) {
+                sidebarScroll.contentItem.contentY = Math.max(0, sidebarScroll.contentHeight-sidebarScroll.availableHeight);
+                recipeScroll.contentItem.contentY = Math.max(0, recipeScroll.contentHeight-recipeScroll.availableHeight);
+            }
+            if (probeStep === 5) {
+                root.sidebarProbe("large_bottom");
+                shell.grabToImage(function(result) { Julia.record_sidebar_capture("large", result.saveToFile(sidebarCapturePrefix + "-large.png")); });
+                stop();
+            }
         }
     }
 
@@ -268,7 +360,7 @@ ApplicationWindow {
     }
     // Deterministic lifecycle smoke, also exercises QML -> Julia form callbacks.
     Timer {
-        interval: 120; running: smokeMode && !experimentSmoke; repeat: true
+        interval: 120; running: smokeMode && !experimentSmoke && !workerSmoke; repeat: true
         onTriggered: {
             if (root.transitionPending) return;
             if (glfwPlotMode && root.uiModel.transitionAck !== root.acknowledgedTransition) return;
@@ -302,7 +394,7 @@ ApplicationWindow {
             if (root.lifecycleStep === 12) Julia.lifecycle_complete()
         }
     }
-    Timer { interval: 120; running: smokeMode && experimentSmoke; repeat: true
+    Timer { interval: 120; running: smokeMode && experimentSmoke && !workerSmoke; repeat: true
         onTriggered: {
             if (root.transitionPending) return;
             var step = Julia.experiment_smoke_step();
@@ -315,6 +407,54 @@ ApplicationWindow {
             if (step === 7) { root.lifecycleStep = 12; Julia.lifecycle_complete(); stop(); }
         }
     }
+    // Commands acknowledge actual control/layout state on a later event pass.
+    // Julia keeps servicing the child and owned GLFW screen between passes.
+    Timer { interval: 60; running: smokeMode && workerSmoke; repeat: true
+        onTriggered: {
+            var command = root.uiModel.workerCommand;
+            if (command.length === 0) return;
+            if (root.workerIssuedCommand !== command) {
+                root.workerIssuedCommand = command; root.workerCommandStep = 0;
+            }
+            if (command === "control") {
+                savedControlsSection.currentIndex = 2;
+                if (root.workerCommandStep === 0) root.workerCommandStep = 1;
+                else if (root.workerCommandStep === 1) {
+                    root.workerCommandStep = 2;
+                    shell.grabToImage(function(result) {
+                        Julia.worker_capture_ack(result.saveToFile(sidebarCapturePrefix+"-active.png"));
+                        Julia.worker_control_ack(command);
+                    });
+                }
+            } else if (command === "native_close") {
+                if (root.workerCommandStep === 0) {
+                    root.workerCommandStep = 1; root.transitionPending = true; Julia.simulate_glfw_close();
+                } else if (!root.transitionPending && !root.viewportOpen) Julia.worker_control_ack(command);
+            } else if (command.indexOf("close_") === 0 || command.indexOf("reopen_") === 0) {
+                var open = command.indexOf("reopen_") === 0;
+                if (root.workerCommandStep === 0) { root.workerCommandStep = 1; root.viewportOpen = open; }
+                else if (!root.transitionPending && root.viewportLoaded === open) Julia.worker_control_ack(command);
+            } else if (command === "capture_small" || command === "capture_large") {
+                var small = command === "capture_small";
+                if (root.workerCommandStep === 0) {
+                    root.workerCommandStep = 1; root.width = small ? 900 : 1100; root.height = small ? 600 : 800;
+                    savedControlsSection.currentIndex = 2;
+                } else if (root.workerCommandStep === 1) {
+                    root.workerCommandStep = 2;
+                    sidebarScroll.contentItem.contentY = Math.max(0,sidebarScroll.contentHeight-sidebarScroll.availableHeight);
+                    recipeScroll.contentItem.contentY = Math.max(0,recipeScroll.contentHeight-recipeScroll.availableHeight);
+                } else if (root.workerCommandStep === 2) {
+                    root.workerCommandStep = 3;
+                    root.sidebarProbe(small ? "sidebar_probe_small" : "sidebar_probe_large");
+                    shell.grabToImage(function(result) {
+                        Julia.record_sidebar_capture(small ? "small" : "large", result.saveToFile(sidebarCapturePrefix+(small ? "-small.png" : "-large.png")));
+                    });
+                }
+            } else if (command === "finish") {
+                root.lifecycleStep = 12; Julia.lifecycle_complete(); stop();
+            }
+        }
+    }
     Timer {
         interval: 350; running: smokeMode; repeat: true
         onTriggered: {
@@ -325,6 +465,6 @@ ApplicationWindow {
             });
         }
     }
-    Timer { interval: 120000; running: smokeMode; repeat: false
+    Timer { interval: workerSmoke ? 350000 : 220000; running: smokeMode; repeat: false
         onTriggered: Julia.smoke_failed("software lifecycle smoke timed out awaiting transition/completion") }
 }

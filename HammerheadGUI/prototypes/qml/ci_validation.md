@@ -32,14 +32,16 @@ The library requirements follow [GLMakie's documentation](https://docs.makie.org
 Windows and macOS use their hosted runner's graphics environment. Missing or
 unsupported graphics capability fails the requested lane rather than skipping it.
 
-Each job requests these independent checks:
+Each job requests these checks in order, subject to the conservative owner gate:
 
 | Lane | Requested checks |
 |---|---|
+| Worker contracts | Primitive protocol bounds, Windows Job ownership/parent loss, real saved-planar parity/cancellation/failure and worker-evidence rejection |
 | Focused contracts | Queued actions, demo and experiment adapters, display transactions, viewport geometry, ownership contracts, invisible-screen ownership and owned GLFW |
 | Harness contracts | Hidden-process exit/timeout ownership and rejection of incomplete evidence |
 | Software Qt | Demo and saved-experiment lifecycle children |
 | Owned GLFW | Demo and saved-experiment lifecycle children with invisible directly rendered scientific screens |
+| Active worker | Compact sidebar reachability and Qt/GLFW acknowledgements during explicitly injected work, followed by real saved-planar replay |
 | Native Qt prerequisite | Construction, native baseline frame, single render/release/exit |
 
 The native lane deliberately retains its current possible Windows offscreen
@@ -50,15 +52,24 @@ workflow; those remain separate acceptance work after a clean prerequisite.
 The runner itself owns Qt startup environment selection and does not infer
 native success from an application-release acknowledgement or capture alone.
 
-After successful setup, a failed check does not prevent independent later lanes
-from running. Every failed step still makes its job fail. The focused loop also
-collects subsequent focused outcomes after one assertion failure. Cancellation
-stops new work; setup failure prevents meaningless application checks.
+Saved-planar subprocess ownership currently requires 64-bit Windows. Unsupported
+Linux/macOS ownership fails the real-replay/active-worker capability gate; the
+workflow does not substitute the cooperative lane or mark that failure expected.
+The matrix definition is not cross-platform worker validation. Local protocol
+and ownership outcomes, plus controlled injected-work acknowledgements, do not
+establish desktop input or portable responsiveness.
+
+After successful setup, every failed check still makes its job fail. An
+unsuccessful child command publishes an incomplete-owner marker and prevents
+later child launches. The focused loop and later steps can retain refusal
+evidence, but do not start more work whose lifetime could overlap an unverified
+descendant. Cancellation stops new work; setup failure prevents meaningless
+application checks.
 
 The inline workflow process owner writes complete stdout and stderr plus a TOML
 invocation, child PID, OS exit status, timeout and owner-error report for every
 requested script. It hides Windows console windows and terminates only its
-owned child on timeout. An owner timeout/error publishes an incomplete-owner
+owned child on timeout. Any unsuccessful child command publishes an incomplete-owner
 marker: every later requested child launch is refused with failure evidence,
 including later focused files and lanes. This prevents overlapping new work
 with a potentially surviving descendant without killing unrelated processes.

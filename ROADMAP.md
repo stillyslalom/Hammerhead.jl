@@ -33,11 +33,10 @@ The [backend feature matrix](docs/src/reference/feature_matrix.md) describes
 current execution support. The [archived roadmap](reference/archive/ROADMAP.md)
 records the original phases, not current status or release promises.
 
-The ensemble-report batch passes 1,687 full GUI checks and 770 final-source
-core report/packet checks. A full core run passed 11,867 checks before the final
-index-capture guard; that guard has separate focused coverage. The documentation
-build executes all seven tutorials. These local checks do not close hardware or
-cross-platform acceptance gates.
+The saved-ensemble batch passes 12,204 full core and 1,885 full GUI checks on
+its final source. The documentation build executes all seven tutorials and the
+committed-input saved-ensemble example. These local checks do not close hardware
+or cross-platform acceptance gates.
 
 ## Delivery order
 
@@ -566,19 +565,19 @@ evidence.
   lazy results with physical units, and explicit displayed-run identity after
   failed actions. Validate application ownership and shutdown without relaxing
   the native rendering/lifecycle gate.
-  The [prototype](HammerheadGUI/prototypes/qml/README.md) passes 250 focused
-  checks and 24 harness checks. Demo and saved-experiment software children exit
-  cleanly after five viewport generations each, with inspected physical-unit
-  captures, no remaining shell subscriptions and no running replay at disposal.
+  The pre-worker [prototype](HammerheadGUI/prototypes/qml/README.md) passed 250
+  focused checks and 24 harness checks. Demo and saved-experiment software
+  children exited cleanly after five viewport generations each, with inspected
+  physical-unit captures, no remaining subscriptions and no replay at disposal.
   Native input, accelerated Qt rendering and other-platform support remain open.
 - [x] Evaluate Qt controls with a separately owned interactive GLMakie window.
   The opt-in `--plot=glfw` mode serializes Qt and GLFW event servicing, preserves
   replay across view closure, and owns each screen through final disposal.
-  It passes 87 focused checks and 38 harness checks. Demo and saved-experiment
-  children, plus both existing static-preview children, exit cleanly with
-  unchanged source identities and inspected captures. Programmatic picking and
+  The pre-worker evaluation passed 87 focused checks and 38 harness checks.
+  Demo and saved-experiment children, plus both static-preview children, exited
+  cleanly with unchanged source identities and inspected captures. Programmatic picking and
   view changes do not establish native desktop input or responsiveness.
-- [ ] Move saved-planar replay in the Qt prototype outside the Qt/GLFW event
+- [x] Move saved-planar replay in the Qt prototype outside the Qt/GLFW event
   thread using an owned core-only Julia subprocess. Capture complete requests,
   bound progress/status messages and preserve ordinary written-pair cancellation,
   failed-prefix metadata, selected/displayed run identities and verified browsing.
@@ -588,6 +587,16 @@ evidence.
   direct/worker parity, cancellation/error boundaries and child/window disposal.
   Record workload-specific event-pump gaps; desktop input, other platforms and
   embedded native rendering remain separate acceptance gates.
+  The 64-bit Windows implementation uses a kill-on-close Job Object and refuses
+  unsupported ownership platforms. Direct/worker parity, cancellation, failed
+  history saves, malformed messages, startup failure and owner-loss checks pass.
+  The hidden active-worker trial verifies retained physical display, control and
+  plot servicing, compact scrolling, full error details and confirmed cleanup.
+  Both saved-experiment software/GLFW lifecycle children also exit cleanly on
+  the same final source; the broader platform and desktop gates remain open.
+  The active trial's maximum pump gap was 1.051 s across the whole interval and 0.036 s
+  after the first write acknowledgement; the [evidence guide](HammerheadGUI/prototypes/qml/README.md)
+  records the small fixture and timing exclusions, without a desktop latency claim.
 - [x] Add a manually triggered three-platform prototype evidence workflow.
   The [workflow guide](HammerheadGUI/prototypes/qml/ci_validation.md) describes
   Julia 1.11 on Ubuntu, Windows and macOS, bounded process ownership, retained
@@ -597,6 +606,9 @@ evidence.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.
+  Establish replay-worker ownership on each platform, including abrupt owner
+  loss during processing and confirmed descendant exit before another launch.
+  A platform-specific ownership implementation does not close this gate.
 - [ ] Record the framework decision, dependency/maintenance cost, distribution
   requirements, and migration sequence. If selected, migrate one tool at a time
   with controller parity and rendering tests; keep toolkit dependencies in the

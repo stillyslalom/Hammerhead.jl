@@ -22,7 +22,11 @@ Masks belong to the synthetic 96-square demo and are hidden/refused on experimen
 output. A previously checked demo drawing mode is ignored/cleared for file or
 saved-experiment picking, so it cannot swallow result inspection. Saved
 ROI/mask/preprocessing settings are preserved, not projected into
-the demo's form. There is no experiment tree, ROI/preprocessing editor, resumability
+the demo's form. Saved planar replay executes in a core-only subprocess while
+the Qt owner retains controls and its owned scientific screen. This worker
+requires tested 64-bit Windows Job Object ownership; other hosts refuse before
+processing. The synthetic batch remains cooperative in-process work; production
+GUI workflows and dependencies remain unchanged. There is no experiment tree, ROI/preprocessing editor, resumability
 or concurrent-writer support.
 
 ## Reproduction
@@ -34,11 +38,17 @@ julia HammerheadGUI/prototypes/qml/setup.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/shell_actions_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_adapter_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_error_pages_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_transaction_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/owned_glfw_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/worker_protocol_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/worker_client_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/worker_replay_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/worker_lifecycle_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/worker_lifecycle_runner.jl --timeout=480
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-experiment-software --timeout=240
@@ -107,7 +117,7 @@ interaction-latency benchmark or a claim of responsive processing. Frame counts
 in these reports count explicit owner-pump renders; capture can perform another
 render and is not included in that count.
 
-The final local Windows evaluation on 2026-10-03 passed **87 focused independent
+The pre-worker local Windows evaluation on 2026-10-03 passed **87 focused independent
 window checks** and **38 process/evidence checks**. All four requested children
 in the ignored local `artifacts/lifecycle-hoXTGy` directory exited zero:
 independent demo/saved experiment and the existing static-preview demo/saved
@@ -124,6 +134,8 @@ Recorded maximum pump gaps of about 2.95 s (demo) and 1.43 s (saved experiment)
 include JIT/workload and concurrent validation; they do not establish interactive
 latency or a performance target. These results support the independent-window
 candidate only; they do not close the embedded native-QML or desktop-input gate.
+The source scope is the recorded maps in `lifecycle-hoXTGy`, before subprocess
+replay integration; these captures are not current worker-source acceptance.
 
 `setup.jl` resolves only this environment and restores portable project source
 paths. Its Manifest is ignored. If the local core gains dependencies, refresh
@@ -134,15 +146,83 @@ a commit.
 
 ## Lifecycle evidence contract
 
+The worker request is detached before observers or Qt actions can change next
+settings. One pair-write progress event is outstanding at a time; the owner
+applies it and acknowledges it explicitly, without waiting inside the Qt event
+callback. Cancellation at an earlier write retains the ordinary planar failed
+prefix. Cancellation at the final write completes; an explicit observer abort
+can fail even then. Native bytes and total write counts do not invent a returned
+completed run after a history-save failure. Terminal status is checked separately
+from final OS exit, and a missing or crossed terminal packet fails the request.
+
+`worker_lifecycle_runner.jl` retains the existing process owner and adds worker,
+compact-sidebar and active-control checks. An explicitly injected child barrier
+keeps the worker alive while controls and scientific callbacks are serviced;
+this interval is not PIV work. Actual PIV intervals are recorded separately and
+include only the exclusions explicitly identified in the report. A warmed parent
+does not establish a warmed fresh worker. There is no universal desktop or
+interaction-latency claim. An outer timeout or unverified worker lifetime leaves
+an incomplete-owner marker and forbids later children; direct Qt-child reaping
+does not alone establish descendant cleanup.
+
+The Windows ownership fixture holds a synchronization handle to the exact live
+worker before abruptly terminating its test owner, then verifies worker exit.
+Its scope is an enrolled injected waiting boundary, not mid-PIV interruption or
+native-file recovery. A separate injected enrollment failure verifies an
+unassigned child is reaped before another launch. Equivalent non-Windows process
+ownership remains open. The manual matrix retains unsupported worker capability
+as a failure rather than falling back to the legacy cooperative lane.
+
+The current Windows checks pass 63 protocol, 48 client/ownership, 90 real replay
+and 26 lifecycle-validator assertions. The isolated enrollment-failure helper
+passes seven checks separately. GUI focused checks total 370 across separate
+invocations: 97 final cached-error/adapter checks, 39 display transactions,
+147 other contracts and 87 owned GLFW checks. Only the 97 were rerun after the
+last error-cache repair; the total is not a single final-source invocation.
+
+The corrected active-worker child in ignored `artifacts/worker-lifecycle-KemBhR`
+exited zero in 97.33 seconds. Its 46 prototype source hashes and executed core/GUI
+source maps remained unchanged. Twenty stages retain exact owner/worker identities,
+including nine injected-barrier interaction stages and three actual native writes.
+The owner services controls, rendering, pick/pan/zoom and close/reopen while that
+barrier is active, retaining the labelled prior physical result. The original
+failed-open error appears in cached text before navigation and is reconstructable
+across the inspection pages. Active/small/large controls and the scientific plot
+were visually inspected; all five PNG digests match the report. Persistent
+cancel/progress controls fit, both scroll areas reach their bottom, four GLFW
+generations/releases restore the screen registry, and no old figures,
+subscriptions or replay remain after disposal. The provisional
+`worker-lifecycle-8mtkLy` capture precedes the error-cache fix and is superseded.
+
+Recorded owner service from request-startup return to joined terminal spans
+29.261 seconds with a maximum pump gap of 1.051 seconds. This includes injected
+waiting work and fresh-worker import/JIT/rendering; it excludes prior fixture
+replay and request capture/spawn. From first native-write acknowledgement to
+joined terminal, the interval is 2.397 seconds with maximum gap 0.036 seconds;
+imports and the first pair are excluded, but later JIT and I/O may remain.
+These are workload observations, not desktop latency targets, portable
+responsiveness or proof of a fully warmed fresh worker.
+
+The final saved-experiment static-preview and separate-GLFW children in
+`artifacts/lifecycle-qhqTp3` also exited zero (95.62 and 94.98 seconds), without
+timeouts or render/model/teardown errors. They cancelled, reran three pairs and
+retained the labelled completed display through a failed open. Both completed
+five viewport generations; the GLFW case released all five screens, restored
+the registry and cleared old figure references. Their 46 prototype source hashes
+match the active-worker child exactly, with unchanged recorded core/GUI sources.
+The old demo captures remain pre-error-fix evidence; they were not rerun as part
+of this final saved-planar acceptance.
+
 The saved-experiment smoke writes actual temporary PNG inputs and a saved recipe
 with ordered passes, preprocessing, ROI, mask and physical scale. It closes a view
 while replay is owned by the shell, cancels after the first native pair write,
 reruns to completion (a last-pair cancel completes), inspects/navigates/picks
 physical output, and exercises retained display after an open error. Shutdown
 requests cancellation and pumps until both controllers finish cleanup before
-shell subscriptions and the viewport are disposed. Cooperative tasks can pause
-the Qt event loop during preflight, pair work or cleanup; this is not a
-responsiveness benchmark or checkpoint workflow.
+shell subscriptions and the viewport are disposed. Snapshotting, startup,
+result I/O and rendering can still pause the Qt owner; saved-planar pair work
+executes in its worker. This is not a universal responsiveness benchmark or
+checkpoint workflow.
 
 Preview arrows normalize their display length to grid spacing; position axes
 and selected component values retain their true units. Physical padding derives
@@ -186,7 +266,11 @@ Parent drift checks cover the prototype sources/QML/manifest. Diagnostic elapsed
 times under concurrent tests are not startup benchmarks. No depot package or
 production dependency is modified.
 
-## Current blocker and ownership repair
+## Pre-worker ownership repair and native blocker
+
+The focused counts and software captures below describe the earlier ownership
+repair, before the saved-planar subprocess lane. Their retained source maps
+define that historical scope; current worker evidence is recorded separately.
 
 Earlier preview/bridge checks passed 250 focused assertions: 11 queued-action, 31 demo-adapter,
 64 saved-experiment adapter, 26 display-transaction, 13 physical-geometry,
@@ -196,7 +280,7 @@ leftover subscriptions or replay work. Released leases retain neither
 subscriptions nor their old figures; invisible GLFW cycles return the screen
 registry to baseline.
 
-The final software child exits zero with five fresh viewport generations, five
+The then-final software child exits zero with five fresh viewport generations, five
 application releases including shutdown, cancellation after one of three pairs,
 and no render/model/teardown errors. Its capture was inspected: Qt controls and
 scientific preview are readable. An explicit FontLoader uses Makie's existing
@@ -205,7 +289,7 @@ shell accepts `--font=<path>` for an existing alternative font; no font is copie
 or installed. These are software/application ownership results, not native Qt
 GPU, gesture or performance evidence.
 
-The saved-experiment software child also exits zero after five generations.
+The historical saved-experiment software child also exits zero after five generations.
 It records cancellation after one written pair, a completed three-pair rerun,
 view release while replaying, and retained display after an open error. Loading
 the completed history leaves the controller ready with zero current-run progress;
@@ -219,7 +303,7 @@ Exploratory saved-replay children faulted in Qt's JS-stack collection while a
 GLFW render loop polled events. Those logs are preserved. The software path now
 copies Qt callback arguments into Julia primitives and queues heavy actions
 outside JS callbacks. It renders an explicitly owned hidden screen directly,
-without starting a background GLFW loop. The final children have no recorded
+without starting a background GLFW loop. Those source-stable children have no recorded
 render/model/teardown errors and exit zero; this does not resolve the native
 bridge gate below.
 

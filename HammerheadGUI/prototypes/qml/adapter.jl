@@ -2,6 +2,7 @@
 module Prototype
 using Hammerhead, HammerheadGUI, HammerheadGUI.Controllers, Observables
 using Hammerhead.SyntheticData: generate_synthetic_piv_pair, linear_flow
+include("worker_client.jl")
 include("experiment_adapter.jl")
 
 mutable struct State

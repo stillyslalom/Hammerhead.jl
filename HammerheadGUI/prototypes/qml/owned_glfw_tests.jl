@@ -168,6 +168,7 @@ end
             end)
             deadline=time()+90
             while Prototype.busy(state) && time()<deadline
+                Prototype.service_saved_replay!(state)
                 OwnedGLFW.pump!(owner)
                 sleep(.005)
             end
@@ -179,6 +180,7 @@ end
             @test Prototype.run_saved_experiment(state)
             deadline=time()+90
             while Prototype.busy(state) && time()<deadline
+                Prototype.service_saved_replay!(state)
                 OwnedGLFW.pump!(owner)
                 sleep(.005)
             end
@@ -201,6 +203,7 @@ end
             Prototype.request_shutdown(state)
             deadline=time()+90
             while Prototype.busy(state) && time()<deadline
+                Prototype.service_saved_replay!(state)
                 sleep(.005)
             end
             close_owned(registry,owner)

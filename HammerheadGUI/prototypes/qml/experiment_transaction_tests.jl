@@ -9,7 +9,12 @@ include("experiment_fixture.jl")
         @test Prototype.open_saved_experiment(state,fixture.path)
         @test Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false)
         @test Prototype.run_saved_experiment(state)
-        @test timedwait(()->!Prototype.busy(state),90)==:ok
+        deadline=time()+120
+        while Prototype.busy(state) && time()<deadline
+            Prototype.service_saved_replay!(state)
+            sleep(.005)
+        end
+        @test !Prototype.busy(state)
         @test Prototype.inspect_saved_experiment(state)
         @test Prototype.navigate(state,3)
         fig,ax,refresh,subscriptions,detach=viewport(state;managed=true)

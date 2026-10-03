@@ -68,7 +68,7 @@ jobs:
               try
                   open(joinpath(destination,"stdout.log"),"w") do out
                       open(joinpath(destination,"stderr.log"),"w") do err
-                          isfile(incomplete) && error("child launch refused: a prior owner timed out or failed cleanup; descendant lifetime is unverified")
+                          isfile(incomplete) && error("child launch refused: a prior child failed; descendant lifetime is unverified")
                           process = run(pipeline(command; stdout=out, stderr=err); wait=false)
                           report["child_pid"] = getpid(process)
                           if timedwait(()->process_exited(process),seconds;pollint=.1) != :ok
@@ -92,9 +92,12 @@ jobs:
                   end
                   report["finished_utc"] = string(now(UTC))
                   report["passed"] = report["exit_code"] == 0 && !report["timed_out"] && isempty(report["owner_error"])
-                  if (report["timed_out"] || !isempty(report["owner_error"])) && !isfile(incomplete)
+                  # A nested lifecycle harness can fail after timing out its own
+                  # child. The direct child's exit does not prove descendant
+                  # cleanup, so any unsuccessful command closes the launch gate.
+                  if !report["passed"] && !isfile(incomplete)
                       open(io->TOML.print(io,Dict("label"=>label,"descendant_cleanup_verified"=>false,
-                          "reason"=>"owner timeout/error; no further children permitted");sorted=true),incomplete,"w")
+                          "reason"=>"child command failed; no further children permitted without verified cleanup");sorted=true),incomplete,"w")
                   end
                   open(io->TOML.print(io,report;sorted=true),joinpath(destination,"process.toml"),"w")
               end
@@ -134,12 +137,28 @@ jobs:
           julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" setup 1500 "$env:QML_PROJECT/artifacts/ci/setup_and_precompile.jl"
           exit $LASTEXITCODE
 
+      - name: Replay worker protocol, process ownership and numerical parity
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 22
+        run: |
+          $checks = @(
+            @{ File = 'worker_protocol_tests'; Seconds = 120 },
+            @{ File = 'worker_client_tests'; Seconds = 360 },
+            @{ File = 'worker_replay_tests'; Seconds = 600 },
+            @{ File = 'worker_lifecycle_tests'; Seconds = 120 }
+          )
+          foreach ($check in $checks) {
+            $file = $check.File
+            julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" $file $check.Seconds "$env:QML_PROJECT/$file.jl"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
       - name: Focused application and owned-GLFW contracts
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        timeout-minutes: 35
+        timeout-minutes: 38
         run: |
           $failed = $false
-          $files = @('shell_actions_tests', 'adapter_tests', 'experiment_adapter_tests', 'experiment_transaction_tests', 'viewport_tests', 'test_lifecycle_contract', 'viewport_ownership_tests', 'owned_glfw_tests')
+          $files = @('shell_actions_tests', 'adapter_tests', 'experiment_error_pages_tests', 'experiment_adapter_tests', 'experiment_transaction_tests', 'viewport_tests', 'test_lifecycle_contract', 'viewport_ownership_tests', 'owned_glfw_tests')
           foreach ($file in $files) {
             julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" $file 240 "$env:QML_PROJECT/$file.jl"
             if ($LASTEXITCODE -ne 0) { $failed = $true }
@@ -165,6 +184,13 @@ jobs:
         timeout-minutes: 10
         run: |
           julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" owned-glfw-shells 540 "$env:QML_PROJECT/lifecycle_runner.jl" --cases=shell-glfw,shell-experiment-glfw --timeout=240
+          exit $LASTEXITCODE
+
+      - name: Hidden Qt controls and owned GLFW during replay worker activity
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" active-worker-shell 540 "$env:QML_PROJECT/worker_lifecycle_runner.jl" --timeout=480
           exit $LASTEXITCODE
 
       - name: Native Qt construction and minimum render-release gate

@@ -9,6 +9,9 @@ plot_mode in ("preview", "embedded", "glfw") || error("--plot must be preview, e
 const glfw_window = plot_mode == "glfw"
 const software = plot_mode != "embedded"
 const experiment_smoke = "--experiment-smoke" in ARGS
+const worker_smoke = "--worker-smoke" in ARGS
+worker_smoke && !glfw_window && error("--worker-smoke requires --plot=glfw")
+const sidebar_probe_mode = "--sidebar-probe" in ARGS
 if !desktop
     ENV["QT_QPA_PLATFORM"] = "offscreen"
 end
@@ -28,7 +31,7 @@ include("shell_actions.jl")
 include("shell_cleanup.jl")
 const import_seconds = (time_ns() - started) / 1e9
 const state = Prototype.State()
-const fixture = experiment_smoke ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
+const fixture = experiment_smoke || worker_smoke || sidebar_probe_mode ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
 const fixture_path=Observable(fixture===nothing ? "" : fixture.path)
 const smoke_step=Ref(0)
 const cancellation_seen=Ref(false)
@@ -41,6 +44,13 @@ const transition_ack=Observable(0)
 const transition_open=Observable(true)
 const transition_separate=Observable(false)
 const smoke_response=Ref(0)
+const sidebar_probe_data=Dict{String,Any}()
+const sidebar_probe_captures=Set{String}()
+const sidebar_capture_prefix=joinpath(@__DIR__,"artifacts",worker_smoke ? "worker_sidebar" : "sidebar_compact")
+if sidebar_probe_mode
+    Prototype.open_saved_experiment(state,fixture.path) || error(state.experiment.error[])
+    Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false) || error(state.experiment.error[])
+end
 function enqueue(action)
     ShellActions.enqueue!(action_queue,action)
 end
@@ -236,12 +246,12 @@ function advance_experiment_smoke()
         @assert Prototype.run_saved_experiment(state;progress=(i,n)->begin
             i==1 || return
             cancel_saved()
-            while transition_ack[]<1
-                yield() # smoke coordination only: wait for view release acknowledgement
-            end
+            :defer # owner services the requested view close before acknowledging
         end)
         smoke_step[]=1
         smoke_response[]=1
+    elseif step==1 && state.experiment.pending_progress!==nothing && transition_ack[]>=1
+        Prototype.acknowledge_saved_progress!(state)
     elseif step==1 && !ec.running[]
         @assert ec.state[]===:cancelled && ec.progress[]==(1,3)
         @assert ec.last_run[].status===:failed
@@ -286,6 +296,9 @@ function advance_experiment_smoke()
     nothing
 end
 experiment_smoke_step()=begin value=smoke_response[];smoke_response[]=0;value end
+worker_smoke && include("worker_shell_smoke.jl")
+worker_control_ack(command)=worker_smoke ? worker_ui_ack(String(command)) : nothing
+worker_capture_ack(success)=worker_smoke ? worker_active_capture(Bool(success)) : nothing
 function smoke_failed(message)
     smoke_error[] = String(message)
     Prototype.request_shutdown(state)
@@ -297,10 +310,37 @@ function smoke_failed(message)
     nothing
 end
 record_font_family(family) = (qt_font_family[] = String(family); nothing)
+function record_sidebar_probe(stage,w,h,available,content_width,outer_height,outer_viewport,y,max_y,bottom_y,bottom_height,inner_height,inner_viewport,inner_y,inner_max_y,bottom_reachable,persistent_visible,inner_reachable)
+    key=String(stage)
+    values=Float64.((w,h,available,content_width,outer_height,outer_viewport,y,max_y,bottom_y,bottom_height,inner_height,inner_viewport,inner_y,inner_max_y))
+    names=("window_width","window_height","available_width","column_width","outer_content_height","outer_viewport_height","outer_content_y","outer_max_y","bottom_y","bottom_height","inner_content_height","inner_viewport_height","inner_content_y","inner_max_y")
+    sidebar_probe_data[key]=Dict{String,Any}(String(k)=>v for (k,v) in zip(names,values))
+    merge!(sidebar_probe_data[key],Dict("bottom_reachable"=>Bool(bottom_reachable),
+        "persistent_controls_visible"=>Bool(persistent_visible),"inner_bottom_reachable"=>Bool(inner_reachable)))
+    if worker_smoke
+        worker_stage(key; (Symbol(k)=>v for (k,v) in sidebar_probe_data[key])...)
+    end
+    open(sidebar_capture_prefix*".toml","w") do io
+        TOML.print(io,sidebar_probe_data)
+    end
+    nothing
+end
+function record_sidebar_capture(name,success)
+    label=String(name);ok=Bool(success)
+    ok || error("sidebar capture failed: $label")
+    push!(sidebar_probe_captures,label)
+    if length(sidebar_probe_captures)==2 && !worker_smoke
+        captured[]=true;lifecycle_done[]=true
+    end
+    nothing
+end
 @qmlfunction change_schedule open_results navigate_frame run_batch cancel_batch close_mask set_mask_mode pick_preview viewport_created lifecycle_complete record_capture shutdown_prototype prepare_viewport viewport_scene release_viewport detach_viewport smoke_failed record_font_family
 @qmlfunction open_saved replay_saved cancel_saved inspect_saved saved_page saved_section experiment_smoke_step
 @qmlfunction queue_transition
 @qmlfunction simulate_glfw_close
+@qmlfunction record_sidebar_probe record_sidebar_capture
+@qmlfunction worker_control_ack
+@qmlfunction worker_capture_ack
 
 props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "openError" => state.open_error, "status" => state.status,
@@ -313,17 +353,21 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "experimentHistory"=>state.experiment.controller.run_record_path,
                          "experimentAllow"=>state.experiment.controller.allow_environment_change,
                          "experimentStatus"=>state.experiment.controller.status,
+                         "experimentStatusPreview"=>lift(s->first(String(s),180),state.experiment.controller.status),
                          "experimentError"=>state.experiment.error,
                          "experimentWritten"=>state.experiment.written,
                          "experimentText"=>state.experiment.text,"experimentPages"=>state.experiment.pages,
                          "activeIdentity"=>state.experiment.identity,"displayedIdentity"=>state.displayed,
                          "demoDisplayed"=>lift(mode->mode===:demo,state.dataset),
                          "renderAvailable"=>state.render_available,
-                         "transitionAck"=>transition_ack,"transitionOpen"=>transition_open,"transitionSeparate"=>transition_separate)
+                         "transitionAck"=>transition_ack,"transitionOpen"=>transition_open,"transitionSeparate"=>transition_separate,
+                         "workerCommand"=>worker_smoke ? worker_command : Observable(""))
 const load_started = time_ns()
 const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props,
                          bridgeEnabled = !software, glfwPlotMode = glfw_window, offscreenDisplay = true,
-                         smokeMode = !desktop,experimentSmoke=experiment_smoke,capturePath = capture_path,
+                         smokeMode = !desktop && !sidebar_probe_mode,experimentSmoke=experiment_smoke || worker_smoke || sidebar_probe_mode,capturePath = capture_path,
+                         workerSmoke=worker_smoke,
+                         sidebarProbeMode=sidebar_probe_mode,sidebarCapturePrefix=sidebar_capture_prefix,
                          fontSource = "file:///" * replace(font_path, '\\' => '/'))
 const load_seconds = (time_ns() - load_started) / 1e9
 shell_subscription_count=0
@@ -332,6 +376,7 @@ function cleanup_shell()
     Prototype.request_shutdown(state)
     cleanup_deadline=time()+60
     while Prototype.busy(state) && time()<cleanup_deadline
+        Prototype.service_saved_replay!(state)
         QML.process_eventloop_updates()
         QML.process_events()
         drain_actions()
@@ -340,6 +385,10 @@ function cleanup_shell()
     end
     # Do not dispose model/context resources while a task can still publish.
     # The child fails explicitly; the parent retains its timeout/exit evidence.
+    if Prototype.busy(state) && state.experiment.job!==nothing
+        outcome=Prototype.ReplayWorkerClient.shutdown!(state.experiment.job;timeout=0)
+        Prototype.finish_saved_replay!(state,outcome)
+    end
     Prototype.busy(state) && error("prototype shutdown timed out waiting for processing cleanup")
     release_viewport()
     detach_viewport()
@@ -353,10 +402,12 @@ function cleanup_shell()
     @assert isempty(state.subscriptions) && isempty(state.experiment.subscriptions)
 end
 ShellCleanup.with_cleanup(cleanup_shell) do
-deadline = time() + 180
+deadline = time() + (worker_smoke ? 360 : 240)
 while (!state.shutdown || Prototype.busy(state)) &&
       (desktop || !(lifecycle_done[] && captured[] && !Prototype.busy(state)))
     !desktop && time() > deadline && error("QML shell smoke timed out")
+    Prototype.service_saved_replay!(state)
+    worker_smoke && worker_note_ack()
     # exec_async starts a Julia REPL; scripts explicitly pump Qt between yields.
     QML.process_eventloop_updates()
     QML.process_events()
@@ -369,6 +420,7 @@ while (!state.shutdown || Prototype.busy(state)) &&
         transition_open[]=false; transition_separate[]=true; transition_ack[]+=1
     end
     experiment_smoke && advance_experiment_smoke()
+    worker_smoke && worker_tick()
     state.ticks += 1
     sleep(0.01)
 end
@@ -399,6 +451,7 @@ global report = Dict("julia" => string(VERSION), "os" => string(Sys.KERNEL),
               "qt_font_family" => qt_font_family[],
               "invalid_schedule_seen" => invalid_schedule_seen[], "open_error_seen" => open_error_seen[],
               "experiment_smoke"=>experiment_smoke,"saved_cancellation_seen"=>cancellation_seen[],
+              "worker_smoke"=>worker_smoke,
               "completed_replay_seen"=>completed_replay_seen[],
               "retained_display_seen"=>retained_display_seen[],
               "saved_state"=>String(state.experiment.controller.state[]),
@@ -418,13 +471,15 @@ open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
     TOML.print(io, report)
 end
 println(report)
-if !desktop
+if !desktop && !sidebar_probe_mode
     isempty(smoke_error[]) || error(smoke_error[])
     isempty(qt_font_family[]) && error("Qt controls never acknowledged their loaded font family")
     @assert captured[] && lifecycle_done[]
     @assert state.visualizations >= (experiment_smoke ? 5 : 4)
     if experiment_smoke
         @assert cancellation_seen[] && retained_display_seen[]
+    elseif worker_smoke
+        @assert completed_replay_seen[] && retained_display_seen[]
     else
         @assert isempty(state.schedule_error[]) && invalid_schedule_seen[] && open_error_seen[]
     end

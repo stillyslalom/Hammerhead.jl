@@ -5,9 +5,12 @@ include("viewport_lifecycle.jl")
 include("experiment_fixture.jl")
 
 function wait_saved(state)
-    task=state.experiment.controller._task[]
-    @test timedwait(()->!Prototype.busy(state),90)==:ok
-    task===nothing || wait(task)
+    deadline=time()+120
+    while Prototype.busy(state) && time()<deadline
+        Prototype.service_saved_replay!(state)
+        sleep(.005)
+    end
+    @test !Prototype.busy(state)
 end
 function dispose_view(registry)
     lease=registry.active
@@ -52,6 +55,26 @@ end
         @test ec.record[].recipe.roi==fixture.record.recipe.roi
         @test [s.operation for s in ec.record[].recipe.preprocessing]==[:highpass_filter,:intensity_cap]
         @test Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false)
+        # No unsupported callback is silently omitted from a subprocess request.
+        ec.custom_preprocess[]=identity
+        @test !Prototype.run_saved_experiment(state)
+        @test occursin("custom preprocessing",state.experiment.error[])
+        @test !ec.running[] && state.experiment.job===nothing
+        ec.custom_preprocess[]=nothing
+        # Startup observers cannot strand busy state or spawn processing after
+        # their original failure. The request already exists when notified.
+        startup_error=ErrorException("startup observer failure")
+        startup=on(ec.running) do running
+            if running
+                @test state.experiment.request.record.recipe.recipe_id==fixture.record.recipe.recipe_id
+                @test state.experiment.request.output==fixture.output
+                throw(startup_error)
+            end
+        end
+        @test !Prototype.run_saved_experiment(state)
+        @test ec.error[]===startup_error && !ec.running[]
+        @test state.experiment.job===nothing && state.experiment.request===nothing
+        off(startup)
         @test Prototype.run_saved_experiment(state;progress=(i,n)->i==1 && Prototype.cancel_saved_experiment(state))
         @test !Prototype.configure_saved_experiment(state,"next-output","",true)
         @test !Prototype.run_batch(state)
@@ -134,5 +157,31 @@ end
         Prototype.dispose_state(state)
         @test isempty(state.subscriptions) && isempty(state.experiment.subscriptions)
         @test state.explorer===nothing
+    end
+end
+
+@testset "Owner observer abort and deferred shutdown retain joined prefix" begin
+    mktempdir() do dir
+        fixture=experiment_fixture(dir);state=Prototype.State();ec=state.experiment.controller
+        @test Prototype.open_saved_experiment(state,fixture.path)
+        @test Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false)
+        original=ErrorException("owner progress observer failed")
+        @test Prototype.run_saved_experiment(state;progress=(i,n)->throw(original))
+        wait_saved(state)
+        @test ec.error[]===original && ec.state[]===:failed && ec.progress[]==(1,3)
+        @test state.experiment.outcome.cleanup_confirmed && state.experiment.outcome.exit_code==1
+        @test length(load_results(fixture.output))==1 && ec.last_run[].status===:failed
+        @test Prototype.run_saved_experiment(state;progress=(i,n)->:defer)
+        deadline=time()+120
+        while state.experiment.pending_progress===nothing && ec.running[] && time()<deadline
+            Prototype.service_saved_replay!(state);sleep(.005)
+        end
+        @test state.experiment.pending_progress!==nothing && ec.running[]
+        Prototype.request_shutdown(state)
+        @test state.experiment.pending_progress===nothing
+        wait_saved(state)
+        @test ec.state[]===:cancelled && ec.progress[]==(1,3)
+        @test state.experiment.outcome.cleanup_confirmed && state.experiment.job===nothing
+        Prototype.dispose_state(state)
     end
 end
