@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added a bounded independent VSJ301 tracking study with guarded private caching,
+  sparse annotations and separate coordinate-origin hypotheses evaluated against
+  identical processing outputs. Unknown visibility and annotation gaps remain
+  explicit; association scores do not establish real-recording accuracy.
+- Added associated stereo run-quality reports with raw recipe/result and ordered
+  source verification, optional input-byte checks and explicit result relocation.
+  Existing stored-field and execution-report schemas remain unchanged.
+- Added separate CPU/KA ensemble execution diagnostics for pooled passes,
+  numerical contributions, source support and pre-addition residuals. Iteration
+  settings remain ignored by ensemble processing; vendor-device capture and
+  ensemble execution-report aggregation are explicitly unsupported.
 - Added a bench-only annotated-particle scorer for detection, correspondence,
   identity changes, fragmentation and gap recovery. It separates localization
   from identity ambiguity and preserves full versus detected-only populations.
@@ -175,6 +186,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a separate saved-stereo workflow with complete fitted-recipe snapshots,
+  captured replay/cancellation, historical run selection, verified lazy browsing
+  and associated quality reports. Imported settings remain intact and read-only;
+  calibration fitting and checkpoint/resume remain separate workflows.
 - The planar result explorer can inspect derivative eligibility, neighboring
   stencils and finite gradient components with discrete maps and selected-node
   details. One stencil policy applies across derived scalars and area

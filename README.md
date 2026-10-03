@@ -133,5 +133,11 @@ eligible centers, actual neighboring stencils and unavailable gradients.
 The [annotated tracking scorer](docs/src/howto/validation_ptv_tracking.md)
 evaluates correspondence, identity changes and gap recovery with explicit
 visibility and ambiguity accounting.
+The [VSJ301 study](docs/src/howto/validation_vsj301.md) evaluates an independent
+synthetic source with sparse annotations and explicit coordinate-origin hypotheses.
+The [saved-stereo GUI workflow](docs/src/howto/gui_stereo_experiments.md) preserves
+fitted recipes, historical run selection and verified associated reports.
+[Ensemble execution diagnostics](docs/src/howto/ensemble_execution_diagnostics.md)
+describe actual pooled contributions and residuals separately from single-pair iterations.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

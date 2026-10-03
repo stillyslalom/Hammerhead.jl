@@ -11,6 +11,7 @@ reconstruction remain CPU operations.
 | Planar single-pair / multipass | yes | yes | yes | yes |
 | Planar sequence | yes | yes | yes | yes |
 | Ensemble correlation | yes | yes | yes | yes |
+| Pooled ensemble execution diagnostics | yes | yes | no | no |
 | Stereo 2D3C, sequence, ensemble (per-camera PIV) | yes | yes | yes | yes |
 | Cross and filtered phase correlation | yes | yes | yes | yes |
 | `:gauss3` and `:gauss9` peak fits | yes | yes | yes | yes |
@@ -38,8 +39,10 @@ boundary.
 [checkpoints](../howto/checkpoints.md) retain their file-based planar scope.
 Separate [stereo experiment APIs](../howto/stereo_experiments.md) replay CPU/KA stereo
 sequences from frozen fitted cameras and a common dewarp grid. They do not rerun
-calibration fitting or self-calibration, extend checkpoint recovery, or provide
-GUI stereo recipe controls. PTV/tracking and vendor-GPU recipes remain separate
+calibration fitting or self-calibration or extend checkpoint recovery. A separate
+[saved-stereo GUI workflow](../howto/gui_stereo_experiments.md) snapshots the
+supported batch form and reopens richer recipes intact with read-only settings.
+PTV/tracking and vendor-GPU recipes remain separate
 from the supported processing pipelines.
 [Quality reports](../howto/run_quality.md) summarize stored planar/stereo results
 on the CPU, independently of the backend that produced them. The shared
@@ -52,8 +55,11 @@ software behavior; new vendor-device execution evidence remains separate.
 [Stereo execution diagnostics](../howto/stereo_execution_diagnostics.md) use a
 separate two-camera companion, explicit dewarped-pixel residual basis and common
 world-grid geometry. Native inspection can verify reconstructed/camera measurement
-fields; it does not verify calibration or acquisition sources. Ensemble iteration
-semantics require a separate model and remain unsupported. Lazy native GUI
+fields; it does not verify calibration or acquisition sources.
+[Ensemble diagnostics](../howto/ensemble_execution_diagnostics.md) separately
+record one pooled sweep per pass, ignored iteration settings, numerical
+contributions and pre-addition residuals. Capture supports CPU/KA; vendor devices
+are explicitly refused. Ensemble report/GUI integration remains separate. Lazy native GUI
 inspection checks raw stereo binding before physical conversion. Opt-in quality
 report version 3 retains planar/per-camera execution coverage and support counts;
 it does not pool residual amplitudes or reverify files when a saved report loads.
@@ -73,8 +79,9 @@ this supported association. Numerical UQ availability is not applicability.
 metadata for planar sequences through an optional native companion.
 [Stereo pair timing](../howto/stereo_pair_timing.md) provides a separate companion
 with both cameras' delays/midpoints, synchronization policy and reconstructed
-scaling provenance. Neither companion adds timing-aware exports, replay,
-checkpoints or GUI inspection; these require separate integration.
+scaling provenance. Frozen-camera stereo replay preserves and verifies its timing
+companion. Timing-aware exports, checkpoints and GUI timing inspection require
+separate integration.
 
 [Actual-time tracking](../howto/tracking_timing.md) is a separate explicit CPU
 workflow. Its wrapper, dedicated native artifact and CSV schema preserve sample

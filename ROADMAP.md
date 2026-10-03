@@ -33,6 +33,11 @@ The [backend feature matrix](docs/src/reference/feature_matrix.md) describes
 current execution support. The [archived roadmap](reference/archive/ROADMAP.md)
 records the original phases, not current status or release promises.
 
+The saved-stereo GUI, ensemble execution diagnostics, and VSJ301 validation
+batch passes 11,673 core checks and 1,518 GUI checks; the documentation build
+executes all seven tutorials. These local checks do not close hardware or
+cross-platform acceptance gates.
+
 ## Delivery order
 
 Start a quantitative validation baseline and the experiment-record design first.
@@ -141,8 +146,24 @@ existing implementation is preferable; they are not commitments to add an API.
   A frozen eight-clip run and independent CSV/source audits preserve all
   predictions: stress accepted recalls are 170/190 and 168/190 despite unit
   accepted precision. This does not establish independent or real-data accuracy.
+- [ ] Correct the controlled PTV/tracking scorer's recorded PIV threading
+  default to reflect `Threads.nthreads() > 1`, add a provenance regression and
+  regenerate the affected one-thread study. Historical artifacts retain their
+  original recorded values; the sparse VSJ301 study records the actual default.
 - [ ] Add a reproducible larger-data evaluation command with download/cache and
   checksums; keep a small deterministic regression subset in ordinary CI.
+- [x] Evaluate a fixed eight-frame VSJ301 independent synthetic clip with guarded
+  acquisition/cache hashes, sparse annotations and all predicted associations.
+  Preserve unknown positions/visibility between listed rows, report coordinate
+  registration hypotheses separately, and distinguish annotated endpoint
+  relinking from true absence recovery. Keep real-recording validation open.
+  The [fixed study](docs/src/howto/validation_vsj301.md) completed with unchanged
+  production defaults and source identities. Independent source/CSV audits cover
+  33,250 provided and 7,190 unknown positions, all 12,123 detections and 9,908 raw
+  pair correspondences. Association varies sharply across the three fixed origin
+  hypotheses; none is declared verified. Two annotation reappearance events do
+  not establish true absence or gap-recovery performance. Regression fixtures
+  exercise independent assignment oracles, sparse accounting and guarded caches.
 - [ ] Add real sequence tutorials for background estimation, ensemble correlation,
   and statistics (for example Challenge 2A/4A), with caching and a bounded docs
   CI budget. Executed tutorials must not depend on local gitignored `cases/`.
@@ -188,6 +209,17 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   [119 focused checks](test/test_stereo_experiments.jl) for CPU/KA Float32/64
   parity, exact fitted-camera persistence, source/settings corruption, preflight
   and failed-prefix verification. Existing planar schemas remain unchanged.
+- [x] Connect saved stereo records to a dedicated GUI workflow with exact batch
+  snapshots, immutable imported settings, replay progress/cancellation, historical
+  run selection, verified lazy browsing and associated stored-field/execution
+  reports. Preserve captured run/report identities across failed actions.
+  The [saved stereo workflow](docs/src/howto/gui_stereo_experiments.md) passes
+  [194 focused checks](HammerheadGUI/test/test_stereo_experiments.jl), including
+  exact imported settings, cancellation boundaries, historical selection and
+  retained report identity. Offscreen layouts were inspected at 900/1100 pixels;
+  the full GUI suite passes 1,518 checks. The associated core quality overload
+  adds [62 checks](test/test_stereo_run_quality.jl) for verified raw output,
+  relocation, protected saves and unchanged report schemas.
 - [x] Compare experiment processing revisions with a human-readable settings
   diff. `recipe_diff` returns deterministic field paths and before/after values,
   with content summaries for embedded arrays and explicit added/removed items.
@@ -353,10 +385,18 @@ and GPU memory in the documented ownership modes.
   remain explicit; primary residuals are not attributed to substituted/filled
   vectors. [Tests](test/test_execution_diagnostics.jl) cover CPU/KA equivalence,
   actual loop semantics, persistence, strict replay association and failures.
-- [ ] Extend execution diagnostics to ensemble pooled sweeps with their distinct
-  iteration semantics. Planar/stereo GUI inspection and execution-aware quality
-  reports are available through the completed items below; ensemble integration
-  still needs its own contract.
+- [x] Extend execution diagnostics to ensemble pooled sweeps with their distinct
+  iteration semantics. [Planar ensemble capture](docs/src/howto/ensemble_execution_diagnostics.md)
+  records one sweep per pass, ignored iteration requests, actual source/plane
+  contribution populations and pooled primary residuals before predictor addition.
+  Separate native companions bind raw result fields without changing arithmetic.
+  [187 focused checks](test/test_ensemble_execution_diagnostics.jl) cover CPU/KA
+  Float32/64 parity, absent predictors, masks/UQ, tiled tails, callback/path guards,
+  exact request snapshots and malformed companions. Vendor capture remains refused.
+- [ ] Integrate ensemble execution companions into GUI inspection and quality
+  reports with explicit pooled-sweep populations and verification scope. Preserve
+  planar/stereo report semantics; contribution counts do not establish effective
+  independent sample size, stationarity or uncertainty coverage.
 - [x] Add bounded per-camera stereo execution companions with dewarped-pixel
   residuals, explicit common-grid geometry, measurement-field binding and a
   separate native reader. Keep ensemble, GUI and report integration separate.

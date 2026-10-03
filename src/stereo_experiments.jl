@@ -630,8 +630,9 @@ function _stereo_run_companion_markers(file,association)
             requested && association["completed_pairs"]>0 && _experiment_error("requested stereo companion marker missing")
         end
     end
-    any(k->haskey(file,k),("execution_diagnostics","execution_diagnostics_format_version","measurement_history","measurement_history_format_version","pair_timing","pair_timing_format_version")) &&
-        _experiment_error("stereo experiment output cannot contain crossed planar companion metadata")
+    any(k->haskey(file,k),("execution_diagnostics","execution_diagnostics_format_version","measurement_history","measurement_history_format_version","pair_timing","pair_timing_format_version",
+        "ensemble_execution_diagnostics","ensemble_execution_diagnostics_format_version")) &&
+        _experiment_error("stereo experiment output cannot contain crossed planar or ensemble companion metadata")
 end
 function _stereo_verify_result_fields(result,snapshot,config,dewarpers)
     result isa StereoPIVResult{config.processing.image_type} || _experiment_error("wrong stereo payload kind/precision")

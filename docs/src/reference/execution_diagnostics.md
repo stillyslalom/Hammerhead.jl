@@ -91,8 +91,9 @@ adds no atomic write, concurrent-writer or checkpoint guarantees.
 Stereo single runs and sequences have a separate
 [per-camera companion](stereo_execution_diagnostics.md), with residuals labeled
 in dewarped pixels. PTV and ensemble diagnostics are outside this version.
-Ensemble would require pooled observations with ignored `max_iterations`, rather than
-invented repeated sweeps or individual-pair residuals.
+The separate [ensemble companion](ensemble_execution_diagnostics.md) records pooled
+observations and ignored iteration settings, without inventing repeated sweeps or
+individual-pair residuals.
 
 ```@autodocs
 Modules = [Hammerhead]

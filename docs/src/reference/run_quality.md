@@ -27,6 +27,16 @@ native output must match the recorded byte digest and result count. This is
 recorded provenance, not cryptographic authentication or a guarantee about
 individual measured vectors. Loading a saved report does not reverify files.
 
+The `StereoExperimentRecord` overload preserves these schemas and additionally
+verifies the dedicated stereo run association, frozen geometry, ordered sources,
+raw measurement fields and requested companions before and after the summary.
+It accepts `output` for an explicitly relocated file and `verify_inputs=true`
+for current input-byte checks. Known local locators are protected; foreign
+historical locators are not converted into local paths. Stereo history requests
+are refused. Execution-aware reporting refuses distinct ensemble metadata,
+including orphan groups and markers in empty files, until pooled observations
+have a supported report schema.
+
 Each present `groups.planar` or `groups.stereo` contains `counts` and
 `fractions`. Empty input has no groups. Nodes are counted across all entries;
 the group entry count is not a fraction denominator. Masks exclude nodes from
@@ -202,10 +212,13 @@ crossed planar/stereo companions and companions attached to PTV/tracking are
 refused. A native PIV result does not identify whether an unrecorded driver was
 an ensemble, so workflow categories are not inferred from missing metadata.
 Associated planar execution packets must match the selected recipe/input IDs
-and absolute pair index; generic files remain unassociated. Stereo packets have
-no supported experiment recipe association and are refused in that associated
-mode. Each raw payload is loaded once, and only fixed-size counters survive;
-indexes and protected locators retain their existing documented memory costs.
+and absolute pair index; generic files remain unassociated. The planar
+`ExperimentRecord` overload refuses stereo packets. The dedicated
+`StereoExperimentRecord` overload verifies the saved stereo association before
+and after aggregation. Generic aggregation loads each raw payload once; those
+additional stereo verification passes also load one entry at a time. Only
+fixed-size counters survive aggregation; indexes and protected locators retain
+their existing documented memory costs.
 
 Report snapshots retain no payload arrays and dictionary access returns a
 copy. Known protected locators are authoritative when saving, with normalized
@@ -217,5 +230,5 @@ writer safety, resumption or cryptographic authenticity.
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["run_quality.jl"]
+Pages = ["src/run_quality.jl", "src/stereo_run_quality.jl"]
 ```

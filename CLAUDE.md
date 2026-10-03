@@ -253,8 +253,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   alternatives or filling. Planar sequence/replay may persist version-1 native
   companions without changing result structs. Callback delivery precedes result
   delivery/persistence; it is not a commit notification. Stereo has a separate
-  companion below; ensemble diagnostics remain unsupported. Default calls do
-  not collect diagnostics or hash source files.
+  companion below; ensemble diagnostics use their own pooled-sweep contract.
+  Default calls do not collect diagnostics or hash source files.
 - `measurement_history.jl` — opt-in final-pass/final-sweep planar history,
   separate from execution diagnostics and result structs. Record actual first
   rejection, alternative acceptance, fill assignment and restoration events;
@@ -263,6 +263,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   callbacks. Validate binding before persistence; metadata-only loads do not
   verify payload content unless `verify_result=true`. UQ still describes the
   final deformed windows and is not re-estimated for alternatives or fills.
+- `ensemble_execution_diagnostics.jl` — opt-in array-free pooled-sweep packets
+  for CPU/KA planar ensembles. Count actual pair/window contributions and
+  degenerate planes before accumulation; primary residuals precede predictor
+  addition. Every pass performs one sweep with no convergence checks, even if
+  its requested iteration budget is larger. Predictor presence is observed,
+  not inferred from pass index. Separate native companions bind raw result
+  fields and scale; counts do not establish independent sample size or UQ
+  coverage. Capture freezes the selected pairs, mask and pass schedule before
+  image loading. Ensemble packets are refused by execution-aware quality reports.
 - `stereo_execution_diagnostics.jl` — immutable two-camera execution companions,
   with distinct camera IDs, explicit parent/pair association, dewarped-pixel
   residuals and signed common-grid geometry. Measurement-field binding covers
@@ -298,7 +307,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   full snapshot integrity still protects them. Supplied world/frame labels do
   not infer scale factors. Verification streams raw results without rerunning
   PIV; calibration fitting, self-calibration execution, custom cameras/scripts,
-  checkpoints and GUI stereo recipe controls remain separate work.
+  and checkpoints remain separate work. The GUI can inspect and replay the
+  exact saved recipe through its dedicated controller.
 - `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
   `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
   ordinal. Actual-time prediction and scattered validation normalize elapsed
@@ -342,6 +352,13 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   and numerical UQ availability is not coverage or measurement association.
   Record/run reports verify output content and identities; anonymous iterators
   make no association claim. Protect hidden source paths explicitly when saving.
+- `stereo_run_quality.jl` extends associated reports to completed frozen-camera
+  stereo records. Snapshot record/run, verify raw fields/geometry/ordered sources
+  and native companions before/after the streaming report; optionally check input
+  bytes. Default v1 and execution v3 schemas remain unchanged; stereo history is
+  refused. Explicit result relocation preserves foreign historical locators.
+  Execution-aware reports refuse separate ensemble metadata until its pooled
+  observations have supported aggregation semantics.
 - `pair_comparison.jl` — `compare_recipe_pair` reruns complete built-in planar
   recipes on explicitly selected content-matched inputs. Exact raw-coordinate
   intersections avoid resampling; native and paired quality populations remain
@@ -625,6 +642,15 @@ synchronized frame lists + an `ImageDewarper` pair —
 embeddable `calibration_review!`; runs `run_piv_stereo_sequence` with its
 NATIVE zero-arg `cancel` predicate — no exception, completed prefix
 returned — and a dt-only stereo scale);
+`StereoExperimentController`/`stereo_experiment_workflow` snapshots idle,
+file-based stereo batches and preserves rich imported recipes without exposing
+unsupported edits. Capture replay settings before observable notifications;
+`active_request` carries detached scalar identity/settings, separate from next
+choices. Historical run selection, latest attempt, displayed result and retained
+report keep their own identities. Verify completed outputs before lazy physical
+display; reports use the dedicated stereo core overload. Cancellation waits for
+an acquisition boundary and records failure history without implying resumability.
+Files/Replay/Reports pages retain reachable cancellation/progress controls;
 `CalibrationReview`/
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an
@@ -935,6 +961,17 @@ as contrast evidence; preserve any genuine processing-precision difference.
   identity/gap fixtures, manifest guards and cheap production clips. Full study
   evidence requires a fresh process and frozen source; it does not close
   independent or real-recording validation.
+- `bench/validation_vsj301.jl` evaluates the fixed independent synthetic VSJ301
+  prefix using sparse listed IDs/positions. Unknown rows and visibility remain
+  unknown; associated IDs do not certify physical contributors. Report all
+  coordinate-origin hypotheses on the same unchanged production objects.
+  Independent bounded component assignment must refuse oversized components,
+  never drop them. Ambiguous/unknown observations interrupt identity continuity;
+  exact adjacent recall and annotated endpoint relinking have separate counts.
+  `prepare_vsj301.py` guards acquisition and re-audits selected archive members
+  offline on every cache load. Keep source data and annotation-derived ledgers
+  private; no redistribution license is asserted. Record actual thread defaults
+  and run full studies only with frozen source and a fresh process.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

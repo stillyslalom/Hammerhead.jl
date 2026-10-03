@@ -137,6 +137,21 @@ cameras. This binding excludes parameter objects and correlation planes, and
 does not verify calibration, source images or synchronization. Its verification
 status describes the current read/capture and is not stored as an attestation.
 
+Planar ensemble capture uses its own version-1
+`ensemble_execution_diagnostics_format_version` marker and per-result sibling
+group. One pooled sweep per pass and ignored iteration settings are distinct
+from planar/stereo iterative execution. The companion binds raw measurement
+fields and geometry, excluding parameter objects and correlation planes;
+metadata-only reads do not verify result fields. CPU/KA capture is explicit,
+and execution-aware quality reports refuse this separate schema. Native result
+layouts and diagnostics-off numerical processing remain unchanged.
+
+Associated stereo quality reports reuse default format 1 and optional execution
+format 3 after dedicated stereo run/raw-field verification. The GUI preserves
+complete stereo records in its own controller and separates selected historical
+run IDs from active attempts and already generated reports. This adds no stereo
+checkpoint or calibration-fitting format.
+
 GUI timed-trajectory inspection explicitly selects the dedicated artifact
 format and retains its wrapper through physical display. Ordinary eager and
 lazy native result vectors retain their element types and persistence behavior.

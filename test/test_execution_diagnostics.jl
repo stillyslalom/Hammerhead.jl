@@ -108,7 +108,8 @@ end
         run_piv(A, B, passes; threaded = false, on_diagnostics = x -> (d[] = x))
         @test length(d[].passes) == 2 && [x.pass_index for x in d[].passes] == [1, 2]
         @test [x.executed_iterations for x in d[].passes] == [1, 2]
-        @test_throws MethodError run_piv_ensemble([(A, B)], p; on_diagnostics = identity)
+        # Ensemble capture has a separate pooled-sweep contract, exercised in
+        # test_ensemble_execution_diagnostics.jl.
     end
 
     mktempdir() do directory

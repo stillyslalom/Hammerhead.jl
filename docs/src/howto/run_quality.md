@@ -25,6 +25,26 @@ run-environment identities. It does not reopen input images or evaluate a
 preprocessing script. The association describes the verified recorded output;
 the report cannot recover measurement events that were never persisted.
 
+For a saved [stereo experiment](stereo_experiments.md), use the same report API
+with `load_stereo_experiment`. Its overload also checks frozen recipe geometry,
+ordered camera sources, raw measurement fields and requested companions before
+and after reporting:
+
+```julia
+record = load_stereo_experiment("stereo-experiment.jld2")
+run = last(record.runs)
+report = quality_report(record, run; include_execution_diagnostics=true)
+save_quality_report("stereo-quality.toml", report)
+```
+
+The default is the existing format-1 stored-field report; the explicit execution
+option uses format 3 with separate camera observations. Stereo measurement
+history is unsupported and requesting it refuses. Only completed runs can be
+reported. `verify_inputs=true` additionally checks current input bytes;
+`output=relocated_path` explicitly locates a moved native file without rewriting
+the historical run locator. Foreign locators are not interpreted as local paths.
+These checks do not rerun PIV, fit cameras or establish calibration accuracy.
+
 For an independent result file, use `quality_report(ResultFile(path))`. This
 records the source file's identity but labels experiment association
 `unassociated`. A finite iterator or vector also works; anonymous iterators do
@@ -107,7 +127,7 @@ end
 This emits report format 2; the default still emits format 1 and its loader
 remains compatible. `quality_report(record, run; include_measurement_history=true)`
 also verifies that every present packet has the selected recipe/input IDs and
-absolute pair index. A present but unassociated or mismatched packet is refused;
+absolute pair index for planar experiment records. A present but unassociated or mismatched packet is refused;
 a missing packet instead reduces coverage. A generic `ResultFile` report remains
 experiment-unassociated even when packet metadata names a recipe.
 

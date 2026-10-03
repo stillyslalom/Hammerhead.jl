@@ -24,6 +24,6 @@ Pages = ["gui_experiments.md"]
 
 ```@autodocs
 Modules = [HammerheadGUI, HammerheadGUI.Controllers]
-Pages = ["experiment_controller.jl", "experiment_workflow.jl"]
+Pages = ["controllers/experiment_controller.jl", "views/experiment_workflow.jl"]
 Order = [:type, :function]
 ```

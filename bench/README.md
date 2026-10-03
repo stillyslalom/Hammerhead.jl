@@ -75,6 +75,13 @@ or thermal effects; inspect the affected workloads and their variability.
 
 ## GPU backends
 
+For independently generated VSJ301 PTV/tracking evidence, use the private cache
+acquisition and fixed eight-frame command in
+[`validation_vsj301.md`](../docs/src/howto/validation_vsj301.md). Sparse missing
+annotations stay unknown; three predeclared origin hypotheses score identical
+production outputs. This does not establish real-recording or visibility-complete
+validation.
+
 `bench/gpu_validate.jl` checks a device backend against the CPU reference
 (single-pass, multipass, masked, ensemble, and uncertainty paths) and
 `bench/gpu_benchmarks.jl` times it (see

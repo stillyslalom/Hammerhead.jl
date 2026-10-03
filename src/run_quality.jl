@@ -56,6 +56,9 @@ end
 function _quality_check_execution_format(source)
     _check_result_file(source)
     jldopen(source.path,"r") do file
+        any(key -> haskey(file,key), ("ensemble_execution_diagnostics_format_version",
+            "ensemble_execution_diagnostics")) &&
+            _quality_error("ensemble pooled execution diagnostics are unsupported by execution-aware quality reports")
         for (group,marker,version) in (("execution_diagnostics","execution_diagnostics_format_version",EXECUTION_DIAGNOSTICS_FORMAT_VERSION),
                 ("stereo_execution_diagnostics","stereo_execution_diagnostics_format_version",STEREO_EXECUTION_DIAGNOSTICS_FORMAT_VERSION))
             if haskey(file,marker)
@@ -520,12 +523,13 @@ even when individual packets name recipe/input IDs.
 
 With `include_execution_diagnostics=true`, require the same direct whole-file
 native mapping and emit format version 3, optionally including the existing
-history section. Read each raw payload once. Recorded planar companions retain
+history section. Generic aggregation reads each raw payload once. Recorded planar companions retain
 entry-key linkage only; stereo companions additionally verify raw measurement
 fields and independent geometry against the already loaded result. Associated
-planar packets must match recipe/input IDs and absolute pair index. Stereo
-packets have no supported experiment recipe association and are refused in that
-associated mode. Wrong-kind companions and invalid versions, including markers
+planar packets must match recipe/input IDs and absolute pair index. The planar
+`ExperimentRecord` overload refuses stereo packets; the dedicated
+`StereoExperimentRecord` overload verifies stereo association in additional
+streaming passes before and after aggregation. Wrong-kind companions and invalid versions, including markers
 in empty files, are refused. Missing metadata is a coverage gap, never inferred
 from parameters. PTV/tracking entries have explicit unsupported counts.
 

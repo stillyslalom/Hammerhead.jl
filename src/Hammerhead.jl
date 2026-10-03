@@ -29,6 +29,7 @@ export recipe_diff, RecipeDiff, RecipeChange, RecipeArraySummary
 export RunQualityReport, quality_report, quality_report_data, save_quality_report, load_quality_report
 export RecipePairComparison, compare_recipe_pair, pair_comparison_data, save_pair_comparison, load_pair_comparison
 export PIVExecutionDiagnostics, PassDiagnostics, execution_diagnostics_data, load_execution_diagnostics
+export EnsemblePassDiagnostics, EnsemblePIVExecutionDiagnostics, load_ensemble_execution_diagnostics
 export StereoPIVExecutionDiagnostics, load_stereo_execution_diagnostics
 export PIVMeasurementHistory, measurement_history_data, load_measurement_history
 export verify_measurement_history, measurement_history_at
@@ -101,6 +102,7 @@ include("artifact_paths.jl")
 include("experiments.jl")
 include("execution_diagnostics.jl")
 include("measurement_history.jl")
+include("ensemble_execution_diagnostics.jl")
 include("stereo_execution_diagnostics.jl")
 include("pair_timing.jl")
 include("stereo_pair_timing.jl")
@@ -110,6 +112,7 @@ include("calibrated_table.jl")
 include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
 include("run_quality.jl")
+include("stereo_run_quality.jl")
 include("pair_comparison.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the

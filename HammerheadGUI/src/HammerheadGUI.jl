@@ -36,6 +36,7 @@ include("controllers/checkpoint_controller.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
 include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
+include("controllers/stereo_experiment_controller.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -71,6 +72,7 @@ export ScaleTool, clear_points!, set_separation!, pixel_distance,
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
+export StereoExperimentController, select_experiment_run!
 
 end # module Controllers
 
@@ -110,6 +112,7 @@ export CalibrationReview, calibration_review, calibration_review!,
        selfcal_review, nplanes, set_plane!
 export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
+export StereoExperimentController, select_experiment_run!, stereo_experiment_workflow, stereo_experiment_workflow!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
@@ -123,6 +126,7 @@ include("views/batch_runner.jl")
 include("views/scale_tool.jl")
 include("views/calibration_review.jl")
 include("views/stereo_batch.jl")
+include("views/stereo_experiment_workflow.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload
 

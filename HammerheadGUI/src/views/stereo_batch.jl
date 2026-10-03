@@ -12,7 +12,8 @@ enter the frame interval and units, and run. Stereo displacements are
 already in world units; the frame interval converts them to velocities.
 An optional output file stores completed acquisitions incrementally.
 "Cancel" stops between acquisitions, and "View results" opens an explorer
-that receives each finished acquisition.
+that receives each finished acquisition. "Saved stereo workflow" opens a separate
+intact-recipe lane for file-based snapshots, saved history and verified replay.
 """
 stereo_batch_runner(; kwargs...) = stereo_batch_runner(StereoBatchRunner(); kwargs...)
 
@@ -81,6 +82,7 @@ function stereo_batch_runner(sbc::StereoBatchRunner; size = (960, 600))
     explore_label = lift(v -> isempty(v) ? "view results" :
                               "view results ($(length(v)))", sbc.completed)
     explore_btn = Button(run_col[8, 1]; label = explore_label, tellwidth = false)
+    experiment_btn = Button(run_col[9,1];label="saved stereo workflow",tellwidth=false,fontsize=12,height=28)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -130,6 +132,10 @@ function stereo_batch_runner(sbc::StereoBatchRunner; size = (960, 600))
     end
     on(_ -> start!(sbc), run_btn.clicks)
     on(_ -> cancel!(sbc), cancel_btn.clicks)
+    on(experiment_btn.clicks) do _
+        sbc.running[] && return
+        display(GLMakie.Screen(),stereo_experiment_workflow(;batch=sbc))
+    end
 
     # Live results hand-off, same pattern as the planar batch view.
     live_ex = Ref{Union{Nothing,ResultExplorer}}(nothing)

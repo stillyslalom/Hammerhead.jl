@@ -1083,7 +1083,8 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                             engine::_KACorrelationEngine{T},
                             imgA::AbstractMatrix, imgB::AbstractMatrix, jobs,
                             params::PIVParameters, mask,
-                            uacc = nothing, uscratch = nothing; source_gate = nothing) where {T}
+                            uacc = nothing, uscratch = nothing; source_gate = nothing,
+                            diagnostics = nothing) where {T}
     njobs = length(jobrange)
     njobs == 0 && return nothing
 
@@ -1096,6 +1097,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     hasmask = mask !== nothing
     themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
     gainarg = engine.padded ? engine.gain : engine.apod   # dummy when unpadded (unread)
+    categories=diagnostics===nothing ? nothing : Vector{UInt8}(undef,bs)
 
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
@@ -1126,6 +1128,17 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
         _ka_spectrum!(engine, params)
         KernelAbstractions.synchronize(ka)
         mul!(engine.CA, engine.bwd, engine.CA)
+        if diagnostics!==nothing
+            # Inspect the exact per-pair values used by the accumulation kernel;
+            # only one scalar category/window is returned, never a plane copy.
+            _ka_ensemble_plane_category!(ka)(categories,engine.CA,gainarg,engine.padded,sr,sc,nr,nc;
+                                           ndrange=nreal)
+            KernelAbstractions.synchronize(ka)
+            for m in 1:nreal
+                j=jobrange[start+m-1];gi,gj,_,_=jobs[j]
+                _source_informative(source_gate,gi,gj) && _ensemble_plane!(diagnostics,j,Int(categories[m]))
+            end
+        end
         # Only the nreal live slices accumulate — the tail of the last tile
         # holds stale spectra that must not pollute the sums.
         _ka_shiftgain_accum!(ka)(acc.Racc, engine.CA, gainarg, engine.padded, sr, sc,
@@ -1136,6 +1149,22 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     return nothing
 end
 
+# Capture is CPU/KA-only. One work item scans one live inverse-FFT slice using
+# precisely the shift/gain arithmetic of _ka_shiftgain_accum!, without altering
+# accumulation or performing individual-pair peak selection.
+@kernel function _ka_ensemble_plane_category!(categories,@Const(CA),@Const(gain),padded,sr,sc,nr,nc)
+    k=@index(Global,Linear)
+    T=typeof(abs(CA[1,1,k]))
+    lo=T(Inf);hi=T(-Inf);finite=true
+    for j in 1:nc,i in 1:nr
+        ip=mod1(i+sr,nr);jp=mod1(j+sc,nc)
+        value=abs(CA[i,j,k]);padded && (value*=gain[ip,jp])
+        finite &= isfinite(value)
+        lo=min(lo,value);hi=max(hi,value)
+    end
+    categories[k]=!finite ? UInt8(4) : lo==hi ? (lo==0 ? UInt8(1) : UInt8(2)) : UInt8(3)
+end
+
 # Ensemble finalize: run the device analysis kernel over the summed planes in
 # tiles and scatter the packed scalars into the vector grids — the ensemble
 # analogue of the `process_windows!` scatter, except residuals *add to* the
@@ -1144,7 +1173,7 @@ end
 function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngine{T},
                            u, v, peak_ratio, correlation_moment,
                            uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
-                           jobs, params::PIVParameters, uacc) where {T}
+                           jobs, params::PIVParameters, uacc;diagnostics = nothing) where {T}
     planes === nothing ||
         throw(ArgumentError("KA-family backends do not support correlation-plane " *
                             "storage yet; use backend = :cpu"))
@@ -1166,6 +1195,7 @@ function ensemble_analyze!(acc::_KAPlaneAccumulator, engine::_KACorrelationEngin
         KernelAbstractions.synchronize(ka)
         for m in 1:nreal
             gi, gj, _, _ = jobs[start + m - 1]
+            diagnostics===nothing || _ensemble_residual!(diagnostics,gi,gj,engine.out[1,m],engine.out[2,m])
             if alt_u !== nothing
                 found = Int(engine.out[5, m])   # small integer, exact in T
                 for mm in 2:min(found, params.n_peaks)
