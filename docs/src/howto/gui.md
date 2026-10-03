@@ -1,329 +1,101 @@
-# Work interactively with the graphical user interface (GUI)
+# Analyze an image pair in the GUI
 
-**Goal:** browse results, draw a mask, run a batch, and review a calibration
-with HammerheadGUI. Use the same results in Julia scripts. For a guided walkthrough with
-figures, start with [the GUI tour](../tutorials/gui_tour.md).
+Start with two exposures of the same flow. You will make a mask if needed,
+run PIV, inspect the vectors, and keep the result. For a complete example with
+sample images, follow [Your first PIV session in the GUI](../tutorials/gui_tour.md).
 
-The GUI is the separate `HammerheadGUI` package. After installing it in your
-environment, `using HammerheadGUI` loads the window interface.
-
-## Explore a results file
-
-[`result_explorer`](@ref) takes anything [`load_results`](@ref) produces —
-planar, stereo, PTV, and tracking entries, mixed files included — or
-in-memory results:
+Install the separate GUI package with `pkg> add HammerheadGUI`, then open the
+batch form:
 
 ```julia
 using HammerheadGUI
-
-result_explorer("run_042.jld2")
-result_explorer(result)              # a PIVResult / StereoPIVResult
-result_explorer(ptv_result)          # a PTVResult / TrackingResult
-result_explorer([r1, r2, r3])        # a sequence — the slider scrubs frames
+batch_runner()
 ```
 
-For a completed file that is too large to load all at once, enable lazy
-browsing explicitly:
+## Add the images
 
-```julia
-using Hammerhead: ResultFile, load_results
+Click **add frames…** and select your images in acquisition order. Choose
+**paired** for separate A/B exposures (`1–2, 3–4`), or **chained** for a
+consecutive sequence (`1–2, 2–3`). Start with one representative pair before
+processing a whole recording.
 
-result_explorer("run_042.jld2"; lazy = true)
-ex = ResultExplorer(ResultFile("run_042.jld2"))
-result_explorer(ex)
-set_frame!(ex, 120)                  # load only the selected saved entry
-saved = load_results("run_042.jld2"; lazy = true)
-result = saved[120]                  # measured units; core reader has no cache
-```
+## Exclude walls and reflections
 
-The index stores sorted result keys, using memory proportional to the number
-of entries. The explorer retains one result in display units and only the
-current frame's derived fields and analysis state; navigation releases the
-previous payload. Each selected entry is loaded in full, so a single entry
-must fit memory. All four result types and mixed files are supported, with
-the same field menus, physical scaling, and selection behavior as eager
-browsing. A read failure leaves the prior frame displayed and reports the
-error below the inspection panel; another readable entry can still be
-selected. Scripted `set_frame!` calls also raise the error and set `ex.status`.
-
-Wait until the writer has closed the file before constructing the index.
-Its keys are fixed: it does not follow live batch writes or provide restart
-support. Size and modification-time checks reject detectable file changes,
-but they do not make concurrent reading/writing safe or create an atomic
-snapshot. Create a new index after a completed file changes. Use the existing
-in-memory explorer with `push_result!` for a live batch. The default
-`load_results(path)` and `ResultExplorer(path)` still load eagerly; collecting
-the lazy vector or retaining its returned objects also retains those payloads.
-
-For gridded results the field menu lists displacement magnitude, components,
-the validation diagnostics, and per-vector σ when the analysis ran with
-`uncertainty = true`; click any vector to inspect its numbers. A
-[`PTVResult`](@ref) is drawn as a colored particle scatter with optional
-displacement arrows (flagged particles in red), and a
-[`TrackingResult`](@ref) as trajectory polylines colored by mean speed, with
-breaks at bridged frame gaps.
-
-When a result carries a [`PhysicalScale`](@ref) — attached at analysis time
-or with [`with_scale`](@ref) — the explorer displays in physical units:
-axis labels, the colorbar, and the inspection panel all read `mm`, `mm/s`,
-and so on instead of `px` / `px/frame`.
-
-The colorbar defaults to a robust 2–98% percentile range over the valid
-(non-masked, non-flagged) vectors ([`color_limits`](@ref)), so outliers
-cannot wash out the display. The "color range" group switches to the full
-extrema or pins either bound; manual bounds persist across frame/field
-switches until cleared. To make the same changes from Julia, retain the
-controller:
-
-```julia
-ex = ResultExplorer("run_042.jld2")
-result_explorer(ex)
-set_color_mode!(ex, :full)             # extrema instead of percentiles
-set_color_limits!(ex; min = 0, max = 5)
-set_color_limits!(ex; max = "auto")    # clear one bound
-```
-
-For planar results the field menu also carries the derived fields —
-vorticity, divergence, strain rate `|S|`, swirling strength, and Q — via
-[`flow_derivatives`](@ref), computed once per frame and labelled `1/s`
-(`1/s²` for Q) when a scale is attached. Since derivatives amplify local
-vector errors, inspect masks and flagged vectors around a small feature
-before treating it as flow. The *tool* menu adds interactive
-analysis on the same results:
-
-```julia
-set_tool!(ex, :profile)      # two clicks sample u/v/|V| along a line
-set_tool!(ex, :circulation)  # click a contour, right-click to close:
-                             # line-integral + vorticity-area circulation
-tool_summary(ex)             # the live numbers, with units
-set_tool!(ex, :inspect)      # back to click-to-inspect
-```
-
-For a circulation contour, check the reported area coverage before using
-the vorticity-area estimate. Masked or invalid cells can leave a partial
-integral; with no valid area, there is no area estimate. Inspect the source
-field and flags if the two estimates disagree.
-
-Tool state clears when the frame changes, and the analysis tools revert to
-`:inspect` on result types without derived analysis (stereo/PTV/tracking).
-
-## Draw a mask and use it
+Open a mask editor on the first image:
 
 ```julia
 mask_editor("frame_0001.tif")
 ```
 
-Left-click adds vertices (inside an existing polygon it selects instead),
-right-click closes the polygon, Backspace undoes a vertex, Delete removes
-the selected polygon. "Save mask…" writes an image where white pixels mark
-excluded areas. Read it with [`load_mask`](@ref):
+Left-click around the unwanted region; right-click to close the polygon.
+Turn on **show mask** to check the red excluded area. Use **save mask…**, then
+**load mask…** in the batch form. These are separate windows; saving the mask
+and loading it into the batch makes the hand-off explicit.
+
+![A reflection excluded in the tutorial's mask editor.](../assets/gui/mask.png)
+
+For holes, mask files, or automatic masks, see [Mask reflections and geometry](masking.md).
+
+## Choose settings and units
+
+Choose **medium** effort for an initial run; the preset chooses the window
+schedule. Use **custom** when you want to enter your own schedule, such as
+`64, 32, 32`. [Choose an effort level](effort.md) explains the trade-off.
+
+Enter your measured **pixel size**, the exposure-pair **dt**, and their unit
+labels. For example, `0.02`, `0.001`, `mm`, and `s` mean 0.02 mm per pixel and
+1 ms between exposures. Labels do not convert the numbers. If you have a
+calibration image, [the scale tool](scaling.md) helps measure a known separation.
+
+![The tutorial's batch form, with one pair, a mask, and a physical scale.](../assets/gui/batch.png)
+
+**edit ROI…** opens a rectangle editor when you need only part of the image.
+**preprocess…** opens a raw/processed comparison when the particles need
+conditioning. Use the editor's **apply to batch** or **use in batch** action
+before returning to the run. See [Build a preprocessing chain](preprocessing.md)
+for choosing operations.
+
+## Run and inspect
+
+Choose an output file with **choose output…**, then press **run**. Completed
+pairs appear in **view results**, which opens a separate explorer. **cancel**
+stops after the current pair and retains finished results.
+
+![The tutorial vortex in the result explorer, with one selected vector.](../assets/gui/explorer.png)
+
+Click a vector to read its components and status. Use the field menu to switch
+between magnitude, components, and diagnostics; the slider browses frames.
+When a scale is attached, the explorer uses its physical units.
+
+Want a profile or a rotation estimate? Use the explorer's **tool** and **field**
+menus. Inspect flagged vectors before interpreting derivatives;
+[Inspect derivative support](gui_derivative_support.md) shows which neighbors
+contribute. [Recorded processing details](gui_companions.md) and
+[quality reports](run_quality.md) help examine a completed run more closely.
+
+## Keep the work
+
+Reopen a completed native results file with:
 
 ```julia
-mask = load_mask("mask.png")
-result = run_piv(imgA, imgB, passes; mask)
+result_explorer("vectors.jld2"; lazy=true)
 ```
 
-To skip the file, hold the [`MaskEditor`](@ref) controller and export
-directly — and seed it with existing polygons to resume editing:
+Lazy browsing loads one selected entry at a time. Keep the file unchanged while
+browsing. To keep the **settings** as well, use **saved experiments…** and
+[Save your settings and run them again](gui_experiments.md). That workflow also
+opens separate editors for [passes](gui_recipe_revision.md),
+[preprocessing](gui_preprocessing_revision.md), and
+[ROI/scale](gui_recipe_geometry_revision.md). For a long run that needs restart,
+use [checkpoints](gui_checkpoints.md).
 
-```julia
-me = MaskEditor(load_image("frame_0001.tif"))
-mask_editor(me)                      # draw…
-mask = polygon_mask(me)              # image-sized Bool, true = excluded
+## Working with another kind of recording?
 
-me = MaskEditor(img; polygons = [[(120, 40), (480, 90), (450, 300)]])
-```
+For two cameras, start with [Calibrate a real stereo rig](stereo_rig.md), then
+use the [saved stereo workflow](gui_stereo_experiments.md). For repeated
+image pairs pooled into one measurement, use [saved ensembles](gui_ensemble_experiments.md).
+Particle and trajectory results open in the same explorer;
+[timed trajectories](gui_tracking_timing.md) explains their time and gap display.
 
-## Run a batch from the form
-
-```julia
-batch_runner()
-```
-
-"Add frames…" picks the image files, the menu chooses paired (`1-2, 3-4`)
-or chained (`1-2, 2-3`) pairing, the windows textbox takes a schedule like
-`64, 32, 32`, and "choose output…" sets an incremental JLD2 file (written
-pair by pair; read it with [`load_results`](@ref)). "Cancel" stops after
-the pair in flight and keeps every finished pair. "View results" activates
-as soon as the first pair completes: it opens the finished prefix in the
-result explorer and appends later pairs live, so you can inspect a long
-batch while it runs. In a scripted run, use `run_piv_sequence`'s `on_result`
-callback for the same stream of completed results.
-
-The *effort* menu switches between the manual schedule (`:custom`) and
-[`run_piv_sequence`](@ref)'s `:low` / `:medium` / `:high` presets — when a
-preset is active the manual schedule is ignored (the summary says so). The
-*physical scale* group (pixel size, dt, and unit labels) attaches a
-[`PhysicalScale`](@ref) to every output when any field is non-default, so the
-batch results carry units straight into the explorer. From code:
-
-```julia
-bc = BatchRunner(files = readdir("run42"; join = true))
-set_effort!(bc, :high)
-set_scale!(bc; pixel_size = 0.02, dt = 0.001, length_unit = "mm", time_unit = "s")
-```
-
-Set `pixel_size` from a target photographed with the same camera geometry;
-the number above is only an example. Use the exposure-pair delay for `dt`,
-which may differ from the interval between completed velocity fields.
-
-Instead of typing the pixel size, derive it from an image with the scale
-tool — click the two endpoints of a feature of known physical size (a
-ruler, or two dots of a calibration plate) and apply the result to the
-form:
-
-```julia
-st = ScaleTool("calibration_plate.tif")
-scale_tool(st; batch = bc)     # click two points, enter the separation…
-apply_scale!(bc, st)           # …or do the hand-off from code
-```
-
-"Preprocess…" opens a [`preprocess_preview`](@ref) on the first frame: an
-ordered, toggleable pipeline over the core preprocessing set (background
-subtraction, intensity cap, highpass, CLAHE, percentile stretch, inversion,
-local-variance normalization) with a live raw/processed comparison; "use in
-batch" installs it. From code, build the pipeline yourself:
-
-```julia
-pp = PreprocessPreview(first_frame; enabled = [:highpass_filter, :clahe])
-set_step_param!(pp, :highpass_filter, :sigma, 5)
-set_preprocess!(bc, pp)        # snapshot: later edits don't affect the run
-```
-
-The exported closure copies each frame before its in-place steps, so
-in-memory arrays are never mutated.
-
-Use "edit ROI…" in the batch form to limit planar analysis to a rectangle
-on the first frame. Click two opposite corners, or edit the inclusive first
-and last row/column bounds and press "set bounds". The outline follows pixel
-edges; clicks snap to pixels. "Apply to batch" copies the completed selection
-into the form. In the editor, "full image" resets the preview; apply it to
-reset the batch too. The batch form's own "full image" button resets the
-batch directly. A pending first corner must be completed before applying.
-From code:
-
-```julia
-using Hammerhead: ROI
-
-ed = ROIEditor(first_frame)
-roi_editor(ed; batch = bc)
-set_roi!(ed, 25, 120, 17, 112)       # rows 25:120, columns 17:112
-apply_roi!(bc, ed)
-set_roi!(bc, ROI(25:120, 17:112))    # equivalent direct batch setting
-clear_roi!(bc)                       # process the full image again
-```
-
-The selection uses the core [`ROI`](@ref) contract: positive, nonempty,
-inclusive integer ranges in the original image. Bounds are checked against
-the first frame before running and against each pair during processing.
-The ROI must fit every processing window; the form rejects selections smaller
-than a custom schedule before opening the output file. Effort presets adapt
-their window sizes to the selected ROI dimensions.
-Preprocessing receives full frames before the core crops them. A mask may
-match the full image or the ROI size; `true` still means excluded. Returned
-vector centers retain full-image pixel coordinates, and physical scaling
-uses those coordinates. An ROI change made during a batch takes effect on
-the next run.
-
-Give the preview the frame's correlation partner to probe a single
-interrogation window. Click the processed image, then toggle a step and
-compare displacement and peak ratio at the same location. Repeat in dim,
-bright, and high-gradient regions before applying the change to a batch:
-
-```julia
-pp = PreprocessPreview(frameA; pair = frameB)   # the batch pop-out does this
-set_probe_window!(pp, 48)
-preprocess_preview(pp)                         # click the processed image
-probe_summary(pp)                              # du, dv, and peak ratio at that click
-```
-
-Seed the form from code with a [`BatchRunner`](@ref) — every form field is
-an observable on the controller:
-
-```julia
-bc = BatchRunner(files = readdir("run42"; join = true), uncertainty = true)
-bc.output_path[] = "run_042.jld2"
-batch_runner(bc)
-```
-
-`start!(bc; async = false)` runs the same batch without the
-window at all.
-
-## Review a calibration
-
-[`calibration_review`](@ref) shows each plate image with its detected dots
-colored by reprojection error (fiducial markers outlined), a plane slider,
-and a camera-model menu that refits on switch. The keyword arguments are
-[`detect_calibration_grid`](@ref)'s:
-
-```julia
-calibration_review(plate_images, zs; spacing = 15.0, two_level = true,
-                   level_separation = 3.0, origin_offset = (30.0, 7.5))
-```
-
-Inspect residual patterns, detected indices, and marker positions on each
-plane before accepting the fit. For the 4E calibration example, see
-[Calibrate a real stereo rig](stereo_rig.md).
-
-After stereo self-calibration, [`selfcal_review`](@ref) browses the
-report; keep the disparity maps to inspect them pass by pass in an
-embedded explorer:
-
-```julia
-dw1c, dw2c, report = self_calibrate(frames1, frames2, dw1, dw2;
-                                    keep_disparity_maps = true)
-selfcal_review(report)
-```
-
-## Run a stereo batch
-
-[`stereo_calibration`](@ref) sets the rig up: both cameras'
-[`CalibrationReview`](@ref)s embedded side by side, the dewarp-grid options
-(coverage, spacing), and a "build dewarpers" button running
-[`build_dewarpers`](@ref) over the two fitted cameras:
-
-```julia
-target_options = (spacing = 15.0, two_level = true,
-                  level_separation = 3.0, origin_offset = (30.0, 7.5))
-cr1 = CalibrationReview(plates_cam1, zs; target_options...)
-cr2 = CalibrationReview(plates_cam2, zs; target_options...)
-sbc = StereoBatchRunner()
-stereo_calibration(cr1, cr2; batch = sbc)   # inspect fits, then build dewarpers
-set_dewarpers!(sbc, cr1, cr2)               # equivalent controller action
-```
-
-Dewarpers you built at the REPL (e.g. after [`self_calibrate`](@ref)) go
-straight in with `set_dewarpers!(sbc, dw1, dw2)`. Then
-[`stereo_batch_runner`](@ref) is the stereo form: each camera's frame list,
-the effort/schedule form, a dt-only physical scale (stereo results are
-already in world units), and incremental output —
-[`run_piv_stereo_sequence`](@ref) underneath. Cancellation uses the
-driver's native between-acquisition predicate, so the completed prefix
-always lands in `results`, and "view results" opens the
-[`StereoPIVResult`](@ref)s in the explorer live, exactly like the planar
-batch:
-
-```julia
-add_files!(sbc, cam1_paths; camera = 1)
-add_files!(sbc, cam2_paths; camera = 2)
-set_effort!(sbc, :medium)
-set_dt!(sbc, 0.001); sbc.time_unit[] = "s"; sbc.length_unit[] = "mm"
-stereo_batch_runner(sbc)     # or start!(sbc; async = false) headless
-```
-
-## Embed a view in your own figure
-
-[`result_explorer!`](@ref) builds the explorer into a `GridPosition`, for
-composing dashboards — it is the embeddable form the composite views use
-internally:
-
-```julia
-using GLMakie
-
-fig = Figure(size = (1400, 700))
-result_explorer!(fig[1, 1], ResultExplorer(results))
-ax = Axis(fig[1, 2])  # your own plots alongside
-```
-
-Because the view renders a controller, several views (or your own code)
-can share one `ResultExplorer` and stay in sync through its observables.
+The [GUI reference](../reference/gui.md) covers scripted controls and embedding
+views when you are ready to customize the workflow.

@@ -47,6 +47,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 `howto/`, `explanation/`, `reference/`, plus `index.md` and `references.md`
 (bibliography). Rules that keep the build green:
 
+- Organize the public site around reader tasks and a short learning path.
+  Tutorials lead with a concrete question, executable example and useful figure,
+  then explain the result and invite one change to try. Hide only rendering
+  machinery; all inputs needed to run visible example code must be introduced.
+  Do not turn implementation batches into new top-level navigation entries.
+  Keep detailed pages searchable and linked through the topic hubs in `make.jl`.
+  File-format versions, field schemas and edge-case contracts belong in API
+  reference; test inventories and framework evaluations belong in development
+  material. Page titles describe a reader's task, not an internal delivery slice.
 - Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
   them into `docs/src/tutorials/` (gitignored) with executable `@example`
   blocks, so the docs build runs them end to end — they are integration

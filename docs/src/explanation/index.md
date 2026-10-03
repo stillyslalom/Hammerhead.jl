@@ -1,0 +1,20 @@
+# Understand the measurements
+
+Use these explanations when a result raises a question. For a first practical
+walkthrough, begin with [a vector field](../tutorials/first_vector_field.md)
+and return here as you need the underlying ideas.
+
+| Question | Read |
+|:--|:--|
+| Why does a positive vertical vector point down? | [Coordinates, signs and units](conventions.md) |
+| How does a correlation peak measure displacement? | [Correlation and its sources of bias](correlation.md) |
+| Why use more than one pass? | [Image deformation and smaller windows](multipass.md) |
+| What happens inside an excluded region? | [How masks affect correlation and validation](masking.md) |
+| Why can a window produce no measurement? | [Windows without displacement information](noninformative_windows.md) |
+| What do the uncertainty estimates mean? | [Correlation uncertainty](uncertainty.md) |
+| How can two cameras recover three components? | [Stereo geometry and self-calibration](stereo.md) |
+| When should I use Float32 or Float64? | [Numerical precision](precision.md) |
+
+Looking for arguments or return values? Use the [API reference](../reference/index.md).
+Implementation choices and validation studies live in
+[development documentation](../development/index.md).

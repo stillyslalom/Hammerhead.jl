@@ -1,118 +1,100 @@
-# Summarize recorded ensemble execution
+```@meta
+CurrentModule = Hammerhead
+```
 
-Save the ensemble companion alongside its raw result, then summarize the
-completed native file with an explicit format-4 opt-in:
+# Check an ensemble result
 
-```julia
+A pooled vector field tells you the estimated displacement. A quality report
+also shows how much recorded processing contributed to it and which stored
+vectors are finite, masked or flagged.
+
+## Record and inspect a small pool
+
+Here two image pairs pass through two pooling passes. The left strip is masked.
+The requested iteration budget is deliberately larger than one so the output
+makes the ensemble's one-sweep-per-pass behavior visible.
+
+```@example ensemble_report
 using Hammerhead, Random
 
-A = rand(MersenneTwister(741), 48, 48)
-B = circshift(A, (1, 2))
+rng = MersenneTwister(742)
+pairs = [begin
+    a = rand(rng, Float32, 48, 48)
+    (a, circshift(a, (1, 2)))
+end for _ in 1:2]
 p = PIVParameters(window_size=16, overlap=8, padding=true,
-    max_iterations=8, convergence_tol=1e-3, uncertainty=true)
+    max_iterations=8, convergence_tol=1e-3, uod_enable=false)
+mask = falses(48, 48)
+mask[:, 1:16] .= true
 
-run_piv_ensemble([(A, B), (A, B)], [p, p];
-    threaded=false, progress=false,
-    output="ensemble-results.jld2", record_diagnostics=true)
-
-report = quality_report(ResultFile("ensemble-results.jld2");
-    include_ensemble_execution_diagnostics=true)
-display(report)
-save_quality_report("ensemble-quality.toml", report)
-section = quality_report_data(report)["ensemble_execution_diagnostics"]
+mktempdir() do directory
+    source = joinpath(directory, "pooled.jld2")
+    run_piv_ensemble(pairs, [p, p]; mask,
+        threaded=false, progress=false, output=source, record_diagnostics=true)
+    report = quality_report(ResultFile(source);
+        include_ensemble_execution_diagnostics=true)
+    saved = save_quality_report(joinpath(directory, "quality.toml"), report)
+    data = quality_report_data(load_quality_report(saved))
+    c = data["ensemble_execution_diagnostics"]["counts"]
+    @assert c["pair_observations"] == 2
+    @assert c["executed_pooling_sweeps"] == 2 && c["tolerance_checks"] == 0
+    (; pooled_results=data["groups"]["planar"]["counts"]["entries"],
+       input_pair_observations=c["pair_observations"],
+       pooling_sweeps=c["executed_pooling_sweeps"],
+       pair_contributions_across_passes=c["all_pass_pair_observations"],
+       tolerance_checks=c["tolerance_checks"],
+       masked_windows=c["all_pass_masked_window_pairs"],
+       accumulated_windows=c["all_pass_accumulated_window_pairs"])
+end
 ```
 
-The result file contains **one result per pool**, rather than one per contributing
-image pair. Each recorded pass performed one pooled sweep; requested iteration
-budgets and tolerance values were ignored. Repeated passes do not demonstrate
-convergence. The report leaves residual amplitudes in the individual packets,
-where their processing grid and pixel basis remain explicit.
+Expect **one result, two pooling sweeps, four pair contributions and zero
+convergence checks**. Masked windows did not contribute correlation planes.
+The requested eight iterations did not produce eight sweeps per pass.
 
-## Interpret coverage and contributions
+## Read the useful numbers
 
-Every planar entry is classified as a recorded ensemble, a recorded ordinary
-iteration workflow, or an entry without execution metadata. A missing ensemble
-packet cannot establish whether that entry was an ensemble at all. Consequently
-the reported ensemble fraction uses **all examined planar entries** as its
-denominator; it is not coverage of an independently known ensemble population.
+| Question | Look at |
+|:--|:--|
+| Are the stored vectors usable? | `groups["planar"]`: finite, masked and outlier counts |
+| Did a window contribute? | `all_pass_*_window_pairs`: masked, source-gated or accumulated |
+| How many pairs supported the final grid? | `final_zero/some/all_finite_nonzero_count` |
+| Was pooled uncertainty evaluated? | `final_uq_evaluated_entries` and the separate u/v availability fractions |
 
-All-pass window/pair opportunities partition into masked, original-source-gated
-and accumulated contributions. Accumulated numerical planes partition into
-finite zero, finite flat nonzero, finite nonflat and nonfinite planes. Source
-support observations use the original sampled 4×4 stencil convention described
-in [non-informative windows](../explanation/noninformative_windows.md).
-Finite nonzero includes flat nonzero planes; it does not certify a useful peak.
-Pair observations can repeat the same acquisition in different pools or passes;
-they are not counts of unique inputs or independent samples.
+Finite nonzero planes can still be flat or have an unhelpful peak. Counts of
+contributions do not establish independent sample size or uncertainty coverage.
+Residual and uncertainty observations stay in processing pixels, even when the
+stored field has a physical scale. Individual packets retain residual
+amplitudes; the report does not average them across different grids.
 
-Final-pass node populations distinguish zero, some and all finite nonzero
-contributions, nonfinite planes, masks, and finite/nonfinite primary peaks.
-These are node observations across recorded pools, not correspondence across
-different interrogation grids. The primary support precedes predictor addition
-and validation. Current stored output quality remains in the ordinary `groups`
-section; replacement or validation can change the final fields.
+## Choose the right report call
 
-Final pooled UQ counts cover only pools whose statistics were actually
-evaluated. The two component populations separately partition eligible nodes
-into finite nonnegative, finite negative and nonfinite values, before validation
-and availability cleanup. Disabled, intermediate or entirely masked cases do
-not invent evaluated estimates. Zero denominators remain unavailable. These
-counts are distinct from the stored output's UQ availability and do not establish
-estimator applicability, common displacement, effective sample size or coverage.
-Residual and UQ observations retain processing-pixel units even when a result
-has a physical scale.
-
-## Combine supported observations
-
-A completed native file can contain ensemble and ordinary planar/stereo entries.
-Request their separate sections explicitly:
+For a native result file:
 
 ```julia
-report = quality_report(ResultFile("mixed-results.jld2");
-    include_ensemble_execution_diagnostics=true,
-    include_execution_diagnostics=true,
-    include_measurement_history=true)
+report = quality_report(ResultFile("pooled.jld2");
+    include_ensemble_execution_diagnostics=true)
 ```
 
-The ordinary execution and history sections retain their existing denominators.
-An ensemble entry therefore lacks ordinary pair-iteration/history coverage;
-the format-4 classification explains that absence. Different entries may carry
-different companion families. An ensemble packet combined with ordinary
-iteration, stereo diagnostics or measurement history **on the same entry** is
-refused. Wrong-kind packets, unsupported root markers, malformed companion
-roots and orphan entries are refused across all four inspected families,
-including empty native files.
+For a saved recipe and completed run:
 
-The default report remains format 1, history opt-in remains format 2, and
-ordinary execution alone remains format 3 with its existing ensemble refusal.
-Format 4 requires a direct whole-file `ResultFile`; bare/physical result arrays,
-views, checkpoints and experiment-record association are unsupported for this
-opt-in. No replayable ensemble recipe association is inferred from planar or
-stereo experiment records.
-For a saved ensemble recipe and completed run, use the dedicated
-[ensemble experiment workflow](ensemble_experiments.md); its associated report
-uses format 5 while retaining these pooled-count definitions.
+```julia
+record = load_ensemble_experiment("ensemble-record.jld2")
+report = quality_report(record, last(record.runs); verify_inputs=true)
+```
 
-## Verification and memory
+The second call additionally verifies the saved run association; see
+[Save and replay an ensemble experiment](ensemble_experiments.md).
+Both inspect raw fields before summarizing. Reopening a saved TOML report
+validates past report data and does not recheck the native result file.
 
-Generation loads each raw native result once, checks any ensemble packet's
-measurement-field digest and independent grid/array/flag geometry against that
-payload, and retains fixed-count summaries. Binding excludes parameter objects,
-retained correlation planes and source bytes. The completed file is checked and
-hashed before/after reading. There is no concurrent-writer guarantee or claim
-about calibration, input authenticity or scientific assumptions.
-Before recording provenance or entry populations, the supplied index keys must
-exactly match the independently sorted native result keys. Omissions, duplicates
-and reordering are refused. The report uses a detached metadata snapshot for its
-scan; changing a caller-owned index vector cannot change that selected request.
+A missing packet means **no recorded execution evidence**. A bare planar result
+cannot tell you whether it was produced by an ensemble. In mixed native files,
+ensemble, ordinary execution and history sections can be requested separately;
+conflicting companion families on the same entry are refused.
 
-`load_quality_report` validates saved structure, count partitions and fractions.
-It describes checks **when the report was generated** and never freshly verifies
-the recorded source. Save guards protect known local source destinations. Metric
-storage is bounded independently of entry count; the native index and protected
-locator metadata retain O(entries) strings. One loaded result can include any
-saved correlation planes.
-
-The [GUI companion guide](gui_companions.md) describes raw verification before
-physical display and native-explorer report saving. See the
-[format-4 schema](../reference/ensemble_quality_reports.md) for exact fields.
+See [Reports for pooled results](../reference/ensemble_quality_reports.md)
+for populations, count partitions, file checks and supported inputs, or
+[Ensemble result reports](../reference/ensemble_experiment_quality.md)
+for saved-run association. The [GUI companion guide](gui_companions.md)
+shows inspection and report saving in the result explorer.

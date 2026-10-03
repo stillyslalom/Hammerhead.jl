@@ -1,26 +1,62 @@
-# Save, replay and inspect a planar ensemble experiment
+```@meta
+CurrentModule = Hammerhead
+```
 
-Use a saved ensemble experiment to retain the exact ordered image pairs,
-processing schedule, preprocessing, mask and physical scale used for one pooled
-field. Ensemble processing sums correlation planes before finding the vector
-field; it does not produce one independent measurement per pair. Choose and
-assess the recording interval separately: saved provenance does not demonstrate
-stationarity or a common displacement.
+# Save and replay an ensemble experiment
 
-The first format supports file-based planar ensembles, CPU/KA, Float32/Float64,
-explicit passes, embedded built-in preprocessing and a full-image static mask.
-It refuses ROI, custom preprocessing scripts, independent uncertainty backends
-and vendor devices. Existing planar/stereo experiment formats remain unchanged.
-Input bytes, settings and order define identities; path locations are provenance.
+Save the ordered image pairs and processing settings together so you can
+recreate a pooled field and check which inputs produced it.
 
-## Capture complete processing settings
+## Save, reopen, run
 
-```julia
+This example uses the committed PIV Challenge A pair. It exercises the saved
+workflow with one pair; it does not demonstrate the benefit of averaging.
+All output files live in a temporary directory.
+
+```@example saved_ensemble
 using Hammerhead
 
-files = sort(readdir("recording"; join=true))
+mktempdir() do directory
+    images = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")
+    pairs = [(joinpath(images, "A001_1.tif"), joinpath(images, "A001_2.tif"))]
+    passes = PIVParameters(window_size=64, overlap=32, padding=true,
+        uod_enable=false, validation=(), replace_outliers=false)
+    recipe = EnsemblePIVRecipe(passes; threaded=false)
+    record = EnsembleExperimentRecord(pairs, recipe)
+
+    record_path = joinpath(directory, "experiment.jld2")
+    save_experiment(record_path, record)
+    reopened = load_ensemble_experiment(record_path)
+    run = replay_experiment(reopened;
+        output=joinpath(directory, "pooled.jld2"), run_record=record_path,
+        record_diagnostics=true)
+
+    report = quality_report(reopened, run; verify_inputs=true)
+    report_path = save_quality_report(joinpath(directory, "quality.toml"), report)
+    data = quality_report_data(load_quality_report(report_path))
+    p = data["provenance"]
+    @assert run.status == :completed && p["published_results"] == 1
+    (; status=run.status, input_pairs=p["input_pairs"],
+       pooling_passes=p["scheduled_passes"],
+       pair_contributions=p["completed_contributions"],
+       pooled_results=p["published_results"])
+end
+```
+
+The result is a completed run with **one input pair, one contribution and one
+pooled result**. With four pairs and two passes, there would be eight pair
+contributions but still one result. Contributions count processing work,
+including masked or skipped windows, not independent measurements.
+
+## Capture your own settings
+
+Use only image files, ordered by acquisition, and include the complete schedule:
+
+```julia
+files = sort(filter(f -> endswith(lowercase(f), ".tif"),
+                    readdir("recording"; join=true)))
 pairs = image_pairs(files; mode=:paired)
-passes = multipass_parameters([64, 32, 16]; padding=true,
+passes = multipass_parameters([64, 32, 16, 16]; padding=true,
     final=(uncertainty=true,))
 recipe = EnsemblePIVRecipe(passes;
     preprocessing=[PreprocessStep(:highpass_filter; sigma=3)],
@@ -29,114 +65,54 @@ record = EnsembleExperimentRecord(pairs, recipe)
 save_experiment("ensemble-record.jld2", record)
 ```
 
-Keep the full pass schedule. Requested iteration budgets and convergence
-tolerances remain part of the settings even though the ensemble driver executes
-one pooled sweep per pass and ignores those iteration controls. Resolve effort
-presets using their ensemble semantics before constructing an explicit recipe;
-do not substitute the ordinary sequence preset.
+Saved recipes support CPU/KA with Float32/Float64, built-in preprocessing,
+embedded backgrounds, a full-image static mask and an optional physical scale.
+ROI, custom scripts and vendor-device recipes are not supported here.
+The direct [ensemble driver](ensemble.md) supports a broader set of workflows.
 
-## Replay and observe progress
+## Monitor or cancel a replay
 
 ```julia
 record = load_ensemble_experiment("ensemble-record.jld2")
 run = replay_experiment(record;
     output="ensemble-results.jld2", run_record="ensemble-record.jld2",
+    progress=event -> println(event.completed_contributions, "/",
+                              event.total_contributions),
+    cancel_requested=() -> false,
     record_diagnostics=true)
 ```
 
-Replay validates settings, all input identities, environment and destinations
-before producing output. The output may replace an existing destination after
-successful staged processing, but may not alias an input or protected record.
-Computation failure or cancellation leaves a pre-existing destination untouched;
-this does not promise preservation through every publication or filesystem error.
-Replacing a historical result invalidates that older run's saved output hash.
-`allow_environment_change=true` explicitly
-permits a different execution environment and records the actual environment;
-it does not promise identical numerical output across environments.
+Progress follows each joined pair computation. Even the last progress event
+precedes peak analysis and publication. Cancellation is checked between pairs
+and before publication; a cancelled run has no published pool. Replaying starts
+from the beginning, rather than resuming an accumulator.
 
-Progress describes completed pair accumulation work across all passes, including
-masked or source-gated contributions. It is not result persistence, informative
-sample count or effective sample size. Cooperative cancellation is checked
-between joined pair computations and before result publication; current
-computation/preflight/I/O can pause the caller or GUI. A cancelled attempt has no
-published pooled result. Callback or processing failures retain their original
-exception and attempt to save failed-run metadata when a run-record destination
-was supplied. Secondary history-save failures are logged.
-This workflow reruns from the beginning and does not resume partial accumulators.
+Processing failure or cancellation preserves a previous output destination.
+Successful replay may replace it, so choose a new output name to keep older
+runs verifiable. Input and record aliases are refused. If the environment has
+changed, replay requires an explicit `allow_environment_change=true`.
 
-Native output and optional run history are separate publications. If history
-saving fails after an otherwise completed or cancelled replay,
-`EnsembleRunRecordError` carries the accurate terminal metadata in `error.run`
-and the writing exception in `error.cause`. A completed native result remains
-completed even if its history could not be saved. Ordinary processing failures
-retain their original exception instead of this wrapper. Save or inspect the
-carried run explicitly; do not relabel it as failed processing.
-
-## Verify and report the completed output
+## Check the saved output
 
 ```julia
 verify_ensemble_experiment_run(record, run; verify_results=true)
 report = quality_report(record, run; verify_inputs=true)
-save_quality_report("ensemble-quality.toml", report)
 display(report)
+save_quality_report("ensemble-quality.toml", report)
 ```
 
-The new associated overload emits [report format 5](../reference/ensemble_experiment_quality.md).
-It verifies the native output hash, exact one-result mapping, recipe grid/mask/
-scale, raw measurement association and requested execution packet before and
-after aggregation. The report retains separate ordered input-pair, processed
-contribution and published-result counts. Stored uncertainty availability is
-finite/nonnegative array availability, not estimator applicability or coverage.
+The check binds the completed output to the saved settings, ordered inputs and
+run. The report adds stored-field counts and, when recorded, contribution
+observations. See [Checking an ensemble result](ensemble_quality_reports.md)
+for interpretation. Neither check establishes stationarity or accuracy.
 
-Use `include_ensemble_execution_diagnostics=false` for a stored-field-only
-format-5 report. Run association and requested-companion verification still
-occur; omitting the display section does not skip integrity checks. Failed or
-cancelled runs cannot be reported as completed pooled results.
+For a moved native result, supply `output="local/moved.jld2"` to the verifier
+or report call. Loading a saved report checks its contents, not the current
+result file. Input files are rechecked only with `verify_inputs=true` during
+inspection, and always before replay.
 
-```julia
-reopened = load_quality_report("ensemble-quality.toml")
-data = quality_report_data(reopened)
-@assert data["provenance"]["published_results"] == 1
-```
-
-Loading a saved report validates historical metadata; it does not freshly verify
-the source. To locate a moved native file, pass `output="local/moved.jld2"` to
-the verifier/report overload. Replay uses the recorded input locators; moved
-images require capturing a new record with their local paths. Unchanged ordered
-input bytes and settings can retain their scientific identities, but the new
-record has a different full creation-record binding. Known local dependency paths are protected on report
-saves; add hidden dependencies through `protected_paths` if needed.
-
-## Run a complete local example
-
-This executable example uses the committed Challenge A pair only to exercise
-save/reopen/replay/report. One pair is not ensemble averaging evidence or a
-stationarity test.
-
-```@example saved_ensemble
-using Hammerhead
-
-mktempdir() do directory
-    root = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")
-    pairs = [(joinpath(root, "A001_1.tif"), joinpath(root, "A001_2.tif"))]
-    parameters = PIVParameters(window_size=64, overlap=32, padding=true,
-        uod_enable=false, validation=(), replace_outliers=false)
-    record = EnsembleExperimentRecord(pairs,
-        EnsemblePIVRecipe(parameters; threaded=false))
-    record_path = joinpath(directory, "experiment.jld2")
-    save_experiment(record_path, record)
-    reopened = load_ensemble_experiment(record_path)
-    run = replay_experiment(reopened;
-        output=joinpath(directory, "pooled.jld2"), run_record=record_path,
-        record_diagnostics=true)
-    report = quality_report(reopened, run; verify_inputs=true)
-    report_path = joinpath(directory, "quality.toml")
-    save_quality_report(report_path, report)
-    data = quality_report_data(load_quality_report(report_path))
-    @assert data["provenance"]["published_results"] == 1
-    @assert data["provenance"]["input_pairs"] == 1
-    (; report_format=data["quality_report_format_version"],
-       input_pairs=data["provenance"]["input_pairs"],
-       published_results=data["provenance"]["published_results"])
-end
-```
+Output and run history are saved separately. If history saving fails after a
+completed or cancelled attempt, `EnsembleRunRecordError.run` retains its true
+status and `.cause` explains the write failure. See the
+[saved-ensemble reference](../reference/ensemble_experiments.md) for failure,
+publication and exact verification rules.

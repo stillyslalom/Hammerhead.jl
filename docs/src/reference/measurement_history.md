@@ -1,4 +1,4 @@
-# Planar measurement-history companions
+# Recorded vector history
 
 Native result format 1 and the existing result structs remain unchanged. The
 optional `measurement_history_format_version=1` declares a sibling group

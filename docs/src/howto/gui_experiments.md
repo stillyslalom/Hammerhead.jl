@@ -1,171 +1,87 @@
-```@meta
-CurrentModule = HammerheadGUI
-```
+# Save your settings and run them again
 
-# Save and reopen experiments in the GUI
+Once a representative pair looks useful, save its recipe before processing
+the rest of the recording. A **results file** holds the measured vectors; an
+**experiment file** holds the input pairs and settings for another run.
 
-**Goal:** save supported planar batch settings, reopen the complete recipe,
-replay it, and browse its completed results without rebuilding the settings.
-The saved-experiment workflow uses the core version-1 format described in
-[Save and replay a planar experiment](experiments.md).
+Start from the batch form used in [Your first PIV session in the GUI](../tutorials/gui_tour.md).
+The saved-experiment workflow opens in a **separate window**.
 
-Open the batch form's **saved experiments…** button, or create the workflow
-directly:
+![The saved-experiment window from the GUI tutorial.](../assets/gui/saved-experiment.png)
 
-```julia
-using HammerheadGUI
+## Save the working setup
 
-batch = BatchRunner()
-display(experiment_workflow(; batch))
-```
+1. Click **saved experiments…** in the batch window.
+2. In **Files**, choose **snapshot batch**, then **save experiment…**.
+3. Give the experiment a useful name, such as `vortex-medium.jld2`.
 
-Use the **Files**, **Replay**, and **Reports** control sections to choose an
-action. Switching sections preserves the opened recipe, environment choice and
-report toggles. Cancel, written-pair progress and a compact status preview stay
-visible in every section. The standalone layout supports 900×600 and larger
-windows; its text pages reflow when resized. Full paths, errors and identities
-remain available through **previous**/**next**, even when their control previews
-are shortened.
+The snapshot keeps the ordered file pairs, passes, preprocessing, mask, ROI,
+and scale. It uses the effective preset schedule, so **medium** is saved as
+explicit passes. Use the recipe pages to check the setup before saving.
+The record format needs image files; an array-only batch must first be saved
+as images. Saving a snapshot does not attach earlier batch results as run history.
 
-You can open a saved experiment even when the batch has no files. **Snapshot
-batch** captures the current file pairs, exact effective pass schedule,
-built-in preprocessing, original full-image mask, ROI, and scale. **Save
-experiment…** writes that intact record. Effort presets are expanded using
-the full image or ROI dimensions; pairs that need different preset schedules
-are refused. In-memory images are outside the file-based record format.
+## Run the saved recipe
 
-Preprocessing attached with `set_preprocess!(batch, preview)` retains an ordered
-built-in recipe and a copied background alongside its processing function.
-Later preview edits do not alter that snapshot. The existing batch workflow
-uses CPU/Float64 and the current core thread default; those effective settings
-are saved explicitly. An arbitrary function cannot be inferred from a closure
-and requires an explicit script reference through the controller API.
+1. Use **open experiment…** to reopen the record.
+2. In **Files**, choose a new result output. Choose a run record if needed;
+   an opened experiment is normally where its run history is appended.
+3. Switch to **Replay** and press **replay exact recipe**.
+4. When it finishes, use **view completed results** to inspect the field.
 
-## Replay an intact record
+Keep distinct result outputs if you want earlier runs to remain inspectable.
+**cancel after current pair** waits for the current pair to finish writing;
+a cancel request at the final write can still mean completion. Ordinary replay
+starts from the beginning. For restart between committed pairs, open the
+separate [checkpoint workflow](gui_checkpoints.md).
 
-**Open experiment…** loads the full recipe into a separate read-only workflow.
-The recipe pages show every pass field and preprocessing option, and the
-history pages show recorded run identities, statuses, outputs and failures.
-Use **previous**/**next** to inspect long recipes. Embedded backgrounds/masks
-are summarized by shape/type or excluded-pixel count; their full values remain
-in the saved record. Opening does not project settings onto the narrower batch
-or preprocessing forms, so nondefault fields and repeated operations survive.
+### Try it on a small recording
 
-To change the ordered pass schedule, use the separate
-[saved-recipe revision editor](gui_recipe_revision.md). It preserves other
-imported settings and saves a new record with empty run history after verifying
-the original inputs. The source recipe and its prior runs remain separate.
-
-Choose a new result output and a run-record destination in **Files**, then use
-**replay exact recipe** in **Replay**. An opened record is the default destination
-for appended run history.
-The status reports busy, cancellation requested, cancelled, completed or failed.
-Written-pair progress updates after each pair's native writes. **Cancel after
-current pair** waits for a written-pair boundary and loading/output/history
-cleanup; cancellation after the final write means completion. Replay starts
-from pair 1 and does not resume a partial output. See [monitor and cancel
-replay](gui_experiment_replay.md) for failure-history semantics. Custom scripts
-are never loaded or evaluated automatically. The GUI remains a cooperative
-Julia task; preflight and CPU/I/O work can delay rendering.
-
-This executable controller example uses committed image fixtures without
-opening a window:
+This example uses a committed image pair, saves the settings, and replays them
+without opening desktop windows. The same actions are available through the
+buttons above.
 
 ```@example gui_experiments
 using HammerheadGUI
 using Hammerhead
 
 directory = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")
-files = sort(filter(path -> endswith(lowercase(path), ".tif"),
-                    readdir(directory; join=true)))
-batch = BatchRunner(files=files[1:2], window_schedule=[32, 16],
-                    roi=ROI(1:64, 1:64), pixel_size=0.02, dt=0.001,
+files = sort(filter(p -> endswith(lowercase(p), ".tif"), readdir(directory; join=true)))
+batch = BatchRunner(files=files[1:2], window_schedule=[32,16],
+                    roi=ROI(1:64,1:64), pixel_size=0.02, dt=0.001,
                     length_unit="mm", time_unit="s")
-preview = PreprocessPreview(files[1]; enabled=[:invert_image])
-set_preprocess!(batch, preview)
 
 mktempdir() do work
     path = joinpath(work, "experiment.jld2")
     save_batch_experiment(path, batch)
-    controller = ExperimentController(path)
-    controller.output_path[] = joinpath(work, "vectors.jld2")
-    start!(controller; async=false)
-    explorer = experiment_results(controller)
-    report_path = joinpath(work, "quality.toml")
-    save_experiment_quality_report(report_path, controller)
-    (state=controller.state[], pairs=nframes(explorer),
-     saved_runs=length(controller.record[].runs),
-     quality_report_saved=isfile(report_path))
+    saved = ExperimentController(path)
+    saved.output_path[] = joinpath(work, "vectors.jld2")
+    start!(saved; async=false)
+    (status=saved.state[], result_frames=nframes(experiment_results(saved)),
+     recorded_runs=length(saved.record[].runs))
 end
 ```
 
-**View completed results** checks the recorded result-file content hash and
-opens a lazy `ResultExplorer`. It retains one display result plus key metadata,
-rather than collecting the whole sequence. Reused or overwritten output is
-refused because it no longer represents that recorded run. Keep result files
-unchanged while browsing and use distinct outputs to retain earlier runs.
+## Make a variation without losing the original
 
-In **Reports**, **Save quality report…** verifies the completed run and saves the same TOML
-report available to scripts through `quality_report`. Its readable summary
-appears in the **quality report** pages. The report scans one result at a time
-and records explicit denominators for mask, current-flag, finite-vector, and
-stored-uncertainty availability fractions. A flagged finite value is not evidence
-of replacement, and finite uncertainty is not an accuracy or coverage claim.
-Unavailable measurement history and sensitivity metrics are identified explicitly.
-See [saved run-quality reports](run_quality.md) for the complete contract.
-The controller equivalents are `experiment_quality_report(controller)` and
-`save_experiment_quality_report(path, controller)`; saving protects the experiment
-record and known input/result paths. The scan is synchronous and can delay the UI
-on large recordings. Opening another experiment or running again clears the
-displayed summary.
+Use **revise pass schedule…**, **revise preprocessing…**, or **revise ROI / scale…**
+to open a dedicated editor. Validate the changes, save a **distinct revision**,
+then open that revision for replay. The source recipe and its history stay separate.
 
-Unchecked report toggles preserve the stored-field format-1 default. **Include
-recorded history in report** selects format 2; **include recorded execution in
-report** selects format 3, optionally with history. Missing entries remain
-explicit. A report's checks describe generation time; its displayed summary
-names the reported run, recipe and inputs. Failed scans/saves keep the prior
-summary with that identity. See [recorded processing details](gui_companions.md)
-for camera residual units and the separation from per-node history.
+For a worked task, choose [pass settings](gui_recipe_revision.md),
+[ordered preprocessing and image previews](gui_preprocessing_revision.md), or
+[ROI and physical scale](gui_recipe_geometry_revision.md).
+[Compare saved recipes](gui_comparison.md) when you want to inspect the difference.
 
-## Handle refusals and custom processing
+## Check a completed run
 
-**Checkpoint / resume…** opens the [checkpoint workflow](gui_checkpoints.md).
-It takes a copy of the complete current recipe for creating a resumable store,
-or opens an existing store. This separate path supports built-in preprocessing,
-strict software identity, progress and cancellation between committed pairs.
-Ordinary replay output is not adopted as a checkpoint.
+In **Reports**, **save quality report…** writes a report and shows its summary.
+The report states which vectors were available, masked, or flagged; uncertainty
+availability alone does not establish accuracy. See [saved run-quality reports](run_quality.md)
+for interpreting those counts.
 
-Changed inputs/scripts, incompatible software, malformed recipes, and output
-aliases are rejected before result output is opened. A preflight failure
-preserves existing destinations. Processing failures can leave a completed
-native prefix and, when a run-record destination is supplied, failed-run
-history. The results and history files are not an atomic transaction; version 1
-does not resume from that prefix.
-
-The **allow environment changes** toggle explicitly permits another software
-environment. It starts off and resets when opening another record. Each run
-records its actual environment separately from recipe creation; matching or
-overridden metadata is not a cross-hardware bitwise reproducibility guarantee.
-
-For a custom preprocessor, establish its implementation yourself and reference
-the reviewed script before saving:
-
-```julia
-using Hammerhead: ScriptReference
-
-reference = ScriptReference("prepare.jl"; entrypoint="prepare_image(image)")
-set_preprocess!(batch, prepare_image)
-save_batch_experiment("custom-experiment.jld2", batch; script_reference=reference)
-
-controller = ExperimentController("custom-experiment.jld2")
-controller.custom_preprocess[] = prepare_image
-controller.output_path[] = "custom-vectors.jld2"
-start!(controller)
-```
-
-The supplied function must correspond to the referenced bytes, preserve the
-saved precision/full-image dimensions, and return finite values. External
-callback state remains the caller's responsibility. The graphical snapshot
-button refuses an unreferenced callback instead of saving an incomplete recipe.
-Stereo calibration, PTV/tracking, GPU recipes, acquisition timing, and complete
-recipe editing remain outside this saved-planar-recipe workflow.
+If replay refuses changed inputs or another software environment, check the
+message before enabling **allow environment changes**. Referenced custom scripts
+are never executed automatically. [Replay and cancellation](gui_experiment_replay.md)
+covers failures and partial outputs; the [experiment workflow reference](../reference/gui_experiments.md)
+covers full settings, verification, and custom callbacks.
