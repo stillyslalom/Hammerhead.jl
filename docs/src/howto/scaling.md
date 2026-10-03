@@ -177,10 +177,8 @@ for row `k` of `A` is `hypot(A[k,1] * σu, A[k,2] * σv) / dt`. Output axes can
 still have correlated errors. The default `uncertainty_assumption = :unknown`
 instead exports `NaN` for uncertainty when a component mixes both input axes,
 because the result does not retain their covariance. A pure axis permutation,
-reflection, or diagonal scale needs no covariance assumption. These estimates
-include neither calibration nor timing error. Save the transform and chosen
-assumption with your processing recipe; they are not stored in the table or
-VTK file.
+reflection, or diagonal scale needs no covariance assumption. Keep the transform and the chosen assumption with your analysis
+notes; the table and VTK file do not store them.
 
 Transform export accepts planar PIV grids with no attached `PhysicalScale`.
 For a **raw, unconverted** result that already carries scale metadata, reuse
@@ -195,14 +193,10 @@ export_table("calibrated.csv", with_scale(result, nothing);
 
 The affine calibration supplies the spatial scale. Removing metadata does not
 undo `physical(result)`, so start from the raw pixel result. Already converted
-results and attached-scale combinations are rejected. Stereo grids, PTV, and
-tracking results do not accept this export keyword. Raw PTV and trajectories
-instead use [calibrated scattered tables](calibrated_scattered_export.md), whose
-separate CSV/TOML contract retains the transform and unit provenance.
+results and attached-scale combinations are rejected. The `transform` keyword applies
+to planar PIV grids only.
 
 To combine a planar PIV field with an image from another camera, use the
 [calibrated PIV/PLIF resampling workflow](calibrated_resampling.md). It fits
 both cameras to common physical coordinates and samples onto explicit target
-axes, retaining separate contributor and availability diagnostics. This adds
-interpolation to coordinate conversion; uncertainty and interrogation-window
-support do not transfer automatically to the new grid.
+axes, retaining separate contributor and availability diagnostics.

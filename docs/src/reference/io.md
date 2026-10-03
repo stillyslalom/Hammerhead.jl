@@ -16,8 +16,8 @@ between successive pairs serve different purposes; see the
 For a completed native file, `ResultFile(path)` or `load_results(path; lazy=true)`
 indexes the available result keys and loads an entry only when accessed, such
 as `results[3]`. Construction retains O(N) key metadata without caching payloads
-or keeping a file handle open. This is a snapshot of a completed file's entries,
-not a live reader for a batch that is still writing.
+or keeping a file handle open. Open the index after the batch has finished
+writing; it describes the entries present at that time.
 
 [`export_table`](@ref) writes planar, stereo, PTV, and tracking results as UTF-8
 CSV. Readers should select columns by name from `TABLE_COLUMNS` and check
@@ -58,16 +58,9 @@ and pass its exposure delay explicitly; removing metadata from `physical(raw)`
 does **not** recover pixels. The `transform` keyword on these writers rejects
 stereo, PTV and tracking results. Invalid transform factors, unit/time options, or
 unsupported combinations are rejected before replacing the destination.
-Without a transform, the existing schema and physical export behavior are
-unchanged. Neither export format stores the affine map or the chosen covariance
-assumption; retain those in the processing recipe. See
+Keep the affine map and the covariance assumption with your analysis notes;
+neither export format stores them. See
 [Scale results to physical units](@ref) for an executable example.
-
-For raw PTV and trajectory payloads, use the separate
-[`export_calibrated_table`](@ref) API. It writes a CSV and a versioned TOML
-companion retaining the affine map, coordinate conventions, unit assumptions,
-diagnostic availability and CSV content identity, including for empty tables.
-See [calibrated scattered exports](../howto/calibrated_scattered_export.md).
 
 For a `TrackingResult`, the original table columns retain their meanings:
 `x`/`y` are observed positions, `u`/`v` are derived velocities, `point_id`
@@ -88,10 +81,8 @@ columns are empty for planar, stereo, and PTV rows.
 | `velocity_valid` | `true` exactly when the current position and both derived components are finite; always `false` for a singleton. |
 | `time_provenance` | `frame_index` for elapsed frame intervals, or `physical_scale` for elapsed time derived from the attached scale. |
 
-Elapsed time is derived, not an absolute acquisition timestamp. With a scale,
-`dt` must represent a uniform interval between the input frames, including any
-subsampling; irregular timestamp information is not available in a
-`TrackingResult`. An unscaled result exports positions in `px`, time in `frame`,
+Elapsed time is derived from frame indices. With a scale, `dt` must be the
+uniform interval between the input frames, including any subsampling. An unscaled result exports positions in `px`, time in `frame`,
 and velocities in `px/frame`. A scaled result converts positions once via
 [`physical`](@ref), derives velocities via [`trajectory_velocities`](@ref)
 using the retained interval, and exports the scale's unit labels. Already
@@ -103,12 +94,11 @@ so gaps are accounted for.
 Only observations are written. Empty trajectories emit no rows and retain
 their slots in trajectory numbering; singleton trajectories emit one row with
 empty `u`/`v`. A result without observations emits only the header. Nonfinite
-observations are retained with validity flags. Validity flags check numerical
-finiteness, not identity or tracking quality. Malformed trajectory arrays,
+observations are retained with validity flags. Malformed trajectory arrays,
 non-increasing/out-of-range frames, inconsistent `start_frame`, and negative
-frame counts are rejected before the destination file is replaced. Tables do
-not preserve empty tracks, the input frame count, or parameters; use
-[`save_results`](@ref) for a lossless round-trip.
+frame counts are rejected before the destination file is replaced. Use
+[`save_results`](@ref) for a lossless round-trip that also keeps empty tracks,
+the input frame count and parameters.
 
 ```julia
 tracks = TrackingResult([

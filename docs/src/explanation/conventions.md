@@ -49,22 +49,13 @@ converted result carries an identity scale with the same unit labels, so
 `physical` is idempotent and plots label their axes correctly either way.
 See the [scaling how-to](../howto/scaling.md).
 
-Temporal spectra need a separate **sampling interval**: pass `dt` or the
-actual `sample_times` explicitly to [`result_spectrum`](@ref).
-`PhysicalScale.dt` describes the delay between
+Temporal spectra need a separate **sampling interval**: pass `dt` explicitly
+to [`result_spectrum`](@ref). `PhysicalScale.dt` describes the delay between
 the two images used to measure a displacement, which need not equal the time
 between successive velocity samples. For example, frames acquired every
 0.01 s and grouped as `(1, 2), (3, 4), …` produce velocity samples every
 0.02 s. Use that 0.02 s sampling interval for spectra, whether the results
 are raw or converted with `physical`.
-
-Supplied times must agree with a regular grid, including both adjacent intervals
-and accumulated drift from that grid. The default tolerance is zero; explicit
-positive tolerances permit approximately uniform sampling without resampling.
-Bounds scale with the sample period, not an absolute clock epoch. Result spectra
-also require compatible grids, array shapes and attached scale factors/labels.
-Convert raw fields explicitly before combining variable image-pair delays.
-See [sampling-time validation](../howto/spectrum_timing.md).
 
 ## World coordinates (stereo)
 
@@ -101,26 +92,6 @@ a [`PhysicalScale`](@ref) and call [`physical`](@ref) to convert its results.
 A [`TrackingResult`](@ref) stores positions, with velocities calculated from
 successive positions. Its converted scale retains `dt`; pass that scale to
 [`trajectory_velocities`](@ref) to obtain physical velocities.
-
-With explicit `sample_times`, [`track_particles`](@ref) returns a
-[`TimedTrackingResult`](@ref). Prediction and validation then use actual elapsed
-intervals. Its velocity method applies spatial `pixel_size` and divides by
-recorded time differences; `PhysicalScale.dt` does not divide these values again.
-Endpoint velocities span adjacent observations; interior velocities span the
-two outer observations. On irregular samples, those secants are interval-average
-slopes, not instantaneous derivatives at the central observation. See
-[actual-time tracking](../howto/tracking_timing.md) for units and persistence.
-
-[`tracking_speed_summary`](@ref) takes the arithmetic mean of the magnitudes of
-these observation-associated secants. This is neither an elapsed-time-weighted
-speed nor total path length divided by elapsed time. A trajectory with unavailable
-positions or secants has an unavailable summary; samples are not silently dropped.
-
-[Calibrated scattered tables](../howto/calibrated_scattered_export.md) apply
-`A * p + b` to positions and `A * d` to displacement/velocity components. Original
-pixel-space outlier decisions remain unchanged. A scalar match residual lacks
-the direction needed for an anisotropic transform, so its calibrated value is
-unavailable and its original pixel value is retained separately.
 
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This
@@ -159,8 +130,7 @@ alias for `included`, so it also uses `true` for included windows.
 for usable target samples, while `masked_support=true` reports an excluded
 source contributor. Their separate arrays keep the `(length(y), length(x))`
 layout on explicit target axes. Every positive-weight contributor must be
-usable; exact nodes and edges ignore zero-weight neighbors. Sampled values
-do not acquire the original measurements' uncertainty or spatial support.
+usable; exact nodes and edges ignore zero-weight neighbors.
 
 For area-form [`circulation`](@ref), a masked or nonfinite cell can leave part
 of the requested region uncovered. The default call raises an error in that

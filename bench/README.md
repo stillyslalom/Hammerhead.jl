@@ -1,44 +1,12 @@
 # Hammerhead.jl benchmarks
 
-Performance benchmarks for regression checking. From the package root:
+Performance benchmarks for regression checking. The synthetic accuracy,
+uncertainty-coverage, spatial-response and PTV/tracking studies were removed;
+their findings are summarized in
+[`docs/src/explanation/validation_results.md`](../docs/src/explanation/validation_results.md),
+and the scripts can be recovered from git history at commit `88a4bda`.
 
-For the quantitative validation baseline, including dataset hashes, full
-recipes, synthetic bias/RMS, valid yield, and warmed CPU-call timing, run:
-
-```bash
-julia --project=. -t 4 bench/validation_scorecard.jl
-```
-
-Add `--expanded --samples=5` for the small density/diameter/noise/shear/dropout
-sweep and a final-window comparison. Reports are written to the gitignored
-`bench/profile-output/validation-scorecard/`. Synthetic truth, real A/4E smoke
-checks, and unavailable known-motion experiments are distinguished explicitly.
-Reported Julia allocation totals are **not peak memory**. See the
-[scorecard guide](../docs/src/howto/validation_scorecard.md) for input identities,
-reference conventions, timing scope, and unsupported claims.
-
-The uncertainty investigations use separate, bounded commands rather than timing
-samples: [coverage](../docs/src/howto/validation_uncertainty.md),
-[retained-window diagnostics](../docs/src/howto/diagnostic_uncertainty.md),
-[conditional noise](../docs/src/howto/conditional_uncertainty.md),
-[rendering/interpolation](../docs/src/howto/rendering_uncertainty.md), and
-[spatial response](../docs/src/howto/spatial_transfer.md). Their guides
-state the populations and limits of each comparison; none changes production
-estimator defaults.
-
-For annotated PTV correspondence and trajectory evaluation, run the separate
-[PTV/tracking scorecard](../docs/src/howto/validation_ptv_tracking.md):
-
-```bash
-julia --project=. --threads=1 bench/validation_ptv_tracking.jl --output=bench/profile-output/ptv-tracking-run1
-```
-
-Its eight controlled clips retain detection losses, identity ambiguity,
-fragmentation and gap recovery denominators. Output must use a fresh directory.
-The annotated-input importer does not imply that independent or real recordings
-have been validated; the guide states that remaining evidence gap explicitly.
-
-For the performance-only suite:
+From the package root, run the performance suite:
 
 ```bash
 julia --project=. --threads=auto bench/run_benchmarks.jl
@@ -75,13 +43,6 @@ or thermal effects; inspect the affected workloads and their variability.
 
 ## GPU backends
 
-For independently generated VSJ301 PTV/tracking evidence, use the private cache
-acquisition and fixed eight-frame command in
-[`validation_vsj301.md`](../docs/src/howto/validation_vsj301.md). Sparse missing
-annotations stay unknown; three predeclared origin hypotheses score identical
-production outputs. This does not establish real-recording or visibility-complete
-validation.
-
 `bench/gpu_validate.jl` checks a device backend against the CPU reference
 (single-pass, multipass, masked, ensemble, and uncertainty paths) and
 `bench/gpu_benchmarks.jl` times it (see
@@ -90,17 +51,12 @@ ARGS[1]; the benchmark optionally takes `exclusion` or `regionalmax` as
 ARGS[2], defaulting to the package's `regionalmax`). Record the device,
 driver, package versions, CPU thread count, image size, numeric type, and
 peak-finding mode with the results. CPU agreement checks implementation
-consistency; it does not measure error against the true particle displacement.
+consistency between backends.
 
 `bench/gpu_profile_uq.jl <backend>` (CUDA only; it uses `CUDA.@profile`)
 prints the per-kernel device-time breakdown of a UQ-enabled multipass run.
 Use it to identify which kernels dominate on your device. Device kernel time
 does not include the full cost of file loading, preprocessing, or transfers.
-
-The user-facing setup, support matrix, memory sizing, and troubleshooting
-guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
-
-## Allocation/GC profiling
 
 For a portable CPU/device/hybrid comparison on a target machine, run:
 
@@ -112,6 +68,11 @@ Use `cuda` or `ka` instead of `amdgpu` as appropriate. The script compares
 all-CPU, all-device, and device-correlation plus threaded-CPU uncertainty.
 For real data or a custom pass schedule, call `benchmark_piv_configurations`
 directly with a representative loaded image pair.
+
+The user-facing setup, support matrix, memory sizing, and troubleshooting
+guide is [`docs/src/howto/gpu.md`](../docs/src/howto/gpu.md).
+
+## Allocation/GC profiling
 
 For batch memory work, `gc_profile.jl` reads a directory of camera images.
 The default points to the full Case E sequence under `cases/`, which is not

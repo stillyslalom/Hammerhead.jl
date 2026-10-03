@@ -76,9 +76,8 @@ joint_available = piv_common.available .& plif_common.available
 
 The common vector components are expressed in the fitted planar basis and
 divided by the supplied delay. This synthetic motion is nominally `(1, 0.5)`
-mm/s under the PIV camera's 0.1 mm/pixel map. Actual PIV output retains its
-estimation and validation behavior; resampling does not certify that nominal
-value. The scalar values remain relative fluorescence, not an inferred
+mm/s under the PIV camera's 0.1 mm/pixel map; the resampled vectors carry
+the measurement error of the PIV result they came from. The scalar values remain relative fluorescence, not an inferred
 concentration calibration. Position units, scalar units and frame labels are
 caller-supplied interpretation metadata, not automatic unit conversions.
 

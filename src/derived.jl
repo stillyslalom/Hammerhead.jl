@@ -2,183 +2,75 @@
 
 _field_valid(r::PIVResult) = .!r.mask .& .!r.outliers .& isfinite.(r.u) .& isfinite.(r.v)
 
-const _DERIVATIVE_STENCIL_KINDS = (unavailable=UInt8(0), centered_secant=UInt8(1),
-                                 forward=UInt8(2), backward=UInt8(3))
-
-function _derivative_difference(first_value, second_value)
-    if first_value isa Integer && second_value isa Integer
-        a,b=promote(first_value isa Bool ? Int(first_value) : first_value,
-                    second_value isa Bool ? Int(second_value) : second_value)
-        return Base.Checked.checked_sub(b,a)
-    end
-    second_value-first_value
-end
-
-function _derivative_axis_geometry(axis)
-    length(axis)>=2 || throw(ArgumentError("each differentiated grid dimension needs at least 2 points"))
-    all(a->a isa Real && isfinite(a),axis) || throw(ArgumentError("derivative coordinates must be finite real values"))
-    increasing=all(k->axis[k+1]>axis[k],1:length(axis)-1)
-    decreasing=all(k->axis[k+1]<axis[k],1:length(axis)-1)
-    increasing || decreasing || throw(ArgumentError("derivative coordinates must be strictly monotonic"))
-    function span(first_index,second_index)
-        value=try
-            _derivative_difference(axis[first_index],axis[second_index])
-        catch e
-            e isa OverflowError || rethrow()
-            throw(ArgumentError("derivative coordinate span overflows native integer arithmetic"))
-        end
-        isfinite(value) && !iszero(value) && (increasing ? value>0 : value<0) ||
-            throw(ArgumentError("derivative coordinate spans must be finite, nonzero and preserve axis direction in native arithmetic"))
-        value
-    end
-    adjacent=[span(k,k+1) for k in 1:length(axis)-1]
-    centered=[span(k-1,k+1) for k in 2:length(axis)-1]
-    geometry_type=foldl((T,s)->promote_type(T,typeof(float(s))),Iterators.flatten((adjacent,centered));init=Float64)
-    (;adjacent,centered,geometry_type)
-end
-
-function _derivative_pair(valid,i,j,dim,stencil)
-    valid[i,j] || return (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
-    k=dim==1 ? i : j
-    left=k>1 && (dim==1 ? valid[i-1,j] : valid[i,j-1])
-    right=k<size(valid,dim) && (dim==1 ? valid[i+1,j] : valid[i,j+1])
-    left && right && return (k-1,k+1,_DERIVATIVE_STENCIL_KINDS.centered_secant)
-    stencil==:centered && return (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
-    right && return (k,k+1,_DERIVATIVE_STENCIL_KINDS.forward)
-    left && return (k-1,k,_DERIVATIVE_STENCIL_KINDS.backward)
-    (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
-end
-
-function _derivative_axis_support(dims,geometry,dim)
-    T=geometry.geometry_type
-    (;dimension=dim,kind=fill(_DERIVATIVE_STENCIL_KINDS.unavailable,dims),legend=_DERIVATIVE_STENCIL_KINDS,
-        first_index=zeros(Int,dims),second_index=zeros(Int,dims),signed_span=fill(T(NaN),dims),
-        span_available=falses(dims),first_weight=fill(T(NaN),dims),second_weight=fill(T(NaN),dims),
-        weights_available=falses(dims),structural_supported=falses(dims))
-end
-
-function _derivative_value(first_value,second_value,span)
-    difference=try
-        _derivative_difference(first_value,second_value)
-    catch e
-        e isa OverflowError || rethrow()
-        return NaN # component overflow is distinct from valid coordinate support
-    end
-    difference/span
-end
-
-function _axis_derivatives(u,v,geometry,dim,valid,stencil,return_support)
-    du,dv=fill(NaN,size(u)),fill(NaN,size(u))
-    support=return_support ? _derivative_axis_support(size(u),geometry,dim) : nothing
-    @inbounds for j in axes(u,2),i in axes(u,1)
-        first_index,second_index,kind=_derivative_pair(valid,i,j,dim,stencil)
-        first_index==0 && continue
-        span=kind==_DERIVATIVE_STENCIL_KINDS.centered_secant ? geometry.centered[first_index] : geometry.adjacent[first_index]
-        ua=dim==1 ? u[first_index,j] : u[i,first_index]
-        ub=dim==1 ? u[second_index,j] : u[i,second_index]
-        va=dim==1 ? v[first_index,j] : v[i,first_index]
-        vb=dim==1 ? v[second_index,j] : v[i,second_index]
-        # Preserve native subtraction/division and Float64 output, rather than
-        # evaluating a metadata-weight dot product with different rounding.
-        du[i,j]=_derivative_value(ua,ub,span)
-        dv[i,j]=_derivative_value(va,vb,span)
-        if return_support
-            support.kind[i,j]=kind
-            support.first_index[i,j]=first_index;support.second_index[i,j]=second_index
-            support.structural_supported[i,j]=true
-            descriptor=geometry.geometry_type(span)
-            if isfinite(descriptor) && !iszero(descriptor)
-                support.signed_span[i,j]=descriptor;support.span_available[i,j]=true
-                weight=one(descriptor)/descriptor
-                if isfinite(weight)
-                    support.first_weight[i,j]=-weight;support.second_weight[i,j]=weight
-                    support.weights_available[i,j]=true
-                end
-            end
+function _axis_derivative(f::AbstractMatrix, axis::AbstractVector, dim::Int,
+                          valid::AbstractMatrix{Bool}, centered_only::Bool = false)
+    size(f) == size(valid) || throw(DimensionMismatch("field and validity mask must match"))
+    n = size(f, dim)
+    length(axis) == n || throw(DimensionMismatch("coordinate axis length does not match field"))
+    n >= 2 || throw(ArgumentError("each differentiated grid dimension needs at least 2 points"))
+    all(diff(axis) .!= 0) || throw(ArgumentError("grid coordinates must be distinct"))
+    out = fill(NaN, size(f))
+    nr, nc = size(f)
+    @inbounds for j in 1:nc, i in 1:nr
+        valid[i, j] || continue
+        k = dim == 1 ? i : j
+        left = k > 1 && (dim == 1 ? valid[i - 1, j] : valid[i, j - 1])
+        right = k < n && (dim == 1 ? valid[i + 1, j] : valid[i, j + 1])
+        if left && right
+            fm = dim == 1 ? f[i - 1, j] : f[i, j - 1]
+            fp = dim == 1 ? f[i + 1, j] : f[i, j + 1]
+            out[i, j] = (fp - fm) / (axis[k + 1] - axis[k - 1])
+        elseif centered_only
+            continue
+        elseif right
+            fp = dim == 1 ? f[i + 1, j] : f[i, j + 1]
+            out[i, j] = (fp - f[i, j]) / (axis[k + 1] - axis[k])
+        elseif left
+            fm = dim == 1 ? f[i - 1, j] : f[i, j - 1]
+            out[i, j] = (f[i, j] - fm) / (axis[k] - axis[k - 1])
         end
     end
-    (;du,dv,support)
+    out
 end
 
 """
-    flow_derivatives(result::PIVResult; include_invalid=false,
-                     stencil=:available, return_support=false)
-    flow_derivatives(x, y, u, v; valid=isfinite.(u) .& isfinite.(v),
-                     stencil=:available, return_support=false)
+    flow_derivatives(result::PIVResult; include_invalid=false, stencil=:available)
+    flow_derivatives(x, y, u, v; valid=isfinite.(u) .& isfinite.(v), stencil=:available)
 
-Return `(; dudx, dudy, dvdx, dvdy, valid)` on a planar grid with separate x/y
-coordinate axes. Each
+Return `(; dudx, dudy, dvdx, dvdy, valid)` on a regular planar grid. Each
 derivative has the units of the supplied vector components divided by the
 coordinate units. The result method uses stored arrays; call [`physical`](@ref)
 first if physical velocity gradients are needed. Masked, nonfinite, and
 flagged vectors are excluded by default; `include_invalid=true` admits
 flagged vectors but still excludes masked and nonfinite ones. The array
-method uses its explicit `valid` mask as center/neighbor eligibility; it does
-not intersect a supplied mask with finite component values. Returned `valid`
-is a copy of that eligibility, not derivative availability.
+method uses its explicit `valid` mask.
 
-With `stencil=:available` (default), two eligible immediate neighbors give
-the exact neighboring secant `(f[k+1]-f[k-1])/(axis[k+1]-axis[k-1])`.
-Otherwise an eligible immediate neighbor gives a one-sided quotient. An
-eligible center is always required, even when its value has zero coefficient
-in the two-neighbor secant. No stencil crosses an ineligible neighbor.
-`stencil=:centered` permits only the two-neighbor secant: boundaries and gaps
-without both neighbors remain `NaN`. This secant is not the general
-nonuniform three-point derivative at the center, and no second-order accuracy
-on irregular spacing is implied.
-
-Each axis needs at least two finite real, strictly monotonic coordinates,
-ascending or descending. All adjacent and two-neighbor denominators are
-validated before calculation, regardless of eligibility/policy. Nonfinite,
-zero, reversed-direction or native integer-overflow spans raise `ArgumentError`.
-Component integer-subtraction overflow instead gives `NaN`; floating component
-arithmetic retains its native nonfinite result.
-
-`return_support=true` adds `support=(; policy, center_eligible, x, y, finite)`.
-`center_eligible` aliases the returned `valid` copy, never the supplied mask.
-Each axis contains grid-shaped `kind` codes (with `legend`), `first_index`,
-`second_index`, `signed_span`, `span_available`, `first_weight`, `second_weight`,
-`weights_available` and `structural_supported`, plus `dimension` (x=2, y=1).
-Indices are along that axis; the other index is unchanged. The weights are
-`(-1/span,+1/span)` for those two contributors. The centered kind omits the
-center from its contributors; forward/backward kinds include it. Missing
-stencils have index 0, `NaN` descriptors and false availability masks.
-
-`finite=(; dudx, dudy, dvdx, dvdy)` independently records finite returned
-components, distinct from geometric support or representable metadata weights.
-Combinations such as vorticity or Q must also check their own finite output.
-Descriptor types promote the floating native spans with `Float64` (retaining
-`BigFloat`); calculation still uses native subtraction/division, not weights.
-An unrepresentable descriptor or reciprocal is marked unavailable with `NaN`
-metadata, without discarding a valid direct quotient. For example matching
-subnormal field/coordinate differences may yield 1 while `1/span` overflows.
-Spans retain current coordinate units. Support is for stored values, not
-measurement-origin attribution, a resolution certificate or propagated UQ.
+Central differences use two valid neighbors; boundaries or gaps use a
+one-sided difference when possible. Set `stencil=:centered` to use central
+differences only, leaving boundary and gap-adjacent nodes `NaN`. Values without
+a valid local stencil are `NaN`. Each axis needs at least two distinct coordinates.
 """
 function flow_derivatives(x::AbstractVector, y::AbstractVector,
                           u::AbstractMatrix, v::AbstractMatrix;
                           valid::AbstractMatrix{Bool} = isfinite.(u) .& isfinite.(v),
-                          stencil::Symbol=:available,return_support::Bool=false)
+                          stencil::Symbol = :available)
+    stencil in (:available, :centered) ||
+        throw(ArgumentError("stencil must be :available or :centered, got :$stencil"))
     size(u) == size(v) == size(valid) || throw(DimensionMismatch("u, v, and valid must match"))
     length(x) == size(u, 2) && length(y) == size(u, 1) ||
         throw(DimensionMismatch("x/y axes do not match the vector field"))
-    stencil in (:available,:centered) || throw(ArgumentError("stencil must be :available or :centered"))
-    Base.require_one_based_indexing(x,y,u,v,valid)
-    gx,gy=_derivative_axis_geometry(x),_derivative_axis_geometry(y)
-    dx=_axis_derivatives(u,v,gx,2,valid,stencil,return_support)
-    dy=_axis_derivatives(u,v,gy,1,valid,stencil,return_support)
-    eligibility=copy(valid)
-    out=(;dudx=dx.du,dudy=dy.du,dvdx=dx.dv,dvdy=dy.dv,valid=eligibility)
-    return_support || return out
-    support=(;policy=stencil,center_eligible=eligibility,x=dx.support,y=dy.support,
-        finite=(;dudx=isfinite.(out.dudx),dudy=isfinite.(out.dudy),dvdx=isfinite.(out.dvdx),dvdy=isfinite.(out.dvdy)))
-    (;out...,support)
+    c = stencil === :centered
+    dudx = _axis_derivative(u, x, 2, valid, c)
+    dudy = _axis_derivative(u, y, 1, valid, c)
+    dvdx = _axis_derivative(v, x, 2, valid, c)
+    dvdy = _axis_derivative(v, y, 1, valid, c)
+    (; dudx, dudy, dvdx, dvdy, valid = copy(valid))
 end
 function flow_derivatives(r::PIVResult; include_invalid::Bool = false,
-                          stencil::Symbol=:available,return_support::Bool=false)
+                          stencil::Symbol = :available)
     valid = isfinite.(r.u) .& isfinite.(r.v) .& .!r.mask
     include_invalid || (valid .&= .!r.outliers)
-    flow_derivatives(r.x, r.y, r.u, r.v; valid,stencil,return_support)
+    flow_derivatives(r.x, r.y, r.u, r.v; valid, stencil)
 end
 
 """
@@ -374,7 +266,7 @@ end
 
 """
     circulation(result::PIVResult; region, include_invalid=false,
-                coverage=:error, stencil=:available)
+                coverage=:error)
 
 Integrate planar vorticity over a rectangle `(xmin, xmax, ymin, ymax)` or
 polygonal `region`. The scalar result uses stored component and coordinate
@@ -392,11 +284,9 @@ small for the ratio to differ from 1 in floating-point arithmetic.
 
 `include_invalid=true` admits flagged vectors when deriving vorticity, but
 masked and nonfinite vectors remain excluded.
-`stencil` is forwarded to [`flow_derivatives`](@ref); `:centered` requires
-both immediate eligible neighbors and can reduce the integrated valid area.
 """
 function circulation(r::PIVResult; region, include_invalid::Bool=false,
-                     coverage::Symbol=:error,stencil::Symbol=:available)
+                     coverage::Symbol=:error)
     coverage in (:error, :report) ||
         throw(ArgumentError("coverage must be :error or :report, got :$coverage"))
     length(r.x)>=2 && length(r.y)>=2 || throw(ArgumentError("circulation needs at least a 2x2 grid"))
@@ -430,7 +320,7 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false,
     xmin, xmax = extrema(r.x)
     ymin, ymax = extrema(r.y)
     outside_grid = any(p -> !(xmin <= p[1] <= xmax && ymin <= p[2] <= ymax), poly)
-    omega = vorticity(r; include_invalid,stencil)
+    omega = vorticity(r; include_invalid)
     total = 0.0
     valid_area = 0.0
     area_compensation = 0.0
@@ -491,25 +381,8 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false,
     return total
 end
 
-function _check_spectrum_results(results, i, j)
-    r1=check_same_grid(results)
-    all(isfinite,r1.x) && all(isfinite,r1.y) || throw(ArgumentError("spectrum grid coordinates must be finite"))
-    dims=(length(r1.y),length(r1.x))
-    1 <= i <= dims[1] && 1 <= j <= dims[2] || throw(ArgumentError("spectrum index is outside the interrogation grid"))
-    signature=_statistics_scale_signature(r1.scale)
-    for result in results
-        all(a->size(a)==dims,(result.u,result.v,result.mask,result.outliers)) ||
-            throw(ArgumentError("spectrum component and flag dimensions must match the interrogation grid"))
-        _statistics_scale_signature(result.scale)==signature ||
-            throw(ArgumentError("spectrum results must have identical scale factors and unit labels; explicitly convert compatible fields first"))
-    end
-    r1
-end
-
 """
-    result_spectrum(results, i, j; dt=nothing, sample_times=nothing, component=:u,
-        invalid=:error, window=:hann, timing_atol=0, timing_rtol=0,
-        time_unit=nothing, return_timing=false)
+    result_spectrum(results, i, j; dt, component=:u, invalid=:error, window=:hann)
 
 Return `(; frequencies, psd)` for component `:u` or `:v` at grid row `i`,
 column `j` across uniformly sampled results. Frequencies are cycles per
@@ -517,17 +390,6 @@ time unit; `psd` is one-sided power spectral density. Supply `dt` between
 successive results; an attached `PhysicalScale.dt` describes an image pair
 and is not used here. The stored component values are analyzed without
 automatic physical conversion. `window` is passed to [`power_spectrum`](@ref).
-Explicit `sample_times` can replace `dt`; the exact uniformity/tolerance contract
-is the same as `power_spectrum`, with no implicit timestamp discovery/resampling.
-Grid coordinates, component/flag dimensions, scale factors and unit labels must
-agree across results, including absent versus attached scales. Convert differing
-pair-delay results explicitly with [`physical`](@ref) before combining compatible
-velocity fields. Metadata agreement cannot establish stored-value representation.
-The sampling `time_unit` label is independent of component velocity-unit labels.
-
-`return_timing=true` adds detached timing provenance, component/index, original
-invalid count, fill policy and attached-scale metadata. The default two-field
-return is unchanged. No field/image/result payload is retained in that report.
 
 Masked, flagged, or nonfinite samples cause an error by default. Set
 `invalid=:mean` to replace them with the mean of valid samples, or
@@ -536,13 +398,11 @@ valid value at either end. At least one valid sample is required.
 """
 function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
                          component::Symbol=:u, invalid::Symbol=:error,
-                         dt::Union{Nothing,Real}=nothing, sample_times=nothing,
-                         timing_atol=0, timing_rtol=0, time_unit=nothing,
-                         return_timing::Bool=false, window::Symbol=:hann)
+                         dt::Union{Nothing,Real}=nothing, window::Symbol=:hann)
+    check_same_grid(results)
+    dt === nothing && throw(ArgumentError("dt must be the sampling interval between successive results"))
     component in (:u,:v) || throw(ArgumentError("component must be :u or :v"))
     invalid in (:error,:interpolate,:mean) || throw(ArgumentError("invalid must be :error, :interpolate, or :mean"))
-    r1=_check_spectrum_results(results,i,j)
-    period,timing=_spectrum_sampling(length(results),dt,sample_times,timing_atol,timing_rtol,time_unit,return_timing;require_timing=true)
     vals = Float64[getproperty(r,component)[i,j] for r in results]
     good = BitVector([!r.mask[i,j] && !r.outliers[i,j] && isfinite(vals[k]) for (k,r) in enumerate(results)])
     if !all(good)
@@ -562,21 +422,7 @@ function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
             end
         end
     end
-    # The timeline was checked before sample extraction/filling. Filling retains
-    # the original regular-grid sample positions, including endpoint holds.
-    if sample_times!==nothing
-        # Match the inferred-spacing guards of the signal API before its FFT.
-        period <= floatmax(Float64)/2 || throw(ArgumentError("inferred FFT PSD normalization is not representable in Float64"))
-    end
-    spectrum=power_spectrum(vals; dt=period, window)
-    if return_timing
-        timing["component"]=String(component);timing["index"]=[i,j]
-        timing["invalid_count"]=length(good)-count(good);timing["fill_policy"]=String(invalid)
-        timing["value_basis"]="stored_component_no_conversion"
-        timing["attached_scale"]=_timing_scale(r1.scale)
-        return (; spectrum.frequencies,spectrum.psd,timing)
-    end
-    spectrum
+    power_spectrum(vals; dt, window)
 end
 
 

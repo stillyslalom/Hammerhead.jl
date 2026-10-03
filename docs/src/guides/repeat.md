@@ -23,36 +23,23 @@ The [batch guide](../howto/batch.md) covers pairing, memory use and exports.
 
 ## Save the settings as well
 
-A result file stores the measurements. An experiment record also stores the
-recipe and identifies the input images. Follow the worked
-[save-and-replay example](../howto/experiments.md) to save a record, reopen it,
-and produce another result without rebuilding the settings by hand.
+A result file stores the measurements; a recipe stores the passes,
+preprocessing, mask, ROI and scale that produced them. Run the recording
+through [`apply_recipe`](@ref) and the recipe is written into the results file:
 
-The corresponding workflows for
-[stereo recordings](../howto/stereo_experiments.md) and
-[pooled ensembles](../howto/ensemble_experiments.md) preserve the settings
-specific to those methods. The [GUI](../howto/gui_experiments.md) provides a
-saved-experiment window for the same planar workflow.
+```julia
+recipe = PIVRecipe(passes)
+apply_recipe(recipe, pairs; output="vectors.jld2")
+same_settings = load_recipe("vectors.jld2")
+```
 
-For long work that must survive interruption, use
-[checkpoints](../howto/checkpoints.md), which store the progress needed to resume.
-Ordinary batch output retains the results completed before a failure.
+[Save settings and reuse them](../howto/recipes.md) covers saving a recipe on
+its own, comparing two recipes, and pooled ensembles. The GUI batch form saves
+and opens the same recipe files.
 
 ## Return to a questionable result
 
-Start with a [quality summary](../howto/run_quality.md) and inspect the relevant
-images. For a closer investigation, you can record extra information at run time:
-
-- [Pass progress](../howto/execution_diagnostics.md) shows what each planar pass
-  actually did; [stereo](../howto/stereo_execution_diagnostics.md) and
-  [ensemble](../howto/ensemble_execution_diagnostics.md) runs have their own views.
-- [Vector history](../howto/measurement_history.md) distinguishes measured,
-  rejected and filled values.
-- [Frame-pair timing](../howto/pair_timing.md) and
-  [stereo timing](../howto/stereo_pair_timing.md) retain the available acquisition
-  times alongside the measurements.
-- [Ensemble quality summaries](../howto/ensemble_quality_reports.md) keep pooled
-  image contributions separate from the single field they produce.
-
-These are optional tools for answering a specific question. They are not
-prerequisites for processing your first recording.
+Open the results file in the [result explorer](../howto/gui.md) and inspect the
+images for the pairs in question. Check the rejected vectors with the
+[validation guide](../howto/validation.md), and change one setting at a time
+on that pair before running the recording again.

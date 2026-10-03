@@ -12,9 +12,10 @@ and return here as you need the underlying ideas.
 | What happens inside an excluded region? | [How masks affect correlation and validation](masking.md) |
 | Why can a window produce no measurement? | [Windows without displacement information](noninformative_windows.md) |
 | What do the uncertainty estimates mean? | [Correlation uncertainty](uncertainty.md) |
+| How accurate are the measurements on known motion? | [Synthetic accuracy, uncertainty and tracking tests](validation_results.md) |
 | How can two cameras recover three components? | [Stereo geometry and self-calibration](stereo.md) |
 | When should I use Float32 or Float64? | [Numerical precision](precision.md) |
 
 Looking for arguments or return values? Use the [API reference](../reference/index.md).
-Implementation choices and validation studies live in
+Implementation choices live in the
 [development documentation](../development/index.md).

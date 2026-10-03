@@ -9,89 +9,25 @@
 const GridResult = Union{PIVResult,StereoPIVResult}
 const ScatteredResult = Union{PTVResult,TrackingResult}
 const AnyResult = Union{GridResult,ScatteredResult}
-const DisplayResult = Union{AnyResult,TimedTrackingResult}
 const Selection = Union{Nothing,CartesianIndex{2},Int}
-
-# Dedicated artifacts own one complete trajectory bundle. Keep native vector
-# eltypes unchanged: widening AnyResult would break native save_results dispatch.
-struct _TimedDisplayResult <: AbstractVector{TimedTrackingResult}
-    result::TimedTrackingResult
-end
-Base.size(::_TimedDisplayResult) = (1,)
-Base.IndexStyle(::Type{_TimedDisplayResult}) = IndexLinear()
-function Base.getindex(results::_TimedDisplayResult,i::Int)
-    checkbounds(results,i)
-    Hammerhead._tracking_check(results.result)
-    results.result
-end
-Base.show(io::IO,::_TimedDisplayResult) = print(io,"Timed tracking display (one complete trajectory bundle)")
-Base.show(io::IO,::MIME"text/plain",results::_TimedDisplayResult) = show(io,results)
 
 # One physical/display payload, irrespective of recording length. Read/convert
 # before replacing the cache, so failed navigation preserves the prior frame.
 mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
-    source::Union{Hammerhead.ResultFile,Hammerhead.CheckpointResults}
+    source::Hammerhead.ResultFile
     index::Int
     result::Union{Nothing,AnyResult}
-    inspection::Bool
-    companions::NamedTuple
 end
-_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,stereo_diagnostics=nothing,ensemble_diagnostics=nothing,display_sha256=nothing)
-_LazyDisplayResults(source,index,result)=_LazyDisplayResults(source,index,result,false,_empty_companions())
 Base.size(results::_LazyDisplayResults) = size(results.source)
 Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
-Hammerhead._result_protected_paths(results::_LazyDisplayResults)=Hammerhead._result_protected_paths(results.source)
 function Base.getindex(results::_LazyDisplayResults, i::Int)
     checkbounds(results, i)
     if results.index != i
-        result,companions=_prepare_lazy_frame(results,i,results.inspection)
-        _commit_lazy_frame!(results,i,result,companions,results.inspection)
+        result = physical(results.source[i])
+        results.result = result
+        results.index = i
     end
     return results.result::AnyResult
-end
-function _prepare_lazy_frame(results,i,inspection)
-    raw=results.source[i]
-    if inspection
-        results.source isa Hammerhead.ResultFile || throw(ArgumentError("checkpoint companion inspection is not supported"))
-        history=Hammerhead.load_measurement_history(results.source,i)
-        diagnostics=Hammerhead.load_execution_diagnostics(results.source,i)
-        stereo=Hammerhead.load_stereo_execution_diagnostics(results.source,i)
-        ensemble=Hammerhead.load_ensemble_execution_diagnostics(results.source,i)
-        if raw isa PIVResult
-            stereo===nothing || throw(ArgumentError("stereo companion attached to a planar result"))
-            if ensemble!==nothing
-                history===nothing && diagnostics===nothing || throw(ArgumentError("ensemble and single-pair companions attached to the same result"))
-                Hammerhead.execution_diagnostics_data(ensemble;result=raw)
-                state=:ensemble_verified
-            else
-                history===nothing || Hammerhead.verify_measurement_history(history,raw)
-                state=history===nothing ? :history_missing : :verified
-            end
-        elseif raw isa StereoPIVResult
-            history===nothing && diagnostics===nothing && ensemble===nothing || throw(ArgumentError("planar companion attached to a stereo result"))
-            stereo===nothing || Hammerhead.execution_diagnostics_data(stereo;result=raw)
-            state=stereo===nothing ? :stereo_missing : :stereo_verified
-        else
-            history===nothing && diagnostics===nothing && stereo===nothing && ensemble===nothing || throw(ArgumentError("recorded companion attached to an unsupported result kind"))
-            state=:unsupported
-        end
-        result=physical(raw)
-        digest=result isa GridResult ? _display_measurement_digest(result) : nothing
-        companions=(state=state,history=history,diagnostics=diagnostics,stereo_diagnostics=stereo,ensemble_diagnostics=ensemble,display_sha256=digest)
-    else
-        result=physical(raw)
-        companions=_empty_companions()
-    end
-    result,companions
-end
-_display_measurement_digest(r::PIVResult)=Hammerhead._history_result_digest(r)
-_display_measurement_digest(r::StereoPIVResult)=Hammerhead._stereo_execution_measurement_digest(r)
-function _commit_lazy_frame!(results,i,result,companions,inspection)
-    results.result=result
-    results.index=i
-    results.companions=companions
-    results.inspection=inspection
-    nothing
 end
 Base.show(io::IO, results::_LazyDisplayResults) =
     print(io, "Lazy display results (", length(results), " indexed, one cached frame)")
@@ -100,9 +36,8 @@ Base.show(io::IO, ::MIME"text/plain", results::_LazyDisplayResults) = show(io, r
 """
     ResultExplorer(results; path = nothing)
     ResultExplorer(result)
-    ResultExplorer(path::AbstractString; lazy = false, format = :native)
+    ResultExplorer(path::AbstractString; lazy = false)
     ResultExplorer(index::ResultFile)
-    ResultExplorer(index::CheckpointResults)
 
 Browse a sequence of `PIVResult`, `StereoPIVResult`, `PTVResult`, or
 `TrackingResult` entries; result types may be mixed. View state is held in
@@ -120,32 +55,9 @@ interactive-analysis state `tool` / `tool_points` / `profile_data` /
 `circulation_result` (see [`set_tool!`](@ref) and [`click!`](@ref);
 planar results only — tool state clears on frame switches).
 
-The `:derivative_support` tool exposes current-node eligibility, actual x/y
-stencils and finite component quotients in a paged drawer. The explorer-wide
-`derivative_stencil` defaults to `:available`; [`set_derivative_stencil!`](@ref)
-can require both immediate neighbors with `:centered`. This policy persists
-across tools/frames and applies to all derived scalar plots and area circulation.
-Profiles and line circulation continue sampling u/v. Rich support metadata is
-retained only for the current planar frame while the tool is active; input
-integrity is checked on inspection, not continuously. This analysis describes
-stored displayed values and makes no origin/resolution/UQ applicability claim.
-
 Results with a [`PhysicalScale`](@ref) are converted through
 [`physical`](@ref) for display in physical units. Unscaled results retain
 their original units.
-
-A `TimedTrackingResult` is preserved as a wrapper in a dedicated singleton
-explorer. Open its dedicated artifact explicitly with `format=:timed_tracking`;
-`lazy=true`, mixed timed/native sequences and appending are unsupported. The
-complete trajectory bundle must fit memory; its result count is one, not the
-number of acquisition samples. Timing/result binding is checked before physical
-conversion and on access. Only spatial coordinates are converted; nominal
-`scale.dt` does not divide actual-time speeds. Colors are arithmetic observation
-means of secant magnitudes, not instantaneous or elapsed-time-weighted speeds.
-Nonfinite data and singleton tracks have unavailable speed, never zero or an
-average over silently omitted observations. Timed refresh/inspection validates
-the whole bundle in O(observations + selected frames); no trusted mutable context
-or per-track velocity cache is retained.
 
 The string form loads a saved sequence with `Hammerhead.load_results`.
 Use `lazy = true` or pass a [`ResultFile`](@ref) to browse a completed file
@@ -157,22 +69,9 @@ set `status`, and leave the previous frame and its selection displayed.
 other view state. The index is fixed and does not follow a concurrent writer.
 Changing frames resets an unavailable `field` to that result's default and
 clears an invalid `selection`.
-
-A `CheckpointResults` index browses a verified fixed committed prefix with the
-same one-frame display cache. Open a new index/explorer after resume to see
-later commits; this is not a live checkpoint reader.
-
-[`set_companion_inspection!`](@ref) opts into recorded final-sweep history and
-execution counts for lazy native files. Verification uses raw measurements
-before physical conversion. A failed read/verification preserves the old frame,
-selection, mode and bundle. Only the current history packet is retained.
-[`companion_summary`](@ref) and [`describe_companion_selection`](@ref) provide
-readable processing details; missing/bare/checkpoint/unsupported states remain
-explicit. Private packet and physical display mutation checks are O(grid nodes)
-on each inspection refresh, not continuous mutation monitoring.
 """
 struct ResultExplorer
-    results::Union{Vector{AnyResult},_LazyDisplayResults,_TimedDisplayResult}
+    results::Union{Vector{AnyResult},_LazyDisplayResults}
     path::Union{Nothing,String}
     frame::Observable{Int}
     field::Observable{Symbol}
@@ -189,9 +88,6 @@ struct ResultExplorer
     circulation_result::Observable{Union{Nothing,NamedTuple}}
     derived_cache::Dict{Int,NamedTuple}
     status::Observable{String}
-    companion_enabled::Observable{Bool}
-    derivative_stencil::Observable{Symbol}
-    derivative_digest::Base.RefValue{Union{Nothing,String}}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -202,22 +98,10 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
     return _result_explorer(conv, path)
 end
 
-function ResultExplorer(result::TimedTrackingResult;path::Union{Nothing,AbstractString}=nothing)
-    display = physical(result) # verifies the raw binding before conversion
-    tracking_speed_summary(display) # complete arithmetic preflight
-    _result_explorer(_TimedDisplayResult(display),path)
-end
-
 function ResultExplorer(index::Hammerhead.ResultFile;
                         path::Union{Nothing,AbstractString} = index.path)
     isempty(index) && throw(ArgumentError("no results to explore"))
     return _result_explorer(_LazyDisplayResults(index, 0, nothing), path)
-end
-
-function ResultExplorer(index::Hammerhead.CheckpointResults;
-                        path::Union{Nothing,AbstractString}=nothing)
-    isempty(index) && throw(ArgumentError("no committed checkpoint results to explore"))
-    _result_explorer(_LazyDisplayResults(index,0,nothing),path)
 end
 
 function _result_explorer(conv, path)
@@ -234,8 +118,7 @@ function _result_explorer(conv, path)
                         Observable(NTuple{2,Float64}[]),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
-                        Dict{Int,NamedTuple}(), Observable(""),Observable(false),
-                        Observable(:available),Ref{Union{Nothing,String}}(nothing))
+                        Dict{Int,NamedTuple}(), Observable(""))
     last_frame = Ref(1)
     # Read failures must occur before downstream view notifications. A direct
     # observable write has already changed its value: restore silently and
@@ -248,226 +131,22 @@ function _result_explorer(conv, path)
             ex.status[] = first(split(sprint(showerror, err), '\n'))
             rethrow()
         end
-        changed=i!=last_frame[]
-        changed && _clear_derivatives!(ex)
+        i == last_frame[] || empty!(ex.derived_cache)
         last_frame[] = i
         ex.status[] = ""
-        # Establish a compatible selection/tool before field observers draw the
-        # new kind. In particular, support maps must not reach a scattered view.
-        ex.selection.val = _valid_selection(r, ex.selection[])
+        ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
+        ex.selection[] = _valid_selection(r, ex.selection[])
         # tool state describes one frame's flow: clear it on a frame switch,
         # and revert to :inspect when the new result has no derived analysis
-        changed && _reset_tool!(ex)
+        _reset_tool!(ex)
         r isa PIVResult || ex.tool[] === :inspect || (ex.tool[] = :inspect)
-        ex.tool[]===:derivative_support && !_derivative_grid(r) && (ex.tool[]=:inspect)
-        ex.field[] in available_fields(ex) || (ex.field[] = first(available_fields(r)))
-        notify(ex.selection)
     end
-    last_mode=Ref(false)
-    on(ex.companion_enabled;priority=typemax(Int)) do enabled
-        enabled==last_mode[] && return
-        try
-            if enabled
-                ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile ||
-                    throw(ArgumentError("recorded companion inspection requires a lazy native ResultFile; eager/bare inputs and checkpoints are unsupported"))
-                result,companions=_prepare_lazy_frame(ex.results,ex.frame[],true)
-                _commit_lazy_frame!(ex.results,ex.frame[],result,companions,true)
-                _reset_tool!(ex) # enabling reloads the display; old analysis may reflect edited values
-            elseif ex.results isa _LazyDisplayResults
-                ex.results.inspection=false
-                ex.results.companions=_empty_companions()
-            end
-        catch err
-            ex.companion_enabled.val=last_mode[]
-            ex.status[]=first(split(sprint(showerror,err),'\n'))
-            rethrow()
-        end
-        last_mode[]=enabled
-        _clear_derivatives!(ex)
-        ex.frame[]=ex.frame[] # refresh the same display without retaining the raw payload
-    end
-    _attach_derivative_state!(ex)
     return ex
 end
 
-"""
-    set_companion_inspection!(ex::ResultExplorer, enabled::Bool=true)
-
-Opt into recorded planar history/execution, ensemble pools or stereo camera execution inspection for a lazy native
-`ResultFile` explorer. Raw results and companions are read and history binding
-verified before physical display conversion/cache replacement. Stereo binding
-checks reconstructed and retained camera measurement fields against the raw
-result. The physical display has a separate mutation digest; it is not the raw
-binding. Ensemble packets verify raw measurement fields and geometry before
-conversion; they contain scalar pooled observations, not per-node history or
-ordinary pair iteration/convergence counts. Same-entry conflicting companion
-families are refused; missing metadata never identifies an ensemble. Failure preserves
-the old mode, frame, selection and display/companion bundle, and sets `status`.
-Disabling releases the current packet. Bare/eager inputs and checkpoint indexes
-have no supported native-companion association. This retains one display result
-and one current packet, not a second raw result. Caller-retained packets cost
-additional memory. Both setter and direct `companion_enabled[]` writes preflight.
-"""
-function set_companion_inspection!(ex::ResultExplorer,enabled::Bool=true)
-    ex.companion_enabled[]=enabled
-    ex
-end
-function _checked_companions(ex)
-    result=current_result(ex)
-    c=ex.results.companions
-    try
-        c.display_sha256===nothing || _display_measurement_digest(result)==c.display_sha256 ||
-            throw(ArgumentError("physical display fields changed after companion verification; disable and reenable inspection to reload"))
-        c.history===nothing || Hammerhead._history_checked_data(c.history)
-        c.stereo_diagnostics===nothing || Hammerhead.execution_diagnostics_data(c.stereo_diagnostics)
-        c.ensemble_diagnostics===nothing || Hammerhead.execution_diagnostics_data(c.ensemble_diagnostics)
-    catch err
-        ex.status[]=first(split(sprint(showerror,err),'\n'))
-        rethrow()
-    end
-    c
-end
-
-"""
-    companion_summary(ex::ResultExplorer) -> String
-
-Describe off/missing/unsupported/verified recorded-companion states and actual
-pass execution observations. History binds raw measurement content; execution
-planar diagnostics v1 bind an entry key, not numerical content or the independent
-history UUID. Stereo companions verify raw reconstructed/camera measurement
-fields on loading, without verifying calibration or source images. Their
-residuals remain dewarped pixels, not world 3C residuals. Stored uncertainty
-availability never certifies applicability. Ensemble summaries distinguish one
-pooled sweep, window/pair opportunities and numerical contributor categories;
-residuals remain processing pixels before predictor addition. No stationarity,
-independent sample size, convergence or per-node attribution is established.
-When enabled, integrity/display checks scan/hash the current arrays (O(nodes));
-no result reload or full packet copy occurs on inspection.
-"""
-function companion_summary(ex::ResultExplorer)
-    if !(ex.results isa _LazyDisplayResults)
-        return "Recorded companions: no indexed native association (eager/bare inputs)."
-    elseif !(ex.results.source isa Hammerhead.ResultFile)
-        return "Recorded companions: checkpoint inspection is unsupported."
-    elseif !ex.companion_enabled[]
-        return "Recorded companion inspection: off."
-    end
-    c=_checked_companions(ex)
-    _companion_summary(c)
-end
-function _companion_summary(c)
-    c.state===:unsupported && return "Recorded companions: unsupported for this result kind."
-    if c.state===:ensemble_verified
-        d=c.ensemble_diagnostics
-        lines=["Recorded planar ensemble: $(d.pair_count) input pairs; raw measurement binding verified at load.",
-            "Current physical display integrity is checked separately."]
-        for p in d.passes
-            push!(lines,"Pass $(p.pass_index): one pooled sweep; requested $(p.requested_iterations) iterations and tolerance ignored (no comparisons).")
-            c=p.contributions;g=p.contributor_nodes;s=p.source_support;r=p.residual;uq=p.uncertainty
-            push!(lines,"  Window/pair opportunities: $(c.window_opportunities); masked $(c.masked_window_pairs), source-gated $(c.source_gated_window_pairs), accumulated $(c.accumulated_window_pairs).",
-                "  Accumulated planes: $(c.finite_zero_planes) finite zero, $(c.finite_flat_nonzero_planes) finite flat nonzero, $(c.finite_nonflat_planes) finite nonflat, $(c.nonfinite_planes) nonfinite.",
-                "  Eligible nodes: $(g.eligible_count); finite nonzero contributions: zero $(g.zero_finite_nonzero_count), some $(g.some_finite_nonzero_count), all $(g.all_finite_nonzero_count); nodes with a nonfinite plane $(g.nodes_with_nonfinite_plane).",
-                "  Source-support pairs: no predictor $(s.no_predictor_pairs), evaluated $(s.evaluated_pairs), disabled for nonfinite source $(s.disabled_nonfinite_source_pairs).",
-                "  Primary pooled residual mean/RMS/max: $(r.mean_magnitude===nothing ? "unavailable" : _fmt(r.mean_magnitude))/$(r.rms_magnitude===nothing ? "unavailable" : _fmt(r.rms_magnitude))/$(r.maximum_magnitude===nothing ? "unavailable" : _fmt(r.maximum_magnitude)) processing px; $(r.finite_count) finite unmasked nodes.",
-                "  Pooled uncertainty: $(replace(uq.reason,'_'=>' ')); $(uq.admitted_window_pair_updates) admitted window/pair updates (before validation and availability cleanup).")
-            for component in (:u,:v)
-                values=getproperty(uq,component)
-                push!(lines,"    $component: $(values.finite_nonnegative_count) finite nonnegative, $(values.finite_negative_count) finite negative, $(values.nonfinite_count) nonfinite unmasked nodes; unit px.")
-            end
-        end
-        push!(lines,"Contribution counts do not establish independent sample size, stationarity, convergence, valid vectors or uncertainty applicability/coverage. Per-node ensemble history is unavailable.")
-        return join(lines,"\n")
-    end
-    if c.state in (:stereo_missing,:stereo_verified)
-        c.stereo_diagnostics===nothing && return "Stereo execution diagnostics: not recorded.\nStereo per-node measurement history: unavailable."
-        d=c.stereo_diagnostics
-        lines=["Stereo execution: raw reconstructed and camera measurement binding verified at load.",
-            "Current physical display integrity is checked separately."]
-        for (role,camera) in enumerate((d.cam1,d.cam2))
-            push!(lines,"Camera $role: dewarped pixels (not reconstructed world 3C residuals).")
-            _append_execution_passes!(lines,camera;unit="dewarped px")
-        end
-        push!(lines,"Stereo per-node measurement history: unavailable.",
-            "Tolerance outcomes are not measurement validity. Calibration, source inputs, uncertainty applicability, accuracy and coverage are not verified.")
-        return join(lines,"\n")
-    end
-    lines=[c.history===nothing ? "Measurement history: not recorded." : "Measurement history: raw measurement binding verified."]
-    if c.diagnostics===nothing
-        push!(lines,"Execution diagnostics: not recorded.")
-    else
-        push!(lines,"Recorded execution counts; not verified against the displayed vector values.")
-        _append_execution_passes!(lines,c.diagnostics)
-        push!(lines,"Tolerance outcomes are not measurement validity.")
-    end
-    push!(lines,"History scope: final pass/final sweep only. Uncertainty applicability, accuracy and coverage are not established.")
-    join(lines,"\n")
-end
-function _append_execution_passes!(lines,diagnostics;unit="px")
-        for pass in diagnostics.passes
-            push!(lines,"Pass $(pass.pass_index): $(pass.executed_iterations)/$(pass.requested_iterations) sweeps; $(replace(String(pass.stop_reason),'_'=>' ')); $(pass.checks) tolerance checks.")
-            check=pass.last_check
-            push!(lines,check===nothing ? "  Tolerance comparison: not evaluated." :
-                "  Last q95 component change: $(check.value_state===:finite ? _fmt(check.value) : check.value_state) $unit; $(check.included_count) contributing nodes (empty support can meet tolerance).")
-            residual=pass.residual
-            push!(lines,"  Primary residual mean/RMS/max: $(residual.mean_magnitude===nothing ? "unavailable" : _fmt(residual.mean_magnitude))/$(residual.rms_magnitude===nothing ? "unavailable" : _fmt(residual.rms_magnitude))/$(residual.maximum_magnitude===nothing ? "unavailable" : _fmt(residual.maximum_magnitude)) $unit; $(residual.finite_count) finite unmasked nodes.")
-        end
-    lines
-end
-
-"""
-    describe_companion_selection(ex::ResultExplorer) -> String
-
-Describe one selected grid node's recorded primary/residual displacement in
-pixels, first observed rejection stage, actual alternative/fill/restoration
-events, final origin/flag and stored uncertainty numerical status. Use the
-ordinary selection panel for final displayed physical units. No history is
-inferred from current flags or reconstructed for missing entries. Integrity
-checks are O(nodes), but the returned text/scalar accessor retains no arrays.
-For ensemble and stereo packets this explicitly states that per-node history is
-unavailable instead of assigning aggregate observations to a selected node.
-"""
-function describe_companion_selection(ex::ResultExplorer)
-    ex.companion_enabled[] || return ""
-    ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile || return ""
-    c=_checked_companions(ex)
-    _companion_selection(ex,c)
-end
-function _companion_selection(ex,c)
-    c.state===:ensemble_verified && return "Ensemble observations summarize pooled passes, not this selected node.\nPer-node contributor counts, replacement history and uncertainty attribution are not recorded.\nUse the ordinary selection panel for displayed vector values and units."
-    c.state in (:stereo_missing,:stereo_verified) && return "Stereo per-node measurement history and world 3C residuals are not recorded.\nUse the ordinary selection panel for displayed vector values."
-    c.history===nothing && return ""
-    sel=ex.selection[]
-    sel isa CartesianIndex{2} || return "Select a grid node to inspect its recorded history."
-    node=Hammerhead._history_node(c.history._data,sel) # caller checked packet integrity
-    stage=node.rejection_name===nothing ? "none observed" : node.rejection_name
-    rank=node.accepted_peak_rank==0 ? "none" : string(node.accepted_peak_rank)
-    join(["Recorded node $(Tuple(sel))", "Raw x/y: $(_fmt(node.x)), $(_fmt(node.y)) px",
-        "Primary u/v: $(_fmt(node.primary_u)), $(_fmt(node.primary_v)) px",
-        "Primary residual u/v: $(_fmt(node.primary_residual_u)), $(_fmt(node.primary_residual_v)) px",
-        "First observed rejection: $stage", "Accepted alternative rank: $rank",
-        "Median attempted/assigned: $(node.fill_attempted)/$(node.fill_assigned)",
-        "Primary restored: $(node.primary_restored)",
-        "Final origin: $(replace(node.final_origin,'_'=>' ')); outlier flag: $(node.final_outlier); masked: $(node.masked)",
-        "Stored u/v uncertainty: $(replace(node.uncertainty_u_status,'_'=>' '))/$(replace(node.uncertainty_v_status,'_'=>' '))",
-        "Numerical availability does not establish applicability."],"\n")
-end
-function _companion_text(ex)
-    if ex.companion_enabled[] && ex.results isa _LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile
-        c=_checked_companions(ex)
-        summary=_companion_summary(c) # one display hash + one packet hash per refresh
-        summary,_companion_selection(ex,c)
-    else
-        companion_summary(ex),""
-    end
-end
-
 ResultExplorer(result::AnyResult; kwargs...) = ResultExplorer([result]; kwargs...)
-function ResultExplorer(path::AbstractString;lazy::Bool=false,format::Symbol=:native)
-    format===:native && return ResultExplorer(load_results(path;lazy);path)
-    format===:timed_tracking || throw(ArgumentError("format must be :native or :timed_tracking"))
-    lazy && throw(ArgumentError("timed tracking artifacts contain one complete bundle; lazy browsing is unsupported"))
-    ResultExplorer(load_timed_tracking(path);path)
-end
+ResultExplorer(path::AbstractString; lazy::Bool = false) =
+    ResultExplorer(load_results(path; lazy); path)
 
 function Base.show(io::IO, ex::ResultExplorer)
     print(io, "ResultExplorer($(length(ex.results)) frame",
@@ -516,15 +195,12 @@ slider — this is how a live explorer follows a still-running batch. The
 current frame is left unchanged. Lazy file-backed explorers reject appends.
 """
 function push_result!(ex::ResultExplorer, r::AnyResult)
-    ex.results isa _TimedDisplayResult && throw(ArgumentError("cannot append native results to a timed tracking explorer"))
     ex.results isa _LazyDisplayResults &&
         throw(ArgumentError("cannot append to a lazy ResultFile explorer; use an in-memory explorer for a live batch"))
     push!(ex.results, physical(r))
     ex.count[] = length(ex.results)
     return ex
 end
-push_result!(::ResultExplorer,::TimedTrackingResult) =
-    throw(ArgumentError("timed tracking explorers are dedicated single bundles; appending is unsupported"))
 
 # Whether a stored selection still refers to a valid item of the given result
 # (a gridded window index for grids, a linear index for scattered results).
@@ -535,7 +211,7 @@ function _valid_selection(r, sel)
     elseif r isa PTVResult
         return (sel isa Int && 1 <= sel <= length(r.x)) ? sel : nothing
     else # TrackingResult
-        return (sel isa Int && 1 <= sel <= length(_tracking_geometry(r).trajectories)) ? sel : nothing
+        return (sel isa Int && 1 <= sel <= length(r.trajectories)) ? sel : nothing
     end
 end
 
@@ -576,9 +252,6 @@ end
 
 available_fields(::PTVResult) = [:magnitude, :u, :v, :match_residual]
 available_fields(::TrackingResult) = [:speed]
-available_fields(::TimedTrackingResult) = [:speed]
-_tracking_geometry(r::TrackingResult) = r
-_tracking_geometry(r::TimedTrackingResult) = r.result
 
 # One derived scalar from a precomputed flow_derivatives NamedTuple.
 _derived_field(d::NamedTuple, field::Symbol) =
@@ -590,7 +263,8 @@ _derived_field(d::NamedTuple, field::Symbol) =
 
 # Only the current frame's derivatives are cached; frame changes evict them,
 # including on eager explorers, so derived data cannot grow with a recording.
-_derived(ex::ResultExplorer) = _explorer_derivatives(ex)
+_derived(ex::ResultExplorer) =
+    get!(() -> flow_derivatives(current_result(ex)), ex.derived_cache, ex.frame[])
 
 """
     field_values(result, field::Symbol)
@@ -616,7 +290,6 @@ end
 function current_field_values(ex::ResultExplorer)
     r = current_result(ex)
     field = ex.field[]
-    field in DERIVATIVE_SUPPORT_FIELDS && return _derivative_map(ex,field)
     r isa PIVResult && field in DERIVED_FIELDS &&
         return _derived_field(_derived(ex), field)
     return field_values(r, field)
@@ -633,10 +306,6 @@ function field_values(r::TrackingResult, field::Symbol)
     field === :speed ||
         throw(ArgumentError("field :$field is not available for this result"))
     return [_mean_speed(t, r.scale) for t in r.trajectories]
-end
-function field_values(r::TimedTrackingResult,field::Symbol)
-    field===:speed || throw(ArgumentError("field :$field is not available for this result"))
-    tracking_speed_summary(r).speeds
 end
 
 const FIELD_NAMES = Dict(
@@ -675,15 +344,6 @@ _field_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) :
 # `physical` conversion keeps this consistent: positions and displacements
 # scale by the same length factor, so the gradients carry exactly 1/dt.
 _time_unit(r::AnyResult) = r.scale === nothing ? "frame" : r.scale.time_unit
-_length_unit(r::TimedTrackingResult) = r.result.scale===nothing ? "px" : r.result.scale.length_unit
-function _field_unit(r::TimedTrackingResult)
-    data=Hammerhead._tracking_check(r)
-    string(_length_unit(r),"/",something(data["effective_time_unit"],"unknown sample-time unit"))
-end
-function field_label(r::TimedTrackingResult,field::Symbol)
-    field===:speed || throw(ArgumentError("field :$field is not available for this result"))
-    "observation-mean secant speed ($(_field_unit(r)))"
-end
 
 """
     field_label(result, field::Symbol) -> String
@@ -696,7 +356,6 @@ unit; the derived gradient fields carry `1/time_unit` (`1/time_unit²` for Q,
 `1/frame` when unscaled); dimensionless diagnostics carry no unit.
 """
 function field_label(r::AnyResult, field::Symbol)
-    field===:magnitude && r.scale!==nothing && return string("speed (",_field_unit(r),")")
     field in (:peak_ratio, :correlation_moment) && return field_name(field)
     field === :match_residual && return string(field_name(field), " (", _length_unit(r), ")")
     field === :q_criterion && return string(field_name(field), " (1/", _time_unit(r), "²)")
@@ -707,10 +366,10 @@ end
 """
     set_field!(ex::ResultExplorer, field::Symbol)
 
-Display `field` (must be in `available_fields(ex)`).
+Display `field` (must be in `available_fields(current_result(ex))`).
 """
 function set_field!(ex::ResultExplorer, field::Symbol)
-    field in available_fields(ex) ||
+    field in available_fields(current_result(ex)) ||
         throw(ArgumentError("field :$field is not available for the current result"))
     ex.field[] = field
     return ex
@@ -722,7 +381,6 @@ end
 _flagged(r::GridResult, i) = r.mask[i] || r.outliers[i]
 _flagged(r::PTVResult, i) = r.outliers[i]
 _flagged(::TrackingResult, i) = false
-_flagged(::TimedTrackingResult,i) = false
 
 # Nearest-rank percentile band of (unsorted) values; mutates `vals` by sorting.
 function _percentile_band(vals::Vector{Float64}, plo::Real, phi::Real)
@@ -743,10 +401,10 @@ non-flagged PTV particles) so a few outliers cannot stretch the color range;
 when no valid values exist it falls back to all finite values. A degenerate
 range is padded by ±0.5.
 """
-color_limits(r::DisplayResult, field::Symbol, mode::Symbol = :robust) =
+color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust) =
     _color_limits(r, field_values(r, field), mode)
 
-function _color_limits(r::DisplayResult, data, mode::Symbol)
+function _color_limits(r::AnyResult, data, mode::Symbol)
     mode in (:robust, :full) ||
         throw(ArgumentError("mode must be :robust or :full, got :$mode"))
     vals = Float64[]
@@ -812,16 +470,9 @@ The colorbar limits in effect for the current frame and field: the automatic
 [`color_limits`](@ref) under `ex.color_mode`, with any manual
 [`set_color_limits!`](@ref) overrides applied bound-wise (an inverted or
 degenerate manual pair is padded to a valid range).
-Derivative support maps instead use fixed categorical limits/legends showing
-excluded nodes. Scalar limits remain stored and take effect on returning to a
-scalar field.
 """
 function current_color_limits(ex::ResultExplorer)
-    ex.field[] in DERIVATIVE_SUPPORT_FIELDS && return _derivative_map_limits(ex.field[])
-    _current_color_limits(ex,current_result(ex),current_field_values(ex))
-end
-function _current_color_limits(ex,r,data)
-    lo, hi = _color_limits(r,data,ex.color_mode[])
+    lo, hi = _color_limits(current_result(ex), current_field_values(ex), ex.color_mode[])
     ex.color_min[] === nothing || (lo = ex.color_min[])
     ex.color_max[] === nothing || (hi = ex.color_max[])
     if !(lo < hi)
@@ -862,16 +513,6 @@ function _nearest(r::TrackingResult, x, y)
     end
     return best
 end
-function _nearest(r::TimedTrackingResult,x,y)
-    best,bestd=nothing,Inf
-    for (k,t) in pairs(r.result.trajectories),p in eachindex(t.x)
-        isfinite(t.x[p]) && isfinite(t.y[p]) || continue
-        # hypot avoids overflowing squared distances for finite coordinates.
-        d=hypot(t.x[p]-x,t.y[p]-y)
-        d<bestd && ((best,bestd)=(k,d))
-    end
-    best
-end
 
 """
     clear_selection!(ex::ResultExplorer)
@@ -884,7 +525,7 @@ clear_selection!(ex::ResultExplorer) = (ex.selection[] = nothing; ex)
 # Interactive derived-analysis tools (planar PIVResult only)
 # ---------------------------------------------------------------------------
 
-const EXPLORER_TOOLS = (:inspect, :profile, :circulation,:derivative_support)
+const EXPLORER_TOOLS = (:inspect, :profile, :circulation)
 
 # Clear the gesture points and computed outputs (frame switches, tool
 # switches, and restarts all funnel through here).
@@ -904,18 +545,12 @@ with `extract_profile`), or `:circulation` (clicks accumulate a contour,
 [`alt_click!`](@ref) closes it and evaluates `circulation`). The analysis
 tools need a planar `PIVResult` at the current frame; switching tools (or
 frames) clears any in-progress gesture and outputs.
-`:derivative_support` clicks select nodes and add four discrete maps to
-[`available_fields`](@ref). It needs two points per axis and validates geometry
-before changing the tool. Reselecting it rebuilds the captured analysis after
-display edits. Leaving it releases rich metadata. The explicit derivative
-stencil policy persists across tool changes.
 """
 function set_tool!(ex::ResultExplorer, tool::Symbol)
     tool in EXPLORER_TOOLS ||
         throw(ArgumentError("tool must be one of $(EXPLORER_TOOLS), got :$tool"))
     tool === :inspect || current_result(ex) isa PIVResult ||
         throw(ArgumentError("the :$tool tool needs a planar PIVResult at the current frame"))
-    tool===:derivative_support && _prepare_derivative_tool!(ex;refresh=true)
     _reset_tool!(ex)
     ex.tool[] = tool
     return ex
@@ -931,7 +566,7 @@ is computed when the second point lands, a third click starts a new line);
 """
 function click!(ex::ResultExplorer, x::Real, y::Real)
     tool = ex.tool[]
-    tool in (:inspect,:derivative_support) && return select_nearest!(ex, x, y)
+    tool === :inspect && return select_nearest!(ex, x, y)
     pts = ex.tool_points[]
     if tool === :profile
         length(pts) >= 2 && (empty!(pts); ex.profile_data[] = nothing)
@@ -967,7 +602,11 @@ function alt_click!(ex::ResultExplorer)
     end
     r = current_result(ex)
     contour = copy(pts)
-    ex.circulation_result[] = _explorer_circulation(r,contour,ex.derivative_stencil[])
+    area_report = circulation(r; region = contour, coverage = :report)
+    ex.circulation_result[] = (; line = circulation(r, contour),
+                               area = area_report.value, contour,
+                               area_report.valid_area, area_report.requested_area,
+                               area_report.coverage_fraction, area_report.complete)
     return ex
 end
 
@@ -1005,7 +644,6 @@ area coverage).
 function tool_summary(ex::ResultExplorer)
     tool = ex.tool[]
     tool === :inspect && return ""
-    tool===:derivative_support && return "Derivative support: select a grid node.\nPolicy: $(_derivative_policy_name(ex.derivative_stencil[]))."
     r = current_result(ex)
     if tool === :profile
         ex.profile_data[] === nothing &&
@@ -1026,14 +664,12 @@ function tool_summary(ex::ResultExplorer)
     else
         string("Γ (vorticity area) = ", _fmt(res.area), " ", un)
     end
-    return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text,
-        res.stencil===:available ? "" : "\nArea policy: both immediate neighbors required.")
+    return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text)
 end
 
 # Data-space point (x, y) marking the current selection, or `nothing` when the
 # selection is empty or stale — the view draws a marker there.
 function selection_point(r, sel)
-    r isa TimedTrackingResult && Hammerhead._tracking_check(r)
     sel = _valid_selection(r, sel)
     sel === nothing && return nothing
     if r isa GridResult
@@ -1041,11 +677,7 @@ function selection_point(r, sel)
     elseif r isa PTVResult
         return (r.x[sel], r.y[sel])
     else # TrackingResult: mark the trajectory's first point
-        t = _tracking_geometry(r).trajectories[sel]
-        if r isa TimedTrackingResult
-            i=findfirst(p->isfinite(t.x[p]) && isfinite(t.y[p]),eachindex(t.x))
-            return i===nothing ? nothing : (t.x[i],t.y[i])
-        end
+        t = r.trajectories[sel]
         return (t.x[1], t.y[1])
     end
 end
@@ -1053,7 +685,7 @@ end
 _fmt(v::Real) = isfinite(v) ? @sprintf("%.4g", v) : "—"
 
 _status(r::GridResult, idx) = r.mask[idx]     ? "masked (no measurement)" :
-                              r.outliers[idx] ? "current outlier flag" : "valid"
+                              r.outliers[idx] ? "outlier (replaced)" : "valid"
 
 """
     describe_selection(ex::ResultExplorer) -> String
@@ -1123,29 +755,6 @@ function vector_summary(r::TrackingResult, k::Int)
              "gaps: $(trajectory_gap_count(t))",
              "mean speed = $spd"]
     return join(lines, "\n")
-end
-
-function vector_summary(r::TimedTrackingResult,k::Int)
-    summary=tracking_speed_summary(r)
-    t=summary.tracks[k]
-    unit=string(summary.length_unit,"/",something(summary.time_unit,"unknown sample-time unit"))
-    speed=summary.available[k] ? "$(_fmt(summary.speeds[k])) $unit" :
-        "unavailable ($(replace(String(summary.reasons[k]),'_' => ' ')))"
-    timeunit=something(summary.time_unit,"unknown unit")
-    range=t.first_frame===nothing ? "unavailable" : "$(t.first_frame)–$(t.last_frame)"
-    timerange=t.first_time===nothing ? "unavailable" : "$(t.first_time)–$(t.last_time) $timeunit"
-    elapsed=t.elapsed===nothing ? "unavailable" : "$(t.elapsed) $timeunit"
-    lines=["trajectory $k (whole track)",
-        "$(t.observations) observations; selected frames $range",
-        "gaps in selected frames: $(t.gaps)",
-        "actual time: $timerange",
-        "elapsed: $elapsed",
-        "observation-mean secant speed:\n$speed"]
-    summary.time_unit_provenance=="legacy_scale_same_unit" && push!(lines,"Time unit assumed from scale; acquisition unit unknown.")
-    summary.time_unit===nothing && push!(lines,"Sample-time unit unknown; no physical time unit inferred.")
-    push!(lines,"Clock: $(something(summary.clock_id,"unknown")); scope: $(replace(summary.source_scope,'_' => ' '))")
-    push!(lines,"Secants describe time windows; not instantaneous speed.")
-    join(lines,"\n")
 end
 
 # Mean speed along a trajectory (physical when `scale` is attached). Zero for

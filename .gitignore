@@ -3,8 +3,6 @@
 /bench/CUDA/Manifest*.toml
 /bench/AMDGPU/Manifest*.toml
 /HammerheadGUI/Manifest*.toml
-/HammerheadGUI/prototypes/qml/Manifest*.toml
-/HammerheadGUI/prototypes/qml/artifacts/
 /cases/
 /docs/Manifest*.toml
 /docs/build/

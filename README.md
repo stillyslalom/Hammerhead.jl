@@ -101,53 +101,7 @@ validation, derived flow quantities, and optional GPU execution for
 supported PIV settings. The [documentation](https://stillyslalom.github.io/Hammerhead.jl/dev/)
 has task guides and the [API reference](https://stillyslalom.github.io/Hammerhead.jl/dev/reference/pipeline/).
 
-Development priorities and outstanding work are tracked in [ROADMAP.md](ROADMAP.md).
-The development checkout also includes [saved planar experiments](docs/src/howto/experiments.md),
-[frozen-camera stereo replay](docs/src/howto/stereo_experiments.md),
-[checkpoint/resume](docs/src/howto/checkpoints.md) with
-[GUI controls](docs/src/howto/gui_checkpoints.md),
-[shared script/GUI quality reports](docs/src/howto/run_quality.md),
-[actual pass diagnostics](docs/src/howto/execution_diagnostics.md),
-[per-camera stereo diagnostics](docs/src/howto/stereo_execution_diagnostics.md),
-[final-vector measurement history](docs/src/howto/measurement_history.md) with
-[GUI inspection](docs/src/howto/gui_companions.md),
-[exact pair-timing metadata](docs/src/howto/pair_timing.md),
-[stereo timing companions](docs/src/howto/stereo_pair_timing.md),
-[actual-time tracking](docs/src/howto/tracking_timing.md) with
-[GUI inspection](docs/src/howto/gui_tracking_timing.md),
-[calibrated particle/trajectory exports](docs/src/howto/calibrated_scattered_export.md), and
-[representative-pair recipe comparisons](docs/src/howto/pair_comparison.md)
-with [GUI controls](docs/src/howto/gui_comparison.md).
-The [synthetic uncertainty scorecard](docs/src/howto/validation_uncertainty.md)
-evaluates coverage and normalized errors with explicit measurement populations.
-The [uncertainty diagnostic](docs/src/howto/diagnostic_uncertainty.md) traces
-stored estimates without changing estimator defaults.
-The [conditional noise study](docs/src/howto/conditional_uncertainty.md) varies
-image noise on fixed scenes and reports conditional and full-error populations separately.
-The [rendering study](docs/src/howto/rendering_uncertainty.md) compares particle
-support, pixel-area sampling and known-shift interpolation on fixed clean scenes.
-The [spatial-response study](docs/src/howto/spatial_transfer.md) compares complete
-schedules at matched vector spacing using analytic truth and explicit populations.
-The [GUI derivative inspector](docs/src/howto/gui_derivative_support.md) shows
-eligible centers, actual neighboring stencils and unavailable gradients.
-The [annotated tracking scorer](docs/src/howto/validation_ptv_tracking.md)
-evaluates correspondence, identity changes and gap recovery with explicit
-visibility and ambiguity accounting.
-The [VSJ301 study](docs/src/howto/validation_vsj301.md) evaluates an independent
-synthetic source with sparse annotations and explicit coordinate-origin hypotheses.
-The [saved-stereo GUI workflow](docs/src/howto/gui_stereo_experiments.md) preserves
-fitted recipes, historical run selection and verified associated reports.
-[Ensemble execution diagnostics](docs/src/howto/ensemble_execution_diagnostics.md)
-describe actual pooled contributions and residuals separately from single-pair iterations.
-Explicit [ensemble quality reports](docs/src/howto/ensemble_quality_reports.md)
-aggregate recorded pools, with [GUI inspection and whole-file reports](docs/src/reference/gui_ensemble_companions.md)
-preserving raw verification and separate report identity.
-[Saved ensemble experiments](docs/src/howto/ensemble_experiments.md) retain the
-ordered inputs and complete processing recipe for replay, with contribution
-progress, cancellation and reports associated with the single pooled output.
-HammerheadGUI's optional [experimental Qt interface](HammerheadGUI/README.md#try-the-experimental-qt-interface)
-opens richer controls beside an interactive scientific plot. Install `QML` and
-`QMLMakie` in your Hammerhead environment, then call `experimental_qml_gui()`
-to explore a demo or open a saved planar experiment.
-See [release notes](CHANGELOG.md) for API and format changes, and
-[RELEASING.md](RELEASING.md) for package release validation.
+Processing settings can be saved as a recipe and applied to new recordings;
+see [Save settings and reuse them](docs/src/howto/recipes.md). Development
+priorities are tracked in [ROADMAP.md](ROADMAP.md) and API changes in
+[CHANGELOG.md](CHANGELOG.md).

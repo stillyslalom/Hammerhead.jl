@@ -12,9 +12,6 @@ matches remain in the result for inspection. This page also covers
 scattered validation and binning to a grid. See the
 [PTV tutorial](../tutorials/ptv.md) for a worked example and the
 [conventions page](../explanation/conventions.md) for coordinates and units.
-For irregular sample intervals, use explicit
-[actual-time tracking](../howto/tracking_timing.md); its wrapper and dedicated
-file format preserve timing independently of ordinal tracking results.
 
 ```@index
 Pages = ["ptv.md"]

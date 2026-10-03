@@ -12,20 +12,6 @@ The [release procedure](https://github.com/stillyslalom/Hammerhead.jl/blob/main/
 describes core-first/GUI-second validation and the dataset, device, and workflow
 evidence associated with a candidate release.
 
-`flow_derivatives` retains its default five-field return and existing quotients
-on supported grids. Stencil metadata and centered-only support are opt-in.
-Coordinate axes now require finite, strictly monotonic values and representable
-native spans; malformed geometry is rejected before calculation. Integer
-component subtraction overflow returns `NaN` instead of a wrapped finite value.
-See [derivative support](../howto/derivative_support.md).
-
-Area circulation also accepts `stencil=:available` or `:centered`, retaining
-the available-neighbor default and existing coverage reporting. The GUI uses
-one explicit policy across derivative scalars and area circulation. Component
-profiles and line circulation do not depend on that policy. Support maps are
-available through `available_fields(ex)` only while inspecting derivative
-support; `available_fields(result)` retains its ordinary field list.
-
 JLD2 is the lossless Julia round-trip format. Files carry `format_version`;
 readers reject unknown versions rather than silently misinterpreting data.
 An empty result vector (or a batch stopped before its first result) is a valid
@@ -33,150 +19,11 @@ versioned file and loads as an empty vector.
 Users who need long-lived, language-neutral archives should also export the
 table or VTK form.
 
-Experiment records use a separate `experiment_format_version = 1`, with explicit
-primitive settings and identities rather than persisted recipe objects. They do
-not change the result-file schema. Unknown versions, unexpected fields, and
-changed recipe/input identities are rejected. There is no implicit migration
-from historical planning files or result-only files: those files do not contain
-the complete processing recipe. See [experiment replay](../howto/experiments.md)
-for the supported planar scope and environment compatibility checks.
-
-Stereo records use an independent `stereo_experiment_format_version = 1` with
-frozen built-in camera coefficients, dewarp-grid settings and ordered four-file
-acquisitions. They leave planar records and native result layouts unchanged.
-Saved native runs carry a separate `stereo_experiment_run_format_version = 1`
-association. Calibration fitting and self-calibration execution are not replayed;
-supplied calibration notes remain descriptive provenance. This format does not
-extend planar checkpoints or GUI saved-experiment controls to stereo.
-See [frozen-camera stereo replay](../howto/stereo_experiments.md) for its
-environment checks and completed-prefix verification limits.
-
-Checkpoint metadata has its own `checkpoint_format_version = 1`, separate from
-experiment records and native result files. It binds immutable per-pair native
-outputs to an ordered recipe/input identity and execution environment. Unknown
-versions are rejected; existing result-only prefixes are not adopted as
-checkpoints. See [checkpoint recovery](../howto/checkpoints.md) for supported
-interruptions and filesystem limits.
-
-Quality reports default to `quality_report_format_version = 1` in language-neutral
-TOML. Opt-in native-file history reports use version 2, with explicit recorded,
-missing and unsupported populations and verified final-sweep event counts.
-Opt-in execution-aware reports use version 3, optionally including history.
-Readers accept all three versions and validate counters, denominators, provenance,
-and unavailable diagnostic reasons. These summaries do not change native result
-structures or reconstruct missing history. See [the report schema](../reference/run_quality.md).
-
-Execution diagnostics are optional native-file companions with
-`execution_diagnostics_format_version = 1`. Each entry binds scalar pass
-observations to a result key; existing result readers ignore the companion.
-The diagnostics reader rejects malformed or unknown versions, while absence
-means not recorded. Generic result-only copies do not preserve companions.
-See [execution diagnostics](../reference/execution_diagnostics.md).
-
-Final-sweep measurement history uses a separate optional native companion,
-`measurement_history_format_version = 1`. It records observed validation,
-alternative-peak and filling events without changing result structures or the
-execution-diagnostics schema. Snapshot integrity and result-key binding are
-checked by the history reader; `verify_result=true` additionally loads the
-selected payload and verifies its numerical content binding. Metadata-only
-loading does not perform that payload check. Result-only copies drop this
-companion. See [measurement history](../reference/measurement_history.md).
-
-Planar sequence timing uses optional `pair_timing_format_version = 1`
-companions. Exact rational encodings retain provided timestamp values and
-derived differences/midpoints, with separate observed and effective scaling
-delays. The reader checks schema, integrity and result-key linkage; payload
-verification is explicit through `verify_result=true`. Result-only copies and
-current table exports omit timing companions. Existing `FrameSource` positional
-construction and default processing remain compatible; new source/clock/unit
-labels are optional metadata. See [pair timing](../reference/pair_timing.md).
-
-Stereo sequence timing uses a separate `stereo_pair_timing_format_version = 1`
-companion beside native results. It preserves both camera descriptors and
-midpoints, synchronization policy, reconstructed scaling delay and a raw
-stereo/camera measurement-field binding. The reconstructed time reference is
-explicitly camera 1's provided timestamp midpoint; tolerated skew does not create
-a common exposure time. Result-only copies omit this companion, and metadata
-inspection does not certify acquisition synchronization or calibration.
-See [stereo pair timing](../reference/stereo_pair_timing.md).
-
-Actual-time tracking is explicit through `TimedTrackingResult`; the registered
-`Trajectory` and `TrackingResult` layouts and default ordinal behavior remain
-unchanged. Dedicated artifacts use `timed_tracking_format_version = 1` and omit
-the ordinary native marker, so generic native readers reject them. Use
-`save_timed_tracking` and `load_timed_tracking` to retain essential timing.
-The separate `hammerhead-tracking-time-table-1` CSV schema preserves exact
-timestamps and velocity time support. Explicitly extracting the legacy payload
-discards timing semantics. See [tracking timing](../reference/tracking_timing.md).
-
-Calibrated scattered exports use a separate
-`hammerhead-calibrated-scattered-table-1` CSV and a TOML companion whose metadata
-contains `calibrated_table_format_version = 1`. The companion retains affine
-settings, coordinate conventions, unit assumptions and diagnostic availability,
-including for empty CSVs. Its reader validates metadata integrity and can verify
-the paired CSV's content and structure; it does not verify the original images
-or numerical result. The two files publish sequentially, so readers must detect
-an incomplete or mismatched pair. Ordinary table/native formats are unchanged.
-See [calibrated tables](../reference/calibrated_table.md).
-
-Dedicated timed artifacts and calibrated companions accept recorded absolute
-Windows/POSIX source locators independently of the reading host. These strings
-remain provenance; foreign paths are not resolved against the receiving workspace.
-The consumed local artifacts and explicitly supplied local inputs remain protected
-against output aliases. Supply a local `csv_path` when the recorded relative CSV
-locator uses a foreign separator dialect. This broadens version-1 reading without
-changing recorded locator strings, result layouts or scientific binding rules.
-It does not relocate or verify unavailable source images, and does not extend
-foreign-locator support to experiment, comparison or quality-report formats.
-
-Stereo execution observations use a separate version-1 sibling group alongside
-unchanged native stereo results. Existing planar diagnostics and result-only
-readers retain their contracts. The stereo reader distinguishes metadata-only
-inspection from optional measurement-field verification, including both retained
-cameras. This binding excludes parameter objects and correlation planes, and
-does not verify calibration, source images or synchronization. Its verification
-status describes the current read/capture and is not stored as an attestation.
-
-Planar ensemble capture uses its own version-1
-`ensemble_execution_diagnostics_format_version` marker and per-result sibling
-group. One pooled sweep per pass and ignored iteration settings are distinct
-from planar/stereo iterative execution. The companion binds raw measurement
-fields and geometry, excluding parameter objects and correlation planes;
-metadata-only reads do not verify result fields. CPU/KA capture is explicit.
-Existing execution-report formats retain their refusal of this separate schema;
-the additive `include_ensemble_execution_diagnostics=true` option selects
-format 4 for direct whole-file native reports. It separates recorded pooled
-execution from ordinary iteration records and entries with no execution metadata.
-It does not infer that an unrecorded PIV entry came from an ensemble. Native
-result layouts and diagnostics-off numerical processing remain unchanged.
-
-Format 4 verifies ensemble companions against raw measurements before counting
-their populations. Retained history and ordinary execution sections preserve
-their earlier definitions; pooled contributions do not establish independent
-sample size or uncertainty coverage. Saved planar/stereo experiment overloads
-refuse ensemble reporting because their sequence records do not describe pools.
-Separate ensemble experiment records use their own run-count contract and
-[associated report format 5](../reference/ensemble_experiment_quality.md), with
-distinct input-pair, processed-contribution and published-result counts.
-GUI inspection also verifies raw binding before physical conversion and keeps
-display integrity separate from the packet's processing-pixel basis.
-
-Associated stereo quality reports reuse default format 1 and optional execution
-format 3 after dedicated stereo run/raw-field verification. The GUI preserves
-complete stereo records in its own controller and separates selected historical
-run IDs from active attempts and already generated reports. This adds no stereo
-checkpoint or calibration-fitting format.
-
-GUI timed-trajectory inspection explicitly selects the dedicated artifact
-format and retains its wrapper through physical display. Ordinary eager and
-lazy native result vectors retain their element types and persistence behavior.
-Timed bundles have one explorer entry and cannot be appended to native sequences.
-
-Representative-pair comparisons use independent version-1 TOML snapshots,
-identified by `pair_comparison_format_version`. They preserve selected-input
-provenance, settings differences, units and comparison populations. Loading
-validates the saved snapshot without rerunning or reopening its image inputs.
-See [recipe comparisons](../reference/pair_comparison.md).
+Saved recipes carry `recipe_format_version = 1`, both in files written by
+[`save_recipe`](@ref) and in result files written by [`apply_recipe`](@ref).
+[`load_recipe`](@ref) rejects unknown versions. Pass settings added to
+[`PIVParameters`](@ref) in later releases take their defaults when an older
+recipe is loaded.
 
 The long-form table contract is identified by `TABLE_SCHEMA_VERSION` and the
 ordered `TABLE_COLUMNS` constant. Columns are a backward-compatible superset
@@ -192,27 +39,21 @@ are metadata, not synthesized positions. Trajectory IDs follow the result's
 trajectory-vector order and are local to that result. Empty trajectories emit no
 rows, so IDs can have gaps. Observation IDs count points within a trajectory;
 the existing `point_id` counts rows across the entire result. Header-only tables
-represent results with no observations. They cannot retain empty trajectories,
-the total input frame count, or scale metadata; use JLD2 when that information
-must round-trip.
+represent results with no observations. Use JLD2 to round-trip empty
+trajectories, the total input frame count, or scale metadata.
 
 `frame_index` records the input frame's one-based index, while `frame_id` remains
 a caller-supplied label for the whole result. `elapsed_time` is derived from
 input frame 1, using frame intervals without a scale or the attached scale's
 `dt` with one. `time_provenance` identifies which convention was used. Physical
-elapsed times assume uniformly spaced input frames; a tracking result does not
-retain acquisition timestamps or original frame-source indices. Supplying a
-scale after subsampling therefore requires the interval between the frames
-actually passed to tracking. This export cannot recover irregular acquisition
-timing from frame indices alone.
+elapsed times assume uniformly spaced input frames, so after subsampling attach
+a scale whose `dt` is the interval between the frames actually passed to tracking.
 
 Tracking velocity columns contain frame-aware differences of observed
 positions, using the same endpoint and central-difference convention as
 [`trajectory_velocities`](@ref). Physical conversion retains the interval and
-is idempotent. `position_valid` and `velocity_valid` report numerical finiteness;
-they make no claim about particle identity, uncertainty, or detection quality.
-Tracking does not retain mask/outlier flags, so those existing columns are
-empty rather than implying that all observations passed a validator. The
+is idempotent. `position_valid` and `velocity_valid` report numerical finiteness.
+Tracking results carry no mask/outlier flags, so those columns are empty. The
 [I/O reference](../reference/io.md) defines the added columns and edge cases.
 
 VTK export uses the legacy structured-grid contract documented by

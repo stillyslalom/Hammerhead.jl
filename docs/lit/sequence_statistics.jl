@@ -21,7 +21,7 @@ using CairoMakie
 
 exposure_dt = 0.01             # seconds between images A and B
 sample_dt = 0.02               # seconds between successive image pairs
-sample_times = (0:15) .* sample_dt
+pair_times = (0:15) .* sample_dt
 flow(x, y, z, t) = (200 + 60sin(2π * t / 0.16), 50.0, 0.0)  # px/s
 
 rng = MersenneTwister(2026)
@@ -30,13 +30,13 @@ pairs = [begin
         t0 = t, particle_density = 0.05, background_noise = 0.03,
         z_range = (-1.0, 1.0), rng)
     (a, b)
-end for t in sample_times]
+end for t in pair_times]
 
 # The prescribed horizontal displacement is 2 ± 0.6 px per pair. We can
 # compare the results with it here because we generated the recording;
 # a measured sequence normally has no known reference field.
 
-true_u = [flow(64, 64, 0, t)[1] * exposure_dt for t in sample_times]
+true_u = [flow(64, 64, 0, t)[1] * exposure_dt for t in pair_times]
 (first = true_u[1], range = extrema(true_u), pairs = length(pairs))
 
 # ## Analyze every pair
@@ -74,9 +74,9 @@ let
     fig = Figure(size = (650, 340))
     ax = Axis(fig[1, 1]; xlabel = "pair start time (s)",
               ylabel = "u (px per pair)", title = "Center displacement")
-    lines!(ax, sample_times, true_u; label = "imposed")
-    scatter!(ax, sample_times, center_u; label = "measured")
-    scatter!(ax, sample_times[1:8:end], center_u[1:8:end];
+    lines!(ax, pair_times, true_u; label = "imposed")
+    scatter!(ax, pair_times, center_u; label = "measured")
+    scatter!(ax, pair_times[1:8:end], center_u[1:8:end];
              label = "every eighth pair", markersize = 16)
     axislegend(ax)
     fig

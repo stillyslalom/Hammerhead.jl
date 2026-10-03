@@ -56,8 +56,7 @@ end
 abstract type AbstractFrameSource end
 
 """
-    FrameSource(n, loader; timestamps=nothing, labels=nothing,
-                source_id=nothing, frame_ids=nothing, time_unit=nothing, clock_id=nothing)
+    FrameSource(n, loader; timestamps=nothing, labels=nothing)
 
 Wrap an indexed frame loader without materializing the whole recording.
 `loader(i)` must return the image matrix for one-based frame index `i`.
@@ -65,47 +64,22 @@ Optional `timestamps` and `labels` must each have `n` entries. Use numeric
 timestamps in the same time unit as any [`PhysicalScale`](@ref) you attach:
 [`image_pairs`](@ref) subtracts paired timestamps into `FramePair.dt`.
 `labels` identify frames in saved sequence results.
-
-Optional nonempty string `source_id` and per-frame `frame_ids` are opaque caller
-identifiers, not verified content hashes. `time_unit` and `clock_id` label the
-provided timestamps without conversion or synchronization certification. They
-are additive metadata for [`PairTiming`](@ref); omitted labels remain unknown.
-The existing timestamp/physical-scale same-unit contract still applies.
 """
 struct FrameSource{F,TS,L} <: AbstractFrameSource
     n::Int
     loader::F
     timestamps::TS
     labels::L
-    source_id::Union{Nothing,String}
-    frame_ids::Union{Nothing,Vector{String}}
-    time_unit::Union{Nothing,String}
-    clock_id::Union{Nothing,String}
 end
 
-function _source_metadata_string(value, name)
-    value === nothing && return nothing
-    value isa AbstractString && !isempty(value) || throw(ArgumentError("$name must be a nonempty string or nothing"))
-    String(value)
-end
-function FrameSource(n::Integer, loader; timestamps=nothing, labels=nothing,
-                     source_id=nothing, frame_ids=nothing, time_unit=nothing, clock_id=nothing)
+function FrameSource(n::Integer, loader; timestamps=nothing, labels=nothing)
     n >= 0 || throw(ArgumentError("frame count must be nonnegative"))
     timestamps === nothing || length(timestamps) == n ||
         throw(DimensionMismatch("timestamps length must equal frame count"))
     labels === nothing || length(labels) == n ||
         throw(DimensionMismatch("labels length must equal frame count"))
-    frame_ids === nothing || length(frame_ids) == n || throw(DimensionMismatch("frame_ids length must equal frame count"))
-    ids = frame_ids === nothing ? nothing : [_source_metadata_string(v, "frame_ids entries") for v in frame_ids]
-    ids === nothing || all(v -> v !== nothing, ids) || throw(ArgumentError("frame_ids entries must be nonempty strings"))
-    FrameSource(Int(n), loader, timestamps, labels, _source_metadata_string(source_id, "source_id"),
-        ids === nothing ? nothing : String[ids...], _source_metadata_string(time_unit, "time_unit"), _source_metadata_string(clock_id, "clock_id"))
+    FrameSource(Int(n), loader, timestamps, labels)
 end
-
-# Preserve the original public positional construction and type-parameter arity.
-FrameSource(n::Integer, loader, timestamps, labels) = FrameSource(n, loader; timestamps, labels)
-FrameSource{F,TS,L}(n::Int, loader::F, timestamps::TS, labels::L) where {F,TS,L} =
-    FrameSource{F,TS,L}(n, loader, timestamps, labels, nothing, nothing, nothing, nothing)
 
 Base.length(s::FrameSource) = s.n
 Base.getindex(s::FrameSource, i::Integer) = (checkbounds(1:s.n, i); s.loader(i))

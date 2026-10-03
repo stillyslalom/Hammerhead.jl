@@ -148,15 +148,14 @@ Write one result or a vector of results to a JLD2 file at `path`, replacing
 an existing file. The vector may mix [`PIVResult`](@ref),
 [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
 [`TrackingResult`](@ref). Read it with [`load_results`](@ref).
-Copying a [`ResultFile`](@ref), [`CheckpointResults`](@ref), or their standard
-array views to a different path streams the entries; overwriting a known lazy
-source file is rejected before opening output.
+Copying a [`ResultFile`](@ref) or its views to a different path streams the
+entries; overwriting that lazy source file is rejected before opening output.
 """
 function save_results(path::AbstractString,
                       results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
-    sources = _result_protected_paths(results)
-    if isfile(path) && any(source -> isfile(source) && Base.samefile(path, source), sources)
-        throw(ArgumentError("cannot save lazy results over a source file; save to a different path or load eagerly first"))
+    source = _result_file_source(results)
+    if source !== nothing && isfile(path) && Base.samefile(path, source.path)
+        throw(ArgumentError("cannot save lazy results over their source file: $(source.path); save to a different path or load eagerly first"))
     end
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
@@ -184,22 +183,14 @@ const SavedResult = Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}
 """
     ResultFile(path) <: AbstractVector
 
-Index a completed native results file without deserializing its result entries.
-The read-only vector stores sorted result keys (O(number of results) metadata),
-and each indexed access opens the file, loads one result, and closes the file.
-No result payload or open file handle is retained by the index. Entries may mix
+Browse a results file one entry at a time. The index holds only the sorted
+entry keys; each access opens the file, loads one result, and closes it, so
+memory stays bounded for long recordings. Entries may mix
 [`PIVResult`](@ref), [`StereoPIVResult`](@ref), [`PTVResult`](@ref), and
-[`TrackingResult`](@ref); measured units and scale metadata are preserved.
-Iteration is lazy; `collect` or saving returned results in a container retains
-those payloads at the caller's request.
+[`TrackingResult`](@ref).
 
-Use only after the writer has closed the file. This is a fixed key index,
-not a live view or a checkpoint/restart API. File size and modification time
-are checked before and after reads to reject detectable changes; these checks
-do not provide concurrent-writer safety or an atomic filesystem snapshot.
-Do not modify or replace the file while using an index. Create a new index
-after a completed file changes. Format metadata is validated immediately;
-unreadable or unsupported result entries fail when selected.
+Open the index after the run that writes the file has finished. Reading an
+entry after the file has changed raises an error; create a new index then.
 
 [`load_results`](@ref) with `lazy = true` is equivalent to this constructor.
 """
@@ -215,14 +206,6 @@ _result_file_source(index::ResultFile) = index
 _result_file_source(results::SubArray) = _result_file_source(parent(results))
 _result_file_source(results::Base.ReshapedArray) = _result_file_source(parent(results))
 _result_file_source(results::PermutedDimsArray) = _result_file_source(parent(results))
-
-# Lazy indexes may read multiple files without having one ResultFile source.
-# Keep destination protection separate from single-file provenance detection.
-_result_protected_paths(results) = String[]
-_result_protected_paths(index::ResultFile) = [index.path]
-_result_protected_paths(results::SubArray) = _result_protected_paths(parent(results))
-_result_protected_paths(results::Base.ReshapedArray) = _result_protected_paths(parent(results))
-_result_protected_paths(results::PermutedDimsArray) = _result_protected_paths(parent(results))
 
 function ResultFile(path::AbstractString)
     fullpath = abspath(path)
@@ -346,53 +329,6 @@ and parameter overrides when `effort` is set, go to [`run_piv`](@ref).
   their `dt` replaces the supplied scale's delay; timestamps alone do not
   attach a physical scale.
 
-`on_diagnostics(i, diagnostics)` optionally delivers actual planar execution
-observations before `on_result`, persistence and progress. Its exceptions
-propagate before that pair is written. `record_diagnostics=true` stores a
-version-1 primitive companion alongside each result and requires an `output`
-path/function. Per-pair files retain absolute input-sequence indices in the
-companion; their result key is still `results/000001`. A persistence-requested
-file declares the companion version even if the first pair fails. Missing entry
-metadata means not recorded, not inferred. No sweep/result history is retained
-by this feature. [`load_execution_diagnostics`](@ref) reads it separately;
-ordinary result-only copies via `save_results` omit companions. This opt-in
-feature supports planar PIV only, not PTV, stereo or ensemble execution.
-
-`on_measurement_history(i, history)` delivers a separate final-pass/final-sweep
-[`PIVMeasurementHistory`](@ref) after execution diagnostics and before
-`on_result`/persistence/progress. `record_measurement_history=true` stores its
-version-1 native companion and requires an output path/function. It retains
-only the current pair's packet, unless the callback explicitly keeps it.
-Callback edits to private packet storage or bound numerical result fields are
-rejected before writing that pair. Missing history is not reconstructed from
-current flags. [`load_measurement_history`](@ref) reads it independently.
-Checkpoint, stereo, ensemble and PTV measurement history are not implemented.
-
-`on_pair_timing(i, timing)` optionally delivers a detached [`PairTiming`](@ref)
-after diagnostics/history and before `on_result`/persistence/progress.
-`record_pair_timing=true` requires native output and saves its version-1
-companion. Capture snapshots scalar metadata for **all** pairs before loading
-or opening output (O(number of pairs) metadata), including timestamps, labels,
-source/frame IDs and declared/effective delays. Missing/partial metadata remains
-explicit; no acquisition time is inferred from a scale or pair index.
-`timing_atol=0.0` and `timing_rtol=sqrt(eps(Float64))` compare declared and
-observed **delays**, never absolute epochs, using
-`abs(a-b) <= atol + rtol*max(abs(a),abs(b))`. Available delays must be positive.
-Numeric timestamps retain exact rational values, including integer epoch halves.
-Provided unit/clock mismatches are rejected; partial labels remain unknown.
-Legacy same-unit timestamp/scale semantics and tuple+scale delays are preserved.
-
-Opt-in capture freezes the two selected frame references and copies declared
-delay: mutable two-frame vectors become immutable tuples for the output callback
-and mask selection. Mask callbacks still receive `(i,imgA,imgB)` as before.
-FramePair containers remain FramePairs. Pixel content from a mutable source is
-not frozen. Timing/result edits by timing, result or function-output callbacks
-are rejected before writing that pair. Only the current bound packet/result is
-retained beyond scalar preflight metadata. [`load_pair_timing`](@ref) reads timing
-separately; ordinary result copies omit it. Capture supports planar PIV sequences
-only; tracking, stereo, PTV, ensemble, experiment replay/checkpoints and exports
-are outside this timing slice.
-
 Pairs are analyzed serially while the next pair is loaded and preprocessed
 on a background task. Preprocessors must be safe to call from that task.
 A shared [`PIVWorkspace`](@ref) reuses buffers across pairs. If processing or
@@ -411,36 +347,13 @@ function run_piv_sequence(pairs::AbstractVector,
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
-                          on_diagnostics::Union{Nothing,Function} = nothing,
-                          record_diagnostics::Bool = false,
-                          _diagnostics_association = nothing,
-                          on_measurement_history::Union{Nothing,Function} = nothing,
-                          record_measurement_history::Bool = false,
-                          _history_association = nothing,
-                          on_pair_timing::Union{Nothing,Function} = nothing,
-                          record_pair_timing::Bool = false,
-                          timing_atol::Real = 0.0,
-                          timing_rtol::Real = sqrt(eps(Float64)),
                           kwargs...)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
-    record_diagnostics && output === nothing && throw(ArgumentError("record_diagnostics requires a native output path or function; use on_diagnostics for callback-only delivery"))
-    record_measurement_history && output === nothing && throw(ArgumentError("record_measurement_history requires a native output path or function"))
-    record_pair_timing && output === nothing && throw(ArgumentError("record_pair_timing requires a native output path or function"))
-    timed_pairs = on_pair_timing === nothing && !record_pair_timing ? pairs : _timing_freeze_pairs(pairs)
-    timing_snapshots = on_pair_timing === nothing && !record_pair_timing ? nothing :
-        _timing_preflight(timed_pairs, scale, timing_atol, timing_rtol)
     workspace = piv_workspace(; backend)
-    diagnostics_state = on_diagnostics === nothing && !record_diagnostics ? nothing : Ref{Any}(nothing)
-    capture = diagnostics_state === nothing ? nothing : d -> (diagnostics_state[] = d)
-    history_state = on_measurement_history === nothing && !record_measurement_history ? nothing : Ref{Any}(nothing)
-    capture_history = history_state === nothing ? nothing : h -> (history_state[] = h)
-    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, on_diagnostics = capture, on_measurement_history=capture_history, kwargs...),
-                  PIVResult, timed_pairs;
-                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV",
-                  diagnostics_state, on_diagnostics, record_diagnostics, diagnostics_association = _diagnostics_association,
-                  history_state,on_measurement_history,record_measurement_history,history_association=_history_association,
-                  timing_snapshots,on_pair_timing,record_pair_timing)
+    _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, params; backend, workspace, mask, scale, kwargs...),
+                  PIVResult, pairs;
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
 end
 
 function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -453,36 +366,13 @@ function run_piv_sequence(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           image_type::Type{<:AbstractFloat} = Float64,
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
-                          on_diagnostics::Union{Nothing,Function} = nothing,
-                          record_diagnostics::Bool = false,
-                          _diagnostics_association = nothing,
-                          on_measurement_history::Union{Nothing,Function} = nothing,
-                          record_measurement_history::Bool = false,
-                          _history_association = nothing,
-                          on_pair_timing::Union{Nothing,Function} = nothing,
-                          record_pair_timing::Bool = false,
-                          timing_atol::Real = 0.0,
-                          timing_rtol::Real = sqrt(eps(Float64)),
                           kwargs...)
-    record_diagnostics && output === nothing && throw(ArgumentError("record_diagnostics requires a native output path or function; use on_diagnostics for callback-only delivery"))
-    record_measurement_history && output === nothing && throw(ArgumentError("record_measurement_history requires a native output path or function"))
-    record_pair_timing && output === nothing && throw(ArgumentError("record_pair_timing requires a native output path or function"))
-    timed_pairs = on_pair_timing === nothing && !record_pair_timing ? pairs : _timing_freeze_pairs(pairs)
-    timing_snapshots = on_pair_timing === nothing && !record_pair_timing ? nothing :
-        _timing_preflight(timed_pairs, scale, timing_atol, timing_rtol)
     workspace = piv_workspace(; backend)
-    diagnostics_state = on_diagnostics === nothing && !record_diagnostics ? nothing : Ref{Any}(nothing)
-    capture = diagnostics_state === nothing ? nothing : d -> (diagnostics_state[] = d)
-    history_state = on_measurement_history === nothing && !record_measurement_history ? nothing : Ref{Any}(nothing)
-    capture_history = history_state === nothing ? nothing : h -> (history_state[] = h)
     process = effort === nothing ?
-        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, on_diagnostics = capture, on_measurement_history=capture_history, kwargs...)) :
-        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, on_diagnostics = capture, on_measurement_history=capture_history, kwargs...))
-    _run_sequence(process, PIVResult, timed_pairs;
-                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV",
-                  diagnostics_state, on_diagnostics, record_diagnostics, diagnostics_association = _diagnostics_association,
-                  history_state,on_measurement_history,record_measurement_history,history_association=_history_association,
-                  timing_snapshots,on_pair_timing,record_pair_timing)
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB, PIVParameters(); backend, workspace, mask, scale, kwargs...)) :
+        ((imgA, imgB, i, pair, mask, scale) -> run_piv(imgA, imgB; effort, backend, workspace, mask, scale, kwargs...))
+    _run_sequence(process, PIVResult, pairs;
+                  preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PIV")
 end
 
 """
@@ -509,7 +399,6 @@ function run_ptv_sequence(pairs::AbstractVector, params::PTVParameters = PTVPara
                           mask = nothing,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
-    _reject_execution_diagnostics(kwargs, "PTV")
     _run_sequence((imgA, imgB, i, pair, mask, scale) -> run_ptv(imgA, imgB, params; mask, scale, kwargs...), PTVResult, pairs;
                   preprocess, output, progress, on_result, collect_results, image_type, mask, scale, label = "PTV")
 end
@@ -536,18 +425,7 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                        image_type::Type{<:AbstractFloat} = Float64,
                        label::AbstractString = "PIV",
                        mask = nothing,
-                       scale = nothing,
-                       diagnostics_state = nothing,
-                       on_diagnostics = nothing,
-                       record_diagnostics = false,
-                       diagnostics_association = nothing,
-                       history_state = nothing,
-                       on_measurement_history = nothing,
-                       record_measurement_history = false,
-                       history_association = nothing,
-                       timing_snapshots = nothing,
-                       on_pair_timing = nothing,
-                       record_pair_timing = false) where {R}
+                       scale = nothing) where {R}
     isempty(pairs) && throw(ArgumentError("pairs must not be empty"))
     results = collect_results ? Vector{R}(undef, length(pairs)) : nothing
     file = output isa AbstractString ? jldopen(output, "w") : nothing
@@ -560,9 +438,6 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
     failed = false
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
-        file === nothing || !record_diagnostics || (file["execution_diagnostics_format_version"] = EXECUTION_DIAGNOSTICS_FORMAT_VERSION)
-        file === nothing || !record_measurement_history || (file["measurement_history_format_version"] = MEASUREMENT_HISTORY_FORMAT_VERSION)
-        file === nothing || !record_pair_timing || (file["pair_timing_format_version"] = PAIR_TIMING_FORMAT_VERSION)
         meter = Progress(length(pairs); desc = "$label sequence: ", enabled = progress === true)
         pending = load_pair(pairs[1])
         for (i, pair) in enumerate(pairs)
@@ -572,20 +447,6 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 i < length(pairs) && (pending = load_pair(pairs[i + 1]))
                 pmask = pair_mask(mask, i, pair, imgA, imgB)
                 result = process(imgA, imgB, i, pair, pmask, pair_scale(scale, pair))
-                if diagnostics_state !== nothing
-                    diagnostics_state[] = _execution_context(diagnostics_state[], i, diagnostics_association)
-                    on_diagnostics === nothing || on_diagnostics(i, diagnostics_state[])
-                end
-                if history_state !== nothing
-                    history_state[] = _history_context(history_state[],i,history_association)
-                    on_measurement_history === nothing || on_measurement_history(i,history_state[])
-                    _history_check_result(history_state[],result)
-                end
-                timing = timing_snapshots === nothing ? nothing : _timing_bind(timing_snapshots[i], result)
-                if timing !== nothing
-                    on_pair_timing === nothing || on_pair_timing(i, timing)
-                    _pair_timing_check_result(timing, result)
-                end
                 collect_results && (results[i] = result)
             catch
                 @error "$label sequence failed on pair $i of $(length(pairs))" frameA = frame_label(frameA) frameB = frame_label(frameB)
@@ -594,33 +455,17 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
             # The prefetch task only loads frames; delivery and persistence
             # run on the caller's task, in pair order, with or without collection.
             on_result === nothing || on_result(i, result)
-            history_state === nothing || _history_check_result(history_state[],result)
-            timing === nothing || _pair_timing_check_result(timing, result)
             if file !== nothing
                 file[result_key(i)] = result
-                record_diagnostics && _write_execution_diagnostics(file, result_key(i), diagnostics_state[])
-                record_measurement_history && _write_measurement_history(file,result_key(i),history_state[])
-                record_pair_timing && _write_pair_timing(file,result_key(i),timing)
-                labels = timing === nothing ? pair_source_labels(frameA, frameB) :
-                    _timing_source_labels(timing_snapshots[i])
+                labels = pair_source_labels(frameA, frameB)
                 if labels !== nothing
                     file[source_key(i)] = labels
                 end
             elseif output isa Function
-                destination = String(output(i, pair))
-                history_state === nothing || _history_check_result(history_state[],result)
-                timing === nothing || _pair_timing_check_result(timing,result)
-                write_pair_file(destination, result, frameA, frameB;
-                    diagnostics = record_diagnostics ? diagnostics_state[] : nothing,
-                    history = record_measurement_history ? history_state[] : nothing,
-                    timing = record_pair_timing ? timing : nothing,
-                    source_labels = timing === nothing ? pair_source_labels(frameA, frameB) : _timing_source_labels(timing_snapshots[i]))
+                write_pair_file(String(output(i, pair)), result, frameA, frameB)
             end
             progress isa Function ? progress(i, length(pairs)) : next!(meter)
             result = nothing
-            timing = nothing
-            diagnostics_state === nothing || (diagnostics_state[] = nothing)
-            history_state === nothing || (history_state[] = nothing)
         end
     catch
         failed = true
@@ -635,8 +480,6 @@ function _run_sequence(process, ::Type{R}, pairs::AbstractVector;
                 end
             end
         finally
-            diagnostics_state === nothing || (diagnostics_state[] = nothing)
-            history_state === nothing || (history_state[] = nothing)
             if file !== nothing
                 try
                     close(file)
@@ -652,19 +495,13 @@ end
 # One-result-per-file writer for the function-`output` sequence mode: a
 # standalone results file (readable by `load_results`) recording the pair's
 # source paths when the pair entries are file paths.
-function write_pair_file(path::AbstractString, result, frameA, frameB; diagnostics = nothing, history = nothing,
-                         timing = nothing, source_labels = pair_source_labels(frameA, frameB))
-    history === nothing || _history_check_result(history,result)
-    timing === nothing || _pair_timing_check_result(timing,result)
+function write_pair_file(path::AbstractString, result, frameA, frameB)
     dir = dirname(path)
     isempty(dir) || mkpath(dir)
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         f[result_key(1)] = result
-        diagnostics === nothing || _write_execution_diagnostics(f, result_key(1), diagnostics)
-        history === nothing || _write_measurement_history(f,result_key(1),history)
-        timing === nothing || _write_pair_timing(f,result_key(1),timing)
-        labels = source_labels
+        labels = pair_source_labels(frameA, frameB)
         if labels !== nothing
             f[source_key(1)] = labels
         end

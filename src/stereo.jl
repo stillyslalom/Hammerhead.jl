@@ -133,12 +133,6 @@ has weak seeding or a larger uncertainty estimate.
 Matrix inputs contain no exposure timestamps: the caller must establish
 synchronization. To validate timestamped [`FrameRef`](@ref)s before loading
 images, use [`run_piv_stereo_sequence`](@ref).
-
-`on_diagnostics(d)` receives one immutable [`StereoPIVExecutionDiagnostics`](@ref)
-after both camera analyses, reconstruction and scale attachment. Camera residuals
-remain dewarped processing pixels; no calibration/convergence validity is claimed.
-Capture is optional and does not change numerical processing. Measurement fields
-are bound and checked after the callback; parameters/correlation planes are excluded.
 """
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         A2::AbstractMatrix{<:Real}, B2::AbstractMatrix{<:Real},
@@ -148,9 +142,7 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         backend::Symbol = :cpu,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                         scale::Union{Nothing,PhysicalScale} = nothing,
-                        on_diagnostics::Union{Nothing,Function} = nothing,
                         kwargs...)
-    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     # Check the backend's option scope before the (relatively expensive)
@@ -170,20 +162,11 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     end
 
     T = float(promote_type(eltype(A1), eltype(B1), eltype(A2), eltype(B2)))
-    camera_diagnostics=on_diagnostics===nothing ? nothing : (Ref{Any}(nothing),Ref{Any}(nothing))
-    geometry=on_diagnostics===nothing ? nothing : _stereo_execution_geometry(grid)
-    source_before=on_diagnostics===nothing ? nothing : _experiment_software()["core_source_sha256"]
     a = Matrix{T}(undef, size(grid))
     b = Matrix{T}(undef, size(grid))
     result = _run_piv_stereo!(a, b, A1, B1, A2, B2, dw1, dw2, params,
-                              node_mask; backend, _camera_diagnostics=camera_diagnostics, kwargs...)
-    result=scale === nothing ? result : with_scale(result, scale)
-    if on_diagnostics!==nothing
-        d=_stereo_execution_finish(map(r->r[],camera_diagnostics),result,geometry,nothing,source_before)
-        on_diagnostics(d)
-        _stereo_execution_check_result(d,result)
-    end
-    result
+                              node_mask; backend, kwargs...)
+    return scale === nothing ? result : with_scale(result, scale)
 end
 
 function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
@@ -192,12 +175,10 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
                         effort::Union{Nothing,Symbol} = nothing,
                         backend::Symbol = :cpu,
                         mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
-                        on_diagnostics::Union{Nothing,Function} = nothing,
                         kwargs...)
-    _reject_execution_diagnostics(kwargs)
     if effort === nothing
         return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, PIVParameters();
-                              backend, mask, on_diagnostics, kwargs...)
+                              backend, mask, kwargs...)
     end
     dw1.grid == dw2.grid ||
         throw(ArgumentError("the two dewarpers must share the same DewarpGrid, " *
@@ -205,22 +186,20 @@ function run_piv_stereo(A1::AbstractMatrix{<:Real}, B1::AbstractMatrix{<:Real},
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
     return run_piv_stereo(A1, B1, A2, B2, dw1, dw2, passes;
-                          backend, mask, on_diagnostics, driver_kwargs...)
+                          backend, mask, driver_kwargs...)
 end
 
 # Allocation-controllable core used by the sequence driver. One dewarped pair
 # buffer and one stateful PIV workspace are sufficient because the two camera
 # analyses are deliberately serial; both are reused across cameras and pairs.
 function _run_piv_stereo!(a, b, A1, B1, A2, B2, dw1, dw2, params, node_mask;
-                          backend::Symbol, workspace = nothing, _camera_diagnostics=nothing, kwargs...)
+                          backend::Symbol, workspace = nothing, kwargs...)
     dewarp!(a, dw1, A1)
     dewarp!(b, dw1, B1)
-    capture1=_camera_diagnostics===nothing ? nothing : d->(_camera_diagnostics[1][]=d)
-    capture2=_camera_diagnostics===nothing ? nothing : d->(_camera_diagnostics[2][]=d)
-    r1 = run_piv(a, b, params; backend, workspace, mask = node_mask, on_diagnostics=capture1, kwargs...)
+    r1 = run_piv(a, b, params; backend, workspace, mask = node_mask, kwargs...)
     dewarp!(a, dw2, A2)
     dewarp!(b, dw2, B2)
-    r2 = run_piv(a, b, params; backend, workspace, mask = node_mask, on_diagnostics=capture2, kwargs...)
+    r2 = run_piv(a, b, params; backend, workspace, mask = node_mask, kwargs...)
     return reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, dw1.grid)
 end
 
@@ -262,24 +241,6 @@ persisted).
 Set `collect_results = false` to return `nothing` instead of retaining the
 completed results in memory, including on cancellation. `on_result`, `output`,
 and `progress` still run for each completed acquisition in the same order.
-`on_diagnostics(i,d)` optionally runs before `on_result`, once per reconstructed
-acquisition. `record_diagnostics=true` writes separate versioned native metadata
-and requires `output`. Callback-only capture is allowed. Measurement-field binding
-is checked after callbacks, including after resolving function output and before
-opening its destination. Progress runs after persistence, so a progress mutation
-error may leave an already completed entry. Packets retain scalar per-camera pass
-observations; [`load_stereo_execution_diagnostics`](@ref) reads them separately.
-`on_pair_timing(i,p)` and `record_pair_timing=true` opt into a separate
-[`StereoPairTiming`](@ref) companion, preflighting all selected scalar source/time
-metadata before loads/output. Its camera midpoints stay separate; a reconstructed
-time reference is explicitly camera 1. `timing_atol=0` and
-`timing_rtol=sqrt(eps(Float64))` check exact encoded declared/observed delay
-agreement separately from synchronization admission. Known unit/clock labels
-must agree across cameras. Capture is off by default and preserves legacy scaling.
-Timing and diagnostics are both captured before the first public callback, then
-checked after diagnostics, timing, result, output-path and progress callbacks.
-With timing enabled, mutable pair containers and source metadata are detached
-before loading; output callbacks receive the frozen four-frame selection.
 Timestamped [`FramePair`](@ref)s attach their actual pair-specific `dt` to
 each result when `scale` is supplied; the two cameras' intervals must agree.
 
@@ -312,16 +273,15 @@ function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  effort::Union{Nothing,Symbol} = nothing,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow, kwargs...)
-    _stereo_timing_guard(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     length(pairs1) == length(pairs2) ||
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
-    _stereo_timing_capture(kwargs) || _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
+    _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
     acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
-                                    scale_pairs = pairs1, timing_pairs2 = pairs2, sync_atol, sync_rtol,
+                                    scale_pairs = pairs1, sync_atol, sync_rtol,
                                     missing_timestamps, kwargs...)
 end
 
@@ -330,21 +290,20 @@ function run_piv_stereo_sequence(pairs1::AbstractVector, pairs2::AbstractVector,
                                  effort::Union{Nothing,Symbol} = nothing,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow, kwargs...)
-    _stereo_timing_guard(kwargs)
     length(pairs1) == length(pairs2) ||
         throw(DimensionMismatch("camera pair sequences must have equal length, got " *
                                 "$(length(pairs1)) and $(length(pairs2))"))
-    _stereo_timing_capture(kwargs) || _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
+    _check_stereo_pair_times(pairs1, pairs2; sync_atol, sync_rtol, missing_timestamps)
     acquisitions = [(p1[1], p1[2], p2[1], p2[2]) for (p1, p2) in zip(pairs1, pairs2)]
     if effort === nothing
         return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters();
-                                        scale_pairs = pairs1, timing_pairs2 = pairs2, sync_atol, sync_rtol,
+                                        scale_pairs = pairs1, sync_atol, sync_rtol,
                                         missing_timestamps, kwargs...)
     end
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     passes = effort_schedule(effort; image_size = size(dw1.grid), piv_kwargs...)
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, passes;
-                                    scale_pairs = pairs1, timing_pairs2 = pairs2, sync_atol, sync_rtol,
+                                    scale_pairs = pairs1, sync_atol, sync_rtol,
                                     missing_timestamps, driver_kwargs...)
 end
 
@@ -419,7 +378,6 @@ function run_piv_stereo_sequence(acquisitions::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper,
                                  params::Union{PIVParameters,AbstractVector{PIVParameters}};
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
-    _stereo_timing_guard(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     return _run_piv_stereo_sequence(acquisitions, dw1, dw2, params; kwargs...)
@@ -428,7 +386,6 @@ end
 function run_piv_stereo_sequence(acquisitions::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper;
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
-    _stereo_timing_guard(kwargs)
     if effort === nothing
         return _run_piv_stereo_sequence(acquisitions, dw1, dw2, PIVParameters(); kwargs...)
     end
@@ -449,51 +406,20 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                                   mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                                   scale::Union{Nothing,PhysicalScale} = nothing,
                                   scale_pairs = nothing,
-                                  timing_pairs2 = nothing,
                                   sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                   missing_timestamps::Symbol = :allow,
-                                  on_diagnostics::Union{Nothing,Function}=nothing,
-                                  record_diagnostics::Bool=false,
-                                  on_pair_timing::Union{Nothing,Function}=nothing,
-                                  record_pair_timing::Bool=false,
-                                  timing_atol::Real=0.0,
-                                  timing_rtol::Real=sqrt(eps(Float64)),
                                   kwargs...)
-    _reject_execution_diagnostics(kwargs)
     isempty(acquisitions) && throw(ArgumentError("acquisitions must not be empty"))
     all(a -> a isa Tuple && length(a) == 4, acquisitions) ||
         throw(ArgumentError("each stereo acquisition must be a 4-tuple (A1, B1, A2, B2)"))
-    record_diagnostics && output===nothing && throw(ArgumentError("record_diagnostics requires native stereo output; use on_diagnostics for callback-only capture"))
-    record_pair_timing && output===nothing && _timing_error("record_pair_timing requires native stereo output; use on_pair_timing for callback-only capture")
-    timing_capture=record_pair_timing || on_pair_timing!==nothing
-    timing_snapshots=nothing
-    protected_inputs=String[]
-    if timing_capture
-        if scale_pairs!==nothing
-            scale_pairs=_timing_freeze_pairs(scale_pairs)
-            timing_pairs2=_timing_freeze_pairs(timing_pairs2)
-            acquisitions=[(p1[1],p1[2],p2[1],p2[2]) for (p1,p2) in zip(scale_pairs,timing_pairs2)]
-        else
-            acquisitions=copy(acquisitions)
-        end
-        timing_snapshots=_stereo_timing_preflight(acquisitions,scale_pairs,timing_pairs2,scale,
-            timing_atol,timing_rtol,sync_atol,sync_rtol,missing_timestamps)
-        protected_inputs=_stereo_timing_protected_inputs(acquisitions)
-        output isa AbstractString && _stereo_timing_output_guard(output,protected_inputs)
-    else
-        _check_stereo_pair_times(((a[1], a[2]) for a in acquisitions),
+    _check_stereo_pair_times(((a[1], a[2]) for a in acquisitions),
                              ((a[3], a[4]) for a in acquisitions);
                              sync_atol, sync_rtol, missing_timestamps)
-    end
     node_mask = _stereo_node_mask(dw1, dw2, mask)
     pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
                  (preprocess, preprocess)
     workspace = piv_workspace(; backend)
     results = collect_results ? StereoPIVResult[] : nothing
-    capturing=on_diagnostics!==nothing || record_diagnostics
-    camera_diagnostics=capturing ? (Ref{Any}(nothing),Ref{Any}(nothing)) : nothing
-    geometry=capturing ? _stereo_execution_geometry(dw1.grid) : nothing
-    source_before=capturing ? _experiment_software()["core_source_sha256"] : nothing
     a = b = nothing
     file = output isa AbstractString ? jldopen(output, "w") : nothing
     load_acquisition(acq) = Threads.@spawn begin
@@ -508,8 +434,6 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
     pending = nothing
     failed = false
     cancelled = false
-    diagnostics=nothing
-    timing=nothing
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(acquisitions); desc = "Stereo PIV sequence: ",
@@ -528,22 +452,9 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                     b = similar(a)
                 end
                 result = _run_piv_stereo!(a, b, frames..., dw1, dw2, params,
-                                          node_mask; backend, workspace, _camera_diagnostics=camera_diagnostics, kwargs...)
-                result_scale = timing_capture ? _stereo_timing_result_scale(timing_snapshots[i]) :
-                    scale_pairs === nothing ? scale : pair_scale(scale, scale_pairs[i])
+                                          node_mask; backend, workspace, kwargs...)
+                result_scale = scale_pairs === nothing ? scale : pair_scale(scale, scale_pairs[i])
                 result = result_scale === nothing ? result : with_scale(result, result_scale)
-                if capturing
-                    diagnostics=_stereo_execution_finish(map(r->r[],camera_diagnostics),result,geometry,i,source_before)
-                end
-                timing_capture && (timing=_stereo_timing_bind(timing_snapshots[i],result,dw1.grid))
-                if capturing
-                    on_diagnostics===nothing || on_diagnostics(i,diagnostics)
-                    _stereo_execution_check_result(diagnostics,result)
-                    timing===nothing || _stereo_pair_timing_check_result(timing,result)
-                end
-                on_pair_timing===nothing || on_pair_timing(i,timing)
-                timing===nothing || _stereo_pair_timing_check_result(timing,result)
-                diagnostics===nothing || _stereo_execution_check_result(diagnostics,result)
                 collect_results && push!(results, result)
             catch
                 @error "Stereo PIV sequence failed on acquisition $i of $(length(acquisitions))"
@@ -553,30 +464,15 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
             # called on the caller's task, in acquisition order, before the
             # incremental write and the progress callback.
             on_result === nothing || on_result(i, result)
-            diagnostics===nothing || _stereo_execution_check_result(diagnostics,result)
-            timing===nothing || _stereo_pair_timing_check_result(timing,result)
             if file !== nothing
                 file[result_key(i)] = result
-                record_diagnostics && _write_stereo_execution_diagnostics(file,result_key(i),diagnostics,result)
-                record_pair_timing && _write_stereo_pair_timing(file,result_key(i),timing,result)
-                timing===nothing || _stereo_timing_write_sources(file,i,timing_snapshots[i])
-                timing===nothing && all(x -> x isa AbstractString, acq) &&
+                all(x -> x isa AbstractString, acq) &&
                     (file[source_key(i)] = String[String(x) for x in acq])
             elseif output isa Function
-                destination=String(output(i,acq))
-                diagnostics===nothing || _stereo_execution_check_result(diagnostics,result)
-                timing===nothing || _stereo_pair_timing_check_result(timing,result)
-                timing_capture && _stereo_timing_output_guard(destination,protected_inputs)
-                _write_stereo_pair_file(destination,result,acq;diagnostics=record_diagnostics ? diagnostics : nothing,
-                    timing=record_pair_timing ? timing : nothing,timing_snapshot=timing_capture ? timing_snapshots[i] : nothing)
+                _write_stereo_pair_file(String(output(i, acq)), result, acq)
             end
             progress isa Function ? progress(i, length(acquisitions)) : next!(meter)
-            diagnostics===nothing || _stereo_execution_check_result(diagnostics,result)
-            timing===nothing || _stereo_pair_timing_check_result(timing,result)
             result = nothing
-            diagnostics=nothing
-            timing=nothing
-            camera_diagnostics===nothing || foreach(r->r[]=nothing,camera_diagnostics)
         end
     catch
         failed = true
@@ -591,9 +487,6 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                 end
             end
         finally
-            diagnostics=nothing
-            timing=nothing
-            camera_diagnostics===nothing || foreach(r->r[]=nothing,camera_diagnostics)
             if file !== nothing
                 try
                     close(file)
@@ -606,18 +499,13 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
     return results
 end
 
-function _write_stereo_pair_file(path, result, acquisition;diagnostics=nothing,timing=nothing,timing_snapshot=nothing)
-    diagnostics===nothing || _stereo_execution_check_result(diagnostics,result)
-    timing===nothing || _stereo_pair_timing_check_result(timing,result)
+function _write_stereo_pair_file(path, result, acquisition)
     dir = dirname(path)
     isempty(dir) || mkpath(dir)
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         f[result_key(1)] = result
-        diagnostics===nothing || _write_stereo_execution_diagnostics(f,result_key(1),diagnostics,result)
-        timing===nothing || _write_stereo_pair_timing(f,result_key(1),timing,result)
-        timing_snapshot===nothing || _stereo_timing_write_sources(f,1,timing_snapshot)
-        timing_snapshot===nothing && all(x -> x isa AbstractString, acquisition) &&
+        all(x -> x isa AbstractString, acquisition) &&
             (f[source_key(1)] = String[String(x) for x in acquisition])
     end
     return path
@@ -676,7 +564,6 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
                                  missing_timestamps::Symbol = :allow,
                                  kwargs...)
-    _reject_execution_diagnostics(kwargs)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     length(pairs1) == length(pairs2) ||
@@ -700,7 +587,6 @@ end
 function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  dw1::ImageDewarper, dw2::ImageDewarper;
                                  effort::Union{Nothing,Symbol} = nothing, kwargs...)
-    _reject_execution_diagnostics(kwargs)
     if effort === nothing
         return run_piv_stereo_ensemble(pairs1, pairs2, dw1, dw2, PIVParameters(); kwargs...)
     end

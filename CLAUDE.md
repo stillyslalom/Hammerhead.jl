@@ -2,8 +2,8 @@
 
 Hammerhead.jl — particle image velocimetry (PIV) in Julia. Development is
 organized around the International PIV Challenge cases; see [ROADMAP.md](ROADMAP.md)
-for the single active backlog, delivery order, and acceptance criteria. Historical
-phases live in `reference/archive/ROADMAP.md`. Scope is capped at planar 2D2C + stereo 2D3C (tomographic
+for the active backlog (historical phases live in `reference/archive/ROADMAP.md`).
+Scope is capped at planar 2D2C + stereo 2D3C (tomographic
 PIV is out of scope). All five phases are done: 1 (file I/O & batch),
 2 (masking), 3 (ensemble correlation & time-series statistics),
 4 (accuracy/UQ), and 5 (stereo: camera calibration, target detection,
@@ -16,21 +16,25 @@ July 2026) is also done. Hammerhead and HammerheadGUI are registered in
 General; user installation instructions should use `pkg> add Hammerhead`
 and `pkg> add HammerheadGUI`. Phase 7 (HammerheadGUI) is underway:
 the monorepo conversion and CI/TagBot/CompatHelper subdir wiring are done;
-the result explorer, mask editor, batch forms, and calibration diagnostics
-are available. Phase 8 (2D2C PTV,
+the result explorer, mask/ROI editors, batch forms (with saved settings),
+and calibration diagnostics are available. Phase 8 (2D2C PTV,
 July 2026) is done: per-frame particle detection (`detect_particles`),
 hybrid PIV-guided two-frame tracking (`run_ptv` → `PTVResult`, with
 `ptv_to_grid` binning and `run_ptv_sequence` batch), scattered validation,
 multi-frame trajectory linking (`track_particles` → `TrackingResult`), and
 docs — all synthetic-verified, no new deps.
 
+A 2026-10-03 cleanup removed an autonomous agent's provenance, companion,
+experiment-record, checkpoint, quality-report, and Qt/QML layers (recoverable
+from commit 88a4bda). Saved settings now go through the single recipe API in
+`recipes.jl`; don't reintroduce parallel record/companion formats.
+
 ## Commands
 
 ```bash
-julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite, including subprocess recovery checks
+julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite
 julia --project=docs docs/make.jl                    # docs: executes all seven tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
-julia --project=. --threads=4 bench/validation_scorecard.jl  # provenance + synthetic accuracy / real-data smoke report
 ```
 
 `PIV sequence failed` error logs from the intentional failure-propagation
@@ -47,21 +51,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 `howto/`, `explanation/`, `reference/`, plus `index.md` and `references.md`
 (bibliography). Rules that keep the build green:
 
-- Organize the public site around reader tasks and a short learning path.
-  Tutorials lead with a concrete question, executable example and useful figure,
-  then explain the result and invite one change to try. Hide only rendering
-  machinery; all inputs needed to run visible example code must be introduced.
-  Do not turn implementation batches into new top-level navigation entries.
-  Keep detailed pages searchable and linked through the topic hubs in `make.jl`.
-  File-format versions, field schemas and edge-case contracts belong in API
-  reference; test inventories and framework evaluations belong in development
-  material. Page titles describe a reader's task, not an internal delivery slice.
-- Explain what a command does, what a result measures, and how the reader uses
-  it in direct, affirmative language. Include a limitation when it changes an
-  interpretation or next action, and place it with that decision. Avoid habitual
-  negative caveats about unrelated claims, guarantees, unsupported scenarios or
-  hypothetical misunderstandings. Define populations and artifact identities
-  directly instead of repeatedly stating what they are not.
+- Organize the site around reader tasks. Tutorials lead with a concrete
+  question, executable example and figure, then explain the result; page
+  titles name a reader's task; format/edge-case contracts go in API reference.
+  Write directly and affirmatively; place a limitation beside the decision it
+  changes and avoid habitual negative caveats.
 - Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
   them into `docs/src/tutorials/` (gitignored) with executable `@example`
   blocks, so the docs build runs them end to end — they are integration
@@ -77,8 +71,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
   added to one of the reference pages (and every documented binding must
   appear somewhere) or `makedocs` fails its checkdocs pass.
-  `Pages` uses suffix matching; use `"src/quality.jl"` rather than `"quality.jl"`
-  when another source such as `run_quality.jl` shares that suffix.
+  `Pages` suffix-matches: `"calibration.jl"` also catches
+  `planar_calibration.jl`, so use `"src/calibration.jl"` there.
   `reference/internals.md` catches all non-exported docstrings via
   `Public = false`.
 - Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
@@ -105,9 +99,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   plans + buffers per window size; subpixel peak fits
 - `uncertainty.jl` — Wieneke 2015 correlation-statistics uncertainty
   (per-window `accumulate_uncertainty!` + `finalize_uncertainty`)
-- `transforms.jl` — affine transforms, image warping, registration
-  (manual fits validate finite Float64 coordinates, affine rank and invertibility;
-  fit residual acceptance remains the caller's responsibility)
+- `transforms.jl` — affine transforms, image warping, registration (manual
+  fits reject nonfinite, rank-deficient, and singular inputs)
 - `calibration.jl` — `PinholeCamera` (normalized DLT) / `SoloffCamera`
   (19-term polynomial) / `TransformedCamera` (rigid world pre-transform
   wrapper), `calibrate_camera`, `world_to_pixel` / `pixel_to_world`,
@@ -129,10 +122,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`, intensity/contrast/edge `automatic_mask`,
   and circular `grow_mask`/`shrink_mask`
-- `source_support.jl` — lazy original-pixel stencil evidence for deformed
-  windows, using exact comparisons in processing precision. Compact UInt8 maps
-  identify constant/empty/variable raw stencils; uninformative pair contributions
-  are skipped consistently by CPU/shared KA correlation and uncertainty paths.
+- `source_support.jl` — original-pixel contrast gate for deformed windows
+  (lazy UInt8 maps of empty/constant/varying raw 4×4 stencils; see the
+  non-informative-windows convention)
 - `pipeline.jl` — `run_piv`, `piv_pass` (WIDIM multi-pass with symmetric
   image deformation; a pass with `max_iterations > 1` iterates against its
   own validated field until the *q95* per-vector change drops below
@@ -147,15 +139,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `multipass_parameters` (`final = (;)` overrides the last pass only),
   `effort_schedule` (internal builder for `effort = :low/:medium/:high` on
   `run_piv`, `run_piv_sequence`, `run_piv_ensemble`, and `run_piv_stereo`;
-  planar presets use the ROI dimensions when supplied; high effort includes
-  final-pass UQ, and ensemble high repeats the final
+  planar presets size to the ROI when one is given; high effort includes final-pass UQ, and ensemble high repeats the final
   window because ensemble ignores `max_iterations`),
   `PIVWorkspace`/`piv_workspace()` (optional `workspace` kwarg reusing the
   padded B-spline coefficient buffers via `image_interpolant!`+`interpolate!`,
   the deform buffers, and a per-window-config correlator pool across `run_piv`
   calls — bitwise-identical; the sequence/ensemble drivers hold one).
-  Singleton predictor axes extend constantly during deformation and vector
-  attribution, so coarse windows may fill an image or ROI dimension.
+  Singleton predictor axes extend constantly, so a coarse window may span a
+  whole image/ROI dimension.
 - `ka_backend.jl` — portable KernelAbstractions correlation/analysis kernels
   + the built-in `backend = :ka` engine that runs them on the KA CPU backend
   (details and GPU kernel conventions under the GPU-extension bullet below)
@@ -175,28 +166,24 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   dewarped images → geometric least-squares 3C reconstruction with
   uncertainty propagation), synchronized `run_piv_stereo_sequence`, and
   per-camera-correlation `run_piv_stereo_ensemble`. Sequence/ensemble drivers
-  check matching exposure timestamps before loading or opening output;
-  `sync_atol`/`sync_rtol` scale tolerance by pair delay, never clock epoch.
-  `missing_timestamps = :error` requires metadata; default `:allow` preserves
-  path/matrix workflows without claiming synchronization. Declared `FramePair.dt`
-  must agree with available source timestamps within the same tolerance.
+  check camera exposure timestamps and declared `FramePair.dt` before loading
+  or opening output (`sync_atol`/`sync_rtol` scale with pair delay;
+  `missing_timestamps = :allow` default, `:error` to require metadata)
 - `scaling.jl` — `with_scale` (attach/strip `PhysicalScale` metadata,
   arrays shared) + `physical` (same-type conversion to physical units) +
   `plot_axis_labels` (Makie-free label helper) for all four result types
 - `io.jl` — `load_image`/`load_mask` (FileIO), `save_results`/`load_results`
   (JLD2: `format_version` 1 + `results/000001`… + optional `sources/…`;
   entries may be `PIVResult`, `StereoPIVResult`, `PTVResult`, or
-  `TrackingResult`; `ResultFile(path)` / `load_results(path; lazy = true)`
-  indexes sorted keys and loads one entry per access, without a retained
-  payload cache or open handle. The index is for completed files; size/mtime
-  checks reject detectable changes but do not support concurrent writers. The
+  `TrackingResult`; the
   pre-registration dev formats were retired without a load shim when the
-  `scale` field landed),
+  `scale` field landed; `ResultFile(path)` / `load_results(path; lazy = true)`
+  index a completed file and load one entry per access, rejecting detectable
+  size/mtime changes),
   `run_piv_sequence`/`run_ptv_sequence` batch drivers (shared `_run_sequence`;
   `output` accepts a single path or an `(i, pair) -> path` function for
-  per-pair files; `collect_results = false` returns `nothing` while delivering
-  each result to `on_result` and output, then releases its reference (also
-  supported by the stereo sequence driver); the next pair's load+preprocess is prefetched on a
+  per-pair files; `collect_results = false` delivers each result to
+  `on_result`/`output` and returns `nothing` (stereo sequence too); the next pair's load+preprocess is prefetched on a
   `Threads.@spawn` task while the current pair's `process` runs — overlaps
   slow-source IO with compute only under ≥2 threads, results bitwise-identical
   to serial; `run_piv_sequence` also holds one `PIVWorkspace`, reused across
@@ -207,14 +194,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `FrameRef` / timestamped `FramePair` / `TIFFStack`; flexible stride, offset,
   multi-delay pairing; dynamic static/per-frame/per-pair/callback masks with
   pair-union semantics; stable long-form `export_table` CSV and structured-grid
-  `export_vtk`. Tracking CSV uses additive columns for trajectory/observation
-  IDs, original frame indices, derived elapsed time, gaps, and numerical validity;
-  no gap rows or acquisition timestamps are invented. Elapsed time assumes
-  uniform input-frame spacing when derived from `PhysicalScale.dt`.
-  Raw planar-grid exports accept `PlanarTransform` with explicit units and
-  optional pair delay. Attached scales are rejected to avoid double conversion;
-  mixed-axis uncertainty is unavailable unless independence is explicitly
-  assumed. Geometry/topology and vector basis are transformed together.
+  `export_vtk`. `TrackingResult` tables append trajectory/observation IDs,
+  frame indices, gaps, and validity columns (additive-column schema policy).
+  Planar-grid exports accept `transform = PlanarTransform(...)` with explicit
+  length units (and optional pair delay); coordinates and vector basis
+  transform together, and results with an attached scale are rejected to
+  avoid double conversion
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor; one
   `PIVWorkspace` reuses the interpolant/deform buffers across pairs)
@@ -222,202 +207,38 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   ensemble cam1↔cam2 disparity map → triangulation → sheet-plane fit →
   rigid world transform of both cameras) + `SelfCalibrationReport`
 - `statistics.jl` — planar/stereo `field_statistics`, 2C/3C
-  `validate_temporal!`, `power_spectrum`; `FieldStatisticsAccumulator` with
-  `update_statistics!` and independent `field_statistics(acc)` snapshots
-  computes population moments with O(grid nodes) retained memory. Updates
-  validate grid/component dimensions and scale factors/unit labels before
-  mutating; convert inputs through `physical` for velocity statistics.
+  `validate_temporal!`, `power_spectrum`; `FieldStatisticsAccumulator` +
+  `update_statistics!` stream population moments in O(grid) memory
+  (grid/scale compatibility checked before mutating; `field_statistics(acc)`
+  returns an independent snapshot)
 - `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
   swirling strength/Q, profile/region extraction, circulation, and
-  results-vector spectra with an explicit sampling interval or validated sample
-  times (`dt` or `sample_times`, independent of the image-pair delay in
-  `PhysicalScale`). Spectra check full grid/shape/scale compatibility first;
-  actual times require interval and global-grid agreement within explicit
-  period-scaled tolerances. Profile interpolation ignores
+  results-vector spectra with an explicit sampling interval (`dt`, independent
+  of the image-pair delay in `PhysicalScale`). Profile interpolation ignores
   invalid corners with zero weight at exact nodes/edges. `extract_region`
   returns `included` (`true` = returned valid node); its legacy `mask` field
   aliases that grid and has the opposite convention from `PIVResult.mask`.
-  `flow_derivatives` keeps its five-field default return; `return_support=true`
-  adds contributor indices, spans, weights and separate structural/finite masks.
-  `stencil=:centered` refuses one-sided fallbacks. The two-neighbor secant is
-  not a general second-order formula on irregular axes. Validate native spans
-  before calculation; unavailable reciprocal metadata must not discard a valid
-  direct quotient. Support describes stored values, not measurement history/UQ.
   Area `circulation(result; region=...)` now errors on incomplete coverage
   by default; `coverage=:report` returns value, valid/requested area, fraction,
   and authoritative `complete` flag (no valid area gives `NaN` value).
-  Its `stencil` keyword uses the same derivative policy as scalar analysis;
-  centered-only support can reduce valid integrated area.
-- `calibrated_resampling.jl` — CPU bilinear point sampling of raw planar
-  vectors and scalar images onto explicit calibrated coordinates. Detached
-  outputs retain contributor flags and joint vector availability; masks and
-  numerical failures are distinct from measured zeros. Affine geometry and
-  vector bases share one applied map. No measurement/UQ records are synthesized.
-- `artifact_paths.jl` — portable lexical source-locator classification, explicit
-  local-path resolution and prospective alias checks. Foreign provenance is not
-  resolved against the receiving workspace; protect actual consumed local files.
-- `experiments.jl` — versioned file-based planar `PIVRecipe`/`ExperimentRecord`,
-  `PreprocessStep`, hash-verified `ScriptReference`, save/load, and noncollecting
-  `replay_experiment` with optional `ExperimentRun` persistence. Recipes embed
-  copied backgrounds/masks/ROI and full settings; inputs are content-addressed
-  external files. CPU/KA Float32/Float64 only in version 1. Replay checks inputs,
-  destination aliases, and creation/run environment compatibility before opening
-  output; an environment change requires an explicit override. Scripts are never
-  evaluated automatically. The experiment format is separate from result format
-  1; unknown versions are rejected. Optional progress runs after each pair is
-  written; callback failures retain the completed count and original exception.
-  Rerunning is not resuming/checkpoint recovery.
-- `execution_diagnostics.jl` — opt-in `PIVExecutionDiagnostics` and
-  `PassDiagnostics` store scalar observations in immutable tuples. Preserve the
-  existing loop: the final budgeted sweep is unchecked; max_iterations=2 has no
-  tolerance comparison, and an empty comparison may satisfy the condition.
-  Residuals describe primary correlation corrections before predictor addition,
-  alternatives or filling. Planar sequence/replay may persist version-1 native
-  companions without changing result structs. Callback delivery precedes result
-  delivery/persistence; it is not a commit notification. Stereo has a separate
-  companion below; ensemble diagnostics use their own pooled-sweep contract.
-  Default calls do not collect diagnostics or hash source files.
-- `measurement_history.jl` — opt-in final-pass/final-sweep planar history,
-  separate from execution diagnostics and result structs. Record actual first
-  rejection, alternative acceptance, fill assignment and restoration events;
-  value differences and final flags cannot reconstruct these events. Bind the
-  detached snapshot to raw result content including coordinates and scale before
-  callbacks. Validate binding before persistence; metadata-only loads do not
-  verify payload content unless `verify_result=true`. UQ still describes the
-  final deformed windows and is not re-estimated for alternatives or fills.
-- `ensemble_execution_diagnostics.jl` — opt-in array-free pooled-sweep packets
-  for CPU/KA planar ensembles. Count actual pair/window contributions and
-  degenerate planes before accumulation; primary residuals precede predictor
-  addition. Every pass performs one sweep with no convergence checks, even if
-  its requested iteration budget is larger. Predictor presence is observed,
-  not inferred from pass index. Separate native companions bind raw result
-  fields and scale; counts do not establish independent sample size or UQ
-  coverage. Capture freezes the selected pairs, mask and pass schedule before
-  image loading. Ensemble packets are refused by execution-aware quality reports.
-- `stereo_execution_diagnostics.jl` — immutable two-camera execution companions,
-  with distinct camera IDs, explicit parent/pair association, dewarped-pixel
-  residuals and signed common-grid geometry. Measurement-field binding covers
-  reconstructed and camera fields, excluding parameters and retained planes.
-  Validate structure and binding after callbacks and before output publication.
-  A separate native sibling group/reader leaves planar diagnostics unchanged;
-  runtime verification status distinguishes metadata-only inspection from field
-  checks and is never persisted as a verification claim.
-  `execution_diagnostics_data(d; result=raw)` verifies an already loaded raw
-  payload and returns detached metadata without retaining or reloading it.
-- `pair_timing.jl` — opt-in planar sequence timing companions. Freeze selected
-  frame references and O(pairs) scalar metadata before loading/output; exact
-  rational encodings preserve integer epochs and timestamp midpoint halves.
-  Observed, declared and effective scaling delays remain distinct. Source IDs
-  are opaque and missing clock/unit labels remain unknown. Bind the current
-  packet to raw numerical result content; generic copies/exports omit it.
-- `stereo_pair_timing.jl` — separate opt-in stereo sequence timing companions,
-  with ordered camera source descriptors, exact per-camera delays/midpoints,
-  synchronization policy and effective reconstructed scaling provenance.
-  Freeze all selected scalar metadata before loading/output. Pair-list scaling
-  follows camera 1's declared delay; four-tuples retain the supplied scale.
-  Capture timing and execution packets before either callback and recheck both
-  before publication. Bind raw reconstructed and camera fields plus signed grid
-  geometry; source bytes, calibration and hardware synchronization are not verified.
-- `stereo_experiments.jl` — independent primitive stereo recipe/record and native
-  run-association formats. Snapshot fitted Pinhole/Soloff cameras (or one rigid
-  wrapper), signed common grid, raw camera sizes, complete CPU/KA settings and
-  two built-in preprocessing pipelines. Decode Pinhole coefficients exactly
-  through the private fitted-snapshot constructor; do not renormalize them.
-  Rebuild and check maps, preserve exact ordered timing and pair-list versus
-  four-tuple scale semantics, and run noncollecting replay. Scientific settings
-  identity excludes descriptive calibration provenance and derived-map hashes;
-  full snapshot integrity still protects them. Supplied world/frame labels do
-  not infer scale factors. Verification streams raw results without rerunning
-  PIV; calibration fitting, self-calibration execution, custom cameras/scripts,
-  and checkpoints remain separate work. The GUI can inspect and replay the
-  exact saved recipe through its dedicated controller.
-- `ensemble_experiments.jl` — separate planar `EnsemblePIVRecipe`,
-  `EnsembleExperimentRecord` and `EnsembleExperimentRun` schemas for a saved pool.
-  Preserve ordered file inputs, exact CPU/KA passes, built-in preprocessing,
-  full-image mask and scale. Input pairs, joined pair contributions across passes
-  and the single published result have distinct counts. Private ensemble-driver
-  hooks deliver immutable progress after joined work; cancellation can stop the
-  last contribution before pooled analysis/publication. Snapshot before callbacks
-  and run final integrity/path checks after the last user callback. Stage the
-  complete artifact beside its destination and use native rename without a
-  copy/delete fallback. Output and history are separate publications:
-  `EnsembleRunRecordError` retains completed/cancelled run metadata when history
-  saving fails; ordinary processing errors keep their original exception.
-- `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
-  `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
-  ordinal. Actual-time prediction and scattered validation normalize elapsed
-  intervals to the first transition; returned secants divide by actual time and
-  use only the spatial scale. Validate binding before conversion or rebinding.
-  Dedicated timed artifacts omit the generic native marker so older readers
-  cannot discard timing silently; timed CSV preserves exact stamps and stencil
-  support. `tracking_speed_summary` validates once for all trajectories and
-  returns detached observation-mean secant speeds with unavailable reasons.
-  GUI timed inspection keeps a dedicated singleton container; do not widen native
-  result-vector element types or unwrap timing for display/persistence.
-- `calibrated_table.jl` — separate CSV/TOML exports for raw PTV, ordinal tracking
-  and actual-time tracking. Affine offsets affect positions only; transformed
-  scalar match residuals are unavailable because their directions were not stored.
-  Metadata retains settings/units even for empty tables and binds CSV content.
-  Two closed staged files publish sequentially, without atomic-pair guarantees.
-- `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
-  protocol: disjoint metadata/result directories, immutable singleton native
-  payloads and commit descriptors, strict ordered input/recipe/environment
-  identity, explicit interrupted-writer recovery, lazy committed-prefix access,
-  and native aggregate export. Publish closed/validated files by same-directory
-  rename with no copy fallback; do not claim power-loss durability. Cancellation,
-  handled failure, and unmatched attempts have distinct metadata. Committed data
-  counts come from descriptors; memory counters cannot define recovery state.
-- `experiment_comparison.jl` — `recipe_diff` verifies both snapshots and returns
-  deterministic field changes, retaining scalar/tuple settings and summarizing
-  embedded mask/background payloads by shape, precision, and canonical SHA-256.
-  Recipe comparisons exclude script locators, input identities, and run metadata.
-- `run_quality.jl` — `RunQualityReport` scans planar/stereo results without
-  retaining payloads and defaults to validated version-1 TOML. Opt-in native
-  version-2 reports verify final-sweep history, report missing/unsupported entry
-  populations and keep event/origin counts on history-covered denominators.
-  Associated reports also require matching packet recipe/input/pair identities.
-  Opt-in version-3 execution reports require a whole native index and retain
-  planar/per-camera entry coverage, pass/check counts and final primary support.
-  Verify stereo companions against each raw payload while it is loaded; planar
-  execution packets remain entry-key linked. Do not pool residual amplitudes
-  across grids or describe report loading as fresh measurement verification.
-  Counts are node-weighted
-  with explicit denominators; flags/finite values are not replacement history,
-  and numerical UQ availability is not coverage or measurement association.
-  Record/run reports verify output content and identities; anonymous iterators
-  make no association claim. Protect hidden source paths explicitly when saving.
-- `ensemble_run_quality.jl` adds explicit format-4 whole-native-file reports via
-  `include_ensemble_execution_diagnostics=true`. Preserve v1/v2/v3 contracts and
-  their existing ensemble refusal when this flag is false. Classify recorded
-  pools, recorded planar iterations and entries without execution metadata;
-  absence does not identify an ensemble. Verify packets against the already
-  loaded raw payload, reject conflicting companion families on one entry, and
-  separate all-pass window-pair observations from final-pass node/UQ populations.
-  Repeated observations are not independent samples; do not aggregate residual
-  amplitudes. Planar/stereo recipe-associated overloads refuse this option.
-  Validate the complete sorted native entry mapping and detach its key vector
-  before provenance/iteration. GUI whole-file reports use this guard for all
-  formats and capture it before observable notifications or save dialogs.
-- `ensemble_experiment_quality.jl` adds associated report format 5. Verify the
-  completed pooled artifact, raw fields, recipe geometry and requested companions
-  before/after aggregation. Keep input/contribution/publication counts separate
-  from sequence `completed_pairs`. Validate v5 provenance independently, then
-  reuse existing v1/v4 scientific-counter validators without changing their
-  schemas. Saved reports describe past verification; they do not re-open inputs.
-- `stereo_run_quality.jl` extends associated reports to completed frozen-camera
-  stereo records. Snapshot record/run, verify raw fields/geometry/ordered sources
-  and native companions before/after the streaming report; optionally check input
-  bytes. Default v1 and execution v3 schemas remain unchanged; stereo history is
-  refused. Explicit result relocation preserves foreign historical locators.
-  Its execution-aware reports retain v3 semantics and refuse ensemble metadata;
-  format-4 ensemble reporting uses a separate unassociated whole-file index.
-- `pair_comparison.jl` — `compare_recipe_pair` reruns complete built-in planar
-  recipes on explicitly selected content-matched inputs. Exact raw-coordinate
-  intersections avoid resampling; native and paired quality populations remain
-  separate. Pixel differences ignore attached scales; physical comparisons
-  require identical factors and labels. Stable scalar moments and explicit
-  arithmetic unavailability preserve denominators. Detached version-1 TOML
-  snapshots protect known source aliases and do not claim accuracy/UQ coverage.
+  `flow_derivatives(...; stencil = :centered)` refuses one-sided fallbacks
+  (default `:available`).
+- `calibrated_resampling.jl` — `resample_planar` / `resample_image`: CPU
+  bilinear sampling of raw planar vectors and scalar images onto explicit
+  calibrated coordinates (e.g. PIV/PLIF on one grid). Affine geometry and
+  vector basis share one map; outputs carry contributor/availability flags,
+  so masked or unsupported samples stay distinct from measured zeros.
+- `recipes.jl` — saved processing settings. `PIVRecipe(passes;
+  preprocessing, mask, roi, scale, mode = :sequence | :ensemble, image_type,
+  predictor_smoothing, mask_threshold)` with ordered built-in
+  `PreprocessStep`s (backgrounds copied in); `save_recipe`/`load_recipe`
+  (JLD2, `RECIPE_FORMAT_VERSION = 1`, unknown versions rejected);
+  `apply_recipe(recipe, pairs; output, backend, ...)` and the stereo method
+  `apply_recipe(recipe, pairs1, pairs2, dw1, dw2; ...)` dispatch to the
+  sequence/ensemble drivers and store the recipe in the results file, so
+  `load_recipe(results_path)` recovers it; `recipe_preprocess`,
+  `recipe_diff` (`(; path, before, after)` entries). ROI is planar-sequence
+  only; saveable preprocessing is a list of `PreprocessStep`s.
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -539,168 +360,6 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
-`experimental_qml_gui` launches the experimental Qt controls in a fresh process
-using optional QML/QMLMakie dependencies from the caller's project. Its session
-handle owns cooperative shutdown; launch requests capture absolute inputs and
-package paths, verified before Qt initialization. Keep every generated artifact
-under the writable session directory. The packaged runtime lives in
-`HammerheadGUI/prototypes/qml/`, alongside its development harnesses. Its README and
-`docs/src/explanation/gui_framework.md` distinguish controller/rendering
-evidence from native teardown/input/platform gaps. A successful framebuffer
-capture is not a clean application-lifecycle result. Keep generated manifests
-and artifacts ignored; retain portable relative source paths in its Project.
-The saved-experiment lane uses `ExperimentController` for recipe/history state
-and inspection; `worker_client.jl` and `replay_worker.jl` execute captured planar
-requests in a core-only subprocess. Only the shell owner updates Observables and
-acknowledges written-pair progress. Poll process liveness even while an observer
-defers acknowledgement; ordinary shutdown releases deferred acknowledgements
-and waits for confirmed exit. An ownership failure is different: preserve the
-captured job/request and busy guard, expose the original fault, and refuse
-further progress delivery or acknowledgements while cleanup is unconfirmed.
-Do not synthesize a terminal outcome from a diagnostic or clear the job to make
-the UI appear idle. Startup cleanup retains ownership until reaping finishes.
-Windows uses a kill-on-close Job Object. The Linux x86_64 backend uses a core-free
-subreaper guardian and transferred self-opened pidfds; its process-group operation
-requires kernel/libc capability checks before scientific enrollment. The Linux
-client's Process is the guardian; worker PID is zero until enrollment. Retain
-kernel references rather than reopening numeric PIDs after asynchronous exit.
-Require root reaping, group emptiness, no adopted children, request-bound proof
-and normal guardian exit before releasing ownership. Escaped children or guardian
-loss keep cleanup unconfirmed. Unsupported hosts refuse explicitly; do not turn
-that prerequisite into a successful fallback. See the prototype's
-[Linux ownership guide](HammerheadGUI/prototypes/qml/linux_worker.md).
-The lane never projects complete recipes into the synthetic demo form. Preserve
-the displayed run's own identity after failed actions, verify completed output before lazy inspection,
-and use the existing physical-display helpers. Shell ownership of replay survives
-viewport close/reopen; shutdown waits for cancellation cleanup before disposing
-subscriptions. Software-shell checks do not satisfy the native rendering gate.
-Queue loading, replay inspection and viewport transitions outside Qt callbacks;
-copy callback arguments to Julia values before enqueueing. Keep diagnostic
-hashing and assertions in the owner loop too: Julia exceptions must not unwind
-through a QML callback. Shutdown discards
-pending actions and waits for active replay cleanup. Software previews render an
-explicit hidden GLMakie screen without its background event loop; calling the
-figure-level save path can restart that loop through cached-screen configuration.
-File pickers stage draft paths only; existing Open and Replay actions retain
-controller mutation and protected-output checks. Convert accepted QUrl values
-with Qt's local-file APIs on the owner thread before retaining plain Julia
-strings. Cancellation, stale dialog tokens and shutdown must not change the
-current display or destinations. Each dialog instance owns its request token;
-callbacks must not read a newer opening's mutable token. Dispose the instance on
-acceptance, rejection or shutdown. Guard shell shortcuts while a picker is open.
-Save-file pickers use "Use path" without an overwrite prompt: they do not write
-the destination, and explicit replay retains its own output checks.
-Hidden picker checks use Qt's non-native dialogs and do not establish native OS
-dialog behavior, accessibility or network-share access.
-The lifecycle runner owns hidden child processes and records their final exit,
-logs, relevant Qt environment, stages and source identities. Set Qt platform/
-backend selectors in the parent process environment before launching a child;
-Julia `ENV` values alone do not prove Qt's effective C-runtime configuration on
-Windows. Application observer release is distinct from native context cleanup.
-The opt-in `--plot=glfw` mode gives Qt controls a separate, dedicated GLMakie
-screen. Pump Qt and GLFW serially on the owning Julia thread, with no background
-renderer; allocate a dedicated screen before attaching the scene, since the
-scene constructor can reuse an unrelated singleton screen. Preserve ownership
-when destruction fails and report cleanup failures without replacing the
-original processing exception. Capture a screen directly; do not start a cached
-figure-level renderer. Geometry limits include arrow tips, while ordinary frame
-changes preserve manual pan/zoom. This mode still loads the QMLMakie plugin and
-does not establish embedded Qt context cleanup or native input behavior.
-The manual `.github/workflows/qml-prototype.yml` gathers isolated Julia 1.11
-evidence on three operating systems. Failed native prerequisites stay failed;
-any unsuccessful child command prevents later launches because descendant cleanup
-is unverified, including failures returned by nested owners. Workflow presence is
-not platform validation.
-
-`ExperimentController` and `experiment_workflow[!]` provide a separate, read-only
-complete-recipe workflow. `experiment_record` / `save_batch_experiment` export
-file-based batch settings, exact effective preset schedules, and fingerprinted
-built-in preprocessing snapshots. Arbitrary callbacks require `ScriptReference`.
-Do not project imported recipes into the narrower batch/preprocessing widgets.
-Replay captures state before notification, records completed/failed metadata,
-and checks recorded output content before lazy exploration. Progress reports
-completed pairs; cancellation is cooperative at pair boundaries and waits for
-loader cleanup. Cancelled ordinary runs retain failed core metadata and a native
-prefix, without checkpoint resume guarantees. GPU recipes and full recipe
-editing remain open. The separate stereo workflow is described below. The batch
-form links to this workflow; its API reference is split into `gui_experiments.md`.
-Files/Replay/Reports control sections retain their widgets and settings. Hidden
-Makie widget scenes still have active mouse regions, so inactive allocations
-must also move outside the figure. Cancellation/progress/status stay visible;
-full paths and status remain reachable through allocation-sized text pages.
-The same workflow saves and displays core quality reports through
-`experiment_quality_report` / `save_experiment_quality_report`. These synchronous
-scans protect the selected result and run record, and refuse busy/changed runs.
-Capture both history/execution options before dialogs or observer notifications;
-retain the previous report's own identity after a failed save.
-
-`CheckpointController` / `checkpoint_workflow[!]` provide a separate resumable
-built-in recipe path, linked from the saved-experiment view. Capture checkpoint,
-recipe, recovery assertion and an independent cancellation token before notifying
-Observables or yielding. Progress uses committed counts, not repeated store
-scans; cache recipe text separately from progress/status rendering. Opening and
-refreshing validate fixed prefixes; explorers retain one displayed result and
-never follow live appends. Recovery asserts the former writer has stopped and
-resets after use. Preflight and work within a pair can delay UI interaction.
-
-Lazy native explorers can opt into recorded processing details. Verify history
-against the raw result before physical conversion and commit navigation state
-only after preflight succeeds. Retain one display payload/current packet; a
-separate display digest detects later array edits, including retained stereo
-camera fields. Planar execution companions v1 bind entry keys, not numerical
-result content; stereo companions bind raw reconstructed and camera fields.
-Stereo residuals remain dewarped pixels and per-node history stays unavailable.
-Missing history is never inferred. Scaled magnitude fields are labelled speed.
-Ensemble companions bind raw fields/geometry before physical conversion and
-retain scalar pooled observations only; node selection cannot recover unrecorded
-contributor histories. Reject incompatible packet families on the same entry.
-`explorer_quality_report` and `save_explorer_quality_report` consume a lazy native
-explorer's whole raw index, independently of displayed frame and inspection mode.
-The separate `result_quality_report` view captures that index on opening and
-options before notifications or a picker. Failed/cancelled requests retain the
-previous report's own file/SHA identity. Scans are synchronous; eager/bare,
-timed and checkpoint explorers have no supported whole-native-file association.
-
-The separate recipe-comparison controller captures complete before/after records,
-selected pairs and value basis before notifications or asynchronous scheduling.
-It uses the core selected-pair comparison and report contracts. Current choices
-and the last report's identities remain distinct after failure. No cancellation
-or uninterrupted CPU responsiveness is promised for a single-pair comparison.
-
-`RecipeRevisionController` / `recipe_revision[!]` edit ordered planar passes in
-a separate draft. `preprocessing_revision[!]` uses the same controller for ordered
-built-in steps, duplicates and exact embedded backgrounds. `RecipeImagePreviewController`
-captures an explicit original pair, verifies bytes around decoding/conditioning,
-and uses exact replay preprocessing in recipe precision on full images before ROI.
-Its detached bundle keeps its own recipe/pair identity; mask/ROI are overlays and
-raw/processed views share an explicit intensity range. Scripts remain references.
-`recipe_geometry_revision[!]` edits raw ROI/scale drafts on the same controller.
-Preserve exact imported bounds, Float64 factors and unit labels. Disabled drafts
-retain their raw text but compose `nothing`; enabling never invents a calibration.
-Metadata preflight checks each recorded pass and frame. Full-image masks and
-backgrounds stay in original coordinates, while stored result pixels/displacements
-remain unscaled until physical conversion. Capture all drafts before notifications.
-Saved-mask revision retains a detached enabled/full-image raster draft. Disabling
-retains bits but composes `nothing`; an enabled all-false mask stays distinct.
-Seed `MaskEditor` with copied raster bits, then apply ordered exclusions and holes;
-clear-all removes both raster and polygons. A verified raw reference has its own
-captured identity and never executes preprocessing scripts. Applying editor pixels
-refuses unfinished drawing and changed mask content. Mask imports capture options
-before pickers and protect consumed source paths for the controller lifetime.
-Preserve all unedited pass fields, ordered validator tuples
-and the complete imported recipe options. Raw text remains separate from the
-last validated candidate; invalid visible edits must never fall back to stale
-parsed values. Metadata previews can work without source files. Creating or
-saving a new record verifies available unchanged inputs, retains the exact
-ordered input identity, captures the current creation environment and starts
-with no runs. Protect source record aliases, inputs, scripts, recorded results
-and caller-supplied history/output paths. Capture requests before notifications
-or pickers, and queue verification/save work outside native input callbacks.
-Cooperative scheduling does not guarantee responsive file I/O or cancellation.
-Opening a saved revision uses a separate experiment workflow; do not replace
-the original record, history or display. Revision lineage is session metadata,
-not an extension to the core version-1 record schema.
-
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
@@ -718,19 +377,19 @@ controllers never import Makie. The mask editor is the framework proving
 ground for pure-GLMakie widget chrome.
 
 Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
-(Hammerhead and nonvisual dependencies only — the module boundary enforces
-the no-Makie rule, and a test asserts it); `src/views/*.jl` are the
-GLMakie shells. Components so far (each = controller + view pair, same
-naming): `ResultExplorer`/`result_explorer` (browses all four persisted
+(Hammerhead + Observables/Printf/LinearAlgebra/FileIO only — the module
+boundary enforces the no-Makie rule, and a test asserts it); `src/views/*.jl`
+are the GLMakie shells. Controllers should use Hammerhead's public API (the
+batch form's `Hammerhead.effort_schedule` call is the current exception) —
+when the GUI needs something new, add it to the core first. Components (each =
+controller + view pair, same naming): `ResultExplorer`/`result_explorer`
+(browses all four persisted
 result types — `PIVResult`/`StereoPIVResult` grids, `PTVResult` particle
 scatter, `TrackingResult` gap-aware polylines colored by mean speed — mixed
-sequences included; routes each displayed entry through `physical` so a
+sequences included; routes each entry through `physical` at construction so a
 `PhysicalScale` gives physical-unit axis/colorbar/inspection labels;
-path constructors accept `lazy = true` and `ResultFile` inputs retain only
-one converted display payload; all explorers evict derived fields on frame
-changes. Lazy navigation failures preserve the prior display and report
-status; file snapshots reject live appends. The default remains eager;
-selection is a `CartesianIndex` for grids, a linear `Int` for scattered
+`lazy = true` or a `ResultFile` browses a completed file holding one
+displayed payload, and refuses `push_result!`; selection is a `CartesianIndex` for grids, a linear `Int` for scattered
 types; the vector overlay is quiver-style linesegments + rotated-triangle
 scatter heads, NOT arrows2d — arrows2d's per-frame pixel-space tip sizing
 made pan/zoom crawl at thousands of arrows; colorbar limits default to a
@@ -738,28 +397,19 @@ robust 2–98% percentile band over valid vectors (`color_limits`) with
 bound-wise manual overrides persisting across frames; `push_result!`
 appends live and grows the view's slider via the `count` observable;
 planar results add derived fields (:vorticity/:divergence/:strain_rate/
-:swirling_strength/:q_criterion via flow_derivatives, cached for the current frame,
+:swirling_strength/:q_criterion via flow_derivatives, cached per frame,
 unit-labelled 1/time — physical-at-construction keeps the gradients
 exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
 switches; circulation reports both line-integral and vorticity-area
 estimators; the profile panel appears as a third layout row);
-`set_derivative_stencil!` selects an explorer-wide policy that persists across
-tools and frames, including area circulation; component profiles and line
-circulation remain independent. The `:derivative_support` tool adds discrete
-eligibility, x/y stencil and finite-component-count maps through
-`available_fields(ex)`, plus paged contributor details. Rich support metadata
-is retained only for the current frame while the tool is active. Inspection
-checks displayed-input integrity and requires explicit reselection to refresh
-after mutation. Current flags alone never establish measurement replacement.
 `MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
 the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
-`ROIEditor`/`roi_editor` (two-corner and numeric inclusive pixel bounds,
-clear/reset, core `ROI` validation, and `apply_roi!` into `BatchRunner`;
-the batch snapshots its ROI, preprocesses full frames, and lets the core crop
-images/masks and retain original image coordinates);
+`ROIEditor`/`roi_editor` (two-corner or numeric inclusive pixel bounds →
+core `ROI`; `apply_roi!` into a batch form, which preprocesses full frames
+and lets the core crop, keeping original image coordinates);
 `BatchRunner`/`batch_runner` (runs `run_piv_sequence` with its progress
 callback inside `@async` — cooperative, so GL renders keep happening off
 `run_piv`'s internal thread-spawn yields while observables stay on the
@@ -771,13 +421,20 @@ core drivers' `on_result` hook (all sequence drivers incl. stereo: called
 `(i, result)` on the caller's task right after storage, before persist and
 progress; throwing aborts like progress) feeds the live `completed`
 observable, and "view results" opens an explorer mid-run that follows the
-batch; `set_preprocess!` attaches a per-frame pipeline);
+batch; `set_preprocess!` attaches a per-frame pipeline — from a
+`PreprocessPreview` it records `preprocess_steps` so the form stays saveable,
+while a bare function runs through `run_piv_sequence` and cannot be saved;
+otherwise the run goes through `apply_recipe`, so the output file carries its
+recipe. `batch_recipe` / `save_settings` / `load_settings!` round-trip the
+form through a core `PIVRecipe` — the "save settings…"/"open settings…"
+buttons, which also open the recipe stored in a results file — and loading
+selects the `:saved` effort, which runs the recipe's exact pass schedule);
 `PreprocessPreview`/`preprocess_preview` (ordered toggleable pipeline over
 the core preprocessing set with live raw/processed preview and a
 single-window correlation probe — `set_pair!` + `click!` place it, du/dv/
 peak-ratio recompute on every pipeline change via a border-clamped
 single-window `run_piv` at the accuracy defaults; `build_preprocess`
-exports a frame-copying, snapshot-semantics closure with a copied background for
+exports a frame-copying, snapshot-semantics closure (background copied) for
 the batch drivers); `ScaleTool`/`scale_tool` (two clicked points + known
 separation → `PhysicalScale`; `apply_scale!` into a batch form);
 `StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two
@@ -787,21 +444,6 @@ synchronized frame lists + an `ImageDewarper` pair —
 embeddable `calibration_review!`; runs `run_piv_stereo_sequence` with its
 NATIVE zero-arg `cancel` predicate — no exception, completed prefix
 returned — and a dt-only stereo scale);
-`StereoExperimentController`/`stereo_experiment_workflow` snapshots idle,
-file-based stereo batches and preserves rich imported recipes without exposing
-unsupported edits. Capture replay settings before observable notifications;
-`active_request` carries detached scalar identity/settings, separate from next
-choices. Historical run selection, latest attempt, displayed result and retained
-report keep their own identities. Verify completed outputs before lazy physical
-display; reports use the dedicated stereo core overload. Cancellation waits for
-an acquisition boundary and records failure history without implying resumability.
-Files/Replay/Reports pages retain reachable cancellation/progress controls;
-`EnsembleExperimentController`/`ensemble_experiment_workflow` snapshots supported
-file-based batches using ensemble effort presets and preserves full imported
-recipes. Backend/precision controls affect the next snapshot only. Keep selected
-historical runs, active requests, displayed results and reports distinct; joined
-contribution progress is not result publication. Retain a known terminal run if
-history save/reopen fails, and show that persistence error separately.
 `CalibrationReview`/
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an
@@ -820,18 +462,15 @@ before comparing renders in tests; `word_wrap` labels need an explicit
 
 ## Load-bearing conventions
 
-Non-informative correlation planes are unavailable measurements: nonfinite,
-nonpositive, or completely flat planes yield NaN diagnostics/displacement and
-unmasked outlier flags regardless of optional validators. Exact constant valid
-pixels are centered before apodization without averaging roundoff. Predictors
-exclude nonfinite donors and use neutral zero only where no finite fill exists;
-this does not convert missing results into measurements. Deformed windows also
-require exact contrast in both original raw stencil unions sampled by the
-predictor. This is an explicit scientific convention: B-spline prefiltering has
-nonlocal influence, and remote coefficient leakage alone does not establish
-source contrast. Ignore virtual extrapolated zeros and original masked pixels
-as contrast evidence; preserve any genuine processing-precision difference.
-
+- **Non-informative windows are unavailable measurements:** nonfinite,
+  nonpositive, or completely flat correlation planes yield NaN displacement/
+  diagnostics and an (unmasked) outlier flag regardless of validators; exact
+  constant windows are centered before apodization; predictors skip
+  nonfinite donors. Deformed windows additionally need exact contrast
+  (compared in processing precision) in the original raw pixels their B-spline
+  stencils sample (`source_support.jl`) — prefilter leakage from distant
+  coefficients doesn't count; non-contributing pairs are skipped by CPU/KA
+  correlation and UQ.
 - **Sign convention (package-wide):** a particle at `(row, col)` in image A
   found at `(row + dv, col + du)` in B yields positive `(du, dv)`; `u` is
   along columns (x), `v` along rows (y). In correlators use `mul!` with the
@@ -881,7 +520,9 @@ as contrast evidence; preserve any genuine processing-precision difference.
   anticorrelation — a per-term positive threshold inflates σ 2–5× at high
   noise. Estimates describe the random error only; near-outlier windows
   legitimately report huge σ, so validation comparisons use medians over
-  non-outlier vectors.
+  non-outlier vectors. Known open issue: σ under-covers the actual error on
+  synthetic data and a clamped negative covariance sum yields σ = 0 for some
+  windows (see ROADMAP).
 - **Physical units:** result arrays always stay in measured units (px/frame
   for planar and PTV, world-per-frame for stereo); a `PhysicalScale`
   (Float64 pixel_size + dt, display-only unit label strings) attached via
@@ -902,11 +543,8 @@ as contrast evidence; preserve any genuine processing-precision difference.
   capture `scale` so it is NOT forwarded to the per-camera `run_piv` calls.
   Unitful is a weakdep (`PhysicalScale(20.0u"µm", 0.5u"ms")` — values
   stripped in their own units, unit names become the labels).
-- **Temporal sampling:** `result_spectrum` requires explicit `dt` or
-  `sample_times` for successive velocity samples. Exact timing validation uses
-  both interval and accumulated grid residuals, with zero tolerance by default;
-  positive tolerances explicitly permit approximately uniform sampling. There
-  is no resampling. Never infer the sampling interval
+- **Temporal sampling:** `result_spectrum` requires an explicit `dt` for the
+  interval between successive velocity samples. Never infer that interval
   from `PhysicalScale.dt`: that is the image-pair displacement delay, which
   differs for paired/strided recordings and becomes 1 after `physical`.
 - **Calibration (Phase 5):** a deliberate Float64 island — offline
@@ -965,8 +603,8 @@ as contrast evidence; preserve any genuine processing-precision difference.
   `PIVResult`s only with `keep_disparity_maps = true`. If the first
   measurement is already below `tol` the input dewarpers are returned
   `===`-identical.
-  task (correlators are mutable state); results must stay bitwise identical
-  to serial (tested).
+- **Threading:** each chunk/task owns its correlator (correlators are mutable
+  state); results must stay bitwise identical to serial (tested).
 - **PTV (Phase 8):** `PTVResult.x/y` are the **frame-A** particle positions,
   `u/v` the displacement to frame B — this matches the `SyntheticData`
   forward-Euler contract exactly, so ground-truth tests compare directly with
@@ -994,16 +632,6 @@ as contrast evidence; preserve any genuine processing-precision difference.
 
 ## Testing notes
 
-- Windows CI can put the checkout and system temporary directory on different
-  volumes and expose temporary paths through an 8.3 short spelling. Compare
-  canonical stored file locators against `realpath` expectations; retain plain
-  absolute-path expectations where that is the API contract. Exercise relative
-  aliases from a directory on the source volume. Hardlink fixtures must live on
-  the source volume; guarded benchmark outputs should use temporary directories
-  under `bench/profile-output`. Assert the empty output is admitted before adding
-  an alias, then verify same-file identity, alias rejection and unchanged source
-  bytes. Do not skip protection coverage on Windows or accept an unrelated
-  directory-policy error as evidence that alias detection works.
 - `test/runtests.jl` defines the `particle_pair`/`add_particle!` helpers used
   by all included test files; new test files can rely on them.
 - `SyntheticData` ground truth is a forward-Euler step: each particle's true
@@ -1024,141 +652,15 @@ as contrast evidence; preserve any genuine processing-precision difference.
   plumbing incl. the effort kwarg-split path, JLD2 round-trip, the Unitful
   ext — Unitful is a test-target dep, which is what activates the ext under
   `Pkg.test`).
-- `test_stereo_timing.jl` checks exposure synchronization, missing metadata,
-  clock-epoch-independent tolerances, and rejection before image loading/output.
-  `test_tracking_export.jl` checks CSV compatibility, gaps, numerical validity,
-  and physical conversion. `test_sequence_sink.jl` checks non-collecting sequence
-  delivery/persistence/cancellation and weak-reference release of old results.
-- `test_transformed_export.jl` checks calibrated planar CSV/VTK geometry,
-  vector bases, uncertainty assumptions, and refusal before output overwrite.
-  `test_incremental_statistics.jl` checks population moments, incompatible
-  update rejection, independent snapshots, and fixed retained memory.
-  `test_lazy_results.jl` checks indexing, file changes, and lazy payload access;
-  `test_streaming_workflow.jl` combines non-collecting output, live statistics,
-  variable pair delay, physical conversion, and lazy replay.
-- `test_experiments.jl` checks explicit recipe/record round trips, content
-  identities, replay and environment guards, alias rejection, and failure records.
-  `test_ensemble_experiments.jl` checks separate pooled-run counts, CPU/KA
-  Float32/64 direct parity, cancellation before publication, captured settings,
-  input/staging mutation guards and accurate outcomes after history-save errors.
-  `test_ensemble_experiment_quality.jl` checks associated format-5 reports,
-  raw/recipe/companion verification, relocation and protected persistence.
-  GUI `test_ensemble_experiments.jl` checks exact snapshots/imports, contribution
-  progress, retained terminal/report identities and hidden-window mouse routing.
-  `test_validation_scorecard.jl` checks deterministic rendering/hashes, selection
-  rules, population error RMS, analytic midpoint shear truth, complete recipes,
-  report round trips, and output protection. Real A/4E rows have no displacement
-  truth; cumulative Julia allocations are never labeled peak memory.
-- `test_experiment_comparison.jl` checks full settings, ordered changes,
-  content summaries, scientific versus locator identity, and no retained arrays.
-  `test_noninformative_windows.jl` checks degenerate planes, exact constant
-  inputs, tiny contrast, masks, nonfinite donors, predictors, and UQ on CPU/KA;
-  `test_original_source_support.jl` covers deformed constant patches and the
-  original-stencil convention. `test_run_quality.jl` checks stored-field metrics,
-  detached bounded-memory summaries, verified run association, primitive schema
-  validation, and alias-protected TOML persistence.
-  `test_experiment_checkpoint.jl` covers identity/alias guards, exact resumed
-  prefixes, handled failure/cancellation, and hidden child-process termination
-  at lock/data/commit/terminal boundaries. Source must remain unchanged during
-  strict environment-identity tests.
-- `test_execution_diagnostics.jl` checks opt-in numerical parity, actual sweep
-  and tolerance semantics, primary residuals, native companions, callback
-  failures, unsupported-driver refusal before output, and replay association.
-  `test_stereo_execution_diagnostics.jl` checks two-camera parity and association,
-  signed common-grid geometry, separate native persistence, measurement-field
-  verification, mutation guards and non-collecting lifetime. These companions
-  do not verify calibration or certify reconstructed uncertainty.
-  `test_pair_comparison.jl` checks exact grid/population moments, arithmetic
-  overflow, selected-input identities, units and detached TOML snapshots.
-  GUI `test_checkpoints.jl` checks captured execution state, cancellation,
-  recovery, fixed lazy browsing, protected export and offscreen layouts.
-- `test_measurement_history.jl` checks observed final-sweep origin/events,
-  first-rejection semantics, numerical parity, mutable-callback guards and
-  optional companion/result verification. Keep final-history storage bounded
-  across sweeps and non-collecting sequences.
-- `test_pair_timing.jl` checks exact timestamp arithmetic, complete preflight,
-  frozen source selection/metadata, native companion validation, callback
-  integrity and non-collecting lifetime. Timing does not change legacy tracking.
-  `test_quality_history.jl` checks report-v2 coverage, event/origin populations,
-  packet/run association and v1 compatibility. GUI `test_companions.jl` checks
-  transactional loading, physical-display binding, release and panel layouts.
-- `test_tracking_timing.jl` checks elapsed-time linking, exact metadata, secant
-  time support, scale/delay separation and dedicated artifact/table semantics.
-  GUI `test_recipe_comparison.jl` checks captured requests, verified comparisons,
-  failed-request report preservation, protected saves and paged inspection.
-- GUI `test_recipe_revision.jl` checks complete pass/recipe preservation, ordered
-  input identity, fresh creation provenance, empty history, offline metadata
-  inspection, invalid drafts and captured alias-protected saves. Revision view
-  checks exercise compact layouts, live raw text, rejected busy selections and
-  separate workflow launch; hidden controls do not establish desktop acceptance.
-- GUI preprocessing revision tests cover exact step order/options/background
-  precision, capture and protected saves. Independent parity tests compose public
-  core operations in both image precisions, including full-frame-before-ROI and
-  changed-input checks. View tests exercise actual controls, shared image ranges,
-  original-coordinate overlays and retained preview identities at compact sizes.
-- GUI geometry revision tests preserve enabled/disabled settings, invalid text,
-  complete-recipe composition and original-coordinate ROI behavior. Independent
-  replay checks distinguish attached scale metadata from physical conversion;
-  form tests cover compact numeric editing and protected workflow launch.
-- `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
-  unavailable populations and metadata detachment. Calibrated scattered export
-  tests check affine bases, units, exact intervals and paired-artifact verification.
-- `test_calibrated_resampling.jl` uses independent scalar affine algebra and
-  analytic fields to check shared-grid image/vector sampling, contributor
-  validity, coordinate order, precision and input preservation. Registration
-  validation has separate malformed/rank/scale regressions. Sampled arrays
-  remain separate from measured PIV diagnostics and uncertainty.
-- `test_artifact_paths.jl` checks foreign source-locator preservation, explicit
-  local relocation and protection of consumed artifacts, including prospective
-  Windows aliases. Foreign fixtures on Windows do not establish other-OS runtime
-  evidence. Ordinary native result and pair-timing contracts remain separate.
-- `test_spectrum_timing.jl` checks exact sample-time regularity, accumulated drift,
-  large epochs, tolerance/range failures, legacy FFT parity and result value bases.
-  Core/GUI `test_experiment_replay_progress.jl` checks completed-pair callback
-  ordering, request capture, cancellation and original-error/cleanup semantics.
-- `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
-  outputs across fixed seeds. Component UQ populations include zero sigma;
-  normalized errors require positive sigma. Counts retain arithmetic failures,
-  pooled moments stream, and quantiles remain per seed. Its regression file
-  checks population arithmetic, origin guards, reproducibility and output paths.
-- `bench/diagnostic_uncertainty.jl` audits retained final-sweep CPU windows with
-  independent covariance tests and explicit numerical zero classifications.
-  Keep full truth-error coverage, in-sample centering and residual-inclusive
-  sensitivity results distinct; these are diagnostics, not estimator calibration.
-- `bench/conditional_uncertainty.jl` holds clean scenes fixed while independently
-  perturbing both images. Retain full truth-error metrics, complete-case losses
-  and disjoint-realization difference populations. The pre-specified Bartlett
-  covariance comparator is bench-only; its nonnegative block identity does not
-  establish calibrated coverage or justify a production estimator change.
-- `bench/rendering_uncertainty.jl` compares fixed particle placements under
-  production point sampling, wider point support and pixel-area integration.
-  Preserve the original control exactly and compare common primary populations.
-  Its separate known-translation deformation lane never supplies predictors or
-  images to the PIV accuracy runs. Quadrature agreement and interior crops are
-  numerical checks, not total-error bounds or uncertainty calibration.
-- `bench/validation_ptv_tracking.jl` scores complete ID/frame visibility
-  annotations using independent maximum-cardinality/minimum-distance localization.
-  Operational detection counts do not resolve identity: competing detections,
-  nearby targets and target/nuisance overlap retain conservative ambiguity.
-  Keep full and both-localized recall denominators, raw/accepted correspondence,
-  returned-track identity changes/fragmentation and scheduled-absence recovery
-  separate. Preserve all predicted edges, including wrong/unmapped/ambiguous
-  cases. Optional unknown intensity must not invent an annotated amplitude.
-  The regression suite enumerates tiny assignment oracles and checks explicit
-  identity/gap fixtures, manifest guards and cheap production clips. Full study
-  evidence requires a fresh process and frozen source; it does not close
-  independent or real-recording validation.
-- `bench/validation_vsj301.jl` evaluates the fixed independent synthetic VSJ301
-  prefix using sparse listed IDs/positions. Unknown rows and visibility remain
-  unknown; associated IDs do not certify physical contributors. Report all
-  coordinate-origin hypotheses on the same unchanged production objects.
-  Independent bounded component assignment must refuse oversized components,
-  never drop them. Ambiguous/unknown observations interrupt identity continuity;
-  exact adjacent recall and annotated endpoint relinking have separate counts.
-  `prepare_vsj301.py` guards acquisition and re-audits selected archive members
-  offline on every cache load. Keep source data and annotation-derived ledgers
-  private; no redistribution license is asserted. Record actual thread defaults
-  and run full studies only with frozen source and a fresh process.
+- `test_performance.jl` bounds `run_piv` allocations (256², three passes,
+  Float32/64, with and without a mask). A captured variable that is
+  reassigned inside a closure becomes a `Core.Box`; one in `_window_mean`
+  once made CPU `run_piv` 3–8× slower with 30–100× the allocation. Keep
+  per-window loops type-stable and don't raise the bound to make a change pass.
+- `test_noninformative_windows.jl` / `test_original_source_support.jl` cover
+  flat/constant/masked windows and the original-stencil gate on CPU and KA;
+  `test_recipes.jl` covers recipe round trips, `apply_recipe` parity with the
+  sequence/ensemble drivers, and recipes stored in results files.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
@@ -1197,11 +699,6 @@ as contrast evidence; preserve any genuine processing-precision difference.
 
 ## Development planning
 
-All outstanding work is tracked in [ROADMAP.md](ROADMAP.md), including the
-cross-platform GUI framework evaluation. GLMakie is the current implementation;
-the historical decision to keep all widget chrome in Makie is open for review.
-Preserve the framework-free controller boundary when evaluating a new shell.
-Keep this file focused on current architecture, commands, and implementation
-conventions rather than maintaining a second backlog.
-Record user-visible changes in `CHANGELOG.md`; `RELEASING.md` describes the
-core-first/GUI-second release procedure and required validation evidence.
+Open work lives in [ROADMAP.md](ROADMAP.md); keep this file to architecture,
+commands, and conventions. Record user-visible changes in `CHANGELOG.md`;
+`RELEASING.md` describes the core-first/GUI-second release procedure.

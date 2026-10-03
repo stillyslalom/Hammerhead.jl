@@ -2,33 +2,23 @@
 
 This section is for contributors and readers investigating how Hammerhead is
 tested. To learn the analysis workflow, start with
-[the tutorials](../tutorials/first_vector_field.md). To assess your own output,
-start with [a run-quality report](../howto/run_quality.md).
+[the tutorials](../tutorials/first_vector_field.md).
 
 ## Test a scientific change
 
-The [validation scorecard](../howto/validation_scorecard.md) is the starting
-point for comparing a change with known synthetic motion and real-data smoke
-cases. The studies below investigate particular sources of measurement error
-and show how the results depend on their inputs and processing settings.
-
-| Investigation | Study |
-|:--|:--|
-| Particle detection, matching and trajectory continuity | [Annotated particle tracks](../howto/validation_ptv_tracking.md) and [independent VSJ301 images](../howto/validation_vsj301.md) |
-| Estimated uncertainty versus known motion | [Synthetic uncertainty](../howto/validation_uncertainty.md) |
-| Where an uncertainty estimate comes from | [Estimator diagnostics](../howto/diagnostic_uncertainty.md) |
-| Variation when only image noise changes | [Conditional noise experiments](../howto/conditional_uncertainty.md) |
-| Sensitivity to image formation and interpolation | [Rendering experiments](../howto/rendering_uncertainty.md) |
-| Which spatial variations a processing schedule retains | [Spatial response](../howto/spatial_transfer.md) |
+[How accurate are the measurements?](../explanation/validation_results.md)
+summarizes the synthetic accuracy, uncertainty, spatial-response and particle
+tracking studies, with the numbers a change should reproduce or improve. The
+test suite (`julia --project=. -t 4 -e 'using Pkg; Pkg.test()'`) checks the
+displacement tolerances and conventions behind them; `bench/README.md` lists
+the performance benchmarks.
 
 ## Change the software
 
 The [GUI architecture](../explanation/gui.md) separates application logic from
-its widgets. The [desktop framework evaluation](../explanation/gui_framework.md)
-records the Qt prototype and its remaining adoption requirements.
-The [compatibility policy](../explanation/compatibility.md) covers public APIs
+its widgets. The [compatibility policy](../explanation/compatibility.md) covers public APIs
 and saved data when preparing a release.
 
 The repository's `ROADMAP.md` is the development backlog. Learning pages should
-teach a useful task; keep test inventories, validation evidence and delivery
-status in the development and reference material.
+teach a useful task; keep test inventories and delivery status in the
+development and reference material.

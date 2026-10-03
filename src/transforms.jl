@@ -83,10 +83,7 @@ function calculate_manual_registration(points_image::AbstractVector, points_refe
     end
     p = M \ R
     all(isfinite, p) || throw(ArgumentError("registration fit produced nonfinite coefficients"))
-    # Exact determinant of the applied Float64 coefficients avoids determinant
-    # underflow for a valid small or anisotropic coordinate conversion.
-    q = Rational{BigInt}.(p)
-    q[1] * q[5] != q[2] * q[4] || throw(ArgumentError("registration fit is singular"))
+    p[1] * p[5] != p[2] * p[4] || throw(ArgumentError("registration fit is singular"))
     return AffineTransform([p[1] p[2]; p[4] p[5]], [p[3], p[6]])
 end
 
@@ -96,12 +93,8 @@ function _registration_point(point, role, index)
     converted = map(point) do value
         value isa Real && !(value isa Bool) && isfinite(value) ||
             throw(ArgumentError("$role point $index coordinates must be finite real numbers"))
-        number = try
-            Float64(value)
-        catch
-            throw(ArgumentError("$role point $index coordinates must be representable in Float64"))
-        end
-        isfinite(number) && !(value != 0 && number == 0) ||
+        number = Float64(value)
+        isfinite(number) && (number != 0 || iszero(value)) ||
             throw(ArgumentError("$role point $index coordinates must be representable in Float64"))
         number
     end
