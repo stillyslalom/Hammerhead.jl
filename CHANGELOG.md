@@ -201,6 +201,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Extended the isolated Qt prototype's saved-planar worker to x86_64 Linux with
+  a guardian process and explicit kernel/libc capability checks. Ownership
+  failures remain visible and prevent further replay while cleanup is unverified.
 - Added Browse dialogs to the isolated Qt prototype for experiment files,
   completed results and replay destinations. Selections stage draft paths;
   opening files and starting replay remain explicit actions.

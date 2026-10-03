@@ -124,6 +124,14 @@ function worker_tick()
         worker_started_time[]=time();worker_previous_tick[]=worker_started_time[];worker_phase[]=1
     elseif phase==1
         job=worker_barrier_job[];ready=joinpath(job.directory,"injected_barrier_ready.toml")
+        # Linux returns before guardian enrollment. pid=0 means unknown; the
+        # client's Process belongs to the guardian and must never stand in for
+        # the actual scientific worker recorded by the ready envelope.
+        enrolled_pid=Prototype.ReplayWorkerClient.pid(job)
+        enrolled_pid>0 || return
+        captured_pid=worker_metrics["worker_pid"]
+        captured_pid==0 || captured_pid==enrolled_pid || error("worker enrollment identity changed")
+        worker_metrics["worker_pid"]=enrolled_pid
         isfile(ready) || return
         data=Prototype.ReplayWorkerClient.WorkerProtocol.read_control(ready)
         Prototype.ReplayWorkerClient.WorkerProtocol.check_keys(data,("job_id","worker_pid","kind"))

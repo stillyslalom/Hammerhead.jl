@@ -24,8 +24,9 @@ saved-experiment picking, so it cannot swallow result inspection. Saved
 ROI/mask/preprocessing settings are preserved, not projected into
 the demo's form. Saved planar replay executes in a core-only subprocess while
 the Qt owner retains controls and its owned scientific screen. This worker
-requires tested 64-bit Windows Job Object ownership; other hosts refuse before
-processing. The synthetic batch remains cooperative in-process work; production
+uses 64-bit Windows Job Object ownership or the x86_64
+[Linux guardian backend](linux_worker.md), subject to its kernel/libc capability
+checks. Unsupported hosts refuse before processing. The synthetic batch remains cooperative in-process work; production
 GUI workflows and dependencies remain unchanged. There is no experiment tree, ROI/preprocessing editor, resumability
 or concurrent-writer support.
 
@@ -211,11 +212,14 @@ The Windows ownership fixture holds a synchronization handle to the exact live
 worker before abruptly terminating its test owner, then verifies worker exit.
 Its scope is an enrolled injected waiting boundary, not mid-PIV interruption or
 native-file recovery. A separate injected enrollment failure verifies an
-unassigned child is reaped before another launch. Equivalent non-Windows process
-ownership remains open. The manual matrix retains unsupported worker capability
+unassigned child is reaped before another launch. The Linux backend uses
+transferred process descriptors and a separate subreaper guardian; its
+[ownership guide](linux_worker.md) records prerequisites, failure semantics and
+independent descendant checks. macOS ownership remains open.
+The manual matrix retains unsupported worker capability
 as a failure rather than falling back to the legacy cooperative lane.
 
-The current Windows checks pass 63 protocol, 48 client/ownership, 90 real replay
+The pre-Linux Windows checks passed 63 protocol, 48 client/ownership, 90 real replay
 and 26 lifecycle-validator assertions. The isolated enrollment-failure helper
 passes seven checks separately. GUI focused checks total 370 across separate
 invocations: 97 final cached-error/adapter checks, 39 display transactions,

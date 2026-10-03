@@ -527,10 +527,22 @@ The saved-experiment lane uses `ExperimentController` for recipe/history state
 and inspection; `worker_client.jl` and `replay_worker.jl` execute captured planar
 requests in a core-only subprocess. Only the shell owner updates Observables and
 acknowledges written-pair progress. Poll process liveness even while an observer
-defers acknowledgement; shutdown releases deferred acknowledgements and waits
-for confirmed exit. Startup cleanup retains ownership until reaping finishes.
-The native ownership implementation currently requires 64-bit Windows; unsupported
-hosts refuse explicitly. Do not turn that prerequisite into a successful fallback.
+defers acknowledgement; ordinary shutdown releases deferred acknowledgements
+and waits for confirmed exit. An ownership failure is different: preserve the
+captured job/request and busy guard, expose the original fault, and refuse
+further progress delivery or acknowledgements while cleanup is unconfirmed.
+Do not synthesize a terminal outcome from a diagnostic or clear the job to make
+the UI appear idle. Startup cleanup retains ownership until reaping finishes.
+Windows uses a kill-on-close Job Object. The Linux x86_64 backend uses a core-free
+subreaper guardian and transferred self-opened pidfds; its process-group operation
+requires kernel/libc capability checks before scientific enrollment. The Linux
+client's Process is the guardian; worker PID is zero until enrollment. Retain
+kernel references rather than reopening numeric PIDs after asynchronous exit.
+Require root reaping, group emptiness, no adopted children, request-bound proof
+and normal guardian exit before releasing ownership. Escaped children or guardian
+loss keep cleanup unconfirmed. Unsupported hosts refuse explicitly; do not turn
+that prerequisite into a successful fallback. See the prototype's
+[Linux ownership guide](HammerheadGUI/prototypes/qml/linux_worker.md).
 The lane never projects complete recipes into the synthetic demo form. Preserve
 the displayed run's own identity after failed actions, verify completed output before lazy inspection,
 and use the existing physical-display helpers. Shell ownership of replay survives

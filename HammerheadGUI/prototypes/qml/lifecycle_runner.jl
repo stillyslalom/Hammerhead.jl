@@ -169,7 +169,7 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
                 while !process_exited(process)
                     if time() >= deadline
                         timed_out = true
-                        kill(process)
+                        kill(process, Base.SIGKILL)
                         break
                     end
                     sleep(0.05)
@@ -179,7 +179,7 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
                 owner_error = sprint(showerror, exception, catch_backtrace())
             finally
                 if process !== nothing && !process_exited(process)
-                    kill(process)
+                    kill(process, Base.SIGKILL)
                     wait(process)
                 end
             end
@@ -206,13 +206,14 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
     evidence_errors = expected === nothing ? String[] : validate_lifecycle_evidence(directory, expected)
     sources_before == sources_after || push!(evidence_errors, "prototype source changed during the child process")
     report = Dict{String,Any}("exit_code" => process === nothing ? -1 : Int(process.exitcode),
+        "term_signal" => process === nothing ? -1 : Int(process.termsignal),
         "timed_out" => timed_out, "owner_error" => owner_error,
         "elapsed_seconds" => (time_ns() - started) / 1e9,
         "stdout_sha256" => LifecycleEvidence.digest(stdout_path),
         "stderr_sha256" => LifecycleEvidence.digest(stderr_path),
         "error_patterns" => errors, "stages" => stages, "stage_parse_errors" => stage_errors,
         "child_complete" => child_complete, "evidence_errors" => evidence_errors)
-    report["passed"] = report["exit_code"] == 0 && !timed_out && isempty(owner_error) &&
+    report["passed"] = report["exit_code"] == 0 && report["term_signal"] == 0 && !timed_out && isempty(owner_error) &&
         isempty(errors) && isempty(stage_errors) && isempty(evidence_errors) && child_complete
     LifecycleEvidence.write_fresh(joinpath(directory, "process_result.toml"), report)
     report
@@ -308,6 +309,20 @@ function harness_tests(root)
         @test report["exit_code"]==0 && report["child_complete"]
         @test !report["passed"]
         @test report["error_patterns"]==["Failed to update renderobject - skipping update"]
+        if Sys.isunix()
+            # A complete stage followed by signal death is still a failed child;
+            # Julia can expose exitcode=0 alongside termsignal=SIGKILL on Unix.
+            signal_script=joinpath(root,"signal_after_complete.jl")
+            write(signal_script,"include("*repr(joinpath(@__DIR__,"lifecycle_evidence.jl"))*")\n"*
+                "j=LifecycleEvidence.Journal(joinpath(ARGS[1],\"stages\"))\n"*
+                "LifecycleEvidence.stage!(j,\"child_complete\")\nccall(:raise,Cint,(Cint,),9)\n")
+            signal_directory=joinpath(root,"signal-after-complete")
+            signal_command=`$(Base.julia_cmd()) --startup-file=no $signal_script $signal_directory`
+            report=run_lifecycle_child(signal_command,signal_directory;timeout=30.)
+            @test report["child_complete"] && report["term_signal"]==9
+            @test !report["passed"] && !report["timed_out"]
+            @test isempty(report["owner_error"])
+        end
     end
 end
 

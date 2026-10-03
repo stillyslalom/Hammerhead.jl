@@ -63,7 +63,7 @@ jobs:
               report = Dict{String,Any}("command"=>collect(command.exec), "parent_pid"=>getpid(),
                   "started_utc"=>string(now(UTC)), "timeout_seconds"=>seconds,
                   "julia"=>string(VERSION), "os"=>string(Sys.KERNEL), "architecture"=>string(Sys.ARCH),
-                  "exit_code"=>-1, "timed_out"=>false, "owner_error"=>"")
+                  "exit_code"=>-1, "term_signal"=>-1, "timed_out"=>false, "owner_error"=>"")
               process = nothing
               try
                   open(joinpath(destination,"stdout.log"),"w") do out
@@ -77,6 +77,7 @@ jobs:
                           end
                           wait(process)
                           report["exit_code"] = Int(process.exitcode)
+                          report["term_signal"] = Int(process.termsignal)
                       end
                   end
               catch exception
@@ -91,7 +92,8 @@ jobs:
                       end
                   end
                   report["finished_utc"] = string(now(UTC))
-                  report["passed"] = report["exit_code"] == 0 && !report["timed_out"] && isempty(report["owner_error"])
+                  report["passed"] = report["exit_code"] == 0 && report["term_signal"] == 0 &&
+                      !report["timed_out"] && isempty(report["owner_error"])
                   # A nested lifecycle harness can fail after timing out its own
                   # child. The direct child's exit does not prove descendant
                   # cleanup, so any unsuccessful command closes the launch gate.
@@ -101,7 +103,8 @@ jobs:
                   end
                   open(io->TOML.print(io,report;sorted=true),joinpath(destination,"process.toml"),"w")
               end
-              println(label, ": passed=", report["passed"], " exit=", report["exit_code"], " timeout=", report["timed_out"])
+              println(label, ": passed=", report["passed"], " exit=", report["exit_code"],
+                  " signal=", report["term_signal"], " timeout=", report["timed_out"])
               report["passed"] || exit(1)
           end
           main(ARGS)
@@ -136,6 +139,31 @@ jobs:
         run: |
           julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" setup 1500 "$env:QML_PROJECT/artifacts/ci/setup_and_precompile.jl"
           exit $LASTEXITCODE
+
+      - name: Linux worker enrollment and descendant ownership
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && runner.os == 'Linux' }}
+        timeout-minutes: 22
+        run: |
+          $checks = @(
+            @{ File = 'linux_transport_tests'; Seconds = 120; Argument = '' },
+            @{ File = 'linux_enrollment_tests'; Seconds = 180; Argument = '' },
+            @{ File = 'linux_startup_failure_test'; Seconds = 180; Argument = '' },
+            @{ File = 'linux_poll_fault_tests'; Seconds = 180; Argument = '' },
+            @{ File = 'linux_worker_owner_loss_tests'; Seconds = 180; Argument = '' },
+            @{ File = 'linux_client_ownership_tests'; Seconds = 180; Argument = 'guardian_loss' },
+            @{ File = 'linux_client_ownership_tests'; Seconds = 180; Argument = 'escaped' }
+          )
+          foreach ($check in $checks) {
+            $file = $check.File
+            $label = $file
+            $arguments = @()
+            if ($check.Argument) {
+              $label += '-' + $check.Argument
+              $arguments = @($check.Argument)
+            }
+            julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" $label $check.Seconds "$env:QML_PROJECT/$file.jl" @arguments
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
 
       - name: Replay worker protocol, process ownership and numerical parity
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}

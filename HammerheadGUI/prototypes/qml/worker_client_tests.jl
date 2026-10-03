@@ -7,7 +7,7 @@ include("experiment_fixture.jl")
 
 function injected_worker(path,body)
     protocol=repr(joinpath(@__DIR__,"worker_protocol.jl"))
-    write(path,"include($protocol)\nusing .WorkerProtocol\nr=WorkerProtocol.request_data(WorkerProtocol.read_control(only(ARGS)))\nd=dirname(only(ARGS))\n"*
+    write(path,"isdefined(Main,:WorkerProtocol) || include($protocol)\nusing .WorkerProtocol\nr=WorkerProtocol.request_data(WorkerProtocol.read_control(only(ARGS)))\nd=dirname(only(ARGS))\n"*
         "deadline=time()+30\nwhile !isfile(joinpath(d,\"enrolled.toml\"))\n time()<deadline || error(\"enrollment timed out\")\n sleep(.01)\nend\n"*body)
     path
 end
@@ -74,7 +74,7 @@ end
 function worker_client_checks(directory)
     fixture=experiment_fixture(joinpath(directory,"inputs"))
     artifacts=joinpath(directory,"jobs")
-    if !(Sys.iswindows() && Sys.WORD_SIZE==64)
+    if !((Sys.iswindows() && Sys.WORD_SIZE==64) || (Sys.islinux() && Sys.ARCH===:x86_64 && Sys.WORD_SIZE==64))
         @testset "Unsupported native ownership refuses before spawning" begin
             @test_throws ArgumentError start_replay(fixture.record;output=fixture.output,artifact_root=artifacts)
             @test !ispath(artifacts) && !ispath(fixture.output)
@@ -93,6 +93,9 @@ function worker_client_checks(directory)
     end
     stalled=injected_worker(joinpath(directory,"stalled.jl"),
         "WorkerProtocol.write_control(joinpath(d,\"injected_wait_ready.toml\"),Dict(\"job_id\"=>r[\"job_id\"],\"worker_pid\"=>Int(getpid())))\nwhile true; sleep(.1); end\n")
+    # The Windows-specific handle/assignment helpers stay on Windows. Linux's
+    # guardian/transport/owner-loss checks are separate required CI commands.
+    if Sys.iswindows()
     # Run first. Any unverified descendant stops the file before further work.
     lossdir=joinpath(directory,"owner-loss");mkdir(lossdir)
     proof=prove_owner_loss(fixture.path,stalled,lossdir)
@@ -125,6 +128,7 @@ function worker_client_checks(directory)
         proof=TOML.parsefile(joinpath(startup_root,"startup_cleanup_proof.toml"))
         @test proof["cleanup_verified"]===true && proof["process_exit_verified"]===true
         @test !get(proof,"forced_test_cleanup",false)
+    end
     end
     @testset "Nonblocking bounded progress requires an exact explicit acknowledgement" begin
         script=injected_worker(joinpath(directory,"progress_wait.jl"),

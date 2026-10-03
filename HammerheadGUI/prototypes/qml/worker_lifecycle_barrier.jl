@@ -16,7 +16,8 @@ function await_release(args)
     end
     owner=WorkerProtocol.read_control(enrollment)
     owner["job_id"]==request["job_id"] && owner["owner_pid"]===request["owner_pid"] &&
-        owner["worker_pid"]===Int(getpid()) && owner["ownership"]=="windows_kill_on_close_job" &&
+        owner["worker_pid"]===Int(getpid()) && owner["ownership"]==
+            (Sys.islinux() ? "linux_pidfd_subreaper_guardian" : "windows_kill_on_close_job") &&
         owner["request_sha256"]==WorkerProtocol.digest(request_file) || error("injected worker enrollment identity disagrees")
     for (path,hash) in request["worker_sources"]
         WorkerProtocol.digest(path)==hash || error("worker source changed before injected barrier")

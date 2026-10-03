@@ -3,7 +3,8 @@ using Test,Hammerhead
 include("worker_client.jl")
 using .ReplayWorkerClient: start_replay,poll!,active,outcome,acknowledge_progress!,request_cancel!,shutdown!
 include("experiment_fixture.jl")
-Sys.iswindows() && Sys.WORD_SIZE==64 || error("saved-planar worker capability gate failed: validated Windows Job Object ownership is unavailable on this host")
+((Sys.iswindows() && Sys.WORD_SIZE==64) || (Sys.islinux() && Sys.ARCH===:x86_64 && Sys.WORD_SIZE==64)) ||
+    error("saved-planar worker capability gate failed: validated ownership is unavailable on this host")
 
 function settle_worker(job;on_progress=event->nothing,timeout=180.)
     deadline=time()+timeout

@@ -12,6 +12,105 @@ function wait_saved(state)
     end
     @test !Prototype.busy(state)
 end
+
+@testset "Shutdown adopts an exited fault instead of acknowledging its deferred event" begin
+    mktempdir() do dir
+        fixture=experiment_fixture(dir);state=Prototype.State();lane=state.experiment;ec=lane.controller
+        @test Prototype.open_saved_experiment(state,fixture.path)
+        @test Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false)
+        @test Prototype.run_saved_experiment(state;progress=(i,n)->:defer,start_options=(ack_timeout=3.,))
+        job=lane.job
+        try
+            deadline=time()+120.
+            while lane.pending_progress===nothing && ec.running[] && time()<deadline
+                Prototype.service_saved_replay!(state);sleep(.005)
+            end
+            @test lane.pending_progress!==nothing && ec.running[]
+            # Do not service the owner during this wait: the worker's real ACK
+            # deadline fails replay and the owned OS process exits. On Linux
+            # this Process is the guardian, whose exit also requires proof.
+            exited=timedwait(()->process_exited(job.process),60.;pollint=.02)==:ok
+            @test exited
+            exited || error("faulted worker did not exit; stop further launches")
+            @test Prototype.ReplayWorkerClient.outcome(job)===nothing
+            state.shutdown=true
+            Prototype.service_saved_replay!(state)
+            @test !ec.running[] && ec.state[]===:failed
+            @test lane.job===nothing && lane.request===nothing && lane.pending_progress===nothing
+            @test lane.outcome.written==1 && lane.outcome.exit_code==1 && lane.outcome.cleanup_confirmed
+            @test occursin("acknowledgement deadline",lane.outcome.message)
+            @test !isfile(joinpath(job.directory,"ack-1.toml"))
+            @test length(load_results(fixture.output))==1
+        finally
+            if lane.job!==nothing
+                Prototype.ReplayWorkerClient.shutdown!(job;timeout=0.)
+                Prototype.service_saved_replay!(state)
+            end
+            Prototype.busy(state) && error("faulted worker cleanup remains unverified; stop further launches")
+            Prototype.dispose_state(state)
+        end
+    end
+end
+
+# Adapter-only fault seam: actual kernel ownership/refusal is covered by the
+# Linux client subprocess tests; this proves GUI adoption cannot clear its guard.
+struct UnverifiedOwnershipFixture
+    id::String
+    diagnostic::String
+    acknowledgements::Base.RefValue{Int}
+    cancellations::Base.RefValue{Int}
+end
+UnverifiedOwnershipFixture(id,diagnostic)=UnverifiedOwnershipFixture(id,diagnostic,Ref(0),Ref(0))
+Prototype.ReplayWorkerClient.poll!(job::UnverifiedOwnershipFixture)=(kind=:progress,job_id=job.id,sequence=1,written=1,total=3)
+Prototype.ReplayWorkerClient.ownership_error(job::UnverifiedOwnershipFixture)=job.diagnostic
+Prototype.ReplayWorkerClient.outcome(job::UnverifiedOwnershipFixture)=nothing
+Prototype.ReplayWorkerClient.job_id(job::UnverifiedOwnershipFixture)=job.id
+Prototype.ReplayWorkerClient.acknowledge_progress!(job::UnverifiedOwnershipFixture,event;abort=nothing)=(job.acknowledgements[]+=1)
+Prototype.ReplayWorkerClient.request_cancel!(job::UnverifiedOwnershipFixture)=(job.cancellations[]+=1)
+
+@testset "Unverified ownership remains busy and preserves captured/display state" begin
+    mktempdir() do directory
+        fixture=experiment_fixture(joinpath(directory,"inputs"))
+        state=Prototype.State()
+        @test Prototype.open_saved_experiment(state,fixture.path)
+        ec=state.experiment.controller;lane=state.experiment
+        state.explorer=ResultExplorer([Prototype.dense_result(8)])
+        state.explorer.selection[]=CartesianIndex(1,1)
+        state.displayed[]="Previously displayed native recording"
+        snapshot=(state.explorer,state.explorer.selection[],state.frame[],state.displayed[],ec.record[])
+        request=(record=deepcopy(fixture.record),output=fixture.output,history=fixture.history,allow=false)
+        job=UnverifiedOwnershipFixture("captured-test-job","guardian exited without descendant cleanup proof")
+        original=ErrorException("original owner observer error")
+        observer_calls=Ref(0)
+        lane.job=job;lane.request=request;lane.owner_error=original
+        lane.observer=(written,total)->(observer_calls[]+=1)
+        ec.running.val=true;ec.error.val=original
+        Prototype.service_saved_replay!(state)
+        @test ec.running[] && ec.state[]===:cleanup_unverified
+        @test lane.job===job && lane.request===request && lane.outcome===nothing
+        @test ec.error[]===original && lane.owner_error===original
+        @test occursin(job.diagnostic,lane.error[]) && occursin("original owner observer error",lane.error[])
+        @test occursin(job.diagnostic,ec.status[])
+        @test observer_calls[]==0 && job.acknowledgements[]==0 && lane.pending_progress===nothing
+        @test (state.explorer,state.explorer.selection[],state.frame[],state.displayed[],ec.record[])==snapshot
+        @test !Prototype.open_saved_experiment(state,fixture.path)
+        Prototype.service_saved_replay!(state) # restore diagnostic after a refused next action
+        @test ec.running[] && lane.job===job && lane.request===request
+        @test occursin(job.diagnostic,lane.error[]) && ec.error[]===original
+        deferred=(kind=:progress,job_id=job.id,sequence=1,written=1,total=3)
+        lane.pending_progress=deferred
+        @test !Prototype.acknowledge_saved_progress!(state)
+        Prototype.request_shutdown(state)
+        Prototype.service_saved_replay!(state)
+        @test job.cancellations[]>0 && job.acknowledgements[]==0 && observer_calls[]==0
+        @test lane.pending_progress===deferred && ec.running[] && ec.state[]===:cleanup_unverified
+        @test_throws ArgumentError Prototype.dispose_state(state)
+        # Remove only this non-process fixture so the test can dispose its model.
+        lane.job=nothing;lane.request=nothing;ec.running.val=false
+        Prototype.dispose_state(state)
+        @test isempty(state.subscriptions) && isempty(lane.subscriptions)
+    end
+end
 function dispose_view(registry)
     lease=registry.active
     figure=lease.payload[1]

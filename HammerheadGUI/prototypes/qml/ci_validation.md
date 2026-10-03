@@ -36,7 +36,8 @@ Each job requests these checks in order, subject to the conservative owner gate:
 
 | Lane | Requested checks |
 |---|---|
-| Worker contracts | Primitive protocol bounds, Windows Job ownership/parent loss, real saved-planar parity/cancellation/failure and worker-evidence rejection |
+| Linux ownership | Descriptor transport, enrollment/startup failure, malformed ownership proof, actual owner loss, guardian failure and escaped descendants; Linux only |
+| Worker contracts | Primitive protocol bounds, shared client contracts, Windows Job ownership/parent loss, real saved-planar parity/cancellation/failure and worker-evidence rejection |
 | Focused contracts | Queued actions, demo and experiment adapters, display transactions, viewport geometry, ownership contracts, invisible-screen ownership and owned GLFW |
 | Harness contracts | Hidden-process exit/timeout ownership and rejection of incomplete evidence |
 | Software Qt | Demo and saved-experiment lifecycle children |
@@ -53,9 +54,11 @@ workflow; those remain separate acceptance work after a clean prerequisite.
 The runner itself owns Qt startup environment selection and does not infer
 native success from an application-release acknowledgement or capture alone.
 
-Saved-planar subprocess ownership currently requires 64-bit Windows. Unsupported
-Linux/macOS ownership fails the real-replay/active-worker capability gate; the
-workflow does not substitute the cooperative lane or mark that failure expected.
+Saved-planar subprocess ownership uses 64-bit Windows Job Objects or the x86_64
+[Linux guardian backend](linux_worker.md). Linux requires the process-group pidfd
+operation and compatible libc symbols; a runner label alone proves neither.
+macOS and unsupported Linux capability fail the real-replay/active-worker gate;
+the workflow does not substitute the cooperative lane or mark that failure expected.
 The matrix definition is not cross-platform worker validation. Local protocol
 and ownership outcomes, plus controlled injected-work acknowledgements, do not
 establish desktop input or portable responsiveness.
@@ -73,9 +76,14 @@ descendant. Cancellation stops new work; setup failure prevents meaningless
 application checks.
 
 The inline workflow process owner writes complete stdout and stderr plus a TOML
-invocation, child PID, OS exit status, timeout and owner-error report for every
+invocation, child PID, OS exit status and termination signal, timeout and owner-error report for every
 requested script. It hides Windows console windows and terminates only its
-owned child on timeout. Any unsuccessful child command publishes an incomplete-owner
+owned child on timeout. Passing requires both exit code zero and no termination
+signal: Unix signal termination can otherwise carry a zero exit-code field.
+The extracted workflow owner was checked locally with a normal Windows child,
+a self-terminating Linux SIGKILL child and a subsequent refused launch. This
+validates the owner gate, not a hosted workflow run or Linux graphics support.
+Any unsuccessful child command publishes an incomplete-owner
 marker: every later requested child launch is refused with failure evidence,
 including later focused files and lanes. This prevents overlapping new work
 with a potentially surviving descendant without killing unrelated processes.

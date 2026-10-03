@@ -9,9 +9,12 @@ by the production GUI; the isolated candidate does not reproduce those views.
 
 ## Interaction requirements
 
+GUI and rendering evidence below comes from hidden Windows trials. Linux evidence
+concerns core-worker ownership only; native desktop behavior remains separate.
+
 | Requirement | Acceptance exercise | Candidate evidence |
 |:--|:--|:--|
-| Experiment and file browser | Open a completed recording; show path/read errors beside input; retain previous result on failure | Prototype has explicit path entry and lazy open; experiment tree remains pending |
+| Experiment and file browser | Open a completed recording; show path/read errors beside input; retain previous result on failure | Prototype has Qt Browse dialogs, draft paths and lazy open; experiment tree remains pending |
 | Editable parameter forms | Invalid schedules leave controller parameters unchanged; valid correction clears the inline error | Controller adapter tested; native QML TextField and error label wired |
 | Large recordings | Browse indexed completed files while retaining one display payload and current view arrays | Existing ResultFile/ResultExplorer reused; O(number of entries) key index; no live-file tailing |
 | Keyboard and focus | Tab through labeled inputs; arrow keys browse; Esc cancels; Ctrl+Return runs; Ctrl+W reopens viewport | QML bindings and accessible input names present; native input/accessibility audit pending |
@@ -19,7 +22,7 @@ by the production GUI; the isolated candidate does not reproduce those views.
 | Image navigation | Pan/zoom a 1024-square image and retain precise data-coordinate picking | Makie axis interactions in bridge; image-transform fallback implemented; native gesture latency pending |
 | Dense vectors | Render 16,384 vectors over an image, inspect one vector, avoid frame-history caches | Hidden standalone and real embedded framebuffer captures inspected; native bridge reports render exceptions during reopen |
 | Masks and ROI | Draw/close a polygon on the demo image; edits reach the batch controller; retain production ROI semantics | Prototype mask adapter tested; native mask gesture/ROI editor parity pending |
-| Live results and cancellation | Completed pairs update the explorer; cancellation preserves the completed prefix while controls remain serviceable | Synthetic BatchRunner remains cooperative; saved planar replay uses an owned Windows worker with acknowledged native-write boundaries; portable and desktop responsiveness remain pending |
+| Live results and cancellation | Completed pairs update the explorer; cancellation preserves the completed prefix while controls remain serviceable | Synthetic BatchRunner remains cooperative; saved planar replay uses owned Windows/Linux workers with acknowledged native-write boundaries and explicit capability checks; broader platform and desktop responsiveness remain pending |
 | Saved recipe replay | Preserve the full saved recipe; explicit output/history paths and environment policy; progress/cancel; verify completed run before lazy inspection | Core-only saved planar worker passes hidden static-preview and separate-GLFW checks; no automatic script execution, ensemble replay or checkpoint resume in this prototype |
 | HiDPI and accessibility | Test 100/150/200% scaling, focus indicators, screen-reader labels, menus and shortcuts | Pending real desktop checks |
 | Resource lifetime | Close/reopen views repeatedly; exit without stale GL contexts or leaked payloads | Static-preview and dedicated GLFW screens release cleanly in hidden trials; embedded Qt shutdown has exposed GL cleanup errors |
@@ -261,15 +264,26 @@ pair-write boundary. Owner polling is bounded and never waits for a numerical
 pair to finish. These boundaries do not promise an upper bound on GUI action or
 rendering latency.
 
-This worker ownership implementation is Windows-only. Its kill-on-close Job
+On Windows, the worker's kill-on-close Job
 Object must enroll the owned child before processing is permitted. The ownership
 mechanism follows Microsoft's [Job Object contract](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
-Other hosts
-refuse the unsupported ownership capability rather than silently falling back
-to cooperative replay on the Qt thread. The manual three-platform workflow
-must retain this refusal as a failed capability gate. Equivalent tested Linux
-and macOS enrollment, parent-loss cleanup and descendant reaping remain open;
-the production GUI is unchanged.
+The Linux x86_64 backend uses a separate Julia guardian with subreaper ownership
+and self-opened process descriptors transferred from the guardian and worker.
+Worker identity arrives asynchronously; the guardian's PID cannot stand in for
+it. A healthy guardian detects owner socket closure, terminates the bound group
+and verifies root/descendant reaping. Cleanup proof and normal guardian exit are
+both required before the client can release its busy guard. Ownership failures
+remain visible and stop progress acknowledgements; escaped descendants or
+guardian loss cannot be relabelled successful cleanup.
+
+The Linux implementation requires a compatible libc and the process-group
+pidfd operation introduced in kernel 6.9, exercised before scientific enrollment.
+The [Linux ownership guide](https://github.com/stillyslalom/Hammerhead.jl/blob/main/HammerheadGUI/prototypes/qml/linux_worker.md)
+records the WSL environment, exact fixture scope and reproduction commands.
+Unsupported hosts, including macOS, refuse rather than falling back to cooperative
+replay. The manual workflow retains those refusals as failed capability gates;
+the production GUI is unchanged. Linux core-worker evidence does not validate
+Linux Qt rendering or desktop behavior.
 
 Terminal metadata and final OS exit are separate evidence. A process exit or a
 written-pair count cannot establish a completed experiment run. Ordinary planar

@@ -2,9 +2,11 @@ module ReplayWorkerClient
 using Hammerhead, UUIDs
 using Base.Threads: threadid
 export ReplayJob, ReplayOutcome, start_replay, poll!, acknowledge_progress!, request_cancel!,
-    active, outcome, job_id, pid, shutdown!, startup_cleanup_pending, poll_startup_cleanup!
+    active, outcome, job_id, pid, ownership_error, shutdown!, startup_cleanup_pending, poll_startup_cleanup!
 include("worker_protocol.jl")
 using .WorkerProtocol
+include("linux_ownership.jl")
+include("linux_fd_transport.jl")
 const _owned_job=Ref{Any}(nothing)
 const _incomplete_startup=Ref{Any}(nothing)
 startup_cleanup_pending()=_incomplete_startup[]!==nothing
@@ -39,7 +41,8 @@ end
 # The handle is non-inheritable. Windows closes it when its owning Qt process
 # exits, including abrupt termination. No PID enumeration/lookup is used to kill.
 # https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
-mutable struct _WindowsLease
+abstract type _OwnershipLease end
+mutable struct _WindowsLease <: _OwnershipLease
     handle::Ptr{Cvoid}
 end
 function _winerror(name)
@@ -52,7 +55,8 @@ function _close_lease!(lease::_WindowsLease)
     lease.handle=C_NULL
 end
 function _new_lease()
-    Sys.iswindows() && Sys.WORD_SIZE==64 || throw(ArgumentError("subprocess replay requires validated 64-bit Windows Job Object ownership; this prototype's saved replay is unavailable on other hosts pending equivalent ownership validation"))
+    Sys.islinux() && Sys.ARCH===:x86_64 && Sys.WORD_SIZE==64 && return _linux_lease()
+    Sys.iswindows() && Sys.WORD_SIZE==64 || throw(ArgumentError("subprocess replay requires 64-bit Windows Job Object or runtime-verified x86_64 Linux pidfd/subreaper ownership; other hosts remain unsupported"))
     handle=ccall((:CreateJobObjectW,"kernel32"),Ptr{Cvoid},(Ptr{Cvoid},Ptr{UInt16}),C_NULL,C_NULL)
     handle!=C_NULL || _winerror("CreateJobObjectW")
     lease=_WindowsLease(handle)
@@ -72,7 +76,7 @@ function _new_lease()
         _close_lease!(lease);rethrow()
     end
 end
-function _assign!(lease,process)
+function _assign!(lease::_WindowsLease,process)
     # Assign only the Process object just created by this owner. SET_QUOTA |
     # TERMINATE are required by AssignProcessToJobObject.
     handle=ccall((:OpenProcess,"kernel32"),Ptr{Cvoid},(UInt32,Int32,UInt32),0x0101,0,UInt32(getpid(process)))
@@ -83,7 +87,7 @@ function _assign!(lease,process)
         ccall((:CloseHandle,"kernel32"),Int32,(Ptr{Cvoid},),handle)
     end
 end
-function _lease_count(lease)
+function _lease_count(lease::_WindowsLease)
     lease.handle==C_NULL && return 0
     info=zeros(UInt8,48)
     GC.@preserve info begin
@@ -91,10 +95,12 @@ function _lease_count(lease)
         Int(unsafe_load(Ptr{UInt32}(pointer(info)+40)))
     end
 end
-function _terminate!(lease)
+function _terminate!(lease::_WindowsLease)
     lease.handle==C_NULL && return
     ccall((:TerminateJobObject,"kernel32"),Int32,(Ptr{Cvoid},UInt32),lease.handle,1)!=0 || _winerror("TerminateJobObject(owned child)")
 end
+
+include("linux_client_lease.jl")
 
 mutable struct ReplayJob
     job_id::String
@@ -105,7 +111,7 @@ mutable struct ReplayJob
     request::Dict{String,Any}
     stdout::IO
     stderr::IO
-    lease::_WindowsLease
+    lease::_OwnershipLease
     owner_thread::Int
     pending::Any
     last_sequence::Int
@@ -123,6 +129,17 @@ job_id(job)=job.job_id
 pid(job)=job.worker_pid
 outcome(job)=job.terminal
 active(job)=!job.reaped
+"""Cached ownership fault, without I/O. A fault does not certify cleanup: the
+job remains active until verified exit, reaping and descendant inspection.
+"""
+function ownership_error(job)
+    !active(job) && return nothing
+    if job.lease isa _LinuxLease
+        !isempty(job.lease.failure_reason) && return job.lease.failure_reason
+        job.fault!==nothing && return job.fault_message
+    end
+    nothing
+end
 function _owner(job)
     threadid()==job.owner_thread || throw(ArgumentError("replay client must be serviced by its owning thread"))
 end
@@ -140,8 +157,10 @@ end
 
 """Capture a builtin saved-planar request and start one owned, hidden core worker.
 No application Observable or Qt/GL object is touched. `worker_script` is a test
-seam, not a script-preprocessing option. Unsupported ownership platforms refuse
-before spawning. Parent applies each progress event then explicitly acknowledges
+seam, not a script-preprocessing option. Unsupported host platforms refuse
+before spawning. Linux group capability is checked by the guardian/root bootstrap
+before scientific enrollment. Current Linux evidence is x86_64 WSL/glibc only.
+Parent applies each progress event then explicitly acknowledges
 it; one event is outstanding. Evidence/control files are retained.
 """
 function start_replay(record::ExperimentRecord;output::AbstractString,run_record=nothing,
@@ -177,7 +196,7 @@ function start_replay(record::ExperimentRecord;output::AbstractString,run_record
             "output"=>path,"run_record"=>something(history,""),"allow_environment_change"=>allow_environment_change,
             "ack_timeout"=>ack_seconds,"project"=>abspath(project),"threads"=>Threads.nthreads(),
             "fftw_threads"=>Int(Hammerhead.FFTW.get_num_threads()),"protected_record_paths"=>captured_paths,
-            "worker_sources"=>Dict(realpath(p)=>WorkerProtocol.digest(p) for p in (script,@__FILE__,joinpath(@__DIR__,"worker_protocol.jl"),joinpath(@__DIR__,"replay_worker.jl"))))
+            "worker_sources"=>Dict(realpath(p)=>WorkerProtocol.digest(p) for p in _worker_sources(script,lease)))
         WorkerProtocol.request_data(request);request_file=joinpath(directory,"request.toml")
         WorkerProtocol.write_control(request_file,request)
         initial_cancel && WorkerProtocol.write_control(joinpath(directory,"cancel.toml"),Dict("version"=>1,"job_id"=>request["job_id"],"cancel"=>true))
@@ -187,14 +206,24 @@ function start_replay(record::ExperimentRecord;output::AbstractString,run_record
         pools=interactive==0 ? string(Threads.nthreads(:default)) : "$(Threads.nthreads(:default)),$interactive"
         cmd=`$(Base.julia_cmd()) --startup-file=no --project=$(dirname(project)) --threads=$pools $script $request_file`
         cmd=Cmd(cmd;windows_hide=true)
-        process=run(pipeline(cmd;stdout=stdout_io,stderr=stderr_io);wait=false)
+        if lease isa _LinuxLease
+            lease.directory=abspath(directory);lease.request=request;lease.request_sha=WorkerProtocol.digest(request_file)
+            guardian_script=joinpath(@__DIR__,"linux_guardian.jl")
+            cmd=`$(Base.julia_cmd()) --startup-file=no --threads=1 --project=$(dirname(project)) $guardian_script $request_file $script $pools`
+            process=run(pipeline(cmd;stdin=lease.pipe.out,stdout=stdout_io,stderr=stderr_io);wait=false)
+            close(lease.pipe.out)
+        else
+            process=run(pipeline(cmd;stdout=stdout_io,stderr=stderr_io);wait=false)
+        end
         _assign!(lease,process)
-        worker_pid=Int(getpid(process))
+        worker_pid=lease isa _LinuxLease ? 0 : Int(getpid(process))
         owner=Dict("version"=>1,"job_id"=>request["job_id"],"owner_pid"=>Int(getpid()),"worker_pid"=>worker_pid,
             "ownership"=>"windows_kill_on_close_job","directory"=>abspath(directory),"request_sha256"=>WorkerProtocol.digest(request_file))
-        WorkerProtocol.write_control(joinpath(directory,"owner.toml"),owner)
-        # Child waits for this enrollment before importing Hammerhead/processing.
-        WorkerProtocol.write_control(joinpath(directory,"enrolled.toml"),owner)
+        if lease isa _WindowsLease
+            WorkerProtocol.write_control(joinpath(directory,"owner.toml"),owner)
+            # Child waits for this enrollment before importing Hammerhead/processing.
+            WorkerProtocol.write_control(joinpath(directory,"enrolled.toml"),owner)
+        end
         job=ReplayJob(request["job_id"],abspath(directory),process,worker_pid,snapshot,request,stdout_io,stderr_io,lease,threadid(),
             nothing,0,0,initial_cancel,false,false,nothing,nothing,"",nothing,shutdown_seconds)
         _owned_job[]=job
@@ -204,8 +233,14 @@ function start_replay(record::ExperimentRecord;output::AbstractString,run_record
         if process!==nothing
             # Startup failure owns this child exclusively; no subsequent launch
             # happens while its native job still has members.
-            process_exited(process) || try kill(process) catch end
-            confirmed=timedwait(()->process_exited(process) && _lease_count(lease)==0,10.;pollint=.02)==:ok
+            confirmed=if lease isa _LinuxLease
+                # The Linux Process is the guardian, not the numerical worker.
+                # Preserve it to reap descendants and publish genuine cleanup proof.
+                _linux_startup_cleanup!(lease,process;timeout=15.)
+            else
+                process_exited(process) || try kill(process) catch end
+                timedwait(()->process_exited(process) && _lease_count(lease)==0,10.;pollint=.02)==:ok
+            end
             if !confirmed
                 _incomplete_startup[]=(;process,lease,stdout_io,stderr_io,directory,owner_thread=threadid())
                 try WorkerProtocol.write_control(joinpath(directory,"incomplete_owner.toml"),Dict("version"=>1,"owner_pid"=>Int(getpid()),"message"=>"startup child exit remains unverified")) catch end
@@ -228,6 +263,8 @@ function request_cancel!(job)
 end
 function acknowledge_progress!(job,event;abort=nothing)
     _owner(job)
+    active(job) || throw(ArgumentError("cannot acknowledge progress after worker exit and cleanup"))
+    job.fault===nothing || throw(ArgumentError("cannot acknowledge progress after worker ownership/protocol failure"))
     job.pending!==nothing && isequal(event,job.pending) || throw(ArgumentError("no matching pending worker progress event"))
     abort===nothing || abort isa Exception || abort isa CapturedException || throw(ArgumentError("abort must be an exception"))
     packet=WorkerProtocol.acknowledgement(job.job_id,event.sequence;abort)
@@ -240,14 +277,20 @@ end
 function _fault!(job,status,message)
     job.fault===nothing || return
     job.fault=status;job.fault_message=String(message)
-    _terminate!(job.lease)
+    try
+        _terminate!(job.lease)
+    catch error
+        job.lease isa _LinuxLease || rethrow()
+        job.lease.failed=true
+        job.lease.failure_reason="$(job.fault_message); owned termination failed: $(sprint(showerror,error))"
+    end
 end
 function _finish!(job)
     process_exited(job.process) || return false
     _lease_count(job.lease)==0 || return false
     try wait(job.process) catch end
     job.reaped=true;close(job.stdout);close(job.stderr)
-    code=Int(job.process.exitcode)
+    code=_scientific_exit_code(job.lease,job.process)
     data=nothing;run=nothing;status=something(job.fault,:crashed);message=job.fault_message
     type="WorkerProcessFailure";trace="";history_error="";cleanup=false
     if job.fault===nothing
@@ -291,7 +334,25 @@ work. Missing/corrupt terminal or unexpected exit never implies completion.
 function poll!(job)
     _owner(job)
     if !job.reaped
+        if job.lease isa _LinuxLease
+            try
+                if job.fault===nothing
+                    _linux_enroll!(job)
+                else
+                    # A stop before enrollment must still receive queued kernel
+                    # references. Never enroll scientific work after a fault.
+                    _linux_messages!(job.lease)
+                    job.worker_pid=job.lease.worker_pid
+                end
+            catch error
+                isempty(job.lease.failure_reason) && (job.lease.failure_reason=sprint(showerror,error))
+                _fault!(job,:protocol_failed,job.lease.failure_reason)
+            end
+        end
         _finish!(job)
+        if !job.reaped && job.lease isa _LinuxLease && job.lease.failed
+            _fault!(job,:ownership_failed,job.lease.failure_reason)
+        end
         if !job.reaped && job.fault===nothing && job.pending===nothing
             path=joinpath(job.directory,"progress.toml")
             if isfile(path)
@@ -326,7 +387,7 @@ function shutdown!(job;timeout=job.shutdown_timeout)
     request_cancel!(job);deadline=time()+timeout
     while active(job) && time()<deadline
         event=poll!(job)
-        job.pending===nothing || acknowledge_progress!(job,job.pending)
+        !active(job) || job.fault!==nothing || job.pending===nothing || acknowledge_progress!(job,job.pending)
         sleep(.01)
     end
     if active(job)

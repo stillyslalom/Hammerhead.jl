@@ -145,6 +145,8 @@ end
 function acknowledge_saved_progress!(state;abort=nothing)
     lane=state.experiment;event=lane.pending_progress
     event===nothing && return false
+    ReplayWorkerClient.outcome(lane.job)===nothing || return false
+    ReplayWorkerClient.ownership_error(lane.job)===nothing || return false
     ReplayWorkerClient.acknowledge_progress!(lane.job,event;abort)
     lane.pending_progress=nothing
     true
@@ -214,13 +216,31 @@ function service_saved_replay!(state)
         end
         return nothing
     end
+    # One nonblocking protocol event per service pass. Deferred acknowledgments
+    # allow owner-loop tests/actions without a spin inside a progress callback.
+    event=ReplayWorkerClient.poll!(job)
+    diagnostic=ReplayWorkerClient.ownership_error(job)
+    if diagnostic!==nothing
+        # This is a live ownership refusal, not a terminal outcome. Keep the
+        # captured request/job and running guard until actual cleanup is proved.
+        status="Owned worker cleanup remains unverified: $diagnostic"
+        details=lane.owner_error===nothing ? diagnostic : sprint(showerror,lane.owner_error)*"\nOwnership: "*diagnostic
+        if lane.controller.state[]!==:cleanup_unverified || lane.controller.status[]!=status || lane.error[]!=details
+            original=lane.owner_error===nothing ? ErrorException(diagnostic) : lane.owner_error
+            lane.controller.error[]===nothing && _saved_notify!(lane.controller.error,original)
+            _saved_notify!(lane.error,details)
+            _saved_notify!(lane.controller.state,:cleanup_unverified)
+            _saved_notify!(lane.controller.status,status)
+        end
+        # Even a previously deferred event must not run its observer or release
+        # an ACK after ownership proof is lost. Cancellation/cleanup polling
+        # remain available; a diagnostic never invents a terminal outcome.
+        return nothing
+    end
     if state.shutdown && lane.pending_progress!==nothing
         ReplayWorkerClient.request_cancel!(job)
         acknowledge_saved_progress!(state;abort=lane.owner_error)
     end
-    # One nonblocking protocol event per service pass. Deferred acknowledgments
-    # allow owner-loop tests/actions without a spin inside a progress callback.
-    event=ReplayWorkerClient.poll!(job)
     event===nothing || event.job_id==ReplayWorkerClient.job_id(job) ||
         throw(ArgumentError("stale saved replay event refused"))
     if event!==nothing && event.kind===:progress && lane.pending_progress!==nothing

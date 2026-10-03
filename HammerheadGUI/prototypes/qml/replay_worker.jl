@@ -1,11 +1,16 @@
 # Core-only entry point. Enrollment precedes importing Hammerhead, so an
 # assignment/startup failure cannot load pixels or open numerical destinations.
-include("worker_protocol.jl")
+isdefined(@__MODULE__,:WorkerProtocol) || include("worker_protocol.jl")
 using .WorkerProtocol
 length(ARGS)==1 || error("replay worker expects one captured request file")
 const request_file=abspath(only(ARGS))
 const directory=dirname(request_file)
 const request=WorkerProtocol.request_data(WorkerProtocol.read_control(request_file))
+if Sys.islinux()
+    ccall(:setpgid,Cint,(Cint,Cint),0,0)==0 || error("worker cannot create private Linux group")
+    WorkerProtocol.write_control(joinpath(directory,"linux_worker_group.toml"),Dict("version"=>1,"job_id"=>request["job_id"],
+        "worker_pid"=>Int(getpid()),"pgid"=>Int(ccall(:getpgrp,Cint,()))))
+end
 const enrollment=joinpath(directory,"enrolled.toml")
 const enrollment_deadline=time()+10.
 while !isfile(enrollment)
@@ -16,8 +21,8 @@ const enrolled=WorkerProtocol.read_control(enrollment)
 WorkerProtocol.check_keys(enrolled,("version","job_id","owner_pid","worker_pid","ownership","directory","request_sha256"))
 enrolled["version"]===1 && enrolled["job_id"]==request["job_id"] && enrolled["owner_pid"]===request["owner_pid"] &&
     enrolled["worker_pid"]===Int(getpid()) && enrolled["directory"]==directory &&
-    enrolled["ownership"]=="windows_kill_on_close_job" && enrolled["request_sha256"]==WorkerProtocol.digest(request_file) || error("worker enrollment identity disagrees")
-Sys.iswindows() && Sys.WORD_SIZE==64 || error("worker ownership unavailable on this host")
+    enrolled["ownership"]==(Sys.islinux() ? "linux_pidfd_subreaper_guardian" : "windows_kill_on_close_job") && enrolled["request_sha256"]==WorkerProtocol.digest(request_file) || error("worker enrollment identity disagrees")
+(Sys.iswindows() || Sys.islinux()) && Sys.WORD_SIZE==64 || error("worker ownership unavailable on this host")
 for (path,hash) in request["worker_sources"]
     WorkerProtocol.digest(path)==hash || error("worker source changed before execution")
 end

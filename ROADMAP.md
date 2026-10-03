@@ -616,6 +616,20 @@ evidence.
   maps. Modal and compact-layout captures were visually inspected. The
   [prototype evidence](HammerheadGUI/prototypes/qml/README.md) records scope and
   retained artifacts; native desktop and broader platform gates remain open.
+- [x] Extend the prototype's saved-planar worker ownership to Linux. Verify
+  nonblocking enrollment, exact process identity, direct/replay parity and
+  cancellation; abrupt owner loss must terminate the worker and confirm
+  descendant cleanup. Keep failed ownership proof visible and prevent another
+  launch while cleanup is unconfirmed. Preserve Windows behavior, record the
+  actual kernel/architecture prerequisites and keep Linux Qt rendering and
+  macOS ownership as separate acceptance gates.
+  The integrated WSL x86_64 sequence passed 295 checks; Windows passed 138 worker
+  and 163 GUI/harness checks. A final Windows Qt/GLFW child completed all 20
+  lifecycle stages with three native writes, four released viewport generations
+  and inspected captures. Source identities stayed unchanged. The
+  [Linux ownership guide](HammerheadGUI/prototypes/qml/linux_worker.md) records
+  exact environment, cleanup limitations and retained evidence; Linux GUI,
+  other Linux configurations and macOS acceptance remain open.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.
