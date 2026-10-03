@@ -31,6 +31,11 @@ threshold and uncertainty backend. Scripts are retained as references and are
 never executed by revision inspection or saving. This editor does not translate
 the imported recipe into the ordinary batch form or an effort preset.
 
+Use the separate [preprocessing revision view](gui_preprocessing_revision.md)
+to edit ordered built-in steps or explicitly preview conditioned image pairs.
+It shares this controller and save contract. The pass view exposes pass edits;
+the controller composes both sets of drafts when validating or saving.
+
 Choose **save distinct revision** and a separate experiment destination. Saving
 rechecks the current draft, verifies that the original ordered inputs are
 available and unchanged, and captures the current creation environment. A

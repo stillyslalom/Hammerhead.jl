@@ -691,6 +691,41 @@ evidence.
   Source identities remained unchanged during final validation. File I/O is
   cooperatively scheduled and may pause rendering; desktop acceptance and
   broader recipe editing remain separate work.
+- [x] Extend saved-planar recipe revision to lossless ordered built-in
+  preprocessing and an explicit verified image-pair preview. Preserve duplicate
+  operations, empty chains, every supported option and imported background
+  precision; retain all other recipe fields and existing pass-edit/save guards.
+  Keep raw invalid drafts and last valid metadata/image previews separate.
+  Background replacement must be explicit, show its decoding precision and
+  protect consumed source paths without inventing persisted source lineage.
+  Capture recipe and pair requests before notifications, verify selected input
+  bytes, and apply the exact replay preprocessing in the saved image precision
+  to full frames before ROI cropping. Show masks/ROI in original coordinates;
+  do not mask pixels before filtering. Preserve script references for inspection
+  and saving while refusing automatic script execution in image previews.
+  Verify independent operation-composition parity, duplicate ordering, malformed
+  hidden drafts, changed inputs, retained preview identities, protected saves,
+  and actual compact-layout interactions. Keep metadata inspection available
+  offline and numerical image work explicit. ROI/mask/scale editing and the
+  broader integrated-workflow acceptance remain separate roadmap requirements.
+  The [preprocessing editor](docs/src/howto/gui_preprocessing_revision.md) passes
+  84 controller, 292 independent composition/integrity and 138 hidden view checks,
+  including superseded image-array release and original-coordinate overlays.
+  The full GUI suite passes 2,549 checks on Windows/Julia 1.11.4; both 900×600
+  and 1100×800 captures were inspected. All seven documentation tutorials and
+  public API checks pass, with 286 source/test/docs/environment identities
+  unchanged during final validation. Native desktop and other-platform evidence
+  remains separate; cooperative scheduling may pause rendering.
+- [ ] Add lossless saved-planar ROI and isotropic physical-scale revision through
+  the shared recipe controller. Preserve exact imported bounds, scale factors and
+  unit labels, ordered passes/preprocessing and full-image masks/backgrounds.
+  Explicit disabling must restore `nothing`; refuse incompatible ROI/pass
+  geometry without regenerating the schedule. Keep raw invalid text visible and
+  parse every field afresh for preview/save. Capture geometry with image-preview
+  requests, retain original-coordinate overlays and verify physical conversion is
+  applied once. Do not infer calibration-line endpoints absent from the record.
+  Test distinct saves, complete-recipe composition and compact interactions;
+  lossless mask import/editing remains a separate part of workflow integration.
 - [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.
