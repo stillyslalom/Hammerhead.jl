@@ -37,6 +37,7 @@ const r_track = TrackingResult(
     4, PTVParameters())
 
 @testset "HammerheadGUI.jl" begin
+    include("test_qml_gui.jl")
     include("test_experiments.jl")
     include("test_workflow_layout.jl")
     include("test_experiment_replay_progress.jl")

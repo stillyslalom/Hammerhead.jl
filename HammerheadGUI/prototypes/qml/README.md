@@ -1,4 +1,52 @@
-# Isolated Qt6/QML shell evaluation
+# Experimental Qt interface and development probes
+
+## Open the interface
+
+Install the four packages in your Julia environment, then use the public launcher:
+
+```julia
+using Pkg
+Pkg.add(["Hammerhead", "HammerheadGUI", "QML", "QMLMakie"])
+using HammerheadGUI
+session = experimental_qml_gui()
+```
+
+Qt controls open beside an interactive GLMakie scientific window. To start with
+your data, pass `experiment="recipe.jld2"` for a saved planar recipe or
+`result="vectors.jld2"` for an unscaled planar results file. Browse buttons
+select paths; the **open** and **replay** actions apply them. Saved replay
+preserves the recipe's passes, preprocessing, ROI, mask and scale, and runs in a
+separate core-only worker while the controls continue servicing events.
+
+The launcher runs the packaged shell in a fresh process using the caller's
+project. Its optional packages are resolved there. `setup.jl` is the separate
+checkout environment for the development probes below.
+
+Close the plot to release its screen; reopen it from the controls. Close the
+settings window to end the session, then `wait(session)` to check its exit.
+`close(session)` requests shutdown and waits from Julia. Use `isopen(session)`
+to check the child lifetime, `session.log_path` to find its log and
+`session.directory` for reports. `session_dir="qml-session"` creates a new
+session directory whose parent already exists.
+
+### Finish a session
+
+1. Request cancellation or close the settings window. The owner keeps servicing
+   progress until the worker finishes or reaches its shutdown deadline.
+2. Wait for the session process to exit. Successful cleanup releases the worker,
+   plot screens, callbacks and Qt resources.
+3. If cleanup remains unresolved, keep the session logs and job identity for
+   diagnosis. The busy guard retains the request and blocks another replay.
+
+Replay ownership is verified on 64-bit Windows and supported x86_64 Linux;
+the [Linux guide](linux_worker.md) lists its capability checks. Desktop input,
+Linux Qt rendering and macOS ownership remain evaluation tasks. The
+[GUI task guide](../../../docs/src/howto/gui.md)
+introduces saved replay, and the
+[launcher reference](../../../docs/src/reference/gui.md)
+documents the lifecycle options.
+
+## Development evaluation
 
 This opt-in prototype evaluates forms and window management over HammerheadGUI's
 framework-free controllers. It does not replace the production GUI or change its

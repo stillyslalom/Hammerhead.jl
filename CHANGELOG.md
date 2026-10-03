@@ -219,6 +219,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added `experimental_qml_gui`: optional Qt controls with an interactive
+  scientific plot, saved planar experiment/result startup, and a session handle
+  for orderly shutdown. Each launch captures its package paths and retains logs
+  and diagnostics in a separate writable directory.
+
 - Added saved-mask editing that retains imported pixels while adding polygon
   exclusions, holes and morphology. A verified raw reference image guides the
   edits; applying them and saving a new complete recipe are explicit actions.

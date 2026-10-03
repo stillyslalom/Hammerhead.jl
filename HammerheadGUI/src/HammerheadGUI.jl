@@ -11,6 +11,10 @@ module HammerheadGUI
 using Hammerhead
 using GLMakie
 using NativeFileDialog
+import TOML
+
+export experimental_qml_gui, ExperimentalQMLSession
+include("qml_gui.jl")
 
 # Framework-free controller layer: the submodule boundary keeps Makie names
 # out of scope, so controller code cannot grow GL dependencies by accident.

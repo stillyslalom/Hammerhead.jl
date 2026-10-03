@@ -200,6 +200,13 @@ jobs:
           julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" harness-self-test 360 "$env:QML_PROJECT/lifecycle_runner.jl" --self-test
           exit $LASTEXITCODE
 
+      - name: Public experimental launcher and session cleanup
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" public-entry 540 "$env:QML_PROJECT/experimental_entry_tests.jl"
+          exit $LASTEXITCODE
+
       - name: Hidden software Qt demo and saved-experiment lifecycle
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         timeout-minutes: 10

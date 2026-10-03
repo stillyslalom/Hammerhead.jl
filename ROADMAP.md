@@ -1,7 +1,7 @@
 # Hammerhead roadmap
 
 This is the single active backlog for Hammerhead and HammerheadGUI, reconciled
-on 2026-10-02. It includes outstanding work from the former polish backlog,
+on 2026-10-03. It includes outstanding work from the former polish backlog,
 maintainer notes, archived plans, and the repository review. Historical design
 and implementation records remain under [reference/archive](reference/archive/README.md).
 Add new work here; update implementation guidance in `CLAUDE.md` when it lands.
@@ -40,8 +40,30 @@ or cross-platform acceptance gates.
 
 ## Delivery order
 
-Current priority: rebuild the documentation around learning and worked examples
-before resuming additional GUI features.
+This development cycle closes with an experimental QML option in HammerheadGUI.
+The shared recipe editor and broader desktop/platform acceptance remain queued
+for a later cycle.
+
+- [x] Expose an experimental QML launcher in HammerheadGUI with optional Qt
+  dependencies, saved experiment/result startup, a writable session directory,
+  and cooperative shutdown. Validate the public entry point and existing replay
+  lifecycle, document installation and the two-window workflow, and commit the
+  completed integration before closing this cycle.
+  `experimental_qml_gui` opens saved planar recipes or results in a fresh child,
+  with captured package paths, inherited thread pools and retained session logs.
+  The 138 launch/entry checks pass, including two hidden application launches
+  from Unicode paths. Saved-GLFW and active-worker lifecycle regressions pass
+  with joined children and released screens. All 3,426 GUI checks and seven
+  tutorials pass; the 119-page site passes 6,237 local link/anchor checks.
+  Captures were inspected and 382 source/test/docs/environment files remained
+  stable during final validation. The manual QML workflow now includes public
+  launcher acceptance. Hosted Windows CI confirmation and platform/desktop
+  checks stay in their existing backlog entries below.
+- [ ] Combine the saved-recipe pass, preprocessing, geometry and mask editors
+  in one window sharing a single revision controller. Resume the parked draft
+  in a later cycle; validate cross-editor changes and explicit Apply/save behavior.
+  Draft implementation and tests are retained in the local stash named
+  `Shared recipe workbench WIP parked for experimental QML integration`.
 
 - [x] Replace the long feature-by-feature sidebar with a small learning path,
   task hubs and a grouped reference catalog. Preserve existing page URLs.
@@ -682,7 +704,9 @@ evidence.
   other Linux configurations and macOS acceptance remain open.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
-  and responsiveness during CPU/GPU work. Check accessible labels and focus order.
+  and responsiveness during CPU/GPU work. Check accessible labels, focus order,
+  and filename font coverage. The local Qt font renders some CJK filename
+  characters as boxes; Unicode paths open and retain their exact identities.
   Establish replay-worker ownership on each platform, including abrupt owner
   loss during processing and confirmed descendant exit before another launch.
   A platform-specific ownership implementation does not close this gate.

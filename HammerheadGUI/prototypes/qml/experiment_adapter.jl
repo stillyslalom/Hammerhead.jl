@@ -19,6 +19,7 @@ mutable struct ExperimentLane
     outcome::Any
     cancel_requested::Bool
     owner_thread::Int
+    artifact_root::String
 end
 
 function wrapped_pages(text;columns=40,lines=8)
@@ -54,11 +55,11 @@ function refresh_experiment(lane;record_changed=false)
     lane.pages[]="Page $(lane.page[]) / $(length(chunks))"
     nothing
 end
-function ExperimentLane()
+function ExperimentLane(; artifact_root=joinpath(@__DIR__, "artifacts"))
     ec=ExperimentController()
     lane=ExperimentLane(ec,Observable(""),Observable(""),Observable(""),
         Observable(:recipe),Observable(1),Observable(""),Observable(""),Any[],"","",
-        nothing,nothing,nothing,nothing,nothing,nothing,false,Threads.threadid())
+        nothing,nothing,nothing,nothing,nothing,nothing,false,Threads.threadid(),abspath(artifact_root))
     push!(lane.subscriptions,on(_->refresh_experiment(lane;record_changed=true),ec.record))
     for source in (ec.status,ec.state,ec.progress,ec.output_path,ec.run_record_path,lane.section,lane.error)
         push!(lane.subscriptions,on(_->refresh_experiment(lane),source))
@@ -106,7 +107,7 @@ function run_saved_experiment(state;progress=nothing,start_options=NamedTuple())
         isempty(strip(ec.output_path[])) && throw(ArgumentError("choose a result output first"))
         # Capture before running/status observers or spawning the child. Only the
         # owner mutates controller observables; the child sees a native snapshot.
-        options=deepcopy(start_options) # private finite-harness seam, captured like user choices
+        options=merge((artifact_root=lane.artifact_root,),deepcopy(start_options)) # captured like user choices
         lane.request=(record=record,output=String(ec.output_path[]),history=String(ec.run_record_path[]),allow=ec.allow_environment_change[],start_options=options)
         lane.observer=progress;lane.pending_progress=nothing;lane.owner_error=nothing
         lane.outcome=nothing;lane.cancel_requested=false
