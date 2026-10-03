@@ -9,7 +9,23 @@
 const GridResult = Union{PIVResult,StereoPIVResult}
 const ScatteredResult = Union{PTVResult,TrackingResult}
 const AnyResult = Union{GridResult,ScatteredResult}
+const DisplayResult = Union{AnyResult,TimedTrackingResult}
 const Selection = Union{Nothing,CartesianIndex{2},Int}
+
+# Dedicated artifacts own one complete trajectory bundle. Keep native vector
+# eltypes unchanged: widening AnyResult would break native save_results dispatch.
+struct _TimedDisplayResult <: AbstractVector{TimedTrackingResult}
+    result::TimedTrackingResult
+end
+Base.size(::_TimedDisplayResult) = (1,)
+Base.IndexStyle(::Type{_TimedDisplayResult}) = IndexLinear()
+function Base.getindex(results::_TimedDisplayResult,i::Int)
+    checkbounds(results,i)
+    Hammerhead._tracking_check(results.result)
+    results.result
+end
+Base.show(io::IO,::_TimedDisplayResult) = print(io,"Timed tracking display (one complete trajectory bundle)")
+Base.show(io::IO,::MIME"text/plain",results::_TimedDisplayResult) = show(io,results)
 
 # One physical/display payload, irrespective of recording length. Read/convert
 # before replacing the cache, so failed navigation preserves the prior frame.
@@ -69,7 +85,7 @@ Base.show(io::IO, ::MIME"text/plain", results::_LazyDisplayResults) = show(io, r
 """
     ResultExplorer(results; path = nothing)
     ResultExplorer(result)
-    ResultExplorer(path::AbstractString; lazy = false)
+    ResultExplorer(path::AbstractString; lazy = false, format = :native)
     ResultExplorer(index::ResultFile)
     ResultExplorer(index::CheckpointResults)
 
@@ -92,6 +108,19 @@ planar results only — tool state clears on frame switches).
 Results with a [`PhysicalScale`](@ref) are converted through
 [`physical`](@ref) for display in physical units. Unscaled results retain
 their original units.
+
+A `TimedTrackingResult` is preserved as a wrapper in a dedicated singleton
+explorer. Open its dedicated artifact explicitly with `format=:timed_tracking`;
+`lazy=true`, mixed timed/native sequences and appending are unsupported. The
+complete trajectory bundle must fit memory; its result count is one, not the
+number of acquisition samples. Timing/result binding is checked before physical
+conversion and on access. Only spatial coordinates are converted; nominal
+`scale.dt` does not divide actual-time speeds. Colors are arithmetic observation
+means of secant magnitudes, not instantaneous or elapsed-time-weighted speeds.
+Nonfinite data and singleton tracks have unavailable speed, never zero or an
+average over silently omitted observations. Timed refresh/inspection validates
+the whole bundle in O(observations + selected frames); no trusted mutable context
+or per-track velocity cache is retained.
 
 The string form loads a saved sequence with `Hammerhead.load_results`.
 Use `lazy = true` or pass a [`ResultFile`](@ref) to browse a completed file
@@ -118,7 +147,7 @@ explicit. Private packet and physical display mutation checks are O(grid nodes)
 on each inspection refresh, not continuous mutation monitoring.
 """
 struct ResultExplorer
-    results::Union{Vector{AnyResult},_LazyDisplayResults}
+    results::Union{Vector{AnyResult},_LazyDisplayResults,_TimedDisplayResult}
     path::Union{Nothing,String}
     frame::Observable{Int}
     field::Observable{Symbol}
@@ -144,6 +173,12 @@ function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractStr
         throw(ArgumentError("results must be PIVResult, StereoPIVResult, PTVResult, or TrackingResult entries"))
     conv = AnyResult[physical(r) for r in results]
     return _result_explorer(conv, path)
+end
+
+function ResultExplorer(result::TimedTrackingResult;path::Union{Nothing,AbstractString}=nothing)
+    display = physical(result) # verifies the raw binding before conversion
+    tracking_speed_summary(display) # complete arithmetic preflight
+    _result_explorer(_TimedDisplayResult(display),path)
 end
 
 function ResultExplorer(index::Hammerhead.ResultFile;
@@ -338,8 +373,12 @@ function _companion_text(ex)
 end
 
 ResultExplorer(result::AnyResult; kwargs...) = ResultExplorer([result]; kwargs...)
-ResultExplorer(path::AbstractString; lazy::Bool = false) =
-    ResultExplorer(load_results(path; lazy); path)
+function ResultExplorer(path::AbstractString;lazy::Bool=false,format::Symbol=:native)
+    format===:native && return ResultExplorer(load_results(path;lazy);path)
+    format===:timed_tracking || throw(ArgumentError("format must be :native or :timed_tracking"))
+    lazy && throw(ArgumentError("timed tracking artifacts contain one complete bundle; lazy browsing is unsupported"))
+    ResultExplorer(load_timed_tracking(path);path)
+end
 
 function Base.show(io::IO, ex::ResultExplorer)
     print(io, "ResultExplorer($(length(ex.results)) frame",
@@ -388,12 +427,15 @@ slider — this is how a live explorer follows a still-running batch. The
 current frame is left unchanged. Lazy file-backed explorers reject appends.
 """
 function push_result!(ex::ResultExplorer, r::AnyResult)
+    ex.results isa _TimedDisplayResult && throw(ArgumentError("cannot append native results to a timed tracking explorer"))
     ex.results isa _LazyDisplayResults &&
         throw(ArgumentError("cannot append to a lazy ResultFile explorer; use an in-memory explorer for a live batch"))
     push!(ex.results, physical(r))
     ex.count[] = length(ex.results)
     return ex
 end
+push_result!(::ResultExplorer,::TimedTrackingResult) =
+    throw(ArgumentError("timed tracking explorers are dedicated single bundles; appending is unsupported"))
 
 # Whether a stored selection still refers to a valid item of the given result
 # (a gridded window index for grids, a linear index for scattered results).
@@ -404,7 +446,7 @@ function _valid_selection(r, sel)
     elseif r isa PTVResult
         return (sel isa Int && 1 <= sel <= length(r.x)) ? sel : nothing
     else # TrackingResult
-        return (sel isa Int && 1 <= sel <= length(r.trajectories)) ? sel : nothing
+        return (sel isa Int && 1 <= sel <= length(_tracking_geometry(r).trajectories)) ? sel : nothing
     end
 end
 
@@ -445,6 +487,9 @@ end
 
 available_fields(::PTVResult) = [:magnitude, :u, :v, :match_residual]
 available_fields(::TrackingResult) = [:speed]
+available_fields(::TimedTrackingResult) = [:speed]
+_tracking_geometry(r::TrackingResult) = r
+_tracking_geometry(r::TimedTrackingResult) = r.result
 
 # One derived scalar from a precomputed flow_derivatives NamedTuple.
 _derived_field(d::NamedTuple, field::Symbol) =
@@ -500,6 +545,10 @@ function field_values(r::TrackingResult, field::Symbol)
         throw(ArgumentError("field :$field is not available for this result"))
     return [_mean_speed(t, r.scale) for t in r.trajectories]
 end
+function field_values(r::TimedTrackingResult,field::Symbol)
+    field===:speed || throw(ArgumentError("field :$field is not available for this result"))
+    tracking_speed_summary(r).speeds
+end
 
 const FIELD_NAMES = Dict(
     :magnitude => "|displacement|",
@@ -537,6 +586,15 @@ _field_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) :
 # `physical` conversion keeps this consistent: positions and displacements
 # scale by the same length factor, so the gradients carry exactly 1/dt.
 _time_unit(r::AnyResult) = r.scale === nothing ? "frame" : r.scale.time_unit
+_length_unit(r::TimedTrackingResult) = r.result.scale===nothing ? "px" : r.result.scale.length_unit
+function _field_unit(r::TimedTrackingResult)
+    data=Hammerhead._tracking_check(r)
+    string(_length_unit(r),"/",something(data["effective_time_unit"],"unknown sample-time unit"))
+end
+function field_label(r::TimedTrackingResult,field::Symbol)
+    field===:speed || throw(ArgumentError("field :$field is not available for this result"))
+    "observation-mean secant speed ($(_field_unit(r)))"
+end
 
 """
     field_label(result, field::Symbol) -> String
@@ -574,6 +632,7 @@ end
 _flagged(r::GridResult, i) = r.mask[i] || r.outliers[i]
 _flagged(r::PTVResult, i) = r.outliers[i]
 _flagged(::TrackingResult, i) = false
+_flagged(::TimedTrackingResult,i) = false
 
 # Nearest-rank percentile band of (unsorted) values; mutates `vals` by sorting.
 function _percentile_band(vals::Vector{Float64}, plo::Real, phi::Real)
@@ -594,10 +653,10 @@ non-flagged PTV particles) so a few outliers cannot stretch the color range;
 when no valid values exist it falls back to all finite values. A degenerate
 range is padded by ±0.5.
 """
-color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust) =
+color_limits(r::DisplayResult, field::Symbol, mode::Symbol = :robust) =
     _color_limits(r, field_values(r, field), mode)
 
-function _color_limits(r::AnyResult, data, mode::Symbol)
+function _color_limits(r::DisplayResult, data, mode::Symbol)
     mode in (:robust, :full) ||
         throw(ArgumentError("mode must be :robust or :full, got :$mode"))
     vals = Float64[]
@@ -665,7 +724,10 @@ The colorbar limits in effect for the current frame and field: the automatic
 degenerate manual pair is padded to a valid range).
 """
 function current_color_limits(ex::ResultExplorer)
-    lo, hi = _color_limits(current_result(ex), current_field_values(ex), ex.color_mode[])
+    _current_color_limits(ex,current_result(ex),current_field_values(ex))
+end
+function _current_color_limits(ex,r,data)
+    lo, hi = _color_limits(r,data,ex.color_mode[])
     ex.color_min[] === nothing || (lo = ex.color_min[])
     ex.color_max[] === nothing || (hi = ex.color_max[])
     if !(lo < hi)
@@ -705,6 +767,16 @@ function _nearest(r::TrackingResult, x, y)
         d < bestd && ((best, bestd) = (k, d))
     end
     return best
+end
+function _nearest(r::TimedTrackingResult,x,y)
+    best,bestd=nothing,Inf
+    for (k,t) in pairs(r.result.trajectories),p in eachindex(t.x)
+        isfinite(t.x[p]) && isfinite(t.y[p]) || continue
+        # hypot avoids overflowing squared distances for finite coordinates.
+        d=hypot(t.x[p]-x,t.y[p]-y)
+        d<bestd && ((best,bestd)=(k,d))
+    end
+    best
 end
 
 """
@@ -863,6 +935,7 @@ end
 # Data-space point (x, y) marking the current selection, or `nothing` when the
 # selection is empty or stale — the view draws a marker there.
 function selection_point(r, sel)
+    r isa TimedTrackingResult && Hammerhead._tracking_check(r)
     sel = _valid_selection(r, sel)
     sel === nothing && return nothing
     if r isa GridResult
@@ -870,7 +943,11 @@ function selection_point(r, sel)
     elseif r isa PTVResult
         return (r.x[sel], r.y[sel])
     else # TrackingResult: mark the trajectory's first point
-        t = r.trajectories[sel]
+        t = _tracking_geometry(r).trajectories[sel]
+        if r isa TimedTrackingResult
+            i=findfirst(p->isfinite(t.x[p]) && isfinite(t.y[p]),eachindex(t.x))
+            return i===nothing ? nothing : (t.x[i],t.y[i])
+        end
         return (t.x[1], t.y[1])
     end
 end
@@ -948,6 +1025,29 @@ function vector_summary(r::TrackingResult, k::Int)
              "gaps: $(trajectory_gap_count(t))",
              "mean speed = $spd"]
     return join(lines, "\n")
+end
+
+function vector_summary(r::TimedTrackingResult,k::Int)
+    summary=tracking_speed_summary(r)
+    t=summary.tracks[k]
+    unit=string(summary.length_unit,"/",something(summary.time_unit,"unknown sample-time unit"))
+    speed=summary.available[k] ? "$(_fmt(summary.speeds[k])) $unit" :
+        "unavailable ($(replace(String(summary.reasons[k]),'_' => ' ')))"
+    timeunit=something(summary.time_unit,"unknown unit")
+    range=t.first_frame===nothing ? "unavailable" : "$(t.first_frame)–$(t.last_frame)"
+    timerange=t.first_time===nothing ? "unavailable" : "$(t.first_time)–$(t.last_time) $timeunit"
+    elapsed=t.elapsed===nothing ? "unavailable" : "$(t.elapsed) $timeunit"
+    lines=["trajectory $k (whole track)",
+        "$(t.observations) observations; selected frames $range",
+        "gaps in selected frames: $(t.gaps)",
+        "actual time: $timerange",
+        "elapsed: $elapsed",
+        "observation-mean secant speed:\n$speed"]
+    summary.time_unit_provenance=="legacy_scale_same_unit" && push!(lines,"Time unit assumed from scale; acquisition unit unknown.")
+    summary.time_unit===nothing && push!(lines,"Sample-time unit unknown; no physical time unit inferred.")
+    push!(lines,"Clock: $(something(summary.clock_id,"unknown")); scope: $(replace(summary.source_scope,'_' => ' '))")
+    push!(lines,"Secants describe time windows; not instantaneous speed.")
+    join(lines,"\n")
 end
 
 # Mean speed along a trajectory (physical when `scale` is attached). Zero for

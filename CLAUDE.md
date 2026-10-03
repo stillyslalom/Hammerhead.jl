@@ -259,7 +259,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   use only the spatial scale. Validate binding before conversion or rebinding.
   Dedicated timed artifacts omit the generic native marker so older readers
   cannot discard timing silently; timed CSV preserves exact stamps and stencil
-  support. GUI timed-result inspection remains unsupported.
+  support. `tracking_speed_summary` validates once for all trajectories and
+  returns detached observation-mean secant speeds with unavailable reasons.
+  GUI timed inspection keeps a dedicated singleton container; do not widen native
+  result-vector element types or unwrap timing for display/persistence.
+- `calibrated_table.jl` — separate CSV/TOML exports for raw PTV, ordinal tracking
+  and actual-time tracking. Affine offsets affect positions only; transformed
+  scalar match residuals are unavailable because their directions were not stored.
+  Metadata retains settings/units even for empty tables and binds CSV content.
+  Two closed staged files publish sequentially, without atomic-pair guarantees.
 - `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
   protocol: disjoint metadata/result directories, immutable singleton native
   payloads and commit descriptors, strict ordered input/recipe/environment
@@ -794,6 +802,9 @@ as contrast evidence; preserve any genuine processing-precision difference.
   time support, scale/delay separation and dedicated artifact/table semantics.
   GUI `test_recipe_comparison.jl` checks captured requests, verified comparisons,
   failed-request report preservation, protected saves and paged inspection.
+- `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
+  unavailable populations and metadata detachment. Calibrated scattered export
+  tests check affine bases, units, exact intervals and paired-artifact verification.
 - `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
   outputs across fixed seeds. Component UQ populations include zero sigma;
   normalized errors require positive sigma. Counts retain arithmetic failures,
@@ -803,6 +814,11 @@ as contrast evidence; preserve any genuine processing-precision difference.
   independent covariance tests and explicit numerical zero classifications.
   Keep full truth-error coverage, in-sample centering and residual-inclusive
   sensitivity results distinct; these are diagnostics, not estimator calibration.
+- `bench/conditional_uncertainty.jl` holds clean scenes fixed while independently
+  perturbing both images. Retain full truth-error metrics, complete-case losses
+  and disjoint-realization difference populations. The pre-specified Bartlett
+  covariance comparator is bench-only; its nonnegative block identity does not
+  establish calibrated coverage or justify a production estimator change.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

@@ -232,8 +232,16 @@ The final retained CPU windows and history must reproduce primary measurements.
 Returned metadata has no image/result/history payloads.
 """
 function audit_scene(condition,seed; passes=U.controlled_passes(condition.window),size=128)
-    check_passes(passes)
     scene = V.synthetic_scene(;condition.settings...,seed,size)
+    audit_pair(scene,condition,seed;passes)
+end
+
+# Bench-only supplied-pair entry point. The callback receives owned statistics;
+# audit_scene's scientific row and primary population remain unchanged.
+function audit_pair(scene,condition,seed;passes=U.controlled_passes(condition.window),on_component=nothing)
+    check_passes(passes)
+    scene.a isa Matrix{Float64} && scene.b isa Matrix{Float64} && size(scene.a)==size(scene.b) ||
+        throw(ArgumentError("audit_pair requires equally sized Float64 CPU matrices"))
     ws = piv_workspace(;backend=:cpu)
     diagnostics, history = Ref{Any}(nothing),Ref{Any}(nothing)
     result = run_piv(scene.a,scene.b,passes;backend=:cpu,threaded=false,workspace=ws,
@@ -278,6 +286,11 @@ function audit_scene(condition,seed; passes=U.controlled_passes(condition.window
             traced["variance_was_negative"] && (negative[k]+=1)
             push!(residuals[k],hd["primary_residual_"*k][index])
             push!(raw_residuals[k],traced["raw_eq4_residual"])
+            if on_component!==nothing
+                on_component((;index,component=k,statistics=copy(s),sigma=stored,
+                    error=observed.errors[k][reproduction_count+1],classification=reason,
+                    primary_residual=last(residuals[k])))
+            end
             if get(sample_counts[k],reason,0)<2
                 sample_counts[k][reason] = get(sample_counts[k],reason,0)+1
                 push!(samples[k],Dict("row"=>index[1],"column"=>index[2],"x"=>result.x[index[2]],

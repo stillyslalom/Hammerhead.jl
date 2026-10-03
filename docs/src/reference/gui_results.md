@@ -8,6 +8,11 @@ The result explorer combines result browsing, field display, vector selection
 and planar interactive analysis. For an example, see the
 [GUI tour](../tutorials/gui_tour.md). Recorded final-sweep history and execution
 counts have a separate [inspection guide](../howto/gui_companions.md).
+Dedicated actual-time trajectory bundles have an
+[actual-time exploration guide](../howto/gui_tracking_timing.md). Pass a
+`TimedTrackingResult` directly or choose `format=:timed_tracking` explicitly;
+the wrapper survives physical conversion and selection. This is one complete
+bundle, not native lazy per-sample browsing.
 
 `ResultExplorer(path; lazy = true)` or `ResultExplorer(ResultFile(path))`
 browses a closed results file with one cached display result. Only the current

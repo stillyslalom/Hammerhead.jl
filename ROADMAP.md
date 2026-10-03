@@ -93,6 +93,15 @@ existing implementation is preferable; they are not commitments to add an API.
   [292 focused checks](test/test_diagnostic_uncertainty.jl) preserve the original
   scorecard metrics. Negative pre-clamp variance explains the observed zero-sigma
   cases; the broader coverage investigation remains open.
+- [x] Measure conditional variability with repeated independent noise on fixed
+  clean scenes. Retain full truth-error metrics, complete-case selection losses,
+  disjoint realization-pair differences and stored zero/unavailable estimates.
+  Compare a pre-specified positive covariance weighting as a bench diagnostic,
+  with independent algebraic checks, before considering any estimator change.
+  The [conditional study](docs/src/howto/conditional_uncertainty.md) includes
+  [128 regression checks](test/test_conditional_uncertainty.jl) and a 26-call
+  evidence run. Improved paired-noise coverage does not establish calibrated
+  total-error coverage; the broader investigation remains open.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -181,9 +190,18 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   scales are rejected. Mixed-axis uncertainty is unavailable unless independence
   is explicitly assumed. [Transform export tests](test/test_transformed_export.jl)
   check geometry, uncertainty, default compatibility, and rejection before writes.
-- [ ] Extend calibrated table export to PTV and tracking after defining how
-  anisotropic transforms affect particle diagnostics, trajectory velocities,
-  and their units. Current transformed exports accept planar PIV grids only.
+- [x] Extend calibrated table export to PTV and ordinal/actual-time tracking.
+  Explicit affine transforms retain vector bases, exact interval semantics and
+  diagnostic availability in verified CSV/TOML companions. Scalar particle
+  residuals remain in pixels because their direction was not recorded.
+  The [export workflow](docs/src/howto/calibrated_scattered_export.md) has
+  [357 checks](test/test_calibrated_scattered_export.jl), including output aliases
+  and refusal before overwriting protected inputs.
+- [ ] Make recorded source locators portable in dedicated timed artifacts and
+  calibrated table companions. Preserve foreign Windows/POSIX paths as provenance,
+  protect actual local/relocated artifacts, and avoid interpreting foreign paths
+  relative to the current workspace. Current host-specific absolute-path checks
+  can reject otherwise valid relocated companions.
 - [ ] Provide a documented calibrated registration/resampling workflow for
   simultaneous PIV/PLIF data, preserving vector basis and validity masks; this
   follows the use case recorded in [Design.md](reference/Design.md).
@@ -395,8 +413,12 @@ evidence.
   The [comparison workflow](docs/src/howto/gui_comparison.md) has
   [57 focused checks](HammerheadGUI/test/test_recipe_comparison.jl) for captured
   requests, failure recovery, protected outputs, report identity and view controls.
-- [ ] Inspect dedicated actual-time tracking artifacts in the GUI while retaining
+- [x] Inspect dedicated actual-time tracking artifacts in the GUI while retaining
   timing metadata, actual-time units, trajectory selection and explicit gap semantics.
+  The [timed explorer](docs/src/howto/gui_tracking_timing.md) has
+  [69 GUI checks](HammerheadGUI/test/test_tracking_timing_explorer.jl) and
+  [33 core checks](test/test_tracking_speed_summary.jl) for bulk speed summaries,
+  unavailable tracks, metadata integrity and dedicated artifact loading.
 - [x] Add editable GUI ROI selection using the existing core `ROI` semantics.
   The editor supports two-corner selection, numeric bounds, and full-image reset;
   batches preserve mask and coordinate semantics and snapshot the selected ROI.

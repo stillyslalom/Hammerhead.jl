@@ -4,7 +4,7 @@
 
 """
     result_explorer(source; size = (1000, 700)) -> Figure
-    result_explorer(path::AbstractString; lazy = false, size = (1000, 700)) -> Figure
+    result_explorer(path::AbstractString; lazy = false, format = :native, size = (1000, 700)) -> Figure
 
 Open results from a `PIVResult`, `StereoPIVResult`, `PTVResult`, or
 `TrackingResult`, a sequence of results, a saved-results path, or a
@@ -22,6 +22,14 @@ colored particle scatter with optional displacement arrows, and a
 `TrackingResult` as trajectory polylines colored by mean speed (breaks at
 frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel
 summarizes the selected item in physical units when a scale is attached.
+A `TimedTrackingResult` or an explicit `format=:timed_tracking` artifact keeps
+actual timestamps through spatial conversion. The entire trajectory bundle is
+one result (no lazy per-sample navigation). Colors show arithmetic observation
+means of actual-time secant magnitudes; unavailable speeds use neutral gray,
+including singleton tracks. Breaks mark omitted selected frames, not long
+elapsed intervals alone. Selection describes the whole track and exact time
+range, not a picked observation's instantaneous velocity. Unknown/assumed time
+units remain labeled. Timing integrity checks scan the whole current bundle.
 The unchecked "recorded processing details" toggle opts into verified raw
 history/execution inspection for lazy native files. The paged details panel
 labels raw primary/residual measurements in pixels beside displayed units and
@@ -31,13 +39,31 @@ While details are open, profile lines remain overlaid but their separate graph
 is hidden; closing details reveals a profile placed on the current display.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
-result_explorer(path::AbstractString; lazy::Bool = false, kwargs...) =
-    result_explorer(ResultExplorer(path; lazy); kwargs...)
+result_explorer(path::AbstractString; lazy::Bool = false,format::Symbol=:native, kwargs...) =
+    result_explorer(ResultExplorer(path; lazy,format); kwargs...)
 
 function result_explorer(ex::ResultExplorer; size = (1000, 700))
     fig = Figure(; size)
     result_explorer!(fig[1, 1], ex)
     return fig
+end
+
+# Preserve every digit of exact timestamps/opaque clock labels, including long
+# unbroken tokens, without allowing the selected-track panel to grow unbounded.
+function _timed_selection_pages(text)
+    lines=String[]
+    for line in split(text,'\n')
+        chars=collect(line)
+        while length(chars)>28
+            boundary=findlast(isspace,view(chars,1:28))
+            width=boundary===nothing || boundary<=1 ? 28 : boundary-1
+            push!(lines,rstrip(String(chars[1:width])))
+            consumed=boundary===nothing || boundary<=1 ? width : boundary
+            chars=chars[consumed+1:end]
+        end
+        push!(lines,String(chars))
+    end
+    [join(lines[i:min(i+6,length(lines))],"\n") for i in 1:7:length(lines)]
 end
 
 """
@@ -49,6 +75,7 @@ Build the result-explorer view into `target` (a `GridPosition`, e.g.
 function result_explorer!(target, ex::ResultExplorer)
     gl = GridLayout(target)
     n = nframes(ex)
+    timed_selection=current_result(ex) isa TimedTrackingResult
 
     ax = Axis(gl[1, 1]; xlabel = "x", ylabel = "y",
               yreversed = true, aspect = DataAspect(),
@@ -82,7 +109,16 @@ function result_explorer!(target, ex::ResultExplorer)
     tool_info = Label(controls[8, 1], ""; halign = :left, justification = :left,
                       word_wrap = true, width = 210, tellwidth = false)
     inspection_hint=Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
-    info = Label(controls[10, 1], ""; halign = :left, justification = :left,fontsize=14)
+    selection_panel=GridLayout(controls[10,1])
+    info = Label(selection_panel[1,1:3], ""; halign = :left,valign=:top, justification = :left,fontsize=14,
+        word_wrap=true,width=220,tellwidth=false,height=timed_selection ? 155 : Auto())
+    selection_previous=Button(selection_panel[2,1];label="previous",fontsize=12,tellwidth=false)
+    selection_page_label=Label(selection_panel[2,2],"";fontsize=12)
+    selection_next=Button(selection_panel[2,3];label="next",fontsize=12,tellwidth=false)
+    for widget in (selection_previous,selection_next,selection_page_label)
+        widget.blockscene.visible[]=timed_selection
+    end
+    rowsize!(selection_panel,2,Fixed(timed_selection ? 28 : 0))
     Label(controls[11, 1], ex.status; halign = :left, justification = :left,
           word_wrap = true, width = 210, tellwidth = false)
     companion_mode=GridLayout(controls[12,1])
@@ -103,7 +139,7 @@ function result_explorer!(target, ex::ResultExplorer)
         word_wrap=true,width=300,tellwidth=false,fontsize=13)
     colsize!(gl, 3, Fixed(230))
 
-    Label(gl[2, 1:2][1, 1], "frame")
+    Label(gl[2, 1:2][1, 1],current_result(ex) isa TimedTrackingResult ? "bundle" : "frame")
     slider = Slider(gl[2, 1:2][1, 2]; range = 1:max(n, 1), startvalue = ex.frame[])
     Label(gl[2, 1:2][1, 3], lift((i, m) -> "$i / $m", ex.frame, ex.count))
     # Grow the slider range as a live batch appends results (push_result!).
@@ -242,12 +278,38 @@ function result_explorer!(target, ex::ResultExplorer)
     sel_plot = scatter!(ax, sel_points; color = :transparent,
                         strokecolor = :cyan, strokewidth = 2.5, markersize = 16)
     translate!(sel_plot, 0, 0, 2)
-    onany(ex.selection, ex.frame, ex.tool) do sel, _, tool
+    selection_pages=Ref(String[])
+    selection_page=Ref(1)
+    function show_selection_page!()
+        pages=selection_pages[]
+        isempty(pages) && return
+        selection_page[]=clamp(selection_page[],1,length(pages))
+        info.text[]=pages[selection_page[]]
+        selection_page_label.text[]="$(selection_page[]) / $(length(pages))"
+    end
+    on(selection_previous.clicks) do _
+        selection_page[]-=1
+        show_selection_page!()
+    end
+    on(selection_next.clicks) do _
+        selection_page[]+=1
+        show_selection_page!()
+    end
+    function refresh_selection!()
+        sel,tool=ex.selection[],ex.tool[]
         pt = selection_point(current_result(ex), sel)
         sel_points[] = pt === nothing ? Point2f[] : [Point2f(pt[1], pt[2])]
-        info.text[] = tool===:inspect ? describe_selection(ex) : ""
-        inspection_hint.text[]=tool===:inspect ? "click a vector to inspect" : ""
+        text=tool===:inspect ? describe_selection(ex) : ""
+        if timed_selection
+            selection_pages[]=isempty(text) ? ["Select a trajectory to inspect its actual-time range and speed."] : _timed_selection_pages(text)
+            selection_page[]=1
+            show_selection_page!()
+        else
+            info.text[]=text
+        end
+        inspection_hint.text[]=tool===:inspect ? (current_result(ex) isa TimedTrackingResult ? "click a trajectory to inspect" : "click a vector to inspect") : ""
     end
+    onany((args...)->refresh_selection!(),ex.selection,ex.frame,ex.tool)
 
     # Tool overlay (profile line / circulation contour) and the profile
     # side panel, which appears as a third row while a profile is set.
@@ -398,9 +460,32 @@ function result_explorer!(target, ex::ResultExplorer)
         return
     end
 
+    function _draw!(r::TimedTrackingResult)
+        summary=Hammerhead.tracking_speed_summary(r) # one whole validation, never per track
+        lo,hi=Controllers._current_color_limits(ex,r,summary.speeds)
+        crange[]=(lo,hi)
+        clabel[]=string("observation-mean secant speed (",summary.length_unit,"/",
+            something(summary.time_unit,"unknown sample-time unit"),")")
+        unavailable=count(!,summary.available)
+        ax.title[]=string(ex.path===nothing ? "Actual-time trajectories" : basename(ex.path),
+            "\n",unavailable," / ",length(summary.available)," speeds unavailable (gray)")
+        for (k,t) in pairs(r.result.trajectories)
+            xs,ys=trajectory_points(t)
+            isempty(xs) && continue
+            positions=Point2f.(xs,ys)
+            options=summary.available[k] ? (;color=summary.speeds[k],colormap=:viridis,colorrange=(lo,hi)) : (;color=:gray55)
+            push!(plots,lines!(ax,positions;options...))
+            # A singleton (or isolated observations on either side of a gap)
+            # must remain visible/selectable even when no segment can be drawn.
+            push!(plots,scatter!(ax,positions;markersize=5,options...))
+        end
+        return
+    end
+
     function refresh_plots!()
         r = current_result(ex)
-        ax.xlabel[], ax.ylabel[] = Hammerhead.plot_axis_labels(r.scale)
+        scale=r isa TimedTrackingResult ? r.result.scale : r.scale
+        ax.xlabel[], ax.ylabel[] = Hammerhead.plot_axis_labels(scale)
 
         # capture/restore targetlimits (not limits!): the pre-reversal rect,
         # so the image-orientation yreversed flip survives the restore
@@ -421,6 +506,7 @@ function result_explorer!(target, ex::ResultExplorer)
     refresh_menu!()
     refresh_companions!()
     refresh_plots!()
+    refresh_selection!()
     refresh_tools!()
     return gl
 end

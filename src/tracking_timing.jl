@@ -287,6 +287,105 @@ function _tracking_velocities(result,t,data,times = [_timing_decode(value) for v
     u,v
 end
 
+"""
+    tracking_speed_summary(timed::TimedTrackingResult) -> NamedTuple
+
+Validate the complete timing/result binding once, decode the timeline once, and
+return detached per-trajectory scalar summaries. `speeds` are arithmetic means
+of the magnitudes of **observation-associated secants**: adjacent observations
+at endpoints, outer observations at interior rows. They are not instantaneous
+speeds, elapsed-time-weighted means, or path length divided by elapsed time.
+
+`available` and `reasons` accompany `speeds`. Empty/singleton tracks, any
+nonfinite position/secant/magnitude, and Float64 arithmetic overflow/underflow
+make the whole track's speed unavailable (`NaN`); observations are never omitted.
+`tracks` contains observation counts, selected-input ordinal bounds/gap counts,
+and exact first/last/elapsed time strings (no invented gap observations).
+Aggregate units, unit provenance, clock/source scope, and conventions are also
+returned. Unknown sample-time units remain unknown; a scale's same-unit
+assumption is explicitly labeled. Nominal `scale.dt` never divides these speeds.
+
+Cost is O(all observations + selected input frames); retained output is
+O(trajectories), with temporary velocity arrays for one trajectory. This is a
+captured scalar snapshot, not an ongoing mutation-proof view or trusted context.
+Calling it again validates current mutable payloads. No frame descriptors or
+trajectory position arrays are retained in the output.
+"""
+function tracking_speed_summary(timed::TimedTrackingResult)
+    data = _tracking_check(timed)
+    times = [_timing_decode(value) for value in data["sample_times"]]
+    trajectories = timed.result.trajectories
+    speeds = fill(NaN,length(trajectories))
+    available = falses(length(trajectories))
+    reasons = fill(:none,length(trajectories))
+    tracks = NamedTuple[]
+    exact_string(value) = denominator(value)==1 ? string(numerator(value)) : string(numerator(value),"/",denominator(value))
+    for (id,t) in pairs(trajectories)
+        n = length(t)
+        a,b = n==0 ? (nothing,nothing) : (first(t.frames),last(t.frames))
+        push!(tracks,(observations=n,first_frame=a,last_frame=b,
+            gaps=count(>(1),diff(t.frames)),
+            first_time=a===nothing ? nothing : exact_string(times[a]),
+            last_time=b===nothing ? nothing : exact_string(times[b]),
+            elapsed=a===nothing ? nothing : exact_string(times[b]-times[a])))
+        if n<2
+            reasons[id] = n==0 ? :empty : :singleton
+            continue
+        elseif !all(isfinite,t.x) || !all(isfinite,t.y)
+            reasons[id] = :nonfinite_position
+            continue
+        end
+        velocities = try
+            _tracking_velocities(timed.result,t,data,times)
+        catch err
+            if err isa ArgumentError && err.msg=="actual-time velocity overflows or underflows Float64"
+                reasons[id] = :arithmetic_range
+                continue
+            end
+            rethrow()
+        end
+        u,v = velocities
+        maximum_speed = 0.0
+        for i in eachindex(u)
+            if !isfinite(u[i]) || !isfinite(v[i])
+                reasons[id] = :nonfinite_secant
+                break
+            end
+            speed = hypot(u[i],v[i])
+            if !isfinite(speed)
+                reasons[id] = :nonfinite_magnitude
+                break
+            end
+            maximum_speed = max(maximum_speed,speed)
+        end
+        reasons[id]===:none || continue
+        # Scale before accumulating, then use compensated summation. This
+        # avoids overflow for large finite speeds and detects a nonzero mean
+        # that would round to zero (including subnormal speed fixtures).
+        total,correction = 0.0,0.0
+        if maximum_speed>0
+            for i in eachindex(u)
+                term = hypot(u[i],v[i])/maximum_speed-correction
+                next = total+term
+                correction = (next-total)-term
+                total = next
+            end
+        end
+        mean = maximum_speed==0 ? 0.0 : maximum_speed*(total/length(u))
+        isfinite(mean) && (maximum_speed==0 || mean!=0) || (reasons[id]=:arithmetic_range; continue)
+        speeds[id],available[id] = mean,true
+    end
+    scale = timed.result.scale
+    (speeds=speeds,available=available,reasons=reasons,tracks=tracks,
+        length_unit=scale===nothing ? "px" : scale.length_unit,
+        time_unit=data["effective_time_unit"],
+        time_unit_provenance=data["effective_time_unit_provenance"],
+        sample_time_unit=data["time_unit"],clock_id=data["clock_id"],
+        source_scope=data["source_scope"],
+        velocity_convention=data["velocity_convention"],
+        mean_convention="observation_mean_secant_magnitude")
+end
+
 function with_scale(timed::TimedTrackingResult,scale::Union{Nothing,PhysicalScale})
     data = _tracking_check(timed)
     if data["position_basis"] == "scaled_length"

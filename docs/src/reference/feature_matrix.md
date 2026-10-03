@@ -66,8 +66,15 @@ those workflows require separate timing semantics.
 [Actual-time tracking](../howto/tracking_timing.md) is a separate explicit CPU
 workflow. Its wrapper, dedicated native artifact and CSV schema preserve sample
 times through elapsed-time linking and secant velocity evaluation. Default
-tracking remains ordinal. The GUI currently supports ordinary `TrackingResult`
-only; extracting that payload from a timed result discards its timing semantics.
+tracking remains ordinal. [GUI timed-trajectory inspection](../howto/gui_tracking_timing.md)
+accepts one timed wrapper or an explicitly selected dedicated artifact, retaining
+its timing through physical display. Mixed native/timed sequences and lazy timed
+indexes remain unsupported. Extracting the ordinary payload discards its timing.
+
+[Calibrated particle and trajectory tables](../howto/calibrated_scattered_export.md)
+are a separate CPU export with affine position/vector conversion and a verified
+CSV/TOML pair. They accept unscaled PTV, ordinal tracking and timed tracking;
+existing grid exports and ordinary `export_table` keep their contracts.
 
 [GUI recipe comparison](../howto/gui_comparison.md) uses the shared selected-pair
 comparison and report contracts. It runs saved CPU/KA planar recipes; richer

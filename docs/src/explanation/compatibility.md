@@ -75,6 +75,28 @@ The separate `hammerhead-tracking-time-table-1` CSV schema preserves exact
 timestamps and velocity time support. Explicitly extracting the legacy payload
 discards timing semantics. See [tracking timing](../reference/tracking_timing.md).
 
+Calibrated scattered exports use a separate
+`hammerhead-calibrated-scattered-table-1` CSV and a TOML companion whose metadata
+contains `calibrated_table_format_version = 1`. The companion retains affine
+settings, coordinate conventions, unit assumptions and diagnostic availability,
+including for empty CSVs. Its reader validates metadata integrity and can verify
+the paired CSV's content and structure; it does not verify the original images
+or numerical result. The two files publish sequentially, so readers must detect
+an incomplete or mismatched pair. Ordinary table/native formats are unchanged.
+See [calibrated tables](../reference/calibrated_table.md).
+
+Dedicated timed artifacts and calibrated companions currently validate recorded
+absolute source/protected paths using the reading host's path rules. An artifact
+containing paths from a different operating system can therefore be rejected,
+even when an explicit relocated CSV is supplied. Ordinary native result payloads
+do not have this particular restriction. Portable source-locator handling remains
+an explicit follow-up in the roadmap.
+
+GUI timed-trajectory inspection explicitly selects the dedicated artifact
+format and retains its wrapper through physical display. Ordinary eager and
+lazy native result vectors retain their element types and persistence behavior.
+Timed bundles have one explorer entry and cannot be appended to native sequences.
+
 Representative-pair comparisons use independent version-1 TOML snapshots,
 identified by `pair_comparison_format_version`. They preserve selected-input
 provenance, settings differences, units and comparison populations. Loading

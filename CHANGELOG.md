@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added a separate calibrated CSV export for particle matches and trajectories,
+  with affine point/vector transformation and a versioned TOML companion for
+  transform settings, units, diagnostic availability and CSV verification.
+  Actual-time trajectories retain their recorded velocity intervals; scalar
+  particle residuals remain explicitly in their original pixel basis.
+- Added a bench-only repeated-noise study on fixed particle scenes, retaining
+  full truth-error metrics alongside conditional variability and disjoint-pair
+  diagnostics. A pre-specified covariance weighting is an experimental comparator;
+  production uncertainty defaults are unchanged.
+- Added `tracking_speed_summary` for validated bulk summaries of actual-time
+  trajectories, with explicit observation-mean secants and unavailable-track reasons.
 - Added explicit actual-time trajectory linking with exact sample metadata,
   elapsed-time prediction and gap validation, and velocities over recorded
   observation intervals. `TimedTrackingResult` preserves timing through its own
@@ -113,10 +124,14 @@ validation and the core-first, GUI-second release sequence.
   vectors, and component uncertainties use the transformed basis. Mixed-axis
   uncertainty requires an explicit independence assumption or is reported as
   unavailable. Transform export requires raw pixel results without attached
-  scale metadata; stereo, PTV, and tracking transforms remain unsupported.
+  scale metadata. Scattered PTV/tracking calibration uses the separate paired
+  table API above; transformed stereo grids remain unsupported.
 
 ### HammerheadGUI
 
+- Added explicit loading and inspection of single actual-time trajectory
+  artifacts, preserving timing through physical display, selection and export.
+  Speed colors use observation-mean secants, with unavailable values identified.
 - Added a saved-recipe comparison workflow with explicit pair selection,
   pixel/physical value bases, and shared core verification and report persistence.
   Current choices remain separate from a previous report after edits or failures.

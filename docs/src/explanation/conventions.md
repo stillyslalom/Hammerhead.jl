@@ -102,6 +102,17 @@ two outer observations. On irregular samples, those secants are interval-average
 slopes, not instantaneous derivatives at the central observation. See
 [actual-time tracking](../howto/tracking_timing.md) for units and persistence.
 
+[`tracking_speed_summary`](@ref) takes the arithmetic mean of the magnitudes of
+these observation-associated secants. This is neither an elapsed-time-weighted
+speed nor total path length divided by elapsed time. A trajectory with unavailable
+positions or secants has an unavailable summary; samples are not silently dropped.
+
+[Calibrated scattered tables](../howto/calibrated_scattered_export.md) apply
+`A * p + b` to positions and `A * d` to displacement/velocity components. Original
+pixel-space outlier decisions remain unchanged. A scalar match residual lacks
+the direction needed for an anisotropic transform, so its calibrated value is
+unavailable and its original pixel value is retained separately.
+
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This
 differs from multipass PIV with symmetric image deformation, which attributes

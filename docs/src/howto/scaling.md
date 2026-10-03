@@ -196,5 +196,6 @@ export_table("calibrated.csv", with_scale(result, nothing);
 The affine calibration supplies the spatial scale. Removing metadata does not
 undo `physical(result)`, so start from the raw pixel result. Already converted
 results and attached-scale combinations are rejected. Stereo grids, PTV, and
-tracking results currently do not accept this export transform; their existing
-untransformed exports remain available.
+tracking results do not accept this export keyword. Raw PTV and trajectories
+instead use [calibrated scattered tables](calibrated_scattered_export.md), whose
+separate CSV/TOML contract retains the transform and unit provenance.

@@ -55,13 +55,19 @@ metadata, including the identity metadata on an already converted result,
 is rejected to prevent ambiguous or duplicate spatial conversion. For an
 unconverted pixel result, remove the metadata with `with_scale(raw, nothing)`
 and pass its exposure delay explicitly; removing metadata from `physical(raw)`
-does **not** recover pixels. Transform export currently rejects stereo, PTV,
-and tracking results. Invalid transform factors, unit/time options, or
+does **not** recover pixels. The `transform` keyword on these writers rejects
+stereo, PTV and tracking results. Invalid transform factors, unit/time options, or
 unsupported combinations are rejected before replacing the destination.
 Without a transform, the existing schema and physical export behavior are
 unchanged. Neither export format stores the affine map or the chosen covariance
 assumption; retain those in the processing recipe. See
 [Scale results to physical units](@ref) for an executable example.
+
+For raw PTV and trajectory payloads, use the separate
+[`export_calibrated_table`](@ref) API. It writes a CSV and a versioned TOML
+companion retaining the affine map, coordinate conventions, unit assumptions,
+diagnostic availability and CSV content identity, including for empty tables.
+See [calibrated scattered exports](../howto/calibrated_scattered_export.md).
 
 For a `TrackingResult`, the original table columns retain their meanings:
 `x`/`y` are observed positions, `u`/`v` are derived velocities, `point_id`
