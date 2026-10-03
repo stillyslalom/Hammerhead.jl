@@ -67,7 +67,7 @@ function _tracking_preflight(frames, sample_times, time_unit, clock_id, scale, p
         _timing_error("actual-time tracking requires an unscaled pixel-displacement PIV predictor")
     unit = _source_metadata_string(time_unit, "time_unit")
     clock = _source_metadata_string(clock_id, "clock_id")
-    frozen = [f isa AbstractString ? String(f) : f for f in frames]
+    frozen = [f isa AbstractString ? _artifact_local_path(f) : f for f in frames]
     all(f -> f isa Union{FrameRef,AbstractString,AbstractMatrix{<:Real}}, frozen) ||
         _timing_error("actual-time tracking supports FrameRef, path or real matrix inputs")
     descriptors = [_timing_frame(f) for f in frozen]
@@ -104,8 +104,8 @@ function _tracking_preflight(frames, sample_times, time_unit, clock_id, scale, p
     # including bridged gaps, before loading any pixel data.
     _tracking_ratio_bounds(times)
     effective, provenance = _tracking_units(unit, scale)
-    paths = String[abspath(String(f)) for f in frozen if f isa AbstractString]
-    append!(paths,[abspath(f.source.path) for f in frozen if f isa FrameRef && f.source isa TIFFStack])
+    paths = String[_artifact_local_path(f) for f in frozen if f isa AbstractString]
+    append!(paths,[_artifact_local_path(f.source.path) for f in frozen if f isa FrameRef && f.source isa TIFFStack])
     data = Dict{String,Any}("tracking_timing_format_version"=>TRACKING_TIMING_FORMAT_VERSION,
         "n_frames"=>length(frozen), "frames"=>descriptors, "sample_times"=>encoded,
         "sample_time_origin"=>source_mode ? "frame_source" : "explicit_vector",
@@ -187,7 +187,7 @@ function _tracking_validate(data)
     data["position_basis"] in ("pixels","scaled_length") || _timing_error("invalid position basis")
     data["position_basis"] == "scaled_length" && (scale === nothing || scale.pixel_size != 1.0) && _timing_error("scaled positions require an identity position scale")
     paths = data["protected_paths"]
-    paths isa AbstractVector && all(p -> p isa String && isabspath(p),paths) && paths == sort(unique(paths)) || _timing_error("invalid protected tracking paths")
+    paths isa AbstractVector && all(p -> p isa String && _artifact_absolute_locator(p),paths) && paths == sort(unique(paths)) || _timing_error("invalid protected tracking locators")
     _experiment_hash(data["result_sha256"]) || _timing_error("invalid tracking result binding")
     nothing
 end
@@ -424,30 +424,40 @@ save_results(path::AbstractString,timed::TimedTrackingResult) =
 save_results(path::AbstractString,results::AbstractVector{<:TimedTrackingResult}) =
     _timing_error("actual-time tracking requires save_timed_tracking; native-v1 storage would discard timing semantics")
 
-function _tracking_output_guard(path,data)
-    full = abspath(path)
+function _tracking_output_guard(path,data;protected_paths=String[])
+    all(p->p isa AbstractString,protected_paths) || _timing_error("protected_paths must contain local paths")
+    full = _artifact_local_path(path)
     ispath(full) && !isfile(full) && _timing_error("timed tracking output must be a file path")
     islink(full) && !ispath(full) && _timing_error("cannot write timed tracking through a dangling symlink")
-    for source in data["protected_paths"]
-        full == source && _timing_error("cannot overwrite a timed-tracking artifact or input source")
-        ispath(full) && ispath(source) && Base.samefile(full,source) &&
-            _timing_error("cannot overwrite a timed-tracking artifact or input alias")
+    local_sources=[_artifact_local_protected_paths(data["protected_paths"]);_artifact_local_path.(collect(protected_paths))]
+    _artifact_prospective_path(full)
+    for source in local_sources
+        _artifact_alias(full,source;allow_unavailable_other=true) &&
+            _timing_error("cannot overwrite a timed-tracking artifact or local input alias")
     end
     full
 end
 
 """
-    save_timed_tracking(path, timed::TimedTrackingResult) -> path
+    save_timed_tracking(path, timed::TimedTrackingResult; protected_paths=[]) -> path
 
 Save one time-aware tracking result to its dedicated version-1 artifact, replacing
 an existing unrelated destination. The artifact intentionally lacks native
 `format_version`: ordinary/older `load_results` and `ResultFile` refuse it instead
 of dropping essential timing. Binding and known input/artifact aliases are checked
 before output. A same-directory temporary file is closed before publication;
-concurrent writers and external filesystem mutation are unsupported.
+concurrent writers and external filesystem mutation are unsupported. Foreign
+recorded locators remain verbatim provenance and are never resolved on this host.
+Supply relocated local inputs through `protected_paths`; these are recorded in
+the new artifact without changing the supplied wrapper. Explicit path arguments
+must refer to the receiving host.
 """
-function save_timed_tracking(path::AbstractString,timed::TimedTrackingResult)
-    data = _tracking_check(timed)
+function save_timed_tracking(path::AbstractString,timed::TimedTrackingResult;protected_paths=String[])
+    data = deepcopy(_tracking_check(timed))
+    all(p->p isa AbstractString,protected_paths) || _timing_error("protected_paths must contain local paths")
+    append!(data["protected_paths"],_artifact_local_path.(protected_paths))
+    sort!(unique!(data["protected_paths"]))
+    _tracking_validate(data)
     destination = _tracking_output_guard(path,data)
     parent = dirname(destination)
     mkpath(parent)
@@ -458,7 +468,7 @@ function save_timed_tracking(path::AbstractString,timed::TimedTrackingResult)
             file["timed_tracking_format_version"] = TRACKING_TIMING_FORMAT_VERSION
             file["tracking_result"] = timed.result
             file["tracking_timing"] = data
-            file["tracking_timing_sha256"] = timed.timing._sha256
+            file["tracking_timing_sha256"] = _history_digest(data)
         end
         _tracking_check(timed)
         _tracking_output_guard(destination,data)
@@ -476,10 +486,12 @@ Load and validate one completed dedicated timed-tracking artifact, including its
 exact metadata and whole trajectory/scale/parameter binding. One result payload is
 read, with no retained file handle. Native-v1 files are not timed artifacts. File
 size/mtime checks detect some concurrent changes but do not provide writer safety.
-The loaded artifact and recorded input paths remain protected output destinations.
+The loaded local artifact and locally interpretable recorded inputs remain
+protected output destinations. Foreign recorded locators are validated lexically
+and retained verbatim; no foreign source paths are opened or relocated implicitly.
 """
 function load_timed_tracking(path::AbstractString)
-    full = abspath(path)
+    full = _artifact_local_path(path)
     stamp = stat(full)
     timed = jldopen(full,"r") do file
         haskey(file,"format_version") && _timing_error("native results are not dedicated timed-tracking artifacts")
@@ -514,7 +526,7 @@ const TIMED_TRACKING_TABLE_COLUMNS = (TABLE_COLUMNS...,"sample_time_numerator","
     "effective_time_unit_provenance","velocity_start_frame","velocity_end_frame")
 
 """
-    export_table(path, timed::TimedTrackingResult; frame_id="", source_a="", source_b="")
+    export_table(path, timed::TimedTrackingResult; frame_id="", source_a="", source_b="", protected_paths=[])
 
 Export observed trajectory positions with actual-time secants and exact provided
 timestamps/source metadata. The dedicated `hammerhead-tracking-time-table-1`
@@ -523,11 +535,13 @@ velocity stencil support. Elapsed time is relative to the first selected input,
 not the first trajectory observation. Unknown units remain empty. Numeric elapsed
 values that cannot be represented in Float64 are empty; exact elapsed values remain.
 No gap rows, instantaneous derivative claims or uncertainty estimates are invented.
+Foreign recorded locators are provenance; `protected_paths` explicitly protects
+relocated receiving-host inputs, alongside the consumed local timed artifact.
 """
 function export_table(path::AbstractString,timed::TimedTrackingResult;
-                      frame_id="",source_a="",source_b="")
+                      frame_id="",source_a="",source_b="",protected_paths=String[])
     data = _tracking_check(timed)
-    _tracking_output_guard(path,data)
+    destination=_tracking_output_guard(path,data;protected_paths)
     converted = physical(timed)
     q = converted.result
     times = [_timing_decode(v) for v in data["sample_times"]]
@@ -539,7 +553,8 @@ function export_table(path::AbstractString,timed::TimedTrackingResult;
     for t in q.trajectories
         length(t)>=2 && _tracking_velocities(q,t,data,times)
     end
-    open(path,"w") do io
+    _tracking_output_guard(destination,data;protected_paths)
+    open(destination,"w") do io
         println(io,join(TIMED_TRACKING_TABLE_COLUMNS,','))
         point_id = 0
         for (id,t) in enumerate(q.trajectories)

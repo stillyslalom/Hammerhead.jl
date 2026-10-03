@@ -373,8 +373,25 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false,
     return total
 end
 
+function _check_spectrum_results(results, i, j)
+    r1=check_same_grid(results)
+    all(isfinite,r1.x) && all(isfinite,r1.y) || throw(ArgumentError("spectrum grid coordinates must be finite"))
+    dims=(length(r1.y),length(r1.x))
+    1 <= i <= dims[1] && 1 <= j <= dims[2] || throw(ArgumentError("spectrum index is outside the interrogation grid"))
+    signature=_statistics_scale_signature(r1.scale)
+    for result in results
+        all(a->size(a)==dims,(result.u,result.v,result.mask,result.outliers)) ||
+            throw(ArgumentError("spectrum component and flag dimensions must match the interrogation grid"))
+        _statistics_scale_signature(result.scale)==signature ||
+            throw(ArgumentError("spectrum results must have identical scale factors and unit labels; explicitly convert compatible fields first"))
+    end
+    r1
+end
+
 """
-    result_spectrum(results, i, j; dt, component=:u, invalid=:error, window=:hann)
+    result_spectrum(results, i, j; dt=nothing, sample_times=nothing, component=:u,
+        invalid=:error, window=:hann, timing_atol=0, timing_rtol=0,
+        time_unit=nothing, return_timing=false)
 
 Return `(; frequencies, psd)` for component `:u` or `:v` at grid row `i`,
 column `j` across uniformly sampled results. Frequencies are cycles per
@@ -382,6 +399,17 @@ time unit; `psd` is one-sided power spectral density. Supply `dt` between
 successive results; an attached `PhysicalScale.dt` describes an image pair
 and is not used here. The stored component values are analyzed without
 automatic physical conversion. `window` is passed to [`power_spectrum`](@ref).
+Explicit `sample_times` can replace `dt`; the exact uniformity/tolerance contract
+is the same as `power_spectrum`, with no implicit timestamp discovery/resampling.
+Grid coordinates, component/flag dimensions, scale factors and unit labels must
+agree across results, including absent versus attached scales. Convert differing
+pair-delay results explicitly with [`physical`](@ref) before combining compatible
+velocity fields. Metadata agreement cannot establish stored-value representation.
+The sampling `time_unit` label is independent of component velocity-unit labels.
+
+`return_timing=true` adds detached timing provenance, component/index, original
+invalid count, fill policy and attached-scale metadata. The default two-field
+return is unchanged. No field/image/result payload is retained in that report.
 
 Masked, flagged, or nonfinite samples cause an error by default. Set
 `invalid=:mean` to replace them with the mean of valid samples, or
@@ -390,11 +418,13 @@ valid value at either end. At least one valid sample is required.
 """
 function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
                          component::Symbol=:u, invalid::Symbol=:error,
-                         dt::Union{Nothing,Real}=nothing, window::Symbol=:hann)
-    check_same_grid(results)
-    dt === nothing && throw(ArgumentError("dt must be the sampling interval between successive results"))
+                         dt::Union{Nothing,Real}=nothing, sample_times=nothing,
+                         timing_atol=0, timing_rtol=0, time_unit=nothing,
+                         return_timing::Bool=false, window::Symbol=:hann)
     component in (:u,:v) || throw(ArgumentError("component must be :u or :v"))
     invalid in (:error,:interpolate,:mean) || throw(ArgumentError("invalid must be :error, :interpolate, or :mean"))
+    r1=_check_spectrum_results(results,i,j)
+    period,timing=_spectrum_sampling(length(results),dt,sample_times,timing_atol,timing_rtol,time_unit,return_timing;require_timing=true)
     vals = Float64[getproperty(r,component)[i,j] for r in results]
     good = BitVector([!r.mask[i,j] && !r.outliers[i,j] && isfinite(vals[k]) for (k,r) in enumerate(results)])
     if !all(good)
@@ -414,7 +444,21 @@ function result_spectrum(results::AbstractVector{<:PIVResult}, i::Int, j::Int;
             end
         end
     end
-    power_spectrum(vals; dt, window)
+    # The timeline was checked before sample extraction/filling. Filling retains
+    # the original regular-grid sample positions, including endpoint holds.
+    if sample_times!==nothing
+        # Match the inferred-spacing guards of the signal API before its FFT.
+        period <= floatmax(Float64)/2 || throw(ArgumentError("inferred FFT PSD normalization is not representable in Float64"))
+    end
+    spectrum=power_spectrum(vals; dt=period, window)
+    if return_timing
+        timing["component"]=String(component);timing["index"]=[i,j]
+        timing["invalid_count"]=length(good)-count(good);timing["fill_policy"]=String(invalid)
+        timing["value_basis"]="stored_component_no_conversion"
+        timing["attached_scale"]=_timing_scale(r1.scale)
+        return (; spectrum.frequencies,spectrum.psd,timing)
+    end
+    spectrum
 end
 
 

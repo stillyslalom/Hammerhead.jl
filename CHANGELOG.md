@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added explicit sample-time validation for temporal spectra, checking interval
+  regularity and accumulated timing drift with exact arithmetic and optional
+  tolerances. Result spectra reject incompatible grids, shapes and scales;
+  existing explicit-interval calculations retain their numerical behavior.
+- Dedicated timed artifacts and calibrated companions accept foreign absolute
+  source locators as provenance while protecting consumed local files. Explicit
+  local relocation does not rewrite historical source paths or imply verification
+  of unavailable source images.
+- Experiment replay accepts a completed-pair progress callback. Output guards
+  detect prospective aliases through parent links and Windows path spelling
+  before processing begins.
 - Added a separate calibrated CSV export for particle matches and trajectories,
   with affine point/vector transformation and a versioned TOML companion for
   transform settings, units, diagnostic availability and CSV verification.
@@ -129,6 +140,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Ordinary saved-experiment replay now reports completed-pair progress and
+  supports cooperative cancellation. Requests capture their settings before
+  observer notifications; cancellation waits for pair persistence and loader
+  cleanup. This workflow restarts from the beginning on a subsequent replay.
 - Added explicit loading and inspection of single actual-time trajectory
   artifacts, preserving timing through physical display, selection and export.
   Speed colors use observation-mean secants, with unavailable values identified.

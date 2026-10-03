@@ -212,14 +212,20 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   mutating; convert inputs through `physical` for velocity statistics.
 - `derived.jl` — mask-aware derivatives, vorticity/divergence/strain,
   swirling strength/Q, profile/region extraction, circulation, and
-  results-vector spectra with an explicit sampling interval (`dt`, independent
-  of the image-pair delay in `PhysicalScale`). Profile interpolation ignores
+  results-vector spectra with an explicit sampling interval or validated sample
+  times (`dt` or `sample_times`, independent of the image-pair delay in
+  `PhysicalScale`). Spectra check full grid/shape/scale compatibility first;
+  actual times require interval and global-grid agreement within explicit
+  period-scaled tolerances. Profile interpolation ignores
   invalid corners with zero weight at exact nodes/edges. `extract_region`
   returns `included` (`true` = returned valid node); its legacy `mask` field
   aliases that grid and has the opposite convention from `PIVResult.mask`.
   Area `circulation(result; region=...)` now errors on incomplete coverage
   by default; `coverage=:report` returns value, valid/requested area, fraction,
   and authoritative `complete` flag (no valid area gives `NaN` value).
+- `artifact_paths.jl` — portable lexical source-locator classification, explicit
+  local-path resolution and prospective alias checks. Foreign provenance is not
+  resolved against the receiving workspace; protect actual consumed local files.
 - `experiments.jl` — versioned file-based planar `PIVRecipe`/`ExperimentRecord`,
   `PreprocessStep`, hash-verified `ScriptReference`, save/load, and noncollecting
   `replay_experiment` with optional `ExperimentRun` persistence. Recipes embed
@@ -228,7 +234,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   destination aliases, and creation/run environment compatibility before opening
   output; an environment change requires an explicit override. Scripts are never
   evaluated automatically. The experiment format is separate from result format
-  1; unknown versions are rejected. Rerunning is not resuming/checkpoint recovery.
+  1; unknown versions are rejected. Optional progress runs after each pair is
+  written; callback failures retain the completed count and original exception.
+  Rerunning is not resuming/checkpoint recovery.
 - `execution_diagnostics.jl` — opt-in `PIVExecutionDiagnostics` and
   `PassDiagnostics` store scalar observations in immutable tuples. Preserve the
   existing loop: the final budgeted sweep is unchecked; max_iterations=2 has no
@@ -436,8 +444,11 @@ file-based batch settings, exact effective preset schedules, and fingerprinted
 built-in preprocessing snapshots. Arbitrary callbacks require `ScriptReference`.
 Do not project imported recipes into the narrower batch/preprocessing widgets.
 Replay captures state before notification, records completed/failed metadata,
-and checks recorded output content before lazy exploration. Live replay progress,
-cancellation, stereo/GPU recipes, and full recipe editing remain open. The batch
+and checks recorded output content before lazy exploration. Progress reports
+completed pairs; cancellation is cooperative at pair boundaries and waits for
+loader cleanup. Cancelled ordinary runs retain failed core metadata and a native
+prefix, without checkpoint resume guarantees. Stereo/GPU recipes and full recipe
+editing remain open. The batch
 form links to this workflow; its API reference is split into `gui_experiments.md`.
 The same workflow saves and displays core quality reports through
 `experiment_quality_report` / `save_experiment_quality_report`. These synchronous
@@ -642,8 +653,11 @@ as contrast evidence; preserve any genuine processing-precision difference.
   capture `scale` so it is NOT forwarded to the per-camera `run_piv` calls.
   Unitful is a weakdep (`PhysicalScale(20.0u"µm", 0.5u"ms")` — values
   stripped in their own units, unit names become the labels).
-- **Temporal sampling:** `result_spectrum` requires an explicit `dt` for the
-  interval between successive velocity samples. Never infer that interval
+- **Temporal sampling:** `result_spectrum` requires explicit `dt` or
+  `sample_times` for successive velocity samples. Exact timing validation uses
+  both interval and accumulated grid residuals, with zero tolerance by default;
+  positive tolerances explicitly permit approximately uniform sampling. There
+  is no resampling. Never infer the sampling interval
   from `PhysicalScale.dt`: that is the image-pair displacement delay, which
   differs for paired/strided recordings and becomes 1 after `physical`.
 - **Calibration (Phase 5):** a deliberate Float64 island — offline
@@ -805,6 +819,14 @@ as contrast evidence; preserve any genuine processing-precision difference.
 - `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
   unavailable populations and metadata detachment. Calibrated scattered export
   tests check affine bases, units, exact intervals and paired-artifact verification.
+- `test_artifact_paths.jl` checks foreign source-locator preservation, explicit
+  local relocation and protection of consumed artifacts, including prospective
+  Windows aliases. Foreign fixtures on Windows do not establish other-OS runtime
+  evidence. Ordinary native result and pair-timing contracts remain separate.
+- `test_spectrum_timing.jl` checks exact sample-time regularity, accumulated drift,
+  large epochs, tolerance/range failures, legacy FFT parity and result value bases.
+  Core/GUI `test_experiment_replay_progress.jl` checks completed-pair callback
+  ordering, request capture, cancellation and original-error/cleanup semantics.
 - `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
   outputs across fixed seeds. Component UQ populations include zero sigma;
   normalized errors require positive sigma. Counts retain arithmetic failures,

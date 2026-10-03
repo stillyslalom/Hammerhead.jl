@@ -141,7 +141,8 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [x] Connect planar experiment records to GUI batch snapshots, complete-recipe
   inspection/replay, run history, and content-verified lazy result browsing.
   [The GUI workflow](docs/src/howto/gui_experiments.md) preserves exact imported
-  settings; live progress/cancellation and full recipe editing remain open below.
+  settings; ordinary replay progress/cancellation is tracked below, while full
+  recipe editing remains open.
 - [ ] Extend experiment records to stereo calibration/dewarping/self-calibration,
   PTV/tracking, and supported GPU devices. Define migrations when extending the
   format; keep toolkit dependencies in the GUI package.
@@ -176,6 +177,13 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   Covered by [stereo timing regressions](test/test_stereo_timing.jl).
 - [ ] Reject or explicitly handle irregular sampling in analyses that assume a
   fixed interval. Validate unit and coordinate compatibility before combining results.
+  Temporal spectra now have the explicit contract below; other temporal analyses
+  still require their own timing contracts.
+- [x] Validate explicit sample times for temporal spectra, using both interval
+  and accumulated grid residuals, exact arithmetic, declared tolerances and
+  compatible result geometry/value bases. The [sampling guide](docs/src/howto/spectrum_timing.md)
+  and [157 checks](test/test_spectrum_timing.jl) cover large epochs, drift, range
+  failures, scale compatibility and preservation of legacy FFT calculations.
 - [x] Add explicit actual-time tracking with exact sample metadata, elapsed-time
   prediction/gap validation, secant velocities and table export. Keep legacy
   ordinal tracking unchanged and use a dedicated persisted artifact that cannot
@@ -197,11 +205,14 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   The [export workflow](docs/src/howto/calibrated_scattered_export.md) has
   [357 checks](test/test_calibrated_scattered_export.jl), including output aliases
   and refusal before overwriting protected inputs.
-- [ ] Make recorded source locators portable in dedicated timed artifacts and
+- [x] Make recorded source locators portable in dedicated timed artifacts and
   calibrated table companions. Preserve foreign Windows/POSIX paths as provenance,
   protect actual local/relocated artifacts, and avoid interpreting foreign paths
-  relative to the current workspace. Current host-specific absolute-path checks
-  can reject otherwise valid relocated companions.
+  relative to the current workspace. [115 portability checks](test/test_artifact_paths.jl)
+  cover foreign fixtures, relocation, scientific binding and local alias protection.
+  These ran on Windows; Linux/macOS and actual UNC-share execution remain separate
+  platform evidence. Other persisted experiment/report formats retain their own
+  locator restrictions.
 - [ ] Provide a documented calibrated registration/resampling workflow for
   simultaneous PIV/PLIF data, preserving vector basis and validity masks; this
   follows the use case recorded in [Design.md](reference/Design.md).
@@ -404,8 +415,15 @@ evidence.
   It also saves and displays the shared core quality report with the same
   provenance checks and metric definitions used by scripts.
   Its separate checkpoint view adds resumable built-in processing with committed
-  progress and cancellation. Stereo calibration, ordinary replay
-  progress/cancellation, and broader integration remain open.
+  progress and cancellation. Stereo calibration and broader integration remain open.
+- [x] Add completed-pair progress and cooperative cancellation to ordinary saved
+  GUI replay. Capture the full request before notifications, retain original
+  errors, wait for loader cleanup, and distinguish native prefixes from resumable
+  checkpoints and final-pair completion from cancellation.
+  The [replay workflow](docs/src/howto/gui_experiment_replay.md) has
+  [28 core checks](test/test_experiment_replay_progress.jl) and
+  [77 GUI checks](HammerheadGUI/test/test_experiment_replay_progress.jl), including
+  startup/terminal observer failures and default-size offscreen layout review.
 - [x] Add a saved-recipe GUI comparison for an explicitly selected ordered image
   pair. Share core recipe/input verification, populations, value bases and report
   persistence; show the saved report's own identities after a failed rerun.

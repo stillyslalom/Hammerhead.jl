@@ -45,10 +45,14 @@ or preprocessing forms, so nondefault fields and repeated operations survive.
 
 Choose a new result output and a run-record destination, then **replay exact
 recipe**. An opened record is the default destination for appended run history.
-The status reports busy, completed or failed. Replay starts from pair 1 and
-this workflow has no live progress or cancellation controls. Custom scripts
+The status reports busy, cancellation requested, cancelled, completed or failed.
+Written-pair progress updates after each pair's native writes. **Cancel after
+current pair** waits for a written-pair boundary and loading/output/history
+cleanup; cancellation after the final write means completion. Replay starts
+from pair 1 and does not resume a partial output. See [monitor and cancel
+replay](gui_experiment_replay.md) for failure-history semantics. Custom scripts
 are never loaded or evaluated automatically. The GUI remains a cooperative
-Julia task; CPU work can delay rendering during a pair.
+Julia task; preflight and CPU/I/O work can delay rendering.
 
 This executable controller example uses committed image fixtures without
 opening a window:

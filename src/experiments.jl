@@ -518,7 +518,7 @@ function _experiment_validate_environment(env)
 end
 
 function _experiment_alias(path, other)
-    abspath(path)==abspath(other) || (ispath(path) && ispath(other) && Base.samefile(path,other))
+    _artifact_alias(path,other;allow_unavailable_other=true)
 end
 
 function _experiment_protect(path,record; records=false, results=false)
@@ -617,7 +617,8 @@ end
 
 """
     replay_experiment(record; output, custom_preprocess=nothing,
-                      allow_environment_change=false, run_record=nothing) -> ExperimentRun
+                      allow_environment_change=false, run_record=nothing,
+                      progress=nothing) -> ExperimentRun
 
 Rerun a saved file-based planar recipe from the beginning into a native result
 file, without collecting result arrays. Before opening `output`, verify settings,
@@ -640,6 +641,17 @@ The caller is responsible for its correspondence to the referenced script and
 for external state that a function uses.
 
 Returns completed-run metadata; access numerical results with [`load_results`](@ref).
+Optional `progress(written, total)` receives ordered scalar counts after each
+pair's result, requested companions and source labels have been written. The
+internal completed count is updated before delivery. There is no zero/preflight
+or in-pass callback, and a write is not a durability/commit notice. The callback
+runs on the replay task and may throw to stop before the next pair's processing;
+the next pair may already be loading/preprocessing. Pending loading finishes and
+output closes before failure metadata is recorded and the original exception is
+rethrown. A callback exception, including a caller's cancellation signal, uses
+the existing `:failed` run status even after the final pair. No resumability or
+special persisted cancellation status is introduced. Progress is observational
+execution configuration and does not change recipe identity.
 `on_diagnostics(i, diagnostics)` and `record_diagnostics=true` opt into planar
 execution observations/persisted native companions without changing scientific
 recipe identity. Their verified recipe/input association comes from this
@@ -662,6 +674,7 @@ function replay_experiment(record::ExperimentRecord; output::AbstractString,
                            custom_preprocess::Union{Nothing,Function}=nothing,
                            allow_environment_change::Bool=false,
                            run_record::Union{Nothing,AbstractString}=nothing,
+                           progress::Union{Nothing,Function}=nothing,
                            on_diagnostics::Union{Nothing,Function}=nothing,
                            record_diagnostics::Bool=false,
                            on_measurement_history::Union{Nothing,Function}=nothing,
@@ -697,9 +710,14 @@ function replay_experiment(record::ExperimentRecord; output::AbstractString,
     pairs=[(FrameRef(source,p[1]),FrameRef(source,p[2])) for p in snapshot.pairs]
     preprocess=_experiment_preprocess(recipe,custom_preprocess)
     started=time(); completed=Ref(0)
+    delivery=(i,n)->begin
+        completed[]=i
+        progress===nothing || progress(i,n)
+        nothing
+    end
     run=try
         run_piv_sequence(pairs,recipe.passes; preprocess,output,collect_results=false,
-            progress=(i,n)->(completed[]=i),backend=recipe.backend,image_type=recipe.image_type,
+            progress=delivery,backend=recipe.backend,image_type=recipe.image_type,
             mask=recipe.mask,roi=recipe.roi,scale=recipe.scale,threaded=recipe.threaded,
             predictor_smoothing=recipe.predictor_smoothing,mask_threshold=recipe.mask_threshold,
             uncertainty_backend=recipe.uncertainty_backend,

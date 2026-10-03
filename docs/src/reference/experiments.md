@@ -119,6 +119,16 @@ run history is not a resume instruction. Use distinct output paths to retain
 earlier runs; overwriting an ordinary result file makes an earlier recorded
 output digest stale.
 
+`replay_experiment(...; progress=(written,total)->...)` notifies on the calling
+task after a pair's native result, requested companions and source labels have
+been written. There is no zero/preflight or within-pass notification. The count
+is captured before calling user code; a throwing callback leaves a failed run
+with that count, including when it throws after the final write. Pending
+prefetch drains and output closes before failure-history handling. Callback
+selection does not enter recipe identity. The GUI adds cooperative cancellation
+at these boundaries without changing version-1 persisted statuses or providing
+checkpoint resume.
+
 Stereo calibration/dewarping/self-calibration, timestamp persistence, per-pair
 delays, dynamic masks, PTV/tracking, GPU execution, automatic custom-script
 replay, and resume are outside version 1. A scalar `PhysicalScale` is stored;

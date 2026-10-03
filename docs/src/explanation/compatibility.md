@@ -85,12 +85,15 @@ or numerical result. The two files publish sequentially, so readers must detect
 an incomplete or mismatched pair. Ordinary table/native formats are unchanged.
 See [calibrated tables](../reference/calibrated_table.md).
 
-Dedicated timed artifacts and calibrated companions currently validate recorded
-absolute source/protected paths using the reading host's path rules. An artifact
-containing paths from a different operating system can therefore be rejected,
-even when an explicit relocated CSV is supplied. Ordinary native result payloads
-do not have this particular restriction. Portable source-locator handling remains
-an explicit follow-up in the roadmap.
+Dedicated timed artifacts and calibrated companions accept recorded absolute
+Windows/POSIX source locators independently of the reading host. These strings
+remain provenance; foreign paths are not resolved against the receiving workspace.
+The consumed local artifacts and explicitly supplied local inputs remain protected
+against output aliases. Supply a local `csv_path` when the recorded relative CSV
+locator uses a foreign separator dialect. This broadens version-1 reading without
+changing recorded locator strings, result layouts or scientific binding rules.
+It does not relocate or verify unavailable source images, and does not extend
+foreign-locator support to experiment, comparison or quality-report formats.
 
 GUI timed-trajectory inspection explicitly selects the dedicated artifact
 format and retains its wrapper through physical display. Ordinary eager and

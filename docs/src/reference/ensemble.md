@@ -18,6 +18,13 @@ diagnostics, and spectra. The [sequence tutorial](../tutorials/sequence_statisti
 compares the two approaches; the [ensemble guide](../howto/ensemble.md)
 covers setup and limitations.
 
+For spectra, provide a field-sampling `dt` or explicit `sample_times`, separately
+from each image pair's delay. Explicit times undergo exact interval and global
+grid-residual checks with zero-default tolerances. The
+[spectrum timing guide](../howto/spectrum_timing.md) covers Float64 range roundoff,
+units, scale compatibility and the opt-in detached timing report. Neither API
+discovers timestamps or resamples irregular recordings.
+
 ```@index
 Pages = ["ensemble.md"]
 ```

@@ -23,6 +23,12 @@ The metadata verifier checks structural integrity and optional CSV structure/has
 It does not verify numerical result semantics, source bytes, physical calibration
 accuracy or authenticity. A metadata object contains no result or CSV row payload;
 `calibrated_table_data` returns detached data with verification-at-load status.
+Recorded `protected_locators` remain verbatim provenance, including foreign
+absolute locators. Computed `local_protected_paths` selects locally interpretable
+sources and the local consumed/associated artifacts for protection by later
+writers. Source relocation is explicit; incompatible relative CSV separator
+syntax requires receiving-host `csv_path`. Formats and integrity encoding remain
+version 1. See the how-to for the conservative UNC ambiguity rule and test scope.
 Pair publication is sequential, not atomic.
 
 ```@autodocs

@@ -159,7 +159,7 @@ function _cal_prepare(result,transform,length_unit,coordinate_frame,dt,time_unit
     end
     vector_unit = quantity=="pair_displacement" ? lu : unit===nothing ? nothing : lu*"/"*unit
     all(p->p isa AbstractString,protected_paths) || _cal_error("protected_paths must contain paths")
-    protected=abspath.(String.(collect(protected_paths)))
+    protected=_artifact_local_path.(String.(collect(protected_paths)))
     timing===nothing || append!(protected,timing["protected_paths"])
     frozen_labels=Dict{String,String}(k=>String(getproperty(labels,Symbol(k))) for k in ("frame_id","source_a","source_b"))
     policy=Dict{String,Any}("basis"=>basis,"quantity"=>quantity,"unit"=>_cal_optional(unit),
@@ -239,31 +239,16 @@ function _cal_rows(io,c)
     n
 end
 
-function _cal_prospective_path(path)
-    ancestor=abspath(normpath(String(path)))
-    Sys.iswindows() && any(p->endswith(p,".") || endswith(p," "),splitpath(ancestor)) &&
-        _cal_error("Windows trailing-dot/space path components are ambiguous")
-    remaining=String[]
-    while !ispath(ancestor) && !islink(ancestor)
-        parent=dirname(ancestor)
-        parent==ancestor && _cal_error("cannot resolve calibrated output ancestor")
-        push!(remaining,basename(ancestor))
-        ancestor=parent
-    end
-    resolved=try realpath(ancestor) catch;_cal_error("cannot resolve calibrated path ancestor");end
-    canonical=normpath(joinpath(resolved,reverse(remaining)...))
-    # Windows directories can opt into case sensitivity. Refusing such a pair
-    # conservatively is preferable to overwriting a case-insensitive alias.
-    Sys.iswindows() ? lowercase(canonical) : canonical
-end
-_cal_alias(a,b) = _experiment_alias(a,b) || _cal_prospective_path(a)==_cal_prospective_path(b)
+_cal_prospective_path(path) = _artifact_prospective_path(path)
+_cal_alias(a,b) = _artifact_alias(a,b)
 
 function _cal_guard(csv,metadata,protected,overwrite)
     _cal_alias(csv,metadata) && _cal_error("CSV and metadata destinations alias each other")
     for path in (csv,metadata)
         islink(path) && !ispath(path) && _cal_error("dangling output symlinks are not supported")
         ispath(path) && !isfile(path) && _cal_error("calibrated output destination must be a file")
-        any(source->_cal_alias(path,source),protected) && _cal_error("calibrated destination aliases a protected source")
+        any(source->_artifact_alias(path,source;allow_unavailable_other=true),_artifact_local_protected_paths(protected)) &&
+            _cal_error("calibrated destination aliases a protected local source")
         !overwrite && (ispath(path)||islink(path)) && _cal_error("destination exists; use overwrite=true for unrelated outputs")
     end
     nothing
@@ -290,12 +275,14 @@ and closed before sequential publication; publication of the pair is not atomic.
 Default overwrite=false refuses existing destinations. An I/O failure can leave
 an old or incomplete pair; the metadata reader detects missing/mismatched CSVs.
 Concurrent writers/externally changing inputs are unsupported. Literal input paths
-not carried by a bare result must be supplied in protected_paths.
+not carried by a bare result must be supplied as receiving-host paths in
+protected_paths. Foreign recorded timed locators remain verbatim provenance;
+they are never interpreted as local sources or relocated implicitly.
 """
 function export_calibrated_table(csv_path::AbstractString,result; transform,length_unit,coordinate_frame,
     metadata_path::AbstractString=csv_path*".metadata.toml",dt=nothing,time_unit=nothing,
     overwrite::Bool=false,protected_paths=String[],frame_id="",source_a="",source_b="")
-    csv,metadata=abspath(String(csv_path)),abspath(String(metadata_path))
+    csv,metadata=_artifact_local_path(csv_path),_artifact_local_path(metadata_path)
     c=_cal_prepare(result,transform,length_unit,coordinate_frame,dt,time_unit,protected_paths,(;frame_id,source_a,source_b))
     _cal_guard(csv,metadata,c.protected,overwrite)
     n=_cal_rows(nothing,c)
@@ -340,7 +327,7 @@ function _cal_validate(data)
         "geometry","geometry_sha256","time","timing_snapshot","diagnostics","protected_locators"],"calibrated table metadata")
     data["calibrated_table_format_version"] isa Int && data["calibrated_table_format_version"]==CALIBRATED_TABLE_FORMAT_VERSION || _cal_error("unsupported calibrated table version")
     data["csv_schema"]==_CALIBRATED_TABLE_SCHEMA || _cal_error("unsupported calibrated CSV schema")
-    data["csv_relative_path"] isa String && !isempty(data["csv_relative_path"]) && !isabspath(data["csv_relative_path"]) || _cal_error("CSV location must be relative to its metadata")
+    data["csv_relative_path"] isa String && _artifact_relative_locator(data["csv_relative_path"]) || _cal_error("CSV location must be relative to its metadata")
     _experiment_hash(data["csv_sha256"]) || _cal_error("invalid CSV digest")
     data["row_count"] isa Int && data["row_count"]>=0 || _cal_error("invalid CSV row count")
     kind=data["result_kind"]
@@ -397,7 +384,7 @@ function _cal_validate(data)
         d["raw_pixel_residual"] isa Bool && d["raw_pixel_residual"]===(kind=="ptv") &&
         d["uncertainty"]=="not_retained" || _cal_error("unsupported diagnostic availability claims")
     paths=data["protected_locators"]
-    paths isa AbstractVector && all(p->p isa String && isabspath(p),paths) && paths==sort(unique(paths)) || _cal_error("invalid protected locators")
+    paths isa AbstractVector && all(p->p isa String && _artifact_absolute_locator(p),paths) && paths==sort(unique(paths)) || _cal_error("invalid protected locators")
     if timing!==nothing
         all(p->p in paths,_cal_unpack(timing)["protected_paths"]) || _cal_error("timed input locators were dropped")
     end
@@ -453,21 +440,25 @@ integrity; default verify_csv=true also streams the associated CSV to check its
 SHA-256, exact header, quoting/column structure and row count. No row/result payload
 is retained. Missing/mismatched pairs are refused. csv_path can relocate the CSV
 explicitly; otherwise its recorded relative path is resolved beside metadata.
+Foreign absolute source locators remain verbatim provenance and are never read.
+A foreign backslash separator dialect requires explicit receiving-host csv_path
+on POSIX; separators are not translated or guessed. Explicit path arguments
+must refer to the receiving host.
 verify_csv=false reads metadata only and does not certify the CSV, numerical
 results, acquisition sources or coordinate-frame labels. File size/mtime checks
 detect some changes; concurrent writers and atomic snapshots are unsupported.
 """
 function load_calibrated_table_metadata(metadata_path::AbstractString;csv_path=nothing,verify_csv::Bool=true)
-    full=abspath(String(metadata_path));stamp=stat(full)
+    full=_artifact_local_path(metadata_path);stamp=stat(full)
     wrapper=try TOML.parsefile(full) catch;_cal_error("cannot parse calibrated metadata");end
     _experiment_keys(wrapper,["metadata","metadata_sha256"],"calibrated metadata artifact")
     data=wrapper["metadata"]
     _cal_validate(data)
     digest=wrapper["metadata_sha256"]
     _experiment_hash(digest) && _cal_digest(data)==digest || _cal_error("calibrated metadata integrity mismatch")
-    table=csv_path===nothing ? normpath(joinpath(dirname(full),data["csv_relative_path"])) :
-        csv_path isa AbstractString ? abspath(String(csv_path)) : _cal_error("csv_path must be a path")
-    _experiment_alias(full,table) && _cal_error("CSV aliases its metadata")
+    table=csv_path===nothing ? _artifact_resolve_relative(dirname(full),data["csv_relative_path"]) :
+        csv_path isa AbstractString ? _artifact_local_path(csv_path) : _cal_error("csv_path must be a local path")
+    _cal_alias(full,table) && _cal_error("CSV aliases its metadata")
     if verify_csv
         isfile(table) || _cal_error("calibrated CSV is missing; pair is incomplete")
         before=stat(table)
@@ -487,14 +478,17 @@ end
 Return copied validated settings, exact timing context, diagnostic availability
 and CSV association. `verification` records checks made at load, not continuing
 verification; numerical results/source bytes are never verified by this reader.
-Protected locators include the actual consumed metadata/CSV paths after relocation.
-No input/result/CSV files are reopened by this getter.
+`protected_locators` retains recorded provenance verbatim. Computed
+`local_protected_paths` includes locally interpretable recorded sources and the
+actual local metadata/associated CSV paths after relocation; pass that list to
+later writers. Foreign locators are not resolved and no input/result/CSV files
+are reopened by this getter.
 """
 function calibrated_table_data(report::CalibratedTableMetadata)
     _cal_digest(report._data)==report._sha256 || _cal_error("calibrated metadata object changed")
     _cal_validate(report._data)
     data=deepcopy(report._data)
-    data["protected_locators"]=sort!(unique([data["protected_locators"];report._metadata_path;report._csv_path]))
+    data["local_protected_paths"]=sort!(unique([_artifact_local_protected_paths(data["protected_locators"]);report._metadata_path;report._csv_path]))
     data["verification"]=Dict("metadata_schema_and_integrity"=>true,"csv_structure_and_hash_at_load"=>report._csv_verified,
         "numerical_result"=>false,"source_bytes"=>false)
     data

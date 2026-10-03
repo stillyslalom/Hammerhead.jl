@@ -67,17 +67,22 @@ end
     ExperimentController()
 
 Keep a deep-copied complete core recipe apart from the batch form. Observable
-state includes `record`, `running`, `state` (`:empty`, `:ready`, `:busy`,
-`:completed`, `:failed`), `status`, `last_run`, and `error`. `output_path`
+state includes `record`, `running`, `progress` (`written,total`), `state`
+(`:empty`, `:ready`, `:busy`, `:cancel_requested`, `:cancelled`, `:completed`,
+`:failed`), `status`, `last_run`, and `error`. `output_path`
 selects native results; optional `run_record_path` saves success/failure history.
 `allow_environment_change` is an explicit opt-in, initially false.
 `custom_preprocess` is caller-supplied for a recorded script and never loaded
 from it. No recipe fields are reconstructed from GUI widgets.
 
 Use [`open_experiment!`](@ref), [`save_experiment_record!`](@ref), [`start!`](@ref)
-and [`experiment_results`](@ref). Replay runs from the first pair and has no
-live progress/cancellation in this workflow. Metadata-only histories are kept;
-completed result browsing is lazy.
+[`cancel!`](@ref) and [`experiment_results`](@ref). Replay starts from the first
+pair, with progress after native pair writes and cancellation at those boundaries.
+A GUI cancelled attempt is a failed v1 core run with a readable cancellation
+reason when run history is persisted; without a history destination its failed
+run metadata is unavailable. This is not checkpoint/resume support. Metadata-only
+histories are kept; completed result browsing is lazy. Cooperative scheduling
+yields between pairs, but preflight/current computation/I/O can pause rendering.
 """
 struct ExperimentController
     record::Observable{Union{Nothing,ExperimentRecord}}
@@ -90,6 +95,9 @@ struct ExperimentController
     status::Observable{String}
     last_run::Observable{Union{Nothing,ExperimentRun}}
     error::Observable{Any}
+    progress::Observable{Tuple{Int,Int}}
+    _cancel_token::Base.RefValue{Union{Nothing,Base.RefValue{Bool}}}
+    _task::Base.RefValue{Union{Nothing,Task}}
 end
 
 function _validate_gui_experiment(record::ExperimentRecord)
@@ -112,7 +120,9 @@ function ExperimentController(record::Union{Nothing,ExperimentRecord}=nothing;
         Observable(String(output_path)),Observable(String(run_record_path)),Observable(false),
         Observable{Union{Nothing,Function}}(nothing),Observable(false),
         Observable(snapshot===nothing ? :empty : :ready),Observable(""),
-        Observable{Union{Nothing,ExperimentRun}}(latest),Observable{Any}(nothing))
+        Observable{Union{Nothing,ExperimentRun}}(latest),Observable{Any}(nothing),
+        Observable((0,snapshot===nothing ? 0 : length(snapshot.pairs))),
+        Ref{Union{Nothing,Base.RefValue{Bool}}}(nothing),Ref{Union{Nothing,Task}}(nothing))
 end
 ExperimentController(path::AbstractString;run_record_path::AbstractString=path,kwargs...) =
     ExperimentController(load_experiment(path);run_record_path,kwargs...)
@@ -134,6 +144,7 @@ function open_experiment!(ec::ExperimentController,record::ExperimentRecord)
     ec.custom_preprocess[] = nothing
     ec.allow_environment_change[] = false
     ec.last_run[] = isempty(snapshot.runs) ? nothing : last(snapshot.runs)
+    ec.progress[] = (0,length(snapshot.pairs))
     ec.error[] = nothing
     ec.state[] = :ready
     ec.status[] = "recipe loaded; settings are read-only"
@@ -165,7 +176,7 @@ function save_experiment_record!(ec::ExperimentController,path::AbstractString)
 end
 
 """
-    start!(controller::ExperimentController; async=true)
+    start!(controller::ExperimentController; async=true, progress=nothing)
 
 Replay the captured complete recipe to the selected result file. Capture all
 execution state before notifying observers or scheduling work. Errors are
@@ -174,28 +185,115 @@ exposed in `error`/`status` with `state=:failed`; completed output uses
 With a run-record destination, reread appended history after execution, even
 on processing failure. The original replay exception remains the reported
 error if rereading history also fails. No arbitrary recipe overrides occur.
+Optional `progress(written,total)` is captured with the request and runs after
+the writer progress notification. Its exceptions remain failures. The GUI yields
+between pair writes, then checks an independent per-run cancellation token;
+cancellation after the final write resolves as completion. Cancellation before
+scheduled execution starts leaves files/history unchanged. Once replay starts,
+there is no in-pass/preflight interruption: a request waits for the first/next
+pair write, prefetched loading cleanup, closure, hashing and history handling.
+`running` stays true until all handling finishes. No worker-thread Observable
+mutation or event-loop responsiveness is promised by `async=true`.
+Startup/progress notification exceptions become workflow failures. Terminal
+notifications assign final state while suppressing observer exceptions, preserving
+the completed outcome or original replay error and reliably releasing busy state.
 """
-function start!(ec::ExperimentController; async::Bool=true)
+function start!(ec::ExperimentController; async::Bool=true,progress::Union{Nothing,Function}=nothing)
     ec.running[] && return ec
     record = deepcopy(ec.record[])
     output, history = ec.output_path[],ec.run_record_path[]
     allow, custom = ec.allow_environment_change[],ec.custom_preprocess[]
-    ec.error[] = nothing
-    ec.last_run[] = nothing
-    ec.running[] = true
-    ec.state[] = :busy
-    ec.status[] = "replaying; live progress and cancellation are unavailable"
-    run = () -> _replay_gui_experiment!(ec,record,output,history,allow,custom)
-    async ? errormonitor(@async run()) : run()
+    token=Ref(false)
+    ec._cancel_token[]=token
+    try
+        # This is the first notification: observers cannot reenter idle actions.
+        ec.running[] = true
+        ec.error[] = nothing
+        ec.last_run[] = nothing
+        ec.progress[] = (0,record===nothing ? 0 : length(record.pairs))
+        ec.state[] = token[] ? :cancel_requested : :busy
+        ec.status[] = token[] ? "cancellation requested; replay has not started" :
+            "replaying; validation/current-pair work may pause rendering"
+        run = () -> _replay_gui_experiment!(ec,record,output,history,allow,custom,token,progress)
+        if async
+            task=Task(run)
+            ec._task[]=task
+            errormonitor(task)
+            schedule(task)
+        else
+            run()
+        end
+    catch err
+        # No replay was scheduled if startup failed. Terminal observers may
+        # also throw; their exceptions cannot strand busy state or replace err.
+        _experiment_notify_safely!(ec.last_run,nothing)
+        _experiment_notify_safely!(ec.progress,(0,record===nothing ? 0 : length(record.pairs)))
+        _experiment_notify_safely!(ec.error,err)
+        _experiment_notify_safely!(ec.state,:failed)
+        _experiment_notify_safely!(ec.status,"failed to start: $(_errmsg(err))")
+        _experiment_replay_cleanup!(ec)
+    end
     ec
 end
 
-function _replay_gui_experiment!(ec,record,output,history,allow,custom)
+function _experiment_notify_safely!(observable,value)
+    try
+        observable[]=value # assignment occurs before listeners are notified
+    catch
+        # A terminal notification must not replace a replay/startup exception.
+    end
+    nothing
+end
+function _experiment_replay_cleanup!(ec)
+    ec._cancel_token[]=nothing
+    ec._task[]=nothing
+    _experiment_notify_safely!(ec.running,false)
+end
+
+struct _ExperimentCancelled <: Exception
+    written::Int
+    total::Int
+end
+Base.showerror(io::IO,err::_ExperimentCancelled)=
+    print(io,"Experiment replay cancelled after ",err.written," of ",err.total," written pairs")
+
+"""
+    cancel!(controller::ExperimentController)
+
+Request cancellation after the current pair is written. Idle requests are no-ops.
+The captured per-run token cannot be cleared by editing display Observables.
+The GUI remains busy until pending loading/output/history cleanup finishes.
+Cancellation after the final write means completion; earlier cancellation may
+leave a native written prefix and a failed v1 core run record, not a resumable
+checkpoint. Before scheduled execution starts no output/run record is written.
+"""
+function cancel!(ec::ExperimentController)
+    token=ec._cancel_token[]
+    ec.running[] && token!==nothing || return ec
+    token[]=true
+    ec.state[]=:cancel_requested
+    ec.status[]="cancellation requested; waiting for a written-pair boundary and cleanup"
+    ec
+end
+
+function _replay_gui_experiment!(ec,record,output,history,allow,custom,token,observer)
+    total=record===nothing ? 0 : length(record.pairs)
+    written=Ref(0)
     try
         record === nothing && throw(ArgumentError("open or snapshot an experiment first"))
         isempty(strip(output)) && throw(ArgumentError("choose a result output file first"))
+        token[] && throw(_ExperimentCancelled(0,total))
+        delivery=(i,n)->begin
+            written[]=i # independent of mutable progress display state
+            ec.progress[]=(i,n)
+            ec.status[]="$i / $n pairs written"*(token[] ? "; cancellation requested" : "")
+            observer===nothing || observer(i,n)
+            yield()
+            token[] && i<n && throw(_ExperimentCancelled(i,n))
+            nothing
+        end
         run = replay_experiment(record;output,run_record=isempty(history) ? nothing : history,
-            allow_environment_change=allow,custom_preprocess=custom)
+            allow_environment_change=allow,custom_preprocess=custom,progress=delivery)
         if isempty(history)
             push!(record.runs,run)
         else
@@ -203,28 +301,33 @@ function _replay_gui_experiment!(ec,record,output,history,allow,custom)
             !isempty(record.runs) && last(record.runs).run_id==run.run_id ||
                 throw(ArgumentError("saved run history changed before it could be reopened"))
         end
-        ec.record[] = record
-        ec.last_run[] = run
-        ec.state[] = :completed
-        ec.status[] = "completed: $(run.completed_pairs) pairs"
+        _experiment_notify_safely!(ec.record,record)
+        _experiment_notify_safely!(ec.last_run,run)
+        _experiment_notify_safely!(ec.progress,(run.completed_pairs,total))
+        _experiment_notify_safely!(ec.state,:completed)
+        _experiment_notify_safely!(ec.status,"completed: $(run.completed_pairs) written pairs")
     catch err
-        ec.error[] = err
-        ec.state[] = :failed
-        ec.status[] = "failed: $(_errmsg(err))"
+        # Core has drained prefetch/closed output/recorded failure before this
+        # catch. Keep busy/requested state until history recovery also finishes.
+        record===nothing || _experiment_notify_safely!(ec.record,record)
         if record !== nothing && !isempty(history) && isfile(history)
             try
                 updated = load_experiment(history)
                 if updated.input_id==record.input_id && recipe_identity(updated.recipe)==recipe_identity(record.recipe) &&
                    length(updated.runs)>length(record.runs)
-                    ec.record[] = updated
-                    ec.last_run[] = isempty(updated.runs) ? nothing : last(updated.runs)
+                    _experiment_notify_safely!(ec.record,updated)
+                    _experiment_notify_safely!(ec.last_run,isempty(updated.runs) ? nothing : last(updated.runs))
                 end
             catch
                 # Preserve the original exception, including failed metadata saves.
             end
         end
+        _experiment_notify_safely!(ec.progress,(written[],total))
+        _experiment_notify_safely!(ec.error,err)
+        _experiment_notify_safely!(ec.state,err isa _ExperimentCancelled ? :cancelled : :failed)
+        _experiment_notify_safely!(ec.status,err isa _ExperimentCancelled ? sprint(showerror,err) : "failed: $(_errmsg(err))")
     finally
-        ec.running[] = false
+        _experiment_replay_cleanup!(ec)
     end
     ec
 end

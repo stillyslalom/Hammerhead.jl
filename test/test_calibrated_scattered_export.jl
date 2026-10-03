@@ -331,7 +331,7 @@ end
         @test_throws ArgumentError load_calibrated_table_metadata(files.metadata_path;csv_path=other.csv_path)
         moved=joinpath(dir,"relocated.csv");write(moved,goodcsv)
         restored=load_calibrated_table_metadata(files.metadata_path;csv_path=moved)
-        @test moved in calibrated_table_data(restored)["protected_locators"]
-        @test_throws ArgumentError export_calibrated_table(moved,r;base...,overwrite=true,protected_paths=calibrated_table_data(restored)["protected_locators"])
+        @test moved in calibrated_table_data(restored)["local_protected_paths"]
+        @test_throws ArgumentError export_calibrated_table(moved,r;base...,overwrite=true,protected_paths=calibrated_table_data(restored)["local_protected_paths"])
     end
 end

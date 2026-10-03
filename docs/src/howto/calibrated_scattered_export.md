@@ -134,14 +134,39 @@ data = calibrated_table_data(verified)
 
 `verify_csv=false` checks only the companion and does not read the CSV.
 Verification flags describe checks performed at load time; retrieving copied
-metadata does not reopen files. The accessor includes consumed artifact paths in
-`protected_locators`, which can be supplied to later exports. The report retains
+metadata does not reopen files. `protected_locators` retains recorded provenance
+verbatim, including foreign Windows/POSIX absolute locators. The accessor's
+computed `local_protected_paths` includes locally interpretable original sources
+and the actual local companion/associated CSV paths, which can be supplied to
+later exports:
+
+```julia
+export_calibrated_table("another.csv", raw_tracks;
+    transform, length_unit="mm", coordinate_frame="laboratory_xy",
+    protected_paths=data["local_protected_paths"])
+```
+
+The report retains
 no result arrays or CSV rows. Export and verification stream rows; timed metadata
 also retains O(selected frames) scalar acquisition context.
 
-Current path validation is host-specific: companions containing absolute source
-locators from another operating system can be rejected even with `csv_path`
-supplied. Portable foreign-locator handling is tracked separately in the roadmap.
+Original source locators are validated lexically, rather than with the receiving
+host's absolute-path rules. Foreign locators are never resolved relative to the
+current directory or treated as verified local inputs. No image/source relocation
+is inferred. Supply relocated local sources explicitly in `protected_paths`;
+foreign-looking explicit writer/reader arguments are refused before path
+resolution. Existing version-1 metadata and integrity encoding remain unchanged.
+On POSIX, a recorded backslash-separated relative CSV locator needs an explicit
+receiving-host `csv_path`; the reader does not translate or guess separators,
+including with `verify_csv=false`. Forward-slash relative associations work on
+both platforms. Leading `//server/share` is conservatively classified as Windows
+UNC because version 1 has no dialect tag; use a single leading slash for an
+unambiguous POSIX absolute locator. Drive-relative/current-drive locators and
+malformed UNC roots are refused.
+
+Portability regression tests simulate foreign serialized locators on the current
+Windows runtime, preserving scientific bindings and native alias guards. They do
+not establish execution on Linux/macOS or an actual UNC share.
 
 See the [calibrated table reference](../reference/calibrated_table.md) for API
 signatures and the [actual-time tracking guide](tracking_timing.md) for time

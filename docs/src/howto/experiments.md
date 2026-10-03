@@ -54,6 +54,37 @@ Results use the existing native result format. `run_record` appends execution
 metadata to the reopened record and records failures after processing begins;
 preflight rejection does not alter either destination.
 
+## Observe written-pair progress
+
+Pass `progress=(written, total) -> ...` to `replay_experiment`. The callback runs
+on the calling task after each native result, requested companion and source
+label write. It receives only scalar counts, has no initial zero notification,
+and does not change the scientific recipe identity:
+
+```@example experiments
+mktempdir() do work
+    updates = Tuple{Int,Int}[]
+    run = replay_experiment(experiment; output=joinpath(work, "observed.jld2"),
+        progress=(written, total) -> push!(updates, (written, total)))
+    (updates=updates, status=run.status)
+end
+```
+
+Throwing from this callback stops the sequence at a written-pair boundary. The
+driver drains any prefetched loader and closes output before failure metadata is
+saved. If `run_record` was supplied, the version-1 entry is `:failed` with the
+already-written count and original exception. A callback exception after the
+final pair still means failure. A secondary loading/history-save failure does
+not replace the original processing exception.
+
+A prefetched pair may already be loading or preprocessing when the callback
+runs. Counts describe native writes, not an atomic/durable commit or a resume
+position. Ordinary replay has no built-in cancellation token; scripts can use a
+callback exception to stop deliberately. The [GUI replay workflow](gui_experiment_replay.md)
+adds a captured cancellation token and treats a request after the final write as
+completion. Preflight rejection produces no progress notifications and preserves
+existing destinations.
+
 ## Record processing revisions
 
 Treat recipes as snapshots. To change the schedule or preprocessing, create

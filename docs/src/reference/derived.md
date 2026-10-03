@@ -31,7 +31,13 @@ integrated; a displayed fraction can round to 1 even with a small gap.
 For [`result_spectrum`](@ref), pass `dt` as the interval between successive
 results. `PhysicalScale.dt` is the delay between images within each pair;
 it converts displacement to velocity and may differ from the sequence
-cadence.
+cadence. Alternatively provide explicit `sample_times`; the
+[spectrum timing guide](../howto/spectrum_timing.md) describes exact uniformity
+checks, explicit tolerances and optional timing provenance. Results must share
+grid dimensions, scale factors and unit labels. Stored values are analyzed
+without conversion; sampling-unit labels stay independent of component units.
+Invalid interpolation operates on the accepted regular FFT grid, not on a
+separately resampled irregular timeline.
 
 ```@index
 Pages = ["derived.md"]

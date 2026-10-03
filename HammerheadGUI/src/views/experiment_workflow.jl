@@ -8,9 +8,12 @@ output lazily, and save a shared run-quality report. With `batch=BatchRunner(...
 snapshot supported current form settings; unsupported callbacks produce an error
 without saving a partial recipe.
 
-Replay has a busy/completed/failed status, without live progress or cancellation.
-Open the checkpoint workflow for resumable built-in recipes with pair-boundary
-progress and cancellation; its creation candidate preserves the complete recipe.
+Replay reports written-pair progress and accepts cancellation after the current
+pair. It remains busy through prefetched loading/output/history cleanup. A GUI
+cancelled attempt can have a failed v1 run record; native prefixes are not
+resumable. Preflight/current-pair work can pause rendering: cooperative tasks and
+offscreen tests do not establish responsive interaction. Open the checkpoint
+workflow for resumable built-in recipes; its candidate preserves the complete recipe.
 Referenced custom scripts require a caller-supplied controller function and are
 never loaded by this view. Large recipe/history text can be inspected in pages.
 """
@@ -46,31 +49,41 @@ function experiment_workflow!(target,ec::ExperimentController;
                               batch::Union{Nothing,BatchRunner}=nothing)
     gl=GridLayout(target)
     controls=GridLayout(gl[1,1];valign=:top,tellheight=false)
+    rowgap!(controls,3)
     Label(controls[1,1],"saved experiment";font=:bold,halign=:left)
-    open_btn=Button(controls[2,1];label="open experiment…",tellwidth=false)
-    save_btn=Button(controls[3,1];label="save experiment…",tellwidth=false)
-    snapshot_btn=Button(controls[4,1];label="snapshot batch",tellwidth=false)
-    output_btn=Button(controls[5,1];label="choose result output…",tellwidth=false)
+    open_btn=Button(controls[2,1];label="open experiment…",tellwidth=false,height=28,fontsize=14)
+    save_btn=Button(controls[3,1];label="save experiment…",tellwidth=false,height=28,fontsize=14)
+    snapshot_btn=Button(controls[4,1];label="snapshot batch",tellwidth=false,height=28,fontsize=14)
+    output_btn=Button(controls[5,1];label="choose result output…",tellwidth=false,height=28,fontsize=14)
     mono=GLMakie.Makie.assetpath("fonts","DejaVuSansMono.ttf")
     output_label=lift(p->_experiment_wrap_text(isempty(p) ? "No result output selected." : p;max_lines=3),ec.output_path)
     Label(controls[6,1],output_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    history_btn=Button(controls[7,1];label="choose run record…",tellwidth=false)
+    history_btn=Button(controls[7,1];label="choose run record…",tellwidth=false,height=28,fontsize=14)
     history_label=lift(p->_experiment_wrap_text(isempty(p) ? "Run history is not persisted." : "Run record: $p";max_lines=3),ec.run_record_path)
     Label(controls[8,1],history_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    override_toggle=Toggle(controls[9,1];active=ec.allow_environment_change[],halign=:left)
-    Label(controls[10,1],"allow environment changes";halign=:left)
-    run_btn=Button(controls[11,1];label="replay exact recipe",tellwidth=false)
-    explore_btn=Button(controls[12,1];label="view completed results",tellwidth=false)
-    quality_btn=Button(controls[13,1];label="save quality report…",tellwidth=false)
-    quality_history_toggle=Toggle(controls[14,1];active=false,halign=:left)
-    Label(controls[15,1],"include recorded history in report";halign=:left)
+    environment=GridLayout(controls[9,1])
+    override_toggle=Toggle(environment[1,1];active=ec.allow_environment_change[],halign=:left)
+    Label(environment[1,2],"allow environment changes";halign=:left,fontsize=13)
+    execution=GridLayout(controls[11,1])
+    rowgap!(execution,4)
+    run_btn=Button(execution[1,1];label="replay exact recipe",tellwidth=false,height=28,fontsize=14)
+    cancel_color=lift(busy->busy ? RGBf(.12,.12,.12) : RGBf(.65,.65,.65),ec.running)
+    cancel_btn=Button(execution[2,1];label="cancel after current pair",tellwidth=false,height=28,fontsize=14,
+        labelcolor=cancel_color,labelcolor_hover=cancel_color,labelcolor_active=cancel_color)
+    counts=lift((p)->"Written pairs: $(p[1]) / $(p[2])",ec.progress)
+    Label(execution[3,1],counts;halign=:left,fontsize=13)
+    explore_btn=Button(controls[12,1];label="view completed results",tellwidth=false,height=28,fontsize=14)
+    quality_btn=Button(controls[13,1];label="save quality report…",tellwidth=false,height=28,fontsize=14)
+    quality_mode=GridLayout(controls[14,1])
+    quality_history_toggle=Toggle(quality_mode[1,1];active=false,halign=:left)
+    Label(quality_mode[1,2],"include recorded history in report";halign=:left,fontsize=13,word_wrap=true,width=195,tellwidth=false)
     status_label=lift(s->_experiment_wrap_text(s;max_lines=3),ec.status)
     Label(controls[16,1],status_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
-    Label(controls[17,1],"Replay starts from pair 1.\nUse checkpoints for progress,\ncancellation and resume.";
-          halign=:left,justification=:left,word_wrap=true,width=240,tellwidth=false)
+    rowsize!(controls,10,Fixed(0))
+    rowsize!(controls,15,Fixed(0))
 
     content=GridLayout(gl[1,2];valign=:top,tellheight=false)
     section=Observable(:recipe)
@@ -83,7 +96,8 @@ function experiment_workflow!(target,ec::ExperimentController;
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
         details=which===:recipe ? experiment_summary(ec) : which===:history ? experiment_run_history(ec) : report
-        "selected output: $output\nrun record: $history\nstatus: $status\n\n"*details
+        "selected output: $output\nrun record: $history\nstatus: $status\n"*
+        "Replay starts at pair 1; cancel waits for writes/cleanup; use checkpoints to resume.\n\n"*details
     end
     # Wrap long full-pass descriptions explicitly so every field is reachable,
     # rather than allowing an enormous Label to extend outside the figure.
@@ -155,6 +169,7 @@ function experiment_workflow!(target,ec::ExperimentController;
         end
     end
     on(_->start!(ec),run_btn.clicks)
+    on(_->cancel!(ec),cancel_btn.clicks)
     on(ec.record) do _
         report_text[]="Experiment changed. Save a new quality report to inspect its summary."
     end

@@ -49,13 +49,22 @@ converted result carries an identity scale with the same unit labels, so
 `physical` is idempotent and plots label their axes correctly either way.
 See the [scaling how-to](../howto/scaling.md).
 
-Temporal spectra need a separate **sampling interval**: pass `dt` explicitly
-to [`result_spectrum`](@ref). `PhysicalScale.dt` describes the delay between
+Temporal spectra need a separate **sampling interval**: pass `dt` or the
+actual `sample_times` explicitly to [`result_spectrum`](@ref).
+`PhysicalScale.dt` describes the delay between
 the two images used to measure a displacement, which need not equal the time
 between successive velocity samples. For example, frames acquired every
 0.01 s and grouped as `(1, 2), (3, 4), …` produce velocity samples every
 0.02 s. Use that 0.02 s sampling interval for spectra, whether the results
 are raw or converted with `physical`.
+
+Supplied times must agree with a regular grid, including both adjacent intervals
+and accumulated drift from that grid. The default tolerance is zero; explicit
+positive tolerances permit approximately uniform sampling without resampling.
+Bounds scale with the sample period, not an absolute clock epoch. Result spectra
+also require compatible grids, array shapes and attached scale factors/labels.
+Convert raw fields explicitly before combining variable image-pair delays.
+See [sampling-time validation](../howto/spectrum_timing.md).
 
 ## World coordinates (stereo)
 

@@ -143,6 +143,32 @@ Known input paths and loaded artifact paths, including file aliases, are protect
 against export/save overwrite. Completed files only; concurrent writers are not
 supported.
 
+Dedicated version-1 artifacts can retain absolute Windows/POSIX source locators
+from another platform. These strings and their integrity encoding remain verbatim
+provenance: the reader never resolves foreign locators on the receiving host or
+infers source-image relocation. It always protects the actual local loaded
+artifact and locally interpretable known sources. Protect relocated inputs
+explicitly when saving or exporting:
+
+```julia
+restored = load_timed_tracking("relocated-timed-tracks.jld2")
+save_timed_tracking("another-timed-tracks.jld2", restored;
+    protected_paths=["relocated-input-a.tif", "relocated-input-b.tif"])
+export_table("tracks.csv", restored;
+    protected_paths=["relocated-input-a.tif", "relocated-input-b.tif"])
+```
+
+Saving records those extra local protection paths in the new artifact without
+changing the supplied wrapper. Explicit reader/writer/protection arguments refer
+to the receiving host; foreign-looking absolute paths are refused before
+`abspath`. Prospective alias guards retain existing parent-link, hardlink and
+conservative Windows case checks, and reject Windows trailing-dot/space
+components. Leading `//server/share` is conservatively Windows UNC under the
+untagged version-1 contract; POSIX provenance should use a single leading slash.
+Drive-relative/current-drive locators and malformed UNC roots are refused.
+Regression tests use foreign fixtures on Windows, not actual Linux/macOS or UNC
+share execution.
+
 Timed CSV uses `hammerhead-tracking-time-table-1`, with the legacy columns followed
 by exact timestamp/elapsed numerators and denominators, original numeric types,
 selected/acquisition clocks and units, source IDs/indices/labels, effective-unit
@@ -153,7 +179,9 @@ or unavailable uncertainty estimates are invented. Singleton observations have
 no velocity; empty results produce only the header.
 
 Pass the wrapper to supported methods. Explicitly extracting `tracks.result`
-discards timing and restores ordinal semantics. HammerheadGUI currently rejects
-the wrapper; it does not support actual-time mean-speed displays. Tracking export
-with spatial transforms, combined timed native sequences, checkpoint/replay, and
-time-aware spectral analyses remain separate extensions.
+discards timing and restores ordinal semantics. Use the
+[actual-time GUI guide](gui_tracking_timing.md) for supported dedicated artifact
+loading and mean-speed displays, and
+[calibrated scattered export](calibrated_scattered_export.md) for explicit spatial
+transforms. Combined timed native sequences, checkpoint/replay, and time-aware
+spectral analyses remain separate extensions.

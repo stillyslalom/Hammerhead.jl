@@ -76,6 +76,18 @@ are a separate CPU export with affine position/vector conversion and a verified
 CSV/TOML pair. They accept unscaled PTV, ordinal tracking and timed tracking;
 existing grid exports and ordinary `export_table` keep their contracts.
 
+Timed artifacts and calibrated companions preserve foreign Windows/POSIX source
+locators as provenance. Local relocation and consumed-file protection are explicit;
+this does not provide automatic source-file discovery or source-byte verification.
+
+[Temporal spectra](../howto/spectrum_timing.md) accept an explicit interval or
+sample times checked for uniformity within declared tolerances. They do not
+resample irregular data or infer sampling intervals from image-pair delays.
+
+[Ordinary GUI replay](../howto/gui_experiment_replay.md) reports completed pairs
+and supports cooperative cancellation after pair writes and loader cleanup.
+Its native prefix has no checkpoint resume guarantee.
+
 [GUI recipe comparison](../howto/gui_comparison.md) uses the shared selected-pair
 comparison and report contracts. It runs saved CPU/KA planar recipes; richer
 GUI controls do not expand the core recipe scope or supply accuracy ground truth.
