@@ -137,3 +137,10 @@ ordered duplicate steps, every built-in option and embedded background precision
 Explicit verified-pair previews apply the saved core operations to full images
 before ROI and show masks as overlays. Shared display ranges support comparison;
 these images do not establish improved PIV accuracy or uncertainty coverage.
+
+The [ROI and scale revision view](../howto/gui_recipe_geometry_revision.md) edits
+inclusive original-image bounds and isotropic physical-scale factors through the
+same complete-recipe controller. Disabling either setting restores `nothing`;
+masks and backgrounds retain their full-image geometry. Numeric scale factors
+must agree with the caller's unit labels. Attaching a scale leaves stored pixel
+coordinates and displacement unchanged; display conversion remains separate.

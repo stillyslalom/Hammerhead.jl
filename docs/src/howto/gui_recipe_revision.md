@@ -3,6 +3,10 @@
 Choose **revise pass schedule** in the [saved-experiment workflow](gui_experiments.md).
 It captures a separate copy of the selected record. The source recipe, its run
 history and the displayed result remain separate from the revision.
+For bounds and calibration factors, use the separate
+[ROI and scale form](gui_recipe_geometry_revision.md). Programmatic changes to
+passes, preprocessing and geometry can share one `RecipeRevisionController`
+and are validated and saved as a complete recipe.
 
 Select a pass and a field group. Edit the interrogation window, search area,
 overlap, correlation and peak settings, validation controls, iteration settings

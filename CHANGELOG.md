@@ -208,6 +208,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added saved-planar ROI and physical-scale revision with exact imported values,
+  explicit disabling and retained raw drafts. Validation preserves the complete
+  pass/preprocessing recipe and full-image mask/background geometry. Distinct
+  saves retain input identity and start with empty history; scale factors remain
+  metadata until physical conversion is requested.
 - Added ordered preprocessing revision with duplicate steps, every built-in
   option and exact imported background precision. Explicit image-pair previews
   verify original inputs and use replay preprocessing on full frames before ROI,

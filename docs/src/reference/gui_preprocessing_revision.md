@@ -16,6 +16,9 @@ Shared validation, diff and distinct-save behavior follows
 
 These actions preserve every other imported recipe setting. Ordering, duplicates
 and embedded background values/precision contribute to the recipe identity.
+When sharing a controller with the [ROI/scale form](gui_recipe_geometry_revision.md),
+its geometry drafts are composed with the pass and preprocessing drafts at
+validation/save time; the preprocessing form does not reset them.
 No new core schema, ancestry field or history migration is introduced. New
 saved records preserve original ordered input identity and start with empty
 runs. External script references are retained and verified as bytes, never

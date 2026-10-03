@@ -716,7 +716,7 @@ evidence.
   public API checks pass, with 286 source/test/docs/environment identities
   unchanged during final validation. Native desktop and other-platform evidence
   remains separate; cooperative scheduling may pause rendering.
-- [ ] Add lossless saved-planar ROI and isotropic physical-scale revision through
+- [x] Add lossless saved-planar ROI and isotropic physical-scale revision through
   the shared recipe controller. Preserve exact imported bounds, scale factors and
   unit labels, ordered passes/preprocessing and full-image masks/backgrounds.
   Explicit disabling must restore `nothing`; refuse incompatible ROI/pass
@@ -726,6 +726,26 @@ evidence.
   applied once. Do not infer calibration-line endpoints absent from the record.
   Test distinct saves, complete-recipe composition and compact interactions;
   lossless mask import/editing remains a separate part of workflow integration.
+  The [geometry editor](docs/src/howto/gui_recipe_geometry_revision.md) passes
+  88 new controller, 264 independent replay/physical-conversion and 106 hidden
+  interaction checks. The full GUI suite passes 3,007 checks on Windows/Julia
+  1.11.4; all seven documentation tutorials and public API checks pass. Both
+  900×600 and 1100×800 captures were inspected, with 292 source/test/docs/
+  environment identities unchanged during final validation. Native desktop
+  and other-platform acceptance remain separate.
+- [ ] Add lossless saved-planar mask revision with a detached full-image raster.
+  Preserve imported bits and distinguish `nothing` from an enabled all-false
+  mask. Seed the existing polygon/morphology editor without reconstructing
+  polygons or discarding the raster on recomputation. Keep clear-all and
+  reset-to-imported actions distinct. Capture explicit file replacement options,
+  verify source bytes and protect consumed paths for the controller lifetime.
+  Use a verified raw reference image with its own captured identity; mask edits
+  must not execute preprocessing scripts. Apply editor bits explicitly, refusing
+  unfinished polygons and stale edit sessions. Preserve ROI, scale, pass settings,
+  preprocessing and `mask_threshold`; validate full-image shape for every input.
+  Verify exact round trips, disable/re-enable, polygon/hole/morphology behavior,
+  replacement and save guards, full-frame-before-ROI replay parity, bounded
+  retained image state and compact actual interactions.
 - [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.

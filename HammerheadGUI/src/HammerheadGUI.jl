@@ -78,6 +78,7 @@ export RecipeRevisionController, revision_fields, set_revision_pass!, insert_rev
 export preprocessing_fields, set_revision_preprocess!, insert_revision_preprocess!,
        move_revision_preprocess!, delete_revision_preprocess!, set_revision_background!,
        load_revision_background!, RecipeImagePreviewController, preview_recipe_images!
+export revision_roi_fields, revision_scale_fields, set_revision_roi!, set_revision_scale!
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -126,6 +127,8 @@ export preprocessing_fields, set_revision_preprocess!, insert_revision_preproces
        move_revision_preprocess!, delete_revision_preprocess!, set_revision_background!,
        load_revision_background!, RecipeImagePreviewController, preview_recipe_images!
 export preprocessing_revision, preprocessing_revision!
+export revision_roi_fields, revision_scale_fields, set_revision_roi!, set_revision_scale!,
+       recipe_geometry_revision, recipe_geometry_revision!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,
@@ -142,6 +145,7 @@ include("views/result_quality_report.jl")
 include("views/recipe_comparison.jl")
 include("views/recipe_revision.jl")
 include("views/preprocessing_revision.jl")
+include("views/recipe_geometry_revision.jl")
 include("views/experiment_workflow.jl")
 include("views/checkpoint_workflow.jl")
 include("views/mask_editor.jl")
