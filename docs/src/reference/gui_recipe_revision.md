@@ -11,8 +11,10 @@ and each pass's validation tuple. It does not modify the source record or add
 a new lineage, checkpoint or replay schema.
 
 The same controller also holds ordered preprocessing drafts for the
-[preprocessing editor](../howto/gui_preprocessing_revision.md). Validation and
-saving compose both draft sequences; every field outside those edits is retained.
+[preprocessing editor](../howto/gui_preprocessing_revision.md) and raw ROI/scale
+drafts for the [geometry form](../howto/gui_recipe_geometry_revision.md).
+Validation and saving compose all these drafts; every field outside those edits
+is retained. Disabled geometry sections retain text but compose `nothing`.
 Explicit image-pair conditioning uses a separate preview controller and does not
 turn a metadata difference into a numerical assessment.
 
@@ -23,8 +25,8 @@ starts with no runs. Input verification and image decoding have their normal
 I/O and memory costs; a task is not a responsiveness guarantee.
 
 The controller retains separate current drafts, last valid preview and last
-saved record. Raw invalid text survives edits, while preview/save actions refuse
-it. Requests are detached before callbacks. Additional source/history/result
+saved record. Raw invalid text survives edits; preview/save actions refuse invalid
+active settings. Requests are detached before callbacks. Additional source/history/result
 protection belongs to this revision workflow because the ordinary core
 [`save_experiment`](@ref) API also supports updating an existing record.
 Previously saved revision destinations remain protected. Observer failures do

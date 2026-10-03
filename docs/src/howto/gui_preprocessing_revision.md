@@ -4,6 +4,10 @@ Open the preprocessing revision view for a saved planar experiment. It keeps
 the imported recipe and history separate from the editable draft. The existing
 [pass revision editor](gui_recipe_revision.md) uses the same controller; neither
 projects an imported recipe into an effort preset or the narrower batch form.
+The [ROI and scale form](gui_recipe_geometry_revision.md) edits geometry through
+the same controller API. A single controller can compose pass, preprocessing and
+geometry drafts before validation or a distinct save; opening an editor from
+the saved workflow starts a separate revision of that selected record.
 
 The ordered list supports adding, duplicating, moving and deleting steps. Every
 listed step runs in order: two copies of an operation are two applications,

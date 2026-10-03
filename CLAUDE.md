@@ -655,6 +655,12 @@ captures an explicit original pair, verifies bytes around decoding/conditioning,
 and uses exact replay preprocessing in recipe precision on full images before ROI.
 Its detached bundle keeps its own recipe/pair identity; mask/ROI are overlays and
 raw/processed views share an explicit intensity range. Scripts remain references.
+`recipe_geometry_revision[!]` edits raw ROI/scale drafts on the same controller.
+Preserve exact imported bounds, Float64 factors and unit labels. Disabled drafts
+retain their raw text but compose `nothing`; enabling never invents a calibration.
+Metadata preflight checks each recorded pass and frame. Full-image masks and
+backgrounds stay in original coordinates, while stored result pixels/displacements
+remain unscaled until physical conversion. Capture all drafts before notifications.
 Preserve all unedited pass fields, ordered validator tuples
 and the complete imported recipe options. Raw text remains separate from the
 last validated candidate; invalid visible edits must never fall back to stale
@@ -1064,6 +1070,10 @@ as contrast evidence; preserve any genuine processing-precision difference.
   core operations in both image precisions, including full-frame-before-ROI and
   changed-input checks. View tests exercise actual controls, shared image ranges,
   original-coordinate overlays and retained preview identities at compact sizes.
+- GUI geometry revision tests preserve enabled/disabled settings, invalid text,
+  complete-recipe composition and original-coordinate ROI behavior. Independent
+  replay checks distinguish attached scale metadata from physical conversion;
+  form tests cover compact numeric editing and protected workflow launch.
 - `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
   unavailable populations and metadata detachment. Calibrated scattered export
   tests check affine bases, units, exact intervals and paired-artifact verification.

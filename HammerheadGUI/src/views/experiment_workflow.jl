@@ -33,14 +33,18 @@ instead of opening the default editor window. Queued I/O may pause rendering.
 "Revise preprocessing" opens the ordered preprocessing editor with the same
 captured record and path protections. `preprocessing_revision_launcher` can
 receive its controller instead of opening the default window.
+"Revise ROI / scale" opens numeric geometry and physical-scale revision with
+the same capture and protection rules. `geometry_revision_launcher` can receive
+its controller instead of opening the default window.
 """
 function experiment_workflow(ec::ExperimentController=ExperimentController();
                              batch::Union{Nothing,BatchRunner}=nothing,size=(1100,800),
                              report_path_picker::Function=()->save_file(;filterlist="toml"),
                              revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)),
-                             preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)))
+                             preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)),
+                             geometry_revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_geometry_revision(controller)))
     fig=Figure(;size)
-    experiment_workflow!(fig[1,1],ec;batch,report_path_picker,revision_launcher,preprocessing_revision_launcher)
+    experiment_workflow!(fig[1,1],ec;batch,report_path_picker,revision_launcher,preprocessing_revision_launcher,geometry_revision_launcher)
     fig
 end
 
@@ -90,7 +94,8 @@ function experiment_workflow!(target,ec::ExperimentController;
                               batch::Union{Nothing,BatchRunner}=nothing,
                               report_path_picker::Function=()->save_file(;filterlist="toml"),
                               revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)),
-                              preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)))
+                              preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)),
+                              geometry_revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_geometry_revision(controller)))
     gl=GridLayout(target)
     controls=GridLayout(gl[1,1];valign=:top,tellheight=false)
     rowgap!(controls,3)
@@ -160,6 +165,7 @@ function experiment_workflow!(target,ec::ExperimentController;
     comparison_btn=Button(content[4,1:3];label="compare a representative pair…",tellwidth=false)
     revision_btn=Button(content[5,1:3];label="revise pass schedule...",height=28,fontsize=14,tellwidth=false)
     preprocessing_revision_btn=Button(content[6,1:3];label="revise preprocessing...",height=28,fontsize=14,tellwidth=false)
+    geometry_revision_btn=Button(content[7,1:3];label="revise ROI / scale...",height=28,fontsize=14,tellwidth=false)
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
@@ -282,7 +288,8 @@ function experiment_workflow!(target,ec::ExperimentController;
     end
     revision_launch_pending=Ref(false)
     for (button,launcher) in ((revision_btn,revision_launcher),
-                              (preprocessing_revision_btn,preprocessing_revision_launcher))
+                              (preprocessing_revision_btn,preprocessing_revision_launcher),
+                              (geometry_revision_btn,geometry_revision_launcher))
         on(button.clicks) do _
             revision_launch_pending[] && return
             guarded() do
