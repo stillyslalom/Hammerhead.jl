@@ -19,6 +19,13 @@ native spans; malformed geometry is rejected before calculation. Integer
 component subtraction overflow returns `NaN` instead of a wrapped finite value.
 See [derivative support](../howto/derivative_support.md).
 
+Area circulation also accepts `stencil=:available` or `:centered`, retaining
+the available-neighbor default and existing coverage reporting. The GUI uses
+one explicit policy across derivative scalars and area circulation. Component
+profiles and line circulation do not depend on that policy. Support maps are
+available through `available_fields(ex)` only while inspecting derivative
+support; `available_fields(result)` retains its ordinary field list.
+
 JLD2 is the lossless Julia round-trip format. Files carry `format_version`;
 readers reject unknown versions rather than silently misinterpreting data.
 An empty result vector (or a batch stopped before its first result) is a valid
@@ -33,6 +40,16 @@ changed recipe/input identities are rejected. There is no implicit migration
 from historical planning files or result-only files: those files do not contain
 the complete processing recipe. See [experiment replay](../howto/experiments.md)
 for the supported planar scope and environment compatibility checks.
+
+Stereo records use an independent `stereo_experiment_format_version = 1` with
+frozen built-in camera coefficients, dewarp-grid settings and ordered four-file
+acquisitions. They leave planar records and native result layouts unchanged.
+Saved native runs carry a separate `stereo_experiment_run_format_version = 1`
+association. Calibration fitting and self-calibration execution are not replayed;
+supplied calibration notes remain descriptive provenance. This format does not
+extend planar checkpoints or GUI saved-experiment controls to stereo.
+See [frozen-camera stereo replay](../howto/stereo_experiments.md) for its
+environment checks and completed-prefix verification limits.
 
 Checkpoint metadata has its own `checkpoint_format_version = 1`, separate from
 experiment records and native result files. It binds immutable per-pair native

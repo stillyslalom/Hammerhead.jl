@@ -103,6 +103,7 @@ has task guides and the [API reference](https://stillyslalom.github.io/Hammerhea
 
 Development priorities and outstanding work are tracked in [ROADMAP.md](ROADMAP.md).
 The development checkout also includes [saved planar experiments](docs/src/howto/experiments.md),
+[frozen-camera stereo replay](docs/src/howto/stereo_experiments.md),
 [checkpoint/resume](docs/src/howto/checkpoints.md) with
 [GUI controls](docs/src/howto/gui_checkpoints.md),
 [shared script/GUI quality reports](docs/src/howto/run_quality.md),
@@ -127,5 +128,10 @@ The [rendering study](docs/src/howto/rendering_uncertainty.md) compares particle
 support, pixel-area sampling and known-shift interpolation on fixed clean scenes.
 The [spatial-response study](docs/src/howto/spatial_transfer.md) compares complete
 schedules at matched vector spacing using analytic truth and explicit populations.
+The [GUI derivative inspector](docs/src/howto/gui_derivative_support.md) shows
+eligible centers, actual neighboring stencils and unavailable gradients.
+The [annotated tracking scorer](docs/src/howto/validation_ptv_tracking.md)
+evaluates correspondence, identity changes and gap recovery with explicit
+visibility and ambiguity accounting.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

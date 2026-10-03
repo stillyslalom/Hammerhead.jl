@@ -37,6 +37,15 @@ returns its vertical space when disabled. It makes no uncertainty applicability
 or accuracy claim and does not infer absent history from current flags.
 While details are open, profile lines remain overlaid but their separate graph
 is hidden; closing details reveals a profile placed on the current display.
+
+The planar "derivative support" tool uses that drawer for scalar support counts
+and selected immediate contributors. Its four discrete maps keep excluded and
+unavailable nodes visible with fixed legends. The policy selector can require
+both immediate neighbors; this explorer-wide policy persists after changing
+tools and remains labelled on derived scalar fields. Nonfinite scalar output
+is gray while inspecting support. Recorded details return after leaving the
+tool if their toggle remains enabled. No measurement origin or uncertainty
+applicability is inferred from derivative support or current flags.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
 result_explorer(path::AbstractString; lazy::Bool = false,format::Symbol=:native, kwargs...) =
@@ -85,7 +94,21 @@ function result_explorer!(target, ex::ResultExplorer)
     # recreated per refresh (grid sizes may change across a mixed sequence).
     crange = Observable((0.0, 1.0))
     clabel = Observable("")
-    Colorbar(gl[1, 2]; colormap = :viridis, limits = crange, label = clabel)
+    cmap=Observable{Any}(:viridis)
+    cticks=Observable{Any}(GLMakie.Makie.automatic)
+    colorbar=Ref{Any}(Colorbar(gl[1,2];colormap=:viridis,limits=crange,label=clabel))
+    colorbar_kind=Ref(:scalar)
+    function refresh_colorbar!()
+        kind=ex.field[] in Controllers.DERIVATIVE_SUPPORT_FIELDS ? ex.field[] : :scalar
+        if kind!==colorbar_kind[]
+            # Makie's categorical mapping/type observers are not updated
+            # atomically when changing a continuous colormap into bands.
+            # Recreate only on legend-type changes, with constant mapping.
+            delete!(colorbar[])
+            colorbar[]=Colorbar(gl[1,2];colormap=cmap[],limits=crange,label=clabel,ticks=cticks[])
+            colorbar_kind[]=kind
+        end
+    end
 
     controls = GridLayout(gl[1:4, 3]; tellheight = false, valign = :top)
     rowgap!(controls,4)
@@ -105,7 +128,7 @@ function result_explorer!(target, ex::ResultExplorer)
     Label(controls[6, 1], "tool"; halign = :left, font = :bold)
     tool_menu = Menu(controls[7, 1]; tellwidth = false,
                      options = [("inspect", :inspect), ("profile", :profile),
-                                ("circulation", :circulation)])
+                                ("circulation", :circulation),("derivative support",:derivative_support)])
     tool_info = Label(controls[8, 1], ""; halign = :left, justification = :left,
                       word_wrap = true, width = 210, tellwidth = false)
     inspection_hint=Label(controls[9, 1], "click a vector to inspect"; halign = :left, font = :bold)
@@ -133,6 +156,14 @@ function result_explorer!(target, ex::ResultExplorer)
     companion_previous=Button(companion_pager[1,1];label="previous details",tellwidth=false)
     companion_page_label=Label(companion_pager[1,2],"")
     companion_next=Button(companion_pager[1,3];label="next details",tellwidth=false)
+    stencil_menu=Menu(companion_pager[1,4];options=[("available neighbors",:available),("require both neighbors",:centered)],tellwidth=false,fontsize=12)
+    on(stencil_menu.layoutobservables.suggestedbbox;priority=typemax(Int)) do box
+        if ex.tool[]!==:derivative_support && box.origin[1]>-5000
+            stencil_menu.layoutobservables.suggestedbbox[]=Rect2f(-10000,-10000,box.widths...)
+            return Consume(true)
+        end
+        Consume(false)
+    end
     companion_info=Label(companion_panel[2,1],"";halign=:left,valign=:top,justification=:left,
         word_wrap=true,width=300,tellwidth=false,fontsize=13)
     companion_node=Label(companion_panel[2,2],"";halign=:left,valign=:top,justification=:left,
@@ -193,23 +224,37 @@ function result_explorer!(target, ex::ResultExplorer)
         [join(lines[i:min(i+10,length(lines))],"\n") for i in 1:11:length(lines)]
     end
     function refresh_companions!()
-        rowsize!(gl,4,Fixed(ex.companion_enabled[] ? 220 : 0))
-        companion_info.visible[]=ex.companion_enabled[]
-        companion_node.visible[]=ex.companion_enabled[]
+        derivatives=ex.tool[]===:derivative_support
+        details=ex.companion_enabled[] || derivatives
+        rowsize!(gl,4,Fixed(details ? 220 : 0))
+        companion_info.visible[]=details
+        companion_node.visible[]=details
         for block in (companion_previous,companion_next)
-            block.blockscene.visible[]=ex.companion_enabled[]
+            block.blockscene.visible[]=details
         end
-        companion_page_label.visible[]=ex.companion_enabled[]
+        companion_page_label.visible[]=details
+        stencil_menu.blockscene.visible[]=derivatives
+        colsize!(companion_pager,4,Fixed(derivatives ? 220 : 0))
         try
-            summary,node=Controllers._companion_text(ex)
+            summary,node=derivatives ? Controllers._derivative_text(ex) : Controllers._companion_text(ex)
             left,right=companion_chunks(summary),companion_chunks(node)
             companion_pages[]=[(i<=length(left) ? left[i] : "",i<=length(right) ? right[i] : "") for i in 1:max(length(left),length(right))]
         catch err
-            companion_pages[]=[("Recorded companion inspection failed: $(Controllers._errmsg(err))","")]
+            companion_pages[]=[("Processing details unavailable: $(Controllers._errmsg(err))","")]
         end
         companion_page[]=1
     end
-    onany((args...)->refresh_companions!(),ex.frame,ex.selection,ex.companion_enabled)
+    onany((args...)->refresh_companions!(),ex.frame,ex.selection,ex.companion_enabled,ex.tool,ex.derivative_stencil,ex.field)
+    on(stencil_menu.selection) do policy
+        (policy===nothing || policy===ex.derivative_stencil[]) && return
+        try
+            set_derivative_stencil!(ex,policy)
+        catch err
+            ex.status[]=Controllers._errmsg(err)
+            stencil_menu.i_selected[]=findfirst(o->last(o)===ex.derivative_stencil[],stencil_menu.options[])
+        end
+    end
+    _sync_menu!(stencil_menu,ex.derivative_stencil)
     on(slider.value) do i
         i == ex.frame[] && return
         try
@@ -233,15 +278,17 @@ function result_explorer!(target, ex::ResultExplorer)
         (t === nothing || t == ex.tool[]) && return
         try
             set_tool!(ex, t)
-        catch
-            i = findfirst(==(ex.tool[]), (:inspect, :profile, :circulation))
+        catch err
+            ex.status[]=Controllers._errmsg(err)
+            i = findfirst(==(ex.tool[]), Controllers.EXPLORER_TOOLS)
             tool_menu.i_selected[] = something(i, 1)
         end
     end
     on(ex.tool) do t
-        i = findfirst(==(t), (:inspect, :profile, :circulation))
+        i = findfirst(==(t), Controllers.EXPLORER_TOOLS)
         (i === nothing || i == tool_menu.i_selected[]) || (tool_menu.i_selected[] = i)
     end
+    tool_menu.i_selected[]=something(findfirst(==(ex.tool[]),Controllers.EXPLORER_TOOLS),1)
     # Manual colorbar bounds: one-way widget -> controller (the box's
     # placeholder documents the cleared state); junk entries are ignored.
     on(cmin_box.stored_string) do s
@@ -328,7 +375,7 @@ function result_explorer!(target, ex::ResultExplorer)
         tool_line[] = pts
         tool_info.text[] = tool_summary(ex)
         pd = ex.profile_data[]
-        if pd === nothing || ex.companion_enabled[]
+        if pd === nothing || ex.companion_enabled[] || ex.tool[]===:derivative_support
             if profile_ax[] !== nothing
                 delete!(profile_ax[])
                 profile_ax[] = nothing
@@ -359,14 +406,15 @@ function result_explorer!(target, ex::ResultExplorer)
 
     function refresh_menu!()
         r=current_result(ex)
-        fields = available_fields(r)
-        opts = [(f===:magnitude && r.scale!==nothing ? "speed" : field_name(f), f) for f in fields]
+        fields = available_fields(ex)
+        opts = [(f in Controllers.DERIVATIVE_SUPPORT_FIELDS ? Controllers._DERIVATIVE_MAP_NAMES[findfirst(==(f),Controllers.DERIVATIVE_SUPPORT_FIELDS)] : f===:magnitude && r.scale!==nothing ? "speed" : field_name(f), f) for f in fields]
         opts == menu.options[] || (menu.options[] = opts)
         i = something(findfirst(==(ex.field[]), fields), 1)
         i == menu.i_selected[] || (menu.i_selected[] = i)
     end
     on(_ -> refresh_menu!(), ex.frame)
     on(_ -> refresh_menu!(), ex.field) # sync the menu on programmatic set_field!
+    on(_ -> refresh_menu!(),ex.tool)
 
     # The plots are recreated per refresh rather than driven by per-argument
     # observables: grid sizes (and the plot type itself, across a mixed
@@ -420,10 +468,18 @@ function result_explorer!(target, ex::ResultExplorer)
         data = Controllers.current_field_values(ex)   # cached for derived fields
         lo, hi = current_color_limits(ex)
         crange[] = (lo, hi)
-        clabel[] = field_label(r, ex.field[])
+        clabel[] = Controllers._current_field_label(ex)
+        categorical=ex.field[] in Controllers.DERIVATIVE_SUPPORT_FIELDS
+        if categorical
+            ticks,labels=Controllers._derivative_map_legend(ex.field[])
+            cmap[]=GLMakie.Makie.cgrad([:gray75,:steelblue,:darkorange,:purple,:darkcyan][1:length(ticks)],length(ticks);categorical=true)
+            cticks[]=(ticks,labels)
+        else
+            cmap[]=:viridis;cticks[]=GLMakie.Makie.automatic
+        end
         h = heatmap!(ax, collect(r.x), collect(r.y), permutedims(data);
-                     colormap = :viridis, colorrange = (lo, hi),
-                     nan_color = :transparent)
+                     colormap = cmap[], colorrange = (lo, hi),
+                     nan_color = ex.tool[]===:derivative_support ? :gray85 : :transparent)
         translate!(h, 0, 0, -1)
         push!(plots, h)
         _draw_arrows!(r)
@@ -485,6 +541,7 @@ function result_explorer!(target, ex::ResultExplorer)
 
     function refresh_plots!()
         r = current_result(ex)
+        cmap[]=:viridis;cticks[]=GLMakie.Makie.automatic
         scale=r isa TimedTrackingResult ? r.result.scale : r.scale
         ax.xlabel[], ax.ylabel[] = Hammerhead.plot_axis_labels(scale)
 
@@ -496,13 +553,14 @@ function result_explorer!(target, ex::ResultExplorer)
         end
         empty!(plots)
         _draw!(r)
+        refresh_colorbar!()
         has_drawn[] && (ax.targetlimits[] = limits) # keep the user's zoom across refreshes
         has_drawn[] = true
         return
     end
     onany((args...) -> refresh_plots!(),
           ex.frame, ex.field, ex.show_vectors, ex.highlight_outliers,
-          ex.color_mode, ex.color_min, ex.color_max)
+          ex.color_mode, ex.color_min, ex.color_max,ex.tool)
 
     refresh_menu!()
     refresh_companions!()

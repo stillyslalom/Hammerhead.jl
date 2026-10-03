@@ -8,6 +8,17 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added a bench-only annotated-particle scorer for detection, correspondence,
+  identity changes, fragmentation and gap recovery. It separates localization
+  from identity ambiguity and preserves full versus detected-only populations.
+  Imported clips require complete visibility annotations and verified image
+  identities; controlled synthetic results do not establish real-recording accuracy.
+- Added separate stereo experiment records for replay from frozen fitted
+  cameras, signed dewarp grids, per-camera preprocessing and exact pair timing.
+  Run associations support artifact and raw-field verification. Calibration
+  fitting and self-calibration execution remain outside replay.
+- Area circulation accepts the same explicit derivative stencil policy as
+  planar flow gradients and reports the resulting valid-area coverage.
 - Added opt-in derivative stencil descriptions and a centered-only policy.
   Contributor indices, signed spans and weights remain separate from input
   eligibility and finite outputs. Invalid coordinate geometry is rejected;
@@ -123,7 +134,8 @@ validation and the core-first, GUI-second release sequence.
   environment provenance, and streaming replay with optional run records.
   Replay supports CPU/KA and Float32/Float64; custom preprocessing requires a
   caller-provided function matching a recorded script reference. Saved scripts
-  are never automatically executed. Stereo, PTV, tracking, and GPU experiment
+  are never automatically executed. Frozen-camera stereo replay uses the
+  separate format described above; PTV, tracking and vendor-GPU experiment
   recipes remain unsupported.
 - Added a reproducible validation scorecard command covering seeded synthetic
   truth and committed Challenge A/4E smoke data. Reports separate error claims
@@ -163,6 +175,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- The planar result explorer can inspect derivative eligibility, neighboring
+  stencils and finite gradient components with discrete maps and selected-node
+  details. One stencil policy applies across derived scalars and area
+  circulation; profiles continue to sample velocity components. Current outlier
+  flags no longer imply that replacement history was recorded.
 - Saved-experiment controls use Files, Replay and Reports sections, with
   persistent cancellation/progress/status and pagination sized to available
   space. Inactive controls retain their settings and are removed from mouse

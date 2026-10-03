@@ -113,6 +113,16 @@ interactive-analysis state `tool` / `tool_points` / `profile_data` /
 `circulation_result` (see [`set_tool!`](@ref) and [`click!`](@ref);
 planar results only — tool state clears on frame switches).
 
+The `:derivative_support` tool exposes current-node eligibility, actual x/y
+stencils and finite component quotients in a paged drawer. The explorer-wide
+`derivative_stencil` defaults to `:available`; [`set_derivative_stencil!`](@ref)
+can require both immediate neighbors with `:centered`. This policy persists
+across tools/frames and applies to all derived scalar plots and area circulation.
+Profiles and line circulation continue sampling u/v. Rich support metadata is
+retained only for the current planar frame while the tool is active; input
+integrity is checked on inspection, not continuously. This analysis describes
+stored displayed values and makes no origin/resolution/UQ applicability claim.
+
 Results with a [`PhysicalScale`](@ref) are converted through
 [`physical`](@ref) for display in physical units. Unscaled results retain
 their original units.
@@ -173,6 +183,8 @@ struct ResultExplorer
     derived_cache::Dict{Int,NamedTuple}
     status::Observable{String}
     companion_enabled::Observable{Bool}
+    derivative_stencil::Observable{Symbol}
+    derivative_digest::Base.RefValue{Union{Nothing,String}}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
@@ -215,7 +227,8 @@ function _result_explorer(conv, path)
                         Observable(NTuple{2,Float64}[]),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
-                        Dict{Int,NamedTuple}(), Observable(""),Observable(false))
+                        Dict{Int,NamedTuple}(), Observable(""),Observable(false),
+                        Observable(:available),Ref{Union{Nothing,String}}(nothing))
     last_frame = Ref(1)
     # Read failures must occur before downstream view notifications. A direct
     # observable write has already changed its value: restore silently and
@@ -229,15 +242,19 @@ function _result_explorer(conv, path)
             rethrow()
         end
         changed=i!=last_frame[]
-        changed && empty!(ex.derived_cache)
+        changed && _clear_derivatives!(ex)
         last_frame[] = i
         ex.status[] = ""
-        ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
-        ex.selection[] = _valid_selection(r, ex.selection[])
+        # Establish a compatible selection/tool before field observers draw the
+        # new kind. In particular, support maps must not reach a scattered view.
+        ex.selection.val = _valid_selection(r, ex.selection[])
         # tool state describes one frame's flow: clear it on a frame switch,
         # and revert to :inspect when the new result has no derived analysis
         changed && _reset_tool!(ex)
         r isa PIVResult || ex.tool[] === :inspect || (ex.tool[] = :inspect)
+        ex.tool[]===:derivative_support && !_derivative_grid(r) && (ex.tool[]=:inspect)
+        ex.field[] in available_fields(ex) || (ex.field[] = first(available_fields(r)))
+        notify(ex.selection)
     end
     last_mode=Ref(false)
     on(ex.companion_enabled;priority=typemax(Int)) do enabled
@@ -259,9 +276,10 @@ function _result_explorer(conv, path)
             rethrow()
         end
         last_mode[]=enabled
-        empty!(ex.derived_cache)
+        _clear_derivatives!(ex)
         ex.frame[]=ex.frame[] # refresh the same display without retaining the raw payload
     end
+    _attach_derivative_state!(ex)
     return ex
 end
 
@@ -534,8 +552,7 @@ _derived_field(d::NamedTuple, field::Symbol) =
 
 # Only the current frame's derivatives are cached; frame changes evict them,
 # including on eager explorers, so derived data cannot grow with a recording.
-_derived(ex::ResultExplorer) =
-    get!(() -> flow_derivatives(current_result(ex)), ex.derived_cache, ex.frame[])
+_derived(ex::ResultExplorer) = _explorer_derivatives(ex)
 
 """
     field_values(result, field::Symbol)
@@ -561,6 +578,7 @@ end
 function current_field_values(ex::ResultExplorer)
     r = current_result(ex)
     field = ex.field[]
+    field in DERIVATIVE_SUPPORT_FIELDS && return _derivative_map(ex,field)
     r isa PIVResult && field in DERIVED_FIELDS &&
         return _derived_field(_derived(ex), field)
     return field_values(r, field)
@@ -651,10 +669,10 @@ end
 """
     set_field!(ex::ResultExplorer, field::Symbol)
 
-Display `field` (must be in `available_fields(current_result(ex))`).
+Display `field` (must be in `available_fields(ex)`).
 """
 function set_field!(ex::ResultExplorer, field::Symbol)
-    field in available_fields(current_result(ex)) ||
+    field in available_fields(ex) ||
         throw(ArgumentError("field :$field is not available for the current result"))
     ex.field[] = field
     return ex
@@ -756,8 +774,12 @@ The colorbar limits in effect for the current frame and field: the automatic
 [`color_limits`](@ref) under `ex.color_mode`, with any manual
 [`set_color_limits!`](@ref) overrides applied bound-wise (an inverted or
 degenerate manual pair is padded to a valid range).
+Derivative support maps instead use fixed categorical limits/legends showing
+excluded nodes. Scalar limits remain stored and take effect on returning to a
+scalar field.
 """
 function current_color_limits(ex::ResultExplorer)
+    ex.field[] in DERIVATIVE_SUPPORT_FIELDS && return _derivative_map_limits(ex.field[])
     _current_color_limits(ex,current_result(ex),current_field_values(ex))
 end
 function _current_color_limits(ex,r,data)
@@ -824,7 +846,7 @@ clear_selection!(ex::ResultExplorer) = (ex.selection[] = nothing; ex)
 # Interactive derived-analysis tools (planar PIVResult only)
 # ---------------------------------------------------------------------------
 
-const EXPLORER_TOOLS = (:inspect, :profile, :circulation)
+const EXPLORER_TOOLS = (:inspect, :profile, :circulation,:derivative_support)
 
 # Clear the gesture points and computed outputs (frame switches, tool
 # switches, and restarts all funnel through here).
@@ -844,12 +866,18 @@ with `extract_profile`), or `:circulation` (clicks accumulate a contour,
 [`alt_click!`](@ref) closes it and evaluates `circulation`). The analysis
 tools need a planar `PIVResult` at the current frame; switching tools (or
 frames) clears any in-progress gesture and outputs.
+`:derivative_support` clicks select nodes and add four discrete maps to
+[`available_fields`](@ref). It needs two points per axis and validates geometry
+before changing the tool. Reselecting it rebuilds the captured analysis after
+display edits. Leaving it releases rich metadata. The explicit derivative
+stencil policy persists across tool changes.
 """
 function set_tool!(ex::ResultExplorer, tool::Symbol)
     tool in EXPLORER_TOOLS ||
         throw(ArgumentError("tool must be one of $(EXPLORER_TOOLS), got :$tool"))
     tool === :inspect || current_result(ex) isa PIVResult ||
         throw(ArgumentError("the :$tool tool needs a planar PIVResult at the current frame"))
+    tool===:derivative_support && _prepare_derivative_tool!(ex;refresh=true)
     _reset_tool!(ex)
     ex.tool[] = tool
     return ex
@@ -865,7 +893,7 @@ is computed when the second point lands, a third click starts a new line);
 """
 function click!(ex::ResultExplorer, x::Real, y::Real)
     tool = ex.tool[]
-    tool === :inspect && return select_nearest!(ex, x, y)
+    tool in (:inspect,:derivative_support) && return select_nearest!(ex, x, y)
     pts = ex.tool_points[]
     if tool === :profile
         length(pts) >= 2 && (empty!(pts); ex.profile_data[] = nothing)
@@ -901,11 +929,7 @@ function alt_click!(ex::ResultExplorer)
     end
     r = current_result(ex)
     contour = copy(pts)
-    area_report = circulation(r; region = contour, coverage = :report)
-    ex.circulation_result[] = (; line = circulation(r, contour),
-                               area = area_report.value, contour,
-                               area_report.valid_area, area_report.requested_area,
-                               area_report.coverage_fraction, area_report.complete)
+    ex.circulation_result[] = _explorer_circulation(r,contour,ex.derivative_stencil[])
     return ex
 end
 
@@ -943,6 +967,7 @@ area coverage).
 function tool_summary(ex::ResultExplorer)
     tool = ex.tool[]
     tool === :inspect && return ""
+    tool===:derivative_support && return "Derivative support: select a grid node.\nPolicy: $(_derivative_policy_name(ex.derivative_stencil[]))."
     r = current_result(ex)
     if tool === :profile
         ex.profile_data[] === nothing &&
@@ -963,7 +988,8 @@ function tool_summary(ex::ResultExplorer)
     else
         string("Γ (vorticity area) = ", _fmt(res.area), " ", un)
     end
-    return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text)
+    return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text,
+        res.stencil===:available ? "" : "\nArea policy: both immediate neighbors required.")
 end
 
 # Data-space point (x, y) marking the current selection, or `nothing` when the
@@ -989,7 +1015,7 @@ end
 _fmt(v::Real) = isfinite(v) ? @sprintf("%.4g", v) : "—"
 
 _status(r::GridResult, idx) = r.mask[idx]     ? "masked (no measurement)" :
-                              r.outliers[idx] ? "outlier (replaced)" : "valid"
+                              r.outliers[idx] ? "current outlier flag" : "valid"
 
 """
     describe_selection(ex::ResultExplorer) -> String

@@ -28,6 +28,17 @@ reconstructed world 3C residual. Inspection retains only the current display
 and packets. Scaled magnitude fields are labelled speed in length/time units;
 unscaled magnitude retains the displacement label.
 
+The planar [`:derivative_support` tool](../howto/gui_derivative_support.md)
+displays categorical eligibility, x/y
+stencil and finite-gradient-count maps, including excluded nodes. Selected-node
+details describe the immediate contributors in displayed units. Use
+`set_derivative_stencil!` to choose available neighbors or require both neighbors;
+the policy persists across tools and frames and also controls area circulation.
+Velocity-component profiles and line circulation remain independent. These
+support descriptions do not establish measurement origin, spatial resolution
+or uncertainty coverage. Rich metadata is retained only for the current frame
+while inspecting support; changed displayed inputs require an explicit refresh.
+
 ```@index
 Pages = ["gui_results.md"]
 ```
@@ -45,5 +56,5 @@ Pages = ["result_explorer.jl"]
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:type, :function]
-Pages = ["result_explorer.jl"]
+Pages = ["result_explorer.jl", "derivative_inspection.jl"]
 ```

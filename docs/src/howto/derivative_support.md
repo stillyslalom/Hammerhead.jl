@@ -117,5 +117,7 @@ The default returns exactly `(; dudx, dudy, dvdx, dvdy, valid)` and does not
 allocate the rich support matrices. Opt-in support stores only the current
 grid's maps and owned snapshots, without a sequence cache or new dependencies.
 Existing regular-grid arithmetic is preserved; malformed geometry that used
-to produce misleading denominators is now refused. GUI support inspection,
-measurement-origin association and uncertainty propagation are separate work.
+to produce misleading denominators is now refused. The
+[GUI support inspector](gui_derivative_support.md) displays these maps and
+contributors from the current physical display. Measurement-origin association
+and uncertainty propagation remain separate analyses.

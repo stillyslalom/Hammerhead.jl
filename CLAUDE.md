@@ -229,6 +229,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Area `circulation(result; region=...)` now errors on incomplete coverage
   by default; `coverage=:report` returns value, valid/requested area, fraction,
   and authoritative `complete` flag (no valid area gives `NaN` value).
+  Its `stencil` keyword uses the same derivative policy as scalar analysis;
+  centered-only support can reduce valid integrated area.
 - `artifact_paths.jl` — portable lexical source-locator classification, explicit
   local-path resolution and prospective alias checks. Foreign provenance is not
   resolved against the receiving workspace; protect actual consumed local files.
@@ -285,6 +287,18 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Capture timing and execution packets before either callback and recheck both
   before publication. Bind raw reconstructed and camera fields plus signed grid
   geometry; source bytes, calibration and hardware synchronization are not verified.
+- `stereo_experiments.jl` — independent primitive stereo recipe/record and native
+  run-association formats. Snapshot fitted Pinhole/Soloff cameras (or one rigid
+  wrapper), signed common grid, raw camera sizes, complete CPU/KA settings and
+  two built-in preprocessing pipelines. Decode Pinhole coefficients exactly
+  through the private fitted-snapshot constructor; do not renormalize them.
+  Rebuild and check maps, preserve exact ordered timing and pair-list versus
+  four-tuple scale semantics, and run noncollecting replay. Scientific settings
+  identity excludes descriptive calibration provenance and derived-map hashes;
+  full snapshot integrity still protects them. Supplied world/frame labels do
+  not infer scale factors. Verification streams raw results without rerunning
+  PIV; calibration fitting, self-calibration execution, custom cameras/scripts,
+  checkpoints and GUI stereo recipe controls remain separate work.
 - `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
   `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
   ordinal. Actual-time prediction and scattered validation normalize elapsed
@@ -568,6 +582,14 @@ exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
 switches; circulation reports both line-integral and vorticity-area
 estimators; the profile panel appears as a third layout row);
+`set_derivative_stencil!` selects an explorer-wide policy that persists across
+tools and frames, including area circulation; component profiles and line
+circulation remain independent. The `:derivative_support` tool adds discrete
+eligibility, x/y stencil and finite-component-count maps through
+`available_fields(ex)`, plus paged contributor details. Rich support metadata
+is retained only for the current frame while the tool is active. Inspection
+checks displayed-input integrity and requires explicit reselection to refresh
+after mutation. Current flags alone never establish measurement replacement.
 `MaskEditor`/`mask_editor`
 (gesture API `click!`/`alt_click!` holds the editing model; the view only
 forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
@@ -901,6 +923,18 @@ as contrast evidence; preserve any genuine processing-precision difference.
   Its separate known-translation deformation lane never supplies predictors or
   images to the PIV accuracy runs. Quadrature agreement and interior crops are
   numerical checks, not total-error bounds or uncertainty calibration.
+- `bench/validation_ptv_tracking.jl` scores complete ID/frame visibility
+  annotations using independent maximum-cardinality/minimum-distance localization.
+  Operational detection counts do not resolve identity: competing detections,
+  nearby targets and target/nuisance overlap retain conservative ambiguity.
+  Keep full and both-localized recall denominators, raw/accepted correspondence,
+  returned-track identity changes/fragmentation and scheduled-absence recovery
+  separate. Preserve all predicted edges, including wrong/unmapped/ambiguous
+  cases. Optional unknown intensity must not invent an annotated amplitude.
+  The regression suite enumerates tiny assignment oracles and checks explicit
+  identity/gap fixtures, manifest guards and cheap production clips. Full study
+  evidence requires a fresh process and frozen source; it does not close
+  independent or real-recording validation.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

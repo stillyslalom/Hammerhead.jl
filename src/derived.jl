@@ -374,7 +374,7 @@ end
 
 """
     circulation(result::PIVResult; region, include_invalid=false,
-                coverage=:error)
+                coverage=:error, stencil=:available)
 
 Integrate planar vorticity over a rectangle `(xmin, xmax, ymin, ymax)` or
 polygonal `region`. The scalar result uses stored component and coordinate
@@ -392,9 +392,11 @@ small for the ratio to differ from 1 in floating-point arithmetic.
 
 `include_invalid=true` admits flagged vectors when deriving vorticity, but
 masked and nonfinite vectors remain excluded.
+`stencil` is forwarded to [`flow_derivatives`](@ref); `:centered` requires
+both immediate eligible neighbors and can reduce the integrated valid area.
 """
 function circulation(r::PIVResult; region, include_invalid::Bool=false,
-                     coverage::Symbol=:error)
+                     coverage::Symbol=:error,stencil::Symbol=:available)
     coverage in (:error, :report) ||
         throw(ArgumentError("coverage must be :error or :report, got :$coverage"))
     length(r.x)>=2 && length(r.y)>=2 || throw(ArgumentError("circulation needs at least a 2x2 grid"))
@@ -428,7 +430,7 @@ function circulation(r::PIVResult; region, include_invalid::Bool=false,
     xmin, xmax = extrema(r.x)
     ymin, ymax = extrema(r.y)
     outside_grid = any(p -> !(xmin <= p[1] <= xmax && ymin <= p[2] <= ymax), poly)
-    omega = vorticity(r; include_invalid)
+    omega = vorticity(r; include_invalid,stencil)
     total = 0.0
     valid_area = 0.0
     area_compensation = 0.0

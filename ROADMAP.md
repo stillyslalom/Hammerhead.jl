@@ -129,6 +129,18 @@ existing implementation is preferable; they are not commitments to add an API.
   use an independent implementation comparison where useful and reproducible.
 - [ ] Evaluate PTV correspondence precision/recall, trajectory identity switches,
   fragmentation, and gap recovery on independent or annotated recordings.
+- [x] Add a reproducible annotated-particle scorer and controlled clip study
+  covering detection, correspondence, retained identities, fragmentation and
+  gap recovery. Preserve full versus detection-conditioned populations and
+  ambiguous identity bounds; verify an independent localization association.
+  Use complete ID/frame visibility annotations, guarded input manifests and
+  unchanged production tracking. Keep external/real-recording validation open.
+  The [scorer guide](docs/src/howto/validation_ptv_tracking.md) and
+  [2,197 focused checks](test/test_validation_ptv_tracking.jl) cover independent
+  assignment oracles, visibility/identity/gap populations and guarded imports.
+  A frozen eight-clip run and independent CSV/source audits preserve all
+  predictions: stress accepted recalls are 170/190 and 168/190 despite unit
+  accepted precision. This does not establish independent or real-data accuracy.
 - [ ] Add a reproducible larger-data evaluation command with download/cache and
   checksums; keep a small deterministic regression subset in ordinary CI.
 - [ ] Add real sequence tutorials for background estimation, ensemble correlation,
@@ -166,6 +178,16 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Extend experiment records to stereo calibration/dewarping/self-calibration,
   PTV/tracking, and supported GPU devices. Define migrations when extending the
   format; keep toolkit dependencies in the GUI package.
+- [x] Add separate replayable stereo sequence records with exact frozen fitted
+  builtin camera coefficients, signed dewarp geometry, complete two-camera
+  processing and explicit timing/scaling provenance. Verify ordered files,
+  environments, rebuilt maps and raw output binding with noncollecting replay.
+  Preserve planar schemas; fitted-camera replay does not rerun calibration
+  fitting/self-calibration or establish calibration accuracy.
+  [Stereo replay](docs/src/howto/stereo_experiments.md) has
+  [119 focused checks](test/test_stereo_experiments.jl) for CPU/KA Float32/64
+  parity, exact fitted-camera persistence, source/settings corruption, preflight
+  and failed-prefix verification. Existing planar schemas remain unchanged.
 - [x] Compare experiment processing revisions with a human-readable settings
   diff. `recipe_diff` returns deterministic field paths and before/after values,
   with content summaries for embedded arrays and explicit added/removed items.
@@ -332,8 +354,9 @@ and GPU memory in the documented ownership modes.
   vectors. [Tests](test/test_execution_diagnostics.jl) cover CPU/KA equivalence,
   actual loop semantics, persistence, strict replay association and failures.
 - [ ] Extend execution diagnostics to ensemble pooled sweeps with their distinct
-  iteration semantics, and expose recorded diagnostics in shared run-quality
-  reports. Planar GUI inspection is available; stereo GUI inspection remains open.
+  iteration semantics. Planar/stereo GUI inspection and execution-aware quality
+  reports are available through the completed items below; ensemble integration
+  still needs its own contract.
 - [x] Add bounded per-camera stereo execution companions with dewarped-pixel
   residuals, explicit common-grid geometry, measurement-field binding and a
   separate native reader. Keep ensemble, GUI and report integration separate.
@@ -380,8 +403,19 @@ and GPU memory in the documented ownership modes.
   [362 focused checks](test/test_derivative_support.jl) cover independent legacy
   parity, masks/gaps, descending axes, native overflow, subnormal quotients and
   physical units. Existing analysis/validity checks also pass.
-- [ ] Show derivative support and unavailable neighborhoods in the result
+- [x] Show derivative support and unavailable neighborhoods in the result
   explorer after the core stencil contract is established.
+  Keep an explicit stencil policy consistent across explorer tools and area
+  circulation; component profiles remain independent. Show discrete support
+  maps and selected contributors, distinguish current flags from recorded
+  replacement history, and retain only
+  current-frame metadata without repeating physical conversion.
+  The [GUI support guide](docs/src/howto/gui_derivative_support.md) and
+  [116 focused GUI checks](HammerheadGUI/test/test_derivative_support.jl) cover
+  consistent policies, discrete legends, contributor details, mouse routing,
+  valid transition notifications, mutation checks and bounded retention.
+  Core derivative/circulation checks pass 369/369; the full GUI suite passes
+  1,324/1,324, with refreshed support/scalar captures visually inspected.
 - [ ] Evaluate confidence estimates for means and Reynolds stresses with explicit
   assumptions about temporal dependence, finite samples, and measurement noise.
 - [x] Export `TrackingResult` in a language-neutral table with trajectory IDs,

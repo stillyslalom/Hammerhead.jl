@@ -20,6 +20,25 @@ function legacy_derivative_reference(field,coordinates,eligible,dimension)
     reference
 end
 
+@testset "Area circulation forwards the derivative stencil policy" begin
+    x=collect(0.:4.);y=copy(x)
+    u=[-yy for yy in y,xx in x];v=[xx for yy in y,xx in x]
+    r=PIVResult(x,y,u,v,ones(5,5),ones(5,5),fill(NaN,5,5),fill(NaN,5,5),
+        falses(5,5),falses(5,5),PIVParameters(window_size=16,overlap=8))
+    region=(0.,4.,0.,4.)
+    legacy=circulation(r;region,coverage=:report)
+    available=circulation(r;region,coverage=:report,stencil=:available)
+    @test isequal(legacy,available)
+    @test available.value≈32 && available.valid_area==16 && available.complete
+    centered=circulation(r;region,coverage=:report,stencil=:centered)
+    @test centered.value≈8 && centered.valid_area==4 && centered.requested_area==16
+    @test centered.coverage_fraction==.25 && !centered.complete
+    interior=circulation(r;region=(1.,3.,1.,3.),stencil=:centered,coverage=:report)
+    @test interior.value≈8 && interior.complete && interior.coverage_fraction==1
+    @test_throws ArgumentError circulation(r;region,stencil=:centered)
+    @test_throws ArgumentError circulation(r;region,stencil=:invented)
+end
+
 @testset "Derivative independent legacy-formula parity" begin
     # No seeded golden values or statistical thresholds: both methods see
     # identical generated inputs on each Julia version, including signed axes.

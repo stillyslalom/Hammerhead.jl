@@ -10,6 +10,8 @@ frame, ROI, scale, CPU/KA backend, Float32/Float64 precision, and execution
 options. It records input bytes and software provenance separately from run
 history. Existing native result files and `save_results`/`load_results` remain
 independent. See [Save and replay a planar experiment](../howto/experiments.md).
+Frozen-camera stereo sequences use the separate
+[stereo experiment format](stereo_experiments.md).
 
 `PIVRecipe` exposes copied public settings: `passes`, `preprocessing`,
 `external_preprocess`, `mask`, `roi`, `scale`, `backend`, `image_type`,
@@ -142,6 +144,6 @@ Pages = ["experiments.md"]
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["experiments.jl", "experiment_comparison.jl"]
+Pages = ["src/experiments.jl", "experiment_comparison.jl"]
 Private = false
 ```

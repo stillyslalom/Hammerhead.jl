@@ -19,6 +19,7 @@ reconstruction remain CPU operations.
 | `:gauss2d` peak fit | yes | no | no | no |
 | Retained correlation planes | yes | no | no | no |
 | File-based planar experiment replay | yes | yes | no | no |
+| Frozen-camera stereo experiment replay | yes | yes | no | no |
 | Built-in planar recipe checkpoint/resume | yes | yes | no | no |
 | Representative-pair recipe comparison | yes | yes | no | no |
 
@@ -33,9 +34,13 @@ See [Run PIV on a GPU](../howto/gpu.md) for setup and performance tradeoffs,
 or [KernelAbstractions and GPU backends](backends.md) for the execution
 boundary.
 
-[Experiment records](../howto/experiments.md) and
-[checkpoints](../howto/checkpoints.md) currently cover planar file-based recipes;
-the broader stereo/PTV/GPU pipelines above do not imply saved-recipe support.
+[Planar experiment records](../howto/experiments.md) and
+[checkpoints](../howto/checkpoints.md) retain their file-based planar scope.
+Separate [stereo experiment APIs](../howto/stereo_experiments.md) replay CPU/KA stereo
+sequences from frozen fitted cameras and a common dewarp grid. They do not rerun
+calibration fitting or self-calibration, extend checkpoint recovery, or provide
+GUI stereo recipe controls. PTV/tracking and vendor-GPU recipes remain separate
+from the supported processing pipelines.
 [Quality reports](../howto/run_quality.md) summarize stored planar/stereo results
 on the CPU, independently of the backend that produced them. The shared
 original-stencil guard has CPU/KA regression coverage; its vendor GPU paths
@@ -95,7 +100,9 @@ resample irregular data or infer sampling intervals from image-pair delays.
 [Derived flow analysis](derived.md) can describe the actual planar derivative
 contributors and require two-sided stencils. Geometry, input eligibility and
 finite output are distinct; these diagnostics do not establish spatial resolution
-or propagate measurement uncertainty. GUI support visualization remains separate.
+or propagate measurement uncertainty. The planar GUI explorer exposes discrete
+support maps and selected contributors, using one stencil policy across scalar
+analysis and area circulation. Component profiles remain independent.
 
 [Ordinary GUI replay](../howto/gui_experiment_replay.md) reports completed pairs
 and supports cooperative cancellation after pair writes and loader cleanup.

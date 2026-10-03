@@ -26,6 +26,18 @@ samples: [coverage](../docs/src/howto/validation_uncertainty.md),
 state the populations and limits of each comparison; none changes production
 estimator defaults.
 
+For annotated PTV correspondence and trajectory evaluation, run the separate
+[PTV/tracking scorecard](../docs/src/howto/validation_ptv_tracking.md):
+
+```bash
+julia --project=. --threads=1 bench/validation_ptv_tracking.jl --output=bench/profile-output/ptv-tracking-run1
+```
+
+Its eight controlled clips retain detection losses, identity ambiguity,
+fragmentation and gap recovery denominators. Output must use a fresh directory.
+The annotated-input importer does not imply that independent or real recordings
+have been validated; the guide states that remaining evidence gap explicitly.
+
 For the performance-only suite:
 
 ```bash
