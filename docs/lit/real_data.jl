@@ -1,284 +1,210 @@
-# # A real recording: tip vortex with seeding dropout
+# # Find a vortex in a real recording
 #
-# Analyze a wind-tunnel image pair to calculate a vector field and identify
-# where its measurements are less reliable. You will inspect the images,
-# then compare validation flags, peak ratios, and per-vector uncertainty.
+# The dark disk in these images is not an obstacle. It is the core of a
+# wing-tip vortex, where swirling flow has swept many particles away.
+# Can we recover the swirl—and see where the images give weaker evidence?
 #
-# The data is case A of the first International Particle Image Velocimetry
-# (PIV) Challenge
-# [Stanislas2003](@cite): a wing-tip vortex 1.64 m behind a transport
-# aircraft half-model in the German–Dutch Wind Tunnels Large Low-Speed
-# Facility (DNW-LLF), recorded by C. Kähler of the German Aerospace Center
-# (DLR). The images contain strong velocity gradients, varying particle
-# image sizes, and loss of seeding in the vortex core.
+# Use case A of the first International PIV Challenge [Stanislas2003](@cite),
+# recorded by C. Kähler (DLR) in the German–Dutch Wind Tunnels. The image pair
+# is included with Hammerhead; no download is needed.
 #
-# ## Load and inspect
+# ## Look before you calculate
 #
-# [`load_image`](@ref) reads any FileIO-supported image (here 12-bit
-# grayscale TIFF) into a `Matrix{Float64}` scaled to ``[0, 1]``:
+# Load both exposures and compare their particle patterns.
 
 using Hammerhead
+using CairoMakie
 using Statistics: median, quantile
 
 dir = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")
 imgA = load_image(joinpath(dir, "A001_1.tif"))
 imgB = load_image(joinpath(dir, "A001_2.tif"))
-size(imgA), extrema(imgA)
-
-# Inspect the particle images and illumination before choosing analysis
-# settings:
-
-using CairoMakie
 
 let
-    fig = Figure(size = (860, 400))
-    ax1 = Axis(fig[1, 1]; title = "frame A", yreversed = true, aspect = DataAspect())
-    image!(ax1, imgA'; colormap = :grays)
-    ax2 = Axis(fig[1, 2]; title = "vortex core (closeup)", yreversed = true,
-               aspect = DataAspect())
-    image!(ax2, imgA[395:695, 425:725]'; colormap = :grays)
-    fig
-end
-
-# Most of the image has dense seeding and large, bright particle images.
-# Illumination varies across the frame: the row-wise mean intensity changes
-# by a factor of four. The dark disk near the center is the vortex core,
-# roughly 200 px across. Swirling flow has pushed most particles out of
-# that region, so its vectors will have less particle information to use.
-# Compare a seeded patch with the core at the same display contrast. Before
-# looking at the vector diagnostics, which patch would you expect to give
-# the clearer correlation peak?
-
-let
-    fig = Figure(size = (650, 330))
-    for (i, (rows, cols, title)) in enumerate(((200:295, 200:295, "seeded patch"),
-                                               (497:592, 529:624, "vortex core")))
-        ax = Axis(fig[1, i]; title, yreversed = true, aspect = DataAspect())
-        image!(ax, imgA[rows, cols]'; colormap = :grays, colorrange = (0, 0.6))
+    fig = Figure(size = (900, 390))
+    for (k, img, title) in ((1, imgA, "First exposure"), (2, imgB, "Next exposure"))
+        ax = Axis(fig[1, k]; title, yreversed = true, aspect = DataAspect(),
+                  xlabel = "x (px)", ylabel = "y (px)")
+        image!(ax, (0.5, size(img, 2) + 0.5), (0.5, size(img, 1) + 0.5), img';
+               colormap = :grays, colorrange = (0, 0.6))
     end
     fig
 end
 
-# The core patch contains many fewer visible particles. Its vector may
-# still pass a neighbor check, but its peak ratio and uncertainty can show
-# the weaker measurement later in the tutorial.
-#
-# ## Estimate displacement before choosing windows
-#
-# Start with a coarse 96 px pass. This gives an approximate displacement
-# range for choosing a finer schedule; it is not the field we will report.
-
-preview = run_piv(imgA, imgB, PIVParameters(window_size = 96,
-    overlap = 48, padding = true, apodization = :gauss))
-preview_ok = .!(preview.outliers .| preview.mask)
-preview_shift = hypot.(preview.u[preview_ok], preview.v[preview_ok])
-(p95 = round(quantile(preview_shift, 0.95); digits = 1),
- largest = round(maximum(preview_shift); digits = 1),
- valid = count(preview_ok))
-
-# The upper end is around 10 px. A 64 px first window leaves that shift
-# below a quarter of its width (16 px), a useful starting rule for
-# correlation. Recheck the coarse field if it contains large patches of
-# rejected vectors: its reported range might miss the fastest region.
-# Refining to 32 px recovers more local structure. Repeating 32 adds the
-# convergence sweep required by the uncertainty estimator:
-
-passes = multipass_parameters([64, 32, 32];
-    padding = true,
-    apodization = :gauss,
-    uncertainty = true,
-)
-result = run_piv(imgA, imgB, passes)
-
-#-
-
-plot_vector_field(result)
-
-# The in-plane field shows a tip vortex centered on the dark disk. The
-# free-stream flow is perpendicular to the light sheet, so the measured
-# in-plane motion is mostly swirl.
-#
-# ## Judging a measurement without ground truth
-#
-# There is no reference displacement field for this recording. Use these
-# three diagnostics in [`PIVResult`](@ref) to assess the calculated vectors:
-#
-# 1. **`result.outliers`**: vectors rejected by validation (universal outlier
-#    detection by default; peak-ratio rejection requires an explicit threshold).
-# 2. **`result.peak_ratio`**: the height ratio of the primary to the
-#    secondary correlation peak. A low ratio means the displacement peak
-#    has a strong competitor.
-# 3. **`result.uncertainty_u` / `uncertainty_v`**: the Wieneke (2015)
-#    per-vector random-error estimate [Wieneke2015](@cite).
-#
-# Start with the flags. Replaced vectors can still hold numerical values,
-# so exclude outliers and masked windows when summarizing measured data:
-
-count(result.outliers), length(result.outliers)
-
-# Fewer than one percent of the nearly 5000 vectors are flagged. Most flags
-# are near the frame edges, with few in the sparsely seeded core. A core
-# window can still pass validation if its remaining particles produce a
-# vector consistent with its neighbors. Peak ratio and uncertainty show
-# differences among the vectors that pass:
-
-valid = .!(result.outliers .| result.mask);
+# Notice the illumination bands, bright particle images and dark center.
+# Compare a well-seeded patch with the core at the **same contrast**.
+# Which patch would you expect to give the clearer correlation peak?
 
 let
-    fig = Figure(size = (900, 330))
+    fig = Figure(size = (650, 320))
+    for (k, rows, cols, title) in ((1, 200:295, 200:295, "Many particles"),
+                                   (2, 497:592, 529:624, "Inside the core"))
+        ax = Axis(fig[1, k]; title, yreversed = true, aspect = DataAspect(),
+                  xlabel = "column in patch", ylabel = "row in patch")
+        image!(ax, (0.5, length(cols) + 0.5), (0.5, length(rows) + 0.5),
+               imgA[rows, cols]'; colormap = :grays, colorrange = (0, 0.6))
+    end
+    fig
+end
+
+# A core vector can agree with its neighbors even when few particles
+# contribute. Keep this image comparison in mind as you inspect the field.
+#
+# ## Recover the swirl
+#
+# First estimate how far particles move using generous 96 px windows.
+# Summarize only finite vectors without outlier or mask flags.
+
+preview = run_piv(imgA, imgB,
+    PIVParameters(window_size = 96, overlap = 48,
+                  padding = true, apodization = :gauss))
+preview_ok = .!(preview.outliers .| preview.mask) .&
+             isfinite.(preview.u) .& isfinite.(preview.v)
+shifts = hypot.(preview.u[preview_ok], preview.v[preview_ok])
+(p95_shift_px = round(quantile(shifts, 0.95); digits = 1),
+ largest_shift_px = round(maximum(shifts); digits = 1))
+
+# Compare this range with your first window's width. Shifts below roughly
+# one quarter of that width are a useful starting point, not a guarantee.
+# Here we begin at 64 px, refine to 32 px, and repeat the final window size
+# to estimate uncertainty.
+
+passes = multipass_parameters([64, 32, 32];
+    padding = true, apodization = :gauss, uncertainty = true)
+result = run_piv(imgA, imgB, passes)
+
+let
+    fig = Figure(size = (700, 540))
+    ax = Axis(fig[1, 1]; title = "The particle pattern reveals a vortex",
+              yreversed = true, aspect = DataAspect(),
+              xlabel = "x (px)", ylabel = "y (px)")
+    image!(ax, (0.5, size(imgA, 2) + 0.5), (0.5, size(imgA, 1) + 0.5), imgA';
+           colormap = :grays, colorrange = (0, 0.6))
+    plot_vector_field!(ax, result; stride = 5, color = :cyan,
+                       replaced_color = :orangered, lengthscale = 3)
+    fig
+end
+
+# Follow the arrows around the dark core. These are in-plane displacements;
+# the free-stream direction is perpendicular to the light sheet.
+# Arrow lengths are enlarged threefold. Orange arrows carry outlier flags.
+#
+# **Try it:** reduce `stride` to 2 to see more vectors, then zoom your attention
+# to the dark core. Does a smooth-looking field mean equally good evidence
+# everywhere?
+#
+# ## Where is the measurement weaker?
+#
+# A validation flag finds vectors that fail a check, such as disagreement
+# with neighbors. A low peak ratio says another correlation peak competes
+# with the chosen shift. Estimated uncertainty describes random correlation
+# error [Wieneke2015](@cite). Use these together rather than treating one
+# map as a verdict.
+
+valid = .!(result.outliers .| result.mask) .&
+        isfinite.(result.u) .& isfinite.(result.v)
+(accepted_vectors = count(valid), flagged_vectors = count(result.outliers))
+
+let
+    fig = Figure(size = (900, 350))
     pr = copy(result.peak_ratio)
     pr[.!valid] .= NaN
-    ax1 = Axis(fig[1, 1]; title = "peak ratio", yreversed = true, aspect = DataAspect())
+    ax1 = Axis(fig[1, 1]; title = "Peak ratio: competing shifts",
+               yreversed = true, aspect = DataAspect())
     hm1 = heatmap!(ax1, result.x, result.y, pr'; colorrange = (1, 5))
     Colorbar(fig[1, 2], hm1)
-    σu = copy(result.uncertainty_u)
-    σu[.!valid] .= NaN
-    ax2 = Axis(fig[1, 3]; title = "σᵤ (px)", yreversed = true, aspect = DataAspect())
-    hm2 = heatmap!(ax2, result.x, result.y, σu'; colorrange = (0, 0.3))
+    sigma = copy(result.uncertainty_u)
+    sigma[.!valid] .= NaN
+    ax2 = Axis(fig[1, 3]; title = "Horizontal uncertainty (px)",
+               yreversed = true, aspect = DataAspect())
+    hm2 = heatmap!(ax2, result.x, result.y, sigma'; colorrange = (0, 0.3))
     Colorbar(fig[1, 4], hm2)
     fig
 end
 
-# In the core, peak ratios are lower and estimated uncertainty is higher.
-# Compare the core with the far field using medians, which are less affected
-# by the very large estimates in a few near-outlier windows:
+# Find the core in both maps. Compare it with the seeded outer region.
+# Are the uncertainty and peak ratio telling the same story?
+# Summarize each region with medians, excluding flagged and nonfinite values.
 
-r_core = [hypot(x - 577, y - 545) for y in result.y, x in result.x]  # px from disk center
-
-function region_quality(sel)
-    pr = filter(isfinite, result.peak_ratio[sel .& valid])
-    σu = filter(isfinite, result.uncertainty_u[sel .& valid])
-    (median_pr = round(median(pr); digits = 2),
-     median_σu = round(median(σu); digits = 3),
-     q90_σu = round(quantile(σu, 0.9); digits = 3))
+distance_from_core = [hypot(x - 577, y - 545) for y in result.y, x in result.x]
+function region_quality(region)
+    selected = region .& valid
+    pr = filter(isfinite, result.peak_ratio[selected])
+    sigma = filter(isfinite, result.uncertainty_u[selected])
+    (vectors = count(selected), median_peak_ratio = median(pr),
+     median_uncertainty_px = median(sigma))
 end
-(core = region_quality(r_core .< 120), far_field = region_quality(r_core .> 300))
+(core = region_quality(distance_from_core .< 120),
+ outer_flow = region_quality(distance_from_core .> 300))
 
-# In the far field, the median estimated random error is near 0.09 px.
-# Inside the core, the median is about 50% higher and the 90th percentile
-# roughly doubles because fewer particle images contribute to each
-# correlation. The validation flags identify rejected vectors; the
-# uncertainty estimates help assess the vectors that remain. See
-# [Uncertainty quantification](../explanation/uncertainty.md) for what the
-# estimate does and doesn't cover.
+# Fewer visible particles can weaken a measurement that still passes a
+# neighbor check. This recording has no reference displacement field:
+# these diagnostics show evidence and sensitivity, not the true error.
 #
-# ## Check window-size sensitivity
+# ## Does window size change the feature you care about?
 #
-# Run a second schedule with 48 px final windows. Both schedules start from
-# the same 64 px pass and use the same correlation settings. Expect the
-# larger windows to smooth sharp changes near the core. Compare vertical
-# displacement along exactly the same line, y = 545 px. `extract_profile`
-# interpolates valid neighboring vectors to common plot positions; this
-# interpolation does not recover detail missing from the larger windows.
+# Use 48 px final windows on the same pair. Larger windows use more particles
+# but average motion over a larger footprint. Compare both fields along the
+# same horizontal line through the vortex.
 
 passes48 = multipass_parameters([64, 48, 48];
     padding = true, apodization = :gauss, uncertainty = true)
 result48 = run_piv(imgA, imgB, passes48)
-valid48 = .!(result48.outliers .| result48.mask)
 line = [(330.0, 545.0), (820.0, 545.0)]
 profile32 = extract_profile(result, line; n = 100)
 profile48 = extract_profile(result48, line; n = 100)
 
 let
-    fig = Figure(size = (650, 360))
-    ax = Axis(fig[1, 1]; xlabel = "x (px)", ylabel = "v (px per pair)",
-              title = "Across the vortex core", limits = (300, 850, -12, 12))
-    lines!(ax, profile32.x, profile32.v; label = "32 px window")
-    lines!(ax, profile48.x, profile48.v; label = "48 px window")
+    fig = Figure(size = (680, 360))
+    ax = Axis(fig[1, 1]; title = "Across the vortex core",
+              xlabel = "x (px)", ylabel = "vertical displacement (px)",
+              limits = (300, 850, -12, 12))
+    lines!(ax, profile32.x, profile32.v; label = "32 px windows")
+    lines!(ax, profile48.x, profile48.v; label = "48 px windows")
     axislegend(ax)
     fig
 end
 
-#-
-
-common_profile = isfinite.(profile32.v) .& isfinite.(profile48.v)
-(common_positions = count(common_profile),
- median_profile_change = median(abs.(profile32.v[common_profile] .-
-                                     profile48.v[common_profile])))
-
-# Across valid positions on this line, the median difference is about
-# 0.07 px. Inspect larger local differences near the steep changes before
-# relying on a core width or gradient. The 32 px windows sample the field
-# every 16 px; 48 px windows sample it every 24 px because both use 50%
-# overlap. Grid spacing controls where
-# vectors are reported, while the window footprint limits which spatial
-# variations can be resolved. Overlap gives more samples of the same
-# underlying image information; it does not turn a 48 px measurement into
-# 24 px spatial resolution. Compare the two profiles near the sharpest
-# changes before relying on a gradient or a vortex-core estimate.
-
-(grid_step_32 = result.x[2] - result.x[1],
- grid_step_48 = result48.x[2] - result48.x[1])
-
-# For the 48 px result, compare valid vectors in its own core region:
-
-core48 = [hypot(x - 577, y - 545) < 120 for y in result48.y, x in result48.x]
-(valid_32 = count(valid .& (r_core .< 120)),
- valid_48 = count(valid48 .& core48),
- median_σu_32 = median(filter(isfinite, result.uncertainty_u[valid .& (r_core .< 120)])),
- median_σu_48 = median(filter(isfinite, result48.uncertainty_u[valid48 .& core48])))
-
-# A change in the profile with window size reflects analysis sensitivity;
-# σu estimates random correlation error at each chosen window size. Neither
-# proves which profile is closer to the unknown flow. Keep both checks when
-# judging whether a small feature is resolved.
+# Both profiles are interpolated onto common positions; that makes comparison
+# possible, but cannot restore detail lost inside a large window.
+# Look near the steep changes, where a core-width or gradient estimate would
+# be most sensitive to processing choices.
 #
-# This pair has no pixel-to-length calibration or exposure separation in
-# the tutorial data, so displacements remain in pixels per pair. To report
-# velocity, measure those quantities for your setup and attach a
-# [`PhysicalScale`](@ref); see [Scale to physical units](../howto/scaling.md).
+# **Try it:** move the line above the core to `y = 400`. Does the difference
+# between window sizes change? Then increase overlap without changing window
+# size. More samples do not necessarily mean more resolved detail.
 #
-# ## Compare preprocessing options
+# ## Will a cleaner-looking background help?
 #
-# Compare each processing option on the same image pair using peak ratios
-# and outlier counts. The [preprocessing guide](../howto/preprocessing.md)
-# describes the methods. Here, try
-# [`highpass_filter`](@ref) for the illumination gradient,
-# [`intensity_cap`](@ref) for the bright particles [Shavit2007](@cite),
-# and contrast-limited adaptive histogram equalization ([`clahe`](@ref),
-# commonly abbreviated CLAHE) for the dim core:
+# The illumination bands suggest high-pass filtering. Test that idea on the
+# same pair before adopting it: filters can remove useful particle signal too.
 
-candidates = [
-    "raw"              => identity,
-    "highpass (σ = 8)" => img -> highpass_filter(img; sigma = 8),
-    "intensity cap"    => img -> intensity_cap(img),
-    "CLAHE"            => img -> clahe(img),
-]
+filteredA = highpass_filter(imgA; sigma = 8)
+filteredB = highpass_filter(imgB; sigma = 8)
+filtered_result = run_piv(filteredA, filteredB, passes)
 
-function chain_quality(f)
-    res = run_piv(f(imgA), f(imgB), passes)
-    ok = .!(res.outliers .| res.mask)
-    pr = filter(isfinite, res.peak_ratio[ok])
-    (median_pr = round(median(pr); digits = 2),
-     q10_pr = round(quantile(pr, 0.1); digits = 2),
-     outliers = count(res.outliers))
+function pair_quality(r)
+    accepted = .!(r.outliers .| r.mask) .& isfinite.(r.u) .& isfinite.(r.v)
+    ratios = filter(isfinite, r.peak_ratio[accepted])
+    (accepted = count(accepted), flagged = count(r.outliers),
+     median_peak_ratio = median(ratios),
+     lower_peak_ratio = quantile(ratios, 0.1))
 end
-[name => chain_quality(f) for (name, f) in candidates]
+(raw = pair_quality(result), highpass = pair_quality(filtered_result))
 
-# High-pass filtering lowers the median peak ratio and triples the outlier
-# count. These large particle images lose signal along with the smooth
-# background, while each correlation window already subtracts its own mean
-# intensity. Intensity capping doubles the outlier count because the bright
-# particle images contribute useful signal. CLAHE provides a modest gain:
-# it reduces the visible banding and raises peak ratios in dim regions.
+# Did the competing peaks weaken or strengthen? Did more vectors get flagged?
+# This comparison can reject an unhelpful setting, but a higher peak ratio
+# alone cannot prove a more accurate field.
 #
-# For this pair, use the raw images or consider CLAHE for the dim regions;
-# the tested high-pass and intensity-cap settings make the correlations
-# worse. The core remains less certain because it contains few particles.
-# If you have a sequence of a statistically stationary flow, ensemble
-# correlation can combine information from particles passing through the
-# core at different times; see
-# [Ensemble correlation for low signal-to-noise ratio (SNR)](../howto/ensemble.md).
+# **Try it:** change the filter's `sigma`, or substitute
+# `clahe(imgA)` and `clahe(imgB)`. Compare the images and diagnostics on the
+# same region each time; the [preprocessing guide](../howto/preprocessing.md)
+# explains what each operation changes.
 #
-# ## Where to go next
+# This lesson reports pixels between exposures. The sample data supplies no
+# spatial calibration or exposure delay for velocity conversion. For your own
+# recording, measure both and follow [physical scaling](../howto/scaling.md).
 #
-# - Static background removal needs a frame *sequence*
-#   ([`compute_background`](@ref)): the
-#   [preprocessing guide](../howto/preprocessing.md).
-# - If the default checks flag too much or too little:
-#   [Tune validation](../howto/validation.md).
-# - Whole recordings, incremental result files:
-#   [Batch processing](../howto/batch.md).
-# - What σᵤ means and when to trust it:
-#   [Uncertainty quantification](../explanation/uncertainty.md).
-# - Two cameras: the [stereo tutorial](stereo.md).
+# Next, [process a sequence](sequence_statistics.md) to distinguish a persistent
+# flow feature from pair-to-pair variation. For a difficult image region, use
+# [image inspection](../howto/image_quality.md) before adding more processing.

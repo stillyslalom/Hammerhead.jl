@@ -6,6 +6,13 @@ These entries describe changes after the registered baseline. No new package
 version or release date has been assigned. See [RELEASING.md](RELEASING.md) for
 validation and the core-first, GUI-second release sequence.
 
+### Documentation
+
+- Reorganized the site around lessons and reader tasks, with a compact sidebar
+  and grouped reference pages. Reworked the first PIV, real-data, GUI and ensemble
+  examples to lead with images, results and experiments to try. Existing page URLs
+  are retained; schema details and development studies have separate entry points.
+
 ### Core
 
 - Added calibrated bilinear sampling of planar PIV vectors and scalar images

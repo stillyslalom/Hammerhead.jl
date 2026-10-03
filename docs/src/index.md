@@ -2,107 +2,60 @@
 CurrentModule = Hammerhead
 ```
 
-# Hammerhead
+# See the flow in your images
 
-[Hammerhead](https://github.com/stillyslalom/Hammerhead.jl) measures particle
-motion in images using particle image velocimetry (PIV) and particle tracking
-velocimetry (PTV). PIV estimates the displacement of particle patterns in
-small image windows; PTV follows individual detected particles. A spatial
-calibration and the delay between exposures convert displacement to velocity.
+Two exposures of illuminated particles reveal how a fluid moves. Hammerhead
+turns the change in their patterns into a field of displacement vectors.
 
-Use planar PIV for two in-plane components, or stereo PIV to reconstruct
-three components in a light sheet from two calibrated camera views.
-**HammerheadGUI** provides desktop tools for running batches, drawing masks,
-and inspecting results. Start with a path that matches your task:
-
-| Task | Start here |
-|---|---|
-| Understand how images produce a vector field | [Your first vector field](tutorials/first_vector_field.md) |
-| Process and assess a recorded image pair | [A real recording](tutorials/real_data.md) and [image inspection](howto/image_quality.md) |
-| Work through the desktop interface | [GUI tour](tutorials/gui_tour.md) |
-| Analyze a sequence and its fluctuations | [From image pairs to flow statistics](tutorials/sequence_statistics.md) |
-| Reconstruct three components with two cameras | [Stereo PIV](tutorials/stereo.md), then [a real stereo recording](tutorials/stereo_real.md) |
-| Follow individual particles | [Particle tracking](tutorials/ptv.md) |
-
-## Installation
-
-Use Julia 1.10 or later. Press `]` at the Julia prompt to enter package
-mode, then install Hammerhead:
-
-```julia
-pkg> add Hammerhead
+```@example welcome
+using Hammerhead, CairoMakie, Random # hide
+using Hammerhead.SyntheticData # hide
+swirl(x,y,z,t) = (-(y-64)*2/hypot(x-64,y-64,18), (x-64)*2/hypot(x-64,y-64,18), 0.0) # hide
+a,b,_,_ = generate_synthetic_piv_pair(swirl,(128,128),1.0;particle_density=.06,background_noise=.02,z_range=(-1.,1.),rng=MersenneTwister(42)) # hide
+r = run_piv(a,b,multipass_parameters([32,16];padding=true,apodization=:gauss)) # hide
+fig = Figure(size=(960,310)) # hide
+for (k,image,title) in ((1,a,"First exposure"),(2,b,"Next exposure")) # hide
+    ax = Axis(fig[1,k];title,yreversed=true,aspect=DataAspect(),xlabel="x (px)",ylabel="y (px)") # hide
+    image!(ax,(0.5,128.5),(0.5,128.5),image';colormap=:grays) # hide
+end # hide
+ax = Axis(fig[1,3];title="Measured motion",yreversed=true,aspect=DataAspect(),xlabel="x (px)",ylabel="y (px)") # hide
+image!(ax,(0.5,128.5),(0.5,128.5),a';colormap=:grays) # hide
+plot_vector_field!(ax,r;stride=2,color=:cyan,lengthscale=3) # hide
+fig # hide
 ```
 
-For the optional desktop tools, add the GUI to the same environment:
+*A synthetic particle pair and its measured swirl. Arrows show direction;
+their lengths are enlarged for visibility.*
+
+**[Start here: make your first vector field →](tutorials/first_vector_field.md)**
+
+Follow one image pair from particles to a correlation peak and a complete
+field. Then change the window size, mask a reflection, and convert pixels to
+velocity. No recording or calibration equipment is needed to try it.
+
+## Install
+
+In Julia 1.10 or later, press `]` to enter package mode:
 
 ```julia
-pkg> add HammerheadGUI
+pkg> add Hammerhead CairoMakie
 ```
 
-## Quick example
+`CairoMakie` draws the lesson figures. For desktop tools, also install
+`HammerheadGUI`.
 
-Use an *effort* preset to select a multi-pass analysis schedule.
-[`run_piv`](@ref) operates on in-memory image pairs (any equally sized
-real-valued matrices); [`load_image`](@ref) loads image files as grayscale
-`Matrix{Float64}`:
+## Choose your next experiment
 
-```julia
-using Hammerhead
+- **Have a recording?** [Find a tip vortex](tutorials/real_data.md), including
+  the region where particles disappear and the vectors become harder to judge.
+- **Prefer desktop tools?** [Take the GUI tour](tutorials/gui_tour.md) to load
+  images, draw masks and explore a field.
+- **Have many frames?** [Measure flow statistics](tutorials/sequence_statistics.md)
+  from a sequence rather than a single pair.
+- **Need another view of motion?** [Use two cameras for stereo PIV](tutorials/stereo.md)
+  or [follow individual particles](tutorials/ptv.md).
 
-imgA = load_image("frame_0001.tif")
-imgB = load_image("frame_0002.tif")
-
-result = run_piv(imgA, imgB; effort = :high)   # or :low / :medium
-```
-
-`effort` picks a full multi-pass schedule sized to the images (see
-[Choose an effort level](howto/effort.md)). To choose window sizes and
-processing options yourself, pass an explicit schedule:
-
-```julia
-# Multi-pass with symmetric image deformation: each pass uses the previous
-# validated field as a predictor and shrinks the window.
-passes = multipass_parameters([64, 32, 16, 16];
-    padding = true,         # zero-padded (linear) correlation
-    apodization = :gauss,   # Gaussian window on each interrogation window
-    uncertainty = true,     # per-vector uncertainty on the final pass
-)
-result = run_piv(imgA, imgB, passes)
-
-result.u, result.v    # displacement field (px), u along x/columns
-result.x, result.y    # interrogation grid centers (px)
-result.outliers       # validation flags
-```
-
-The returned `u` and `v` values are displacements in pixels. Positive `u`
-points right and positive `v` points down the image. A finite value may be a
-replacement for a rejected vector; use `result.outliers` and `result.mask`
-to identify accepted measurements. See [validation](howto/validation.md)
-for those flags and [physical-unit scaling](howto/scaling.md) for velocity
-conversion.
-
-Whole recordings are processed with [`run_piv_sequence`](@ref), which loads
-frame pairs (see [`image_pairs`](@ref)), applies optional preprocessing, and
-persists results incrementally in the JLD2 Julia data format ([`save_results`](@ref) /
-[`load_results`](@ref)).
-
-## Work with your recording
-
-Inspect the images before choosing [window sizes and effort](howto/effort.md).
-Use [masks](howto/masking.md) for obscured regions and compare
-[preprocessing](howto/preprocessing.md) with raw-image results. Review
-[validation flags](howto/validation.md),
-[uncertainty estimates](explanation/uncertainty.md), and sensitivity to the
-chosen window size before interpreting small flow features.
-
-Once settings work on representative pairs, use [batch processing](howto/batch.md)
-for the recording. [Ensemble correlation](howto/ensemble.md) can help when
-individual pairs have weak signals and a representative displacement field
-is sufficient. [GPU execution](howto/gpu.md) provides another processing
-option for supported hardware.
-
-The [coordinate conventions](explanation/conventions.md) explain units,
-axis signs, and result locations. For arguments and return types, use the
-[pipeline reference](reference/pipeline.md) or the
-[GUI reference](reference/gui.md). The [feature matrix](reference/feature_matrix.md)
-compares the available analysis paths.
+PIV follows particle *patterns* within small windows; PTV follows individual
+particles. A spatial calibration and the exposure delay turn displacement into
+velocity. Start with the images and check the measurement before interpreting
+small flow features.

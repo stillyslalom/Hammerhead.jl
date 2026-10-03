@@ -1,4 +1,4 @@
-# Ensemble-aware quality report format 4
+# Reports for pooled results
 
 [`quality_report`](@ref) emits strict version 4 only when
 `include_ensemble_execution_diagnostics=true`. Generation requires a direct

@@ -2,11 +2,27 @@
 CurrentModule = Hammerhead
 ```
 
-# Associated ensemble quality report format 5
+# Ensemble result reports
+
+Summarize a completed saved ensemble run with its record:
+
+```julia
+record = load_ensemble_experiment("ensemble-record.jld2")
+report = quality_report(record, last(record.runs); verify_inputs=true)
+display(report)
+save_quality_report("ensemble-quality.toml", report)
+```
+
+Follow [Save and replay an ensemble experiment](../howto/ensemble_experiments.md)
+for a runnable example, or [Check an ensemble result](../howto/ensemble_quality_reports.md)
+for interpreting contribution counts. The details below define the saved report
+and its verification limits.
+
+## Options and saved format
 
 `quality_report(record::EnsembleExperimentRecord, run::EnsembleExperimentRun)`
-uses an independent version-5 TOML schema. Existing generic and planar/stereo
-overloads retain formats 1–4. The new overload defaults to
+uses version 5 of the TOML report schema. Existing generic and planar/stereo
+overloads retain formats 1–4. This overload defaults to
 `include_ensemble_execution_diagnostics=true`; setting it to `false` keeps
 format 5 and omits the pooled execution section. History and ordinary iteration
 sections are unsupported for this associated ensemble workflow.
@@ -18,7 +34,7 @@ execution uses the unchanged [format-4 scientific counters](ensemble_quality_rep
 The native source must contain exactly one planar result. Input pairs are not
 counted as individually measured or independently informative results.
 
-## Provenance and counts
+## Input pairs, processing work and results
 
 The provenance mapping has `association="recorded_ensemble_output_verified"`,
 `workflow="planar_ensemble"`, `verification_time="report_generation"`, the
@@ -34,6 +50,8 @@ identities. It has no `completed_pairs` field.
 | `completed_pools` | Exactly one completed pooled estimate, not one per pass |
 | `published_results` | Exactly one native result |
 | `record_diagnostics` | Boolean requested recording policy, not inferred from missing metadata |
+
+## What is verified
 
 `input_bytes_checked` records whether current input files were checked during
 generation. `raw_measurement_fields_checked`, `recipe_grid_mask_scale_checked`
@@ -62,6 +80,8 @@ results and the consumed artifact are protected by `save_quality_report`.
 Foreign locators are never silently converted to local paths. Caller-supplied
 `protected_paths` can add dependencies. Ordinary report destinations may be
 overwritten; this is not atomic publication or concurrent-writer safety.
+
+## API
 
 ```@autodocs
 Modules = [Hammerhead]

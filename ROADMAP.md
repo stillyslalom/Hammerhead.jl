@@ -40,6 +40,23 @@ or cross-platform acceptance gates.
 
 ## Delivery order
 
+Current priority: rebuild the documentation around learning and worked examples
+before resuming additional GUI features.
+
+- [x] Replace the long feature-by-feature sidebar with a small learning path,
+  task hubs and a grouped reference catalog. Preserve existing page URLs.
+  Rewrite the main PIV, real-recording, GUI and ensemble lessons around concrete
+  examples, figures, interpretation and reader experiments. Move schema/format
+  contracts out of learning pages and keep development evidence separate.
+  Execute the examples, inspect generated figures and check navigation/links.
+  The rebuilt site has 17 main navigation destinations and retains all 110
+  existing page URLs, with seven new topic hubs. All seven tutorials and the
+  additional examples execute successfully; 117 generated pages and 6,052 local
+  links/anchors pass the HTML audit. Scientific and GUI figures were inspected,
+  and 299 source/test/docs/environment identities stayed unchanged during final
+  validation. Browser-level layout review remains unverified because no browser
+  connection was available; the site has not been published from this checkout.
+
 Start a quantitative validation baseline and the experiment-record design first.
 Timing integrity and measurement diagnostics should inform that record. Build
 streaming/restart support on stable run identities. A GUI framework prototype

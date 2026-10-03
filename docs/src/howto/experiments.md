@@ -2,169 +2,85 @@
 CurrentModule = Hammerhead
 ```
 
-# Save and replay a planar experiment
+# Save an experiment and run it again
 
-**Goal:** reopen a file-based planar PIV recipe and reproduce its processing
-without reconstructing the pass schedule, preprocessing, mask, ROI, or units.
-Version 1 deliberately covers static planar recipes; it does not yet save
-stereo calibration, dynamic callbacks, acquisition timestamps, or resume state.
+You have found useful settings for a recording. Now save them so that tomorrow
+you can reopen the experiment and recover the same image pairs, processing
+choices and calibration without reconstructing your session.
 
-Build an explicit schedule and ordered built-in preprocessing steps. The
-recipe copies its arrays/settings, including original full-image masks and
-backgrounds. Keep pixel-side settings in their measured units; attaching a
-`PhysicalScale` records calibration without converting the saved results.
+This example uses the supplied tip-vortex images and a small region to keep
+the run short. The [real-recording lesson](../tutorials/real_data.md) shows the
+full images and flow.
 
-This executable example uses the committed PIV Challenge A pair. It analyzes
-a small ROI so the example remains inexpensive, while recording the original
-image-file identities and complete mask:
+## 1. Describe the measurement
 
 ```@example experiments
 using Hammerhead
-
 directory = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")
-files = sort(filter(path -> endswith(lowercase(path), ".tif"),
+files = sort(filter(p -> endswith(lowercase(p), ".tif"),
                     readdir(directory; join=true)))
 pairs = [(files[1], files[2])]
-image = load_image(files[1])
-mask = falses(size(image))
-mask[1:12, 1:12] .= true
-
 passes = multipass_parameters([32, 16]; padding=true, apodization=:gauss)
 recipe = PIVRecipe(passes;
+    roi=ROI(1:64, 1:64),
     preprocessing=[PreprocessStep(:highpass_filter; sigma=3)],
-    mask, roi=ROI(1:64, 1:64), image_type=Float32,
-    scale=PhysicalScale(pixel_size=0.02, dt=0.001,
-                        length_unit="mm", time_unit="s"))
+    image_type=Float32)
 experiment = ExperimentRecord(pairs, recipe)
-
-mktempdir() do work
-    record_path = save_experiment(joinpath(work, "experiment.jld2"), experiment)
-    reopened = load_experiment(record_path)
-    run = replay_experiment(reopened;
-        output=joinpath(work, "vectors.jld2"), run_record=record_path)
-    results = load_results(run.output; lazy=true)
-    (status=run.status, completed_pairs=run.completed_pairs,
-     precision=eltype(results[1].u), saved_runs=length(load_experiment(record_path).runs))
-end
+nothing # hide
 ```
 
-The experiment file embeds settings, masks/backgrounds, input content hashes,
-software provenance, and optional run metadata. Image files remain external.
-Results use the existing native result format. `run_record` appends execution
-metadata to the reopened record and records failures after processing begins;
-preflight rejection does not alter either destination.
+The recipe is the processing plan. The experiment connects that plan to these
+particular input images. A mask and a `PhysicalScale` can also be included in
+the recipe when you have them; this example keeps displacements in pixels.
 
-## Observe written-pair progress
-
-Pass `progress=(written, total) -> ...` to `replay_experiment`. The callback runs
-on the calling task after each native result, requested companion and source
-label write. It receives only scalar counts, has no initial zero notification,
-and does not change the scientific recipe identity:
+## 2. Save, reopen and run
 
 ```@example experiments
-mktempdir() do work
-    updates = Tuple{Int,Int}[]
-    run = replay_experiment(experiment; output=joinpath(work, "observed.jld2"),
-        progress=(written, total) -> push!(updates, (written, total)))
-    (updates=updates, status=run.status)
-end
+work = mktempdir()  # replace with your analysis directory for a lasting result
+record_path = save_experiment(joinpath(work, "experiment.jld2"), experiment)
+reopened = load_experiment(record_path)
+run = replay_experiment(reopened;
+    output=joinpath(work, "vectors.jld2"), run_record=record_path)
+results = load_results(run.output; lazy=true)
+(status=run.status, fields_written=length(results),
+ saved_runs=length(load_experiment(record_path).runs))
 ```
 
-Throwing from this callback stops the sequence at a written-pair boundary. The
-driver drains any prefetched loader and closes output before failure metadata is
-saved. If `run_record` was supplied, the version-1 entry is `:failed` with the
-already-written count and original exception. A callback exception after the
-final pair still means failure. A secondary loading/history-save failure does
-not replace the original processing exception.
+There are two files with different jobs: `experiment.jld2` retains the recipe
+and run history; `vectors.jld2` contains the measured fields. The image files
+remain where they were. Replay checks them against the saved record before
+processing, so replacing an image does not silently change the experiment.
 
-A prefetched pair may already be loading or preprocessing when the callback
-runs. Counts describe native writes, not an atomic/durable commit or a resume
-position. Ordinary replay has no built-in cancellation token; scripts can use a
-callback exception to stop deliberately. The [GUI replay workflow](gui_experiment_replay.md)
-adds a captured cancellation token and treats a request after the final write as
-completion. Preflight rejection produces no progress notifications and preserves
-existing destinations.
+## 3. Change one setting deliberately
 
-## Record processing revisions
-
-Treat recipes as snapshots. To change the schedule or preprocessing, create
-a new `PIVRecipe` and `ExperimentRecord` from the same input pairs. Use
-`recipe_diff` to inspect the processing changes before running either revision:
+Try a different high-pass width while keeping the other settings fixed:
 
 ```@example experiments
 revised = PIVRecipe(recipe.passes;
-    preprocessing=[PreprocessStep(:highpass_filter; sigma=5)],
-    mask=recipe.mask, roi=recipe.roi, scale=recipe.scale, image_type=Float64)
+    roi=recipe.roi, image_type=recipe.image_type,
+    preprocessing=[PreprocessStep(:highpass_filter; sigma=5)])
 changes = recipe_diff(recipe, revised)
 [(change.path, change.before, change.after) for change in changes]
 ```
 
-The change paths identify image precision and the first preprocessing step's
-sigma. Display `changes` directly for a compact readable report, or use its
-`changes`, `before_id`, and `after_id` fields in scripts or GUI forms. Comparison
-checks snapshot integrity first and rejects recipes whose contained settings
-were mutated; it does not execute PIV or read input/script files.
+The difference should identify the filter's `sigma`. It describes a settings
+change, not whether the resulting vectors improve. Next,
+[compare the recipes on the same pair](pair_comparison.md), and use a distinct
+output filename for each run you want to keep.
 
-Passes, preprocessing, and validators are compared by their ordered positions.
-Window/search sizes, ROI bounds, and CLAHE tiles remain readable tuples. Changed
-embedded masks and backgrounds have `RecipeArraySummary` values containing
-size, element type, and full content digest, rather than pixel dumps. Added or
-removed sequence items use `missing`; an explicitly disabled optional mask,
-ROI, scale, or script remains `nothing`. Script content digests and entrypoints
-are compared, while relocated locators alone do not create changes. Recreate
-a `ScriptReference` to snapshot changed script content; comparison does not
-rehash files on disk.
-
-Compare experiment `input_id` values separately: `recipe_diff(first.recipe,
-second.recipe)` describes processing settings, not input, output, or environment
-changes. Identical byte inputs at different paths have the same `input_id`,
-while altered pair order, content, or dimensions change it. A configuration
-report does not predict the numerical effect on representative pairs. Use a
-distinct result path for each run if earlier outputs must remain available for
-comparison.
-
-Replay checks input and referenced-script content before opening result output.
-It also rejects overlapping input/script/record destinations, including same-file
-aliases. Keep files unchanged during processing. File hashes detect changes;
-they do not provide an atomic snapshot against concurrent writes.
-
-## Handle a custom preprocessor explicitly
-
-Reference a script and its intended entrypoint without storing executable
-functions in the record:
-
-```julia
-reference = ScriptReference("my_preprocessing.jl"; entrypoint="prepare_image(image)")
-recipe = PIVRecipe(passes; external_preprocess=reference, image_type=Float32)
-experiment = ExperimentRecord(pairs, recipe)
-save_experiment("custom-experiment.jld2", experiment)
-
-# The caller loads/reviews its own implementation and supplies the function.
-replay_experiment(load_experiment("custom-experiment.jld2");
-    output="custom-vectors.jld2", custom_preprocess=prepare_image,
-    run_record="custom-experiment.jld2")
+```@example experiments
+rm(work; recursive=true) # hide
+nothing # hide
 ```
 
-The library verifies the referenced bytes and never includes/evaluates the script
-or looks up its entrypoint. Your function must match the intended script, preserve
-the full-image dimensions and saved Float32/Float64 precision, and return finite
-values. It runs after any built-in steps. External state used by that function
-is not automatically recorded. Supplying a custom function without a script
-reference, or omitting the function when a reference is present, is rejected.
+## Continue with your recording
 
-## Inspect software differences before rerunning
+- Replace the example pair with your ordered pairs from the
+  [batch guide](batch.md).
+- Use [checkpoints](checkpoints.md) if the job needs to resume after interruption.
+- Use the dedicated [stereo](stereo_experiments.md) or
+  [ensemble](ensemble_experiments.md) workflow for those processing methods.
 
-`creation_environment` records Julia/core/package versions, source and package
-hashes, platform/thread settings, and Project/Manifest text. Replay compares the
-tracked software identity by default. When intentionally changing environments,
-pass `allow_environment_change=true`; the run records its actual environment
-separately. This is an explicit rerun, not a bitwise reproducibility guarantee.
-Inspect those records when comparing revisions. Project/Manifest snapshots are
-provenance and are never installed or activated automatically.
-
-Unknown experiment versions, incomplete or malformed recipes, changed identities,
-incompatible dimensions/ROI/masks, and unsupported backends are rejected. Every
-replay starts from the first pair. Interrupted/failed output may retain a
-completed native prefix, but version 1 does not resume from that prefix. See the
-[experiment reference](../reference/experiments.md) for the schema, numerical
-assumptions, callback/failure behavior, and scope limits.
+For custom preprocessing, software-environment changes, progress callbacks and
+saved-file details, consult the [experiment reference](../reference/experiments.md).
+Saved scripts are references: replay never executes a script automatically.

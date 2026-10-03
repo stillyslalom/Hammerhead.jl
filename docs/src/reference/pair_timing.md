@@ -1,4 +1,4 @@
-# Pair timing companions
+# Recorded frame-pair times
 
 ```@autodocs
 Modules = [Hammerhead]

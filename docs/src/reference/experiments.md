@@ -13,6 +13,8 @@ independent. See [Save and replay a planar experiment](../howto/experiments.md).
 Frozen-camera stereo sequences use the separate
 [stereo experiment format](stereo_experiments.md).
 
+## Recipe settings and comparisons
+
 `PIVRecipe` exposes copied public settings: `passes`, `preprocessing`,
 `external_preprocess`, `mask`, `roi`, `scale`, `backend`, `image_type`,
 `threaded`, `predictor_smoothing`, `mask_threshold`, and
@@ -48,6 +50,8 @@ or use replay's content preflight to check the current file. Compare `input_id`
 separately when comparing experiments. This API performs no numerical execution
 and does not assess the impact of changes on representative image pairs.
 
+## Saved-file structure
+
 | Native experiment field | Meaning |
 |:------------------------|:--------|
 | `experiment_format_version` | Integer `1`; unknown versions are rejected before decoding settings. |
@@ -69,6 +73,8 @@ authentication signatures. Paths are locators/provenance and are excluded
 from recipe/input identities. Exact file bytes matter: re-encoding an image
 with equal decoded pixels creates a new input identity.
 
+## Processing and input checks
+
 Built-in preprocessing supports background subtraction, intensity cap,
 highpass, CLAHE, percentile stretch, inversion, and local-variance normalization.
 Backgrounds are embedded snapshots. Operations run in saved order on the full
@@ -87,6 +93,8 @@ files is unsupported, so the checks do not provide an atomic filesystem
 snapshot. Saving records validates their structure/identities but does not
 require images or scripts to be present; replay verifies their actual content.
 
+## Software environment
+
 `allow_environment_change=true` permits an explicit rerun in another
 environment. Every run records its actual environment separately from the
 record's creation environment; the override option is not a separate persisted
@@ -98,6 +106,8 @@ provider preferences, device/hardware state, and arbitrary callback external
 state are not fully captured. Matching metadata does not prove bitwise
 reproducibility on all hardware.
 
+## Custom preprocessing
+
 An optional `ScriptReference` records a custom preprocessing script's content
 and named entrypoint. The library never `include`s or `eval`s that script,
 resolves its entrypoint, or serializes a closure. Replay requires an explicit
@@ -106,6 +116,8 @@ the caller must establish that the supplied function corresponds to the
 reference. It runs after built-in steps and must return finite values in the
 saved precision with unchanged full-image dimensions. Callback state and
 external inputs remain the caller's responsibility.
+
+## Progress, failures and saved history
 
 Every replay starts at the first pair and writes an ordinary native result
 file with `collect_results=false`. A successful `ExperimentRun` does not retain
@@ -131,12 +143,16 @@ selection does not enter recipe identity. The GUI adds cooperative cancellation
 at these boundaries without changing version-1 persisted statuses or providing
 checkpoint resume.
 
+## Supported workflows
+
 Stereo calibration/dewarping/self-calibration, timestamp persistence, per-pair
 delays, dynamic masks, PTV/tracking, GPU execution, automatic custom-script
 replay, and resume are outside version 1. A scalar `PhysicalScale` is stored;
 `PlanarTransform` export calibration is not part of this processing record yet.
 The GUI can bridge its settings to this core schema, but GUI state/workflows
 are not automatically embedded.
+
+## Functions and types
 
 ```@index
 Pages = ["experiments.md"]
