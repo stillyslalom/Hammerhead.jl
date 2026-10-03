@@ -19,6 +19,14 @@ batch = BatchRunner()
 display(experiment_workflow(; batch))
 ```
 
+Use the **Files**, **Replay**, and **Reports** control sections to choose an
+action. Switching sections preserves the opened recipe, environment choice and
+report toggles. Cancel, written-pair progress and a compact status preview stay
+visible in every section. The standalone layout supports 900×600 and larger
+windows; its text pages reflow when resized. Full paths, errors and identities
+remain available through **previous**/**next**, even when their control previews
+are shortened.
+
 You can open a saved experiment even when the batch has no files. **Snapshot
 batch** captures the current file pairs, exact effective pass schedule,
 built-in preprocessing, original full-image mask, ROI, and scale. **Save
@@ -43,8 +51,9 @@ are summarized by shape/type or excluded-pixel count; their full values remain
 in the saved record. Opening does not project settings onto the narrower batch
 or preprocessing forms, so nondefault fields and repeated operations survive.
 
-Choose a new result output and a run-record destination, then **replay exact
-recipe**. An opened record is the default destination for appended run history.
+Choose a new result output and a run-record destination in **Files**, then use
+**replay exact recipe** in **Replay**. An opened record is the default destination
+for appended run history.
 The status reports busy, cancellation requested, cancelled, completed or failed.
 Written-pair progress updates after each pair's native writes. **Cancel after
 current pair** waits for a written-pair boundary and loading/output/history
@@ -91,7 +100,7 @@ rather than collecting the whole sequence. Reused or overwritten output is
 refused because it no longer represents that recorded run. Keep result files
 unchanged while browsing and use distinct outputs to retain earlier runs.
 
-**Save quality report…** verifies the completed run and saves the same TOML
+In **Reports**, **Save quality report…** verifies the completed run and saves the same TOML
 report available to scripts through `quality_report`. Its readable summary
 appears in the **quality report** pages. The report scans one result at a time
 and records explicit denominators for mask, current-flag, finite-vector, and

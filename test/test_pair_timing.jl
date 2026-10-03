@@ -250,7 +250,7 @@ end
         grid = DewarpGrid(x = 2.0:1.0:25.0, y = 2.0:1.0:25.0)
         cameras = [PinholeCamera([64.0 0.0 slope 0.0; 0.0 64.0 0.0 0.0; 0.0 0.0 1.0 64.0]) for slope in (-8.0, 8.0)]
         dw1, dw2 = [ImageDewarper(cam, grid, (32,32)) for cam in cameras]
-        @test_throws ArgumentError run_piv_stereo_sequence(pairs, pairs, dw1, dw2, timing_params(); record_pair_timing = true, output, progress = false)
+        @test_throws ArgumentError run_piv_stereo_ensemble(pairs, pairs, dw1, dw2, timing_params(); record_pair_timing = true, output, progress = false)
         @test isempty(loads) && read(output, String) == "preserved"
         # Fixed replay/checkpoint keyword signatures reject before executing inputs.
         fixture = joinpath(pkgdir(Hammerhead), "test", "reference_images", "A")

@@ -10,6 +10,26 @@ they do not cross a mask or excluded outlier. The 2D swirling-strength and
 Q values describe the measured in-plane gradient tensor and do not include
 unmeasured 3D terms.
 
+[`flow_derivatives`](@ref) preserves the existing neighboring-secant and
+one-sided quotients with `stencil=:available`. Use `stencil=:centered` to
+require both immediate neighbors; boundaries or gaps without them remain
+unavailable. On nonuniform spacing the two-sided formula is the exact secant
+between neighbors, not the general three-point derivative at the center.
+Axes must be finite and strictly monotonic, with native adjacent/two-neighbor
+spans that are finite, nonzero and preserve direction. Geometry is validated
+regardless of masks or stencil policy.
+
+`return_support=true` adds actual per-axis contributor indices, stencil kinds,
+signed spans and algebraic weights. Center eligibility, structural support,
+representable metadata and finite component output are distinct: `valid`
+describes eligible input centers, while `support.finite` describes each returned
+gradient. A valid direct quotient can exist even when the reciprocal span
+overflows, so unavailable weights do not invalidate its derivative. Metadata
+uses a promoted floating geometry type; calculation retains native subtraction
+and division order. The [support guide](../howto/derivative_support.md)
+describes the schema, physical units and coverage checks. This supplies stored
+value support, without measurement-origin or uncertainty-calibration claims.
+
 `extract_profile` interpolates only from corners with positive weight. A
 masked or invalid corner does not invalidate an exact node or edge sample
 when its weight is zero; a contributing invalid corner yields `NaN`.

@@ -220,6 +220,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   invalid corners with zero weight at exact nodes/edges. `extract_region`
   returns `included` (`true` = returned valid node); its legacy `mask` field
   aliases that grid and has the opposite convention from `PIVResult.mask`.
+  `flow_derivatives` keeps its five-field default return; `return_support=true`
+  adds contributor indices, spans, weights and separate structural/finite masks.
+  `stencil=:centered` refuses one-sided fallbacks. The two-neighbor secant is
+  not a general second-order formula on irregular axes. Validate native spans
+  before calculation; unavailable reciprocal metadata must not discard a valid
+  direct quotient. Support describes stored values, not measurement history/UQ.
   Area `circulation(result; region=...)` now errors on incomplete coverage
   by default; `coverage=:report` returns value, valid/requested area, fraction,
   and authoritative `complete` flag (no valid area gives `NaN` value).
@@ -271,6 +277,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Observed, declared and effective scaling delays remain distinct. Source IDs
   are opaque and missing clock/unit labels remain unknown. Bind the current
   packet to raw numerical result content; generic copies/exports omit it.
+- `stereo_pair_timing.jl` — separate opt-in stereo sequence timing companions,
+  with ordered camera source descriptors, exact per-camera delays/midpoints,
+  synchronization policy and effective reconstructed scaling provenance.
+  Freeze all selected scalar metadata before loading/output. Pair-list scaling
+  follows camera 1's declared delay; four-tuples retain the supplied scale.
+  Capture timing and execution packets before either callback and recheck both
+  before publication. Bind raw reconstructed and camera fields plus signed grid
+  geometry; source bytes, calibration and hardware synchronization are not verified.
 - `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
   `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
   ordinal. Actual-time prediction and scattered validation normalize elapsed
@@ -477,6 +491,10 @@ loader cleanup. Cancelled ordinary runs retain failed core metadata and a native
 prefix, without checkpoint resume guarantees. Stereo/GPU recipes and full recipe
 editing remain open. The batch
 form links to this workflow; its API reference is split into `gui_experiments.md`.
+Files/Replay/Reports control sections retain their widgets and settings. Hidden
+Makie widget scenes still have active mouse regions, so inactive allocations
+must also move outside the figure. Cancellation/progress/status stay visible;
+full paths and status remain reachable through allocation-sized text pages.
 The same workflow saves and displays core quality reports through
 `experiment_quality_report` / `save_experiment_quality_report`. These synchronous
 scans protect the selected result and run record, and refuse busy/changed runs.

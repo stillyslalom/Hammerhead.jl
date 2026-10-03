@@ -48,8 +48,10 @@ software behavior; new vendor-device execution evidence remains separate.
 separate two-camera companion, explicit dewarped-pixel residual basis and common
 world-grid geometry. Native inspection can verify reconstructed/camera measurement
 fields; it does not verify calibration or acquisition sources. Ensemble iteration
-semantics require a separate model and remain unsupported. GUI companion panels
-and quality reports do not yet consume the stereo companion.
+semantics require a separate model and remain unsupported. Lazy native GUI
+inspection checks raw stereo binding before physical conversion. Opt-in quality
+report version 3 retains planar/per-camera execution coverage and support counts;
+it does not pool residual amplitudes or reverify files when a saved report loads.
 
 [Measurement history](../howto/measurement_history.md) observes the final
 planar pass's final sweep and can accompany sequence/replay results. It records
@@ -63,9 +65,11 @@ verifies raw history before physical display; eager inputs and checkpoints lack
 this supported association. Numerical UQ availability is not applicability.
 
 [Pair timing](../howto/pair_timing.md) preserves supplied timestamp/source
-metadata for planar sequences through an optional native companion. It does not
-add timing-aware tracking, exports, replay, checkpoint or stereo persistence;
-those workflows require separate timing semantics.
+metadata for planar sequences through an optional native companion.
+[Stereo pair timing](../howto/stereo_pair_timing.md) provides a separate companion
+with both cameras' delays/midpoints, synchronization policy and reconstructed
+scaling provenance. Neither companion adds timing-aware exports, replay,
+checkpoints or GUI inspection; these require separate integration.
 
 [Actual-time tracking](../howto/tracking_timing.md) is a separate explicit CPU
 workflow. Its wrapper, dedicated native artifact and CSV schema preserve sample
@@ -87,6 +91,11 @@ this does not provide automatic source-file discovery or source-byte verificatio
 [Temporal spectra](../howto/spectrum_timing.md) accept an explicit interval or
 sample times checked for uniformity within declared tolerances. They do not
 resample irregular data or infer sampling intervals from image-pair delays.
+
+[Derived flow analysis](derived.md) can describe the actual planar derivative
+contributors and require two-sided stencils. Geometry, input eligibility and
+finite output are distinct; these diagnostics do not establish spatial resolution
+or propagate measurement uncertainty. GUI support visualization remains separate.
 
 [Ordinary GUI replay](../howto/gui_experiment_replay.md) reports completed pairs
 and supports cooperative cancellation after pair writes and loader cleanup.

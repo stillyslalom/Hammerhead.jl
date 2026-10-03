@@ -128,6 +128,7 @@ their native result key is `results/000001`.
 
 A missing packet returns `nothing`; old results have no recoverable timing.
 Ordinary `save_results` copies and bare results omit companions. There is no
-timing export, checkpoint/replay integration, stereo, PTV, ensemble or irregular
-tracking support in this slice. Those paths reject the new capture options;
-do not interpret this companion as implementing their temporal semantics.
+timing export, checkpoint/replay integration, PTV, ensemble or irregular tracking
+support in this slice. Those paths reject the new capture options; do not interpret
+this companion as implementing their temporal semantics. Stereo sequences have
+a [separate two-camera timing companion](stereo_pair_timing.md).

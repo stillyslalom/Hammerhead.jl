@@ -38,6 +38,7 @@ const r_track = TrackingResult(
 
 @testset "HammerheadGUI.jl" begin
     include("test_experiments.jl")
+    include("test_workflow_layout.jl")
     include("test_experiment_replay_progress.jl")
     include("test_recipe_comparison.jl")
     include("test_tracking_timing_explorer.jl")

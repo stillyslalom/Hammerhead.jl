@@ -5,7 +5,10 @@ CurrentModule = HammerheadGUI
 # Monitor and cancel a saved-experiment replay
 
 Open the [saved-experiment workflow](gui_experiments.md), choose a result output
-and optional run-record destination, then select **replay exact recipe**. The
+and optional run-record destination in **Files**, then select **replay exact
+recipe** in **Replay**. Cancel, written-pair progress and the status preview stay
+visible when switching sections. Full status and destination strings remain in
+the text pages, which adapt to the window size. The
 controller captures the complete recipe, destinations, environment policy and
 custom preprocessor before notifying observers or scheduling execution. Editing
 those choices while it runs affects a later request.

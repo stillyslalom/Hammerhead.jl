@@ -33,6 +33,7 @@ export StereoPIVExecutionDiagnostics, load_stereo_execution_diagnostics
 export PIVMeasurementHistory, measurement_history_data, load_measurement_history
 export verify_measurement_history, measurement_history_at
 export PairTiming, pair_timing_data, load_pair_timing
+export StereoPairTiming, load_stereo_pair_timing
 export TrackingTiming, TimedTrackingResult, tracking_timing_data, save_timed_tracking, load_timed_tracking
 export tracking_speed_summary
 export export_calibrated_table, CalibratedTableMetadata, load_calibrated_table_metadata, calibrated_table_data
@@ -101,6 +102,7 @@ include("execution_diagnostics.jl")
 include("measurement_history.jl")
 include("stereo_execution_diagnostics.jl")
 include("pair_timing.jl")
+include("stereo_pair_timing.jl")
 include("tracking_timing.jl")
 include("calibrated_table.jl")
 include("experiment_checkpoint.jl")

@@ -2,67 +2,183 @@
 
 _field_valid(r::PIVResult) = .!r.mask .& .!r.outliers .& isfinite.(r.u) .& isfinite.(r.v)
 
-function _axis_derivative(f::AbstractMatrix, axis::AbstractVector, dim::Int,
-                          valid::AbstractMatrix{Bool})
-    size(f) == size(valid) || throw(DimensionMismatch("field and validity mask must match"))
-    n = size(f, dim)
-    length(axis) == n || throw(DimensionMismatch("coordinate axis length does not match field"))
-    n >= 2 || throw(ArgumentError("each differentiated grid dimension needs at least 2 points"))
-    all(diff(axis) .!= 0) || throw(ArgumentError("grid coordinates must be distinct"))
-    out = fill(NaN, size(f))
-    nr, nc = size(f)
-    @inbounds for j in 1:nc, i in 1:nr
-        valid[i, j] || continue
-        k = dim == 1 ? i : j
-        left = k > 1 && (dim == 1 ? valid[i - 1, j] : valid[i, j - 1])
-        right = k < n && (dim == 1 ? valid[i + 1, j] : valid[i, j + 1])
-        if left && right
-            fm = dim == 1 ? f[i - 1, j] : f[i, j - 1]
-            fp = dim == 1 ? f[i + 1, j] : f[i, j + 1]
-            out[i, j] = (fp - fm) / (axis[k + 1] - axis[k - 1])
-        elseif right
-            fp = dim == 1 ? f[i + 1, j] : f[i, j + 1]
-            out[i, j] = (fp - f[i, j]) / (axis[k + 1] - axis[k])
-        elseif left
-            fm = dim == 1 ? f[i - 1, j] : f[i, j - 1]
-            out[i, j] = (f[i, j] - fm) / (axis[k] - axis[k - 1])
+const _DERIVATIVE_STENCIL_KINDS = (unavailable=UInt8(0), centered_secant=UInt8(1),
+                                 forward=UInt8(2), backward=UInt8(3))
+
+function _derivative_difference(first_value, second_value)
+    if first_value isa Integer && second_value isa Integer
+        a,b=promote(first_value isa Bool ? Int(first_value) : first_value,
+                    second_value isa Bool ? Int(second_value) : second_value)
+        return Base.Checked.checked_sub(b,a)
+    end
+    second_value-first_value
+end
+
+function _derivative_axis_geometry(axis)
+    length(axis)>=2 || throw(ArgumentError("each differentiated grid dimension needs at least 2 points"))
+    all(a->a isa Real && isfinite(a),axis) || throw(ArgumentError("derivative coordinates must be finite real values"))
+    increasing=all(k->axis[k+1]>axis[k],1:length(axis)-1)
+    decreasing=all(k->axis[k+1]<axis[k],1:length(axis)-1)
+    increasing || decreasing || throw(ArgumentError("derivative coordinates must be strictly monotonic"))
+    function span(first_index,second_index)
+        value=try
+            _derivative_difference(axis[first_index],axis[second_index])
+        catch e
+            e isa OverflowError || rethrow()
+            throw(ArgumentError("derivative coordinate span overflows native integer arithmetic"))
+        end
+        isfinite(value) && !iszero(value) && (increasing ? value>0 : value<0) ||
+            throw(ArgumentError("derivative coordinate spans must be finite, nonzero and preserve axis direction in native arithmetic"))
+        value
+    end
+    adjacent=[span(k,k+1) for k in 1:length(axis)-1]
+    centered=[span(k-1,k+1) for k in 2:length(axis)-1]
+    geometry_type=foldl((T,s)->promote_type(T,typeof(float(s))),Iterators.flatten((adjacent,centered));init=Float64)
+    (;adjacent,centered,geometry_type)
+end
+
+function _derivative_pair(valid,i,j,dim,stencil)
+    valid[i,j] || return (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
+    k=dim==1 ? i : j
+    left=k>1 && (dim==1 ? valid[i-1,j] : valid[i,j-1])
+    right=k<size(valid,dim) && (dim==1 ? valid[i+1,j] : valid[i,j+1])
+    left && right && return (k-1,k+1,_DERIVATIVE_STENCIL_KINDS.centered_secant)
+    stencil==:centered && return (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
+    right && return (k,k+1,_DERIVATIVE_STENCIL_KINDS.forward)
+    left && return (k-1,k,_DERIVATIVE_STENCIL_KINDS.backward)
+    (0,0,_DERIVATIVE_STENCIL_KINDS.unavailable)
+end
+
+function _derivative_axis_support(dims,geometry,dim)
+    T=geometry.geometry_type
+    (;dimension=dim,kind=fill(_DERIVATIVE_STENCIL_KINDS.unavailable,dims),legend=_DERIVATIVE_STENCIL_KINDS,
+        first_index=zeros(Int,dims),second_index=zeros(Int,dims),signed_span=fill(T(NaN),dims),
+        span_available=falses(dims),first_weight=fill(T(NaN),dims),second_weight=fill(T(NaN),dims),
+        weights_available=falses(dims),structural_supported=falses(dims))
+end
+
+function _derivative_value(first_value,second_value,span)
+    difference=try
+        _derivative_difference(first_value,second_value)
+    catch e
+        e isa OverflowError || rethrow()
+        return NaN # component overflow is distinct from valid coordinate support
+    end
+    difference/span
+end
+
+function _axis_derivatives(u,v,geometry,dim,valid,stencil,return_support)
+    du,dv=fill(NaN,size(u)),fill(NaN,size(u))
+    support=return_support ? _derivative_axis_support(size(u),geometry,dim) : nothing
+    @inbounds for j in axes(u,2),i in axes(u,1)
+        first_index,second_index,kind=_derivative_pair(valid,i,j,dim,stencil)
+        first_index==0 && continue
+        span=kind==_DERIVATIVE_STENCIL_KINDS.centered_secant ? geometry.centered[first_index] : geometry.adjacent[first_index]
+        ua=dim==1 ? u[first_index,j] : u[i,first_index]
+        ub=dim==1 ? u[second_index,j] : u[i,second_index]
+        va=dim==1 ? v[first_index,j] : v[i,first_index]
+        vb=dim==1 ? v[second_index,j] : v[i,second_index]
+        # Preserve native subtraction/division and Float64 output, rather than
+        # evaluating a metadata-weight dot product with different rounding.
+        du[i,j]=_derivative_value(ua,ub,span)
+        dv[i,j]=_derivative_value(va,vb,span)
+        if return_support
+            support.kind[i,j]=kind
+            support.first_index[i,j]=first_index;support.second_index[i,j]=second_index
+            support.structural_supported[i,j]=true
+            descriptor=geometry.geometry_type(span)
+            if isfinite(descriptor) && !iszero(descriptor)
+                support.signed_span[i,j]=descriptor;support.span_available[i,j]=true
+                weight=one(descriptor)/descriptor
+                if isfinite(weight)
+                    support.first_weight[i,j]=-weight;support.second_weight[i,j]=weight
+                    support.weights_available[i,j]=true
+                end
+            end
         end
     end
-    out
+    (;du,dv,support)
 end
 
 """
-    flow_derivatives(result::PIVResult; include_invalid=false)
-    flow_derivatives(x, y, u, v; valid=isfinite.(u) .& isfinite.(v))
+    flow_derivatives(result::PIVResult; include_invalid=false,
+                     stencil=:available, return_support=false)
+    flow_derivatives(x, y, u, v; valid=isfinite.(u) .& isfinite.(v),
+                     stencil=:available, return_support=false)
 
-Return `(; dudx, dudy, dvdx, dvdy, valid)` on a regular planar grid. Each
+Return `(; dudx, dudy, dvdx, dvdy, valid)` on a planar grid with separate x/y
+coordinate axes. Each
 derivative has the units of the supplied vector components divided by the
 coordinate units. The result method uses stored arrays; call [`physical`](@ref)
 first if physical velocity gradients are needed. Masked, nonfinite, and
 flagged vectors are excluded by default; `include_invalid=true` admits
 flagged vectors but still excludes masked and nonfinite ones. The array
-method uses its explicit `valid` mask.
+method uses its explicit `valid` mask as center/neighbor eligibility; it does
+not intersect a supplied mask with finite component values. Returned `valid`
+is a copy of that eligibility, not derivative availability.
 
-Central differences use two valid neighbors; boundaries or gaps use a
-one-sided difference when possible. Values without a valid local stencil
-are `NaN`. Each axis needs at least two distinct coordinates.
+With `stencil=:available` (default), two eligible immediate neighbors give
+the exact neighboring secant `(f[k+1]-f[k-1])/(axis[k+1]-axis[k-1])`.
+Otherwise an eligible immediate neighbor gives a one-sided quotient. An
+eligible center is always required, even when its value has zero coefficient
+in the two-neighbor secant. No stencil crosses an ineligible neighbor.
+`stencil=:centered` permits only the two-neighbor secant: boundaries and gaps
+without both neighbors remain `NaN`. This secant is not the general
+nonuniform three-point derivative at the center, and no second-order accuracy
+on irregular spacing is implied.
+
+Each axis needs at least two finite real, strictly monotonic coordinates,
+ascending or descending. All adjacent and two-neighbor denominators are
+validated before calculation, regardless of eligibility/policy. Nonfinite,
+zero, reversed-direction or native integer-overflow spans raise `ArgumentError`.
+Component integer-subtraction overflow instead gives `NaN`; floating component
+arithmetic retains its native nonfinite result.
+
+`return_support=true` adds `support=(; policy, center_eligible, x, y, finite)`.
+`center_eligible` aliases the returned `valid` copy, never the supplied mask.
+Each axis contains grid-shaped `kind` codes (with `legend`), `first_index`,
+`second_index`, `signed_span`, `span_available`, `first_weight`, `second_weight`,
+`weights_available` and `structural_supported`, plus `dimension` (x=2, y=1).
+Indices are along that axis; the other index is unchanged. The weights are
+`(-1/span,+1/span)` for those two contributors. The centered kind omits the
+center from its contributors; forward/backward kinds include it. Missing
+stencils have index 0, `NaN` descriptors and false availability masks.
+
+`finite=(; dudx, dudy, dvdx, dvdy)` independently records finite returned
+components, distinct from geometric support or representable metadata weights.
+Combinations such as vorticity or Q must also check their own finite output.
+Descriptor types promote the floating native spans with `Float64` (retaining
+`BigFloat`); calculation still uses native subtraction/division, not weights.
+An unrepresentable descriptor or reciprocal is marked unavailable with `NaN`
+metadata, without discarding a valid direct quotient. For example matching
+subnormal field/coordinate differences may yield 1 while `1/span` overflows.
+Spans retain current coordinate units. Support is for stored values, not
+measurement-origin attribution, a resolution certificate or propagated UQ.
 """
 function flow_derivatives(x::AbstractVector, y::AbstractVector,
                           u::AbstractMatrix, v::AbstractMatrix;
-                          valid::AbstractMatrix{Bool} = isfinite.(u) .& isfinite.(v))
+                          valid::AbstractMatrix{Bool} = isfinite.(u) .& isfinite.(v),
+                          stencil::Symbol=:available,return_support::Bool=false)
     size(u) == size(v) == size(valid) || throw(DimensionMismatch("u, v, and valid must match"))
     length(x) == size(u, 2) && length(y) == size(u, 1) ||
         throw(DimensionMismatch("x/y axes do not match the vector field"))
-    dudx = _axis_derivative(u, x, 2, valid)
-    dudy = _axis_derivative(u, y, 1, valid)
-    dvdx = _axis_derivative(v, x, 2, valid)
-    dvdy = _axis_derivative(v, y, 1, valid)
-    (; dudx, dudy, dvdx, dvdy, valid = copy(valid))
+    stencil in (:available,:centered) || throw(ArgumentError("stencil must be :available or :centered"))
+    Base.require_one_based_indexing(x,y,u,v,valid)
+    gx,gy=_derivative_axis_geometry(x),_derivative_axis_geometry(y)
+    dx=_axis_derivatives(u,v,gx,2,valid,stencil,return_support)
+    dy=_axis_derivatives(u,v,gy,1,valid,stencil,return_support)
+    eligibility=copy(valid)
+    out=(;dudx=dx.du,dudy=dy.du,dvdx=dx.dv,dvdy=dy.dv,valid=eligibility)
+    return_support || return out
+    support=(;policy=stencil,center_eligible=eligibility,x=dx.support,y=dy.support,
+        finite=(;dudx=isfinite.(out.dudx),dudy=isfinite.(out.dudy),dvdx=isfinite.(out.dvdx),dvdy=isfinite.(out.dvdy)))
+    (;out...,support)
 end
-function flow_derivatives(r::PIVResult; include_invalid::Bool = false)
+function flow_derivatives(r::PIVResult; include_invalid::Bool = false,
+                          stencil::Symbol=:available,return_support::Bool=false)
     valid = isfinite.(r.u) .& isfinite.(r.v) .& .!r.mask
     include_invalid || (valid .&= .!r.outliers)
-    flow_derivatives(r.x, r.y, r.u, r.v; valid)
+    flow_derivatives(r.x, r.y, r.u, r.v; valid,stencil,return_support)
 end
 
 """

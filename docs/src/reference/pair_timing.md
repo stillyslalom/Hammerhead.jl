@@ -2,6 +2,6 @@
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["pair_timing.jl"]
+Pages = ["src/pair_timing.jl"]
 Public = true
 ```

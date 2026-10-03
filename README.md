@@ -111,6 +111,7 @@ The development checkout also includes [saved planar experiments](docs/src/howto
 [final-vector measurement history](docs/src/howto/measurement_history.md) with
 [GUI inspection](docs/src/howto/gui_companions.md),
 [exact pair-timing metadata](docs/src/howto/pair_timing.md),
+[stereo timing companions](docs/src/howto/stereo_pair_timing.md),
 [actual-time tracking](docs/src/howto/tracking_timing.md) with
 [GUI inspection](docs/src/howto/gui_tracking_timing.md),
 [calibrated particle/trajectory exports](docs/src/howto/calibrated_scattered_export.md), and

@@ -8,8 +8,9 @@ const _TIMING_TYPES = Dict(string(T) => T for T in
 _timing_error(message) = throw(ArgumentError(message))
 
 function _reject_pair_timing(kwargs, workflow)
-    any(k -> haskey(kwargs, k), (:on_pair_timing, :record_pair_timing, :timing_atol, :timing_rtol)) &&
-        _timing_error("pair timing currently supports planar PIV sequences only; $workflow timing is not implemented")
+    any(k -> haskey(kwargs, k), (:on_pair_timing, :record_pair_timing, :timing_atol, :timing_rtol,
+        :scale_pairs, :timing_pairs2, :_timing_snapshots)) &&
+        _timing_error("pair timing supports planar and stereo PIV sequences only; $workflow timing is not implemented by this driver")
     nothing
 end
 
@@ -77,7 +78,7 @@ function _timing_agree(a, b, tolerance)
 end
 _timing_scale(s) = s === nothing ? nothing : Dict{String,Any}(String(k) => getfield(s,k) for k in fieldnames(PhysicalScale))
 _timing_status(a, b) = a === nothing && b === nothing ? "missing" : a === nothing || b === nothing ? "partial" : "complete"
-function _timing_frame(frame)
+function _timing_frame(frame; timestamp_value=Val(:read))
     data = Dict{String,Any}("kind" => "matrix", "source_id" => nothing,
         "source_identity" => "unavailable", "frame_id" => nothing, "frame_index" => nothing,
         "label" => nothing, "timestamp" => nothing, "time_unit" => nothing, "clock_id" => nothing)
@@ -86,7 +87,7 @@ function _timing_frame(frame)
         checkbounds(1:length(source), i)
         data["kind"] = "frame_ref"; data["frame_index"] = i
         data["label"] = String(frame_source_label(source, i))
-        data["timestamp"] = _timing_number(frame_timestamp(source, i))
+        data["timestamp"] = _timing_number(timestamp_value isa Val{:read} ? frame_timestamp(source,i) : timestamp_value)
         if source isa FrameSource
             data["source_id"] = _source_metadata_string(source.source_id, "source ID")
             data["source_identity"] = source.source_id === nothing ? "unavailable" : "opaque_provided"
@@ -172,15 +173,7 @@ function _timing_preflight(pairs, scale, atol, rtol)
     snapshots
 end
 
-function _timing_validate(data)
-    fields = ["pair_timing_format_version", "input_sequence_index", "frames", "scale", "delay_tolerance", "raw_result_sha256",
-        "timestamp_status", "time_unit_status", "clock_status", "pair_time_unit", "pair_clock_id", "observed_delay",
-        "declared_delay", "effective_delay", "effective_delay_provenance", "effective_agrees_with_observed", "scale_applied",
-        "scale_time_unit_assumption", "sample_time", "sample_time_convention"]
-    _experiment_keys(data, fields, "pair timing")
-    data["pair_timing_format_version"] isa Int && data["pair_timing_format_version"] == PAIR_TIMING_FORMAT_VERSION || _timing_error("unsupported pair timing format")
-    data["input_sequence_index"] isa Int && data["input_sequence_index"] > 0 || _timing_error("invalid timing sequence index")
-    frames = data["frames"]
+function _timing_validate_frames(frames)
     frames isa AbstractVector && length(frames) == 2 || _timing_error("invalid timing frames")
     for frame in frames
         _experiment_keys(frame, ["kind", "source_id", "source_identity", "frame_id", "frame_index", "label", "timestamp", "time_unit", "clock_id"], "timing source frame")
@@ -199,6 +192,19 @@ function _timing_validate(data)
         end
         _timing_decode(frame["timestamp"])
     end
+    nothing
+end
+
+function _timing_validate(data)
+    fields = ["pair_timing_format_version", "input_sequence_index", "frames", "scale", "delay_tolerance", "raw_result_sha256",
+        "timestamp_status", "time_unit_status", "clock_status", "pair_time_unit", "pair_clock_id", "observed_delay",
+        "declared_delay", "effective_delay", "effective_delay_provenance", "effective_agrees_with_observed", "scale_applied",
+        "scale_time_unit_assumption", "sample_time", "sample_time_convention"]
+    _experiment_keys(data, fields, "pair timing")
+    data["pair_timing_format_version"] isa Int && data["pair_timing_format_version"] == PAIR_TIMING_FORMAT_VERSION || _timing_error("unsupported pair timing format")
+    data["input_sequence_index"] isa Int && data["input_sequence_index"] > 0 || _timing_error("invalid timing sequence index")
+    frames = data["frames"]
+    _timing_validate_frames(frames)
     s = data["scale"]
     if s !== nothing
         _experiment_keys(s, String.(fieldnames(PhysicalScale)), "timing scale")

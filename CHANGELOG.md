@@ -8,6 +8,14 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in derivative stencil descriptions and a centered-only policy.
+  Contributor indices, signed spans and weights remain separate from input
+  eligibility and finite outputs. Invalid coordinate geometry is rejected;
+  native integer component overflow produces an unavailable derivative.
+- Added separate native stereo sequence timing companions with ordered camera
+  metadata, exact observed delays and midpoints, synchronization policy and
+  effective scaling-delay provenance. Frozen selections and measurement-field
+  binding protect callback delivery and persistence.
 - Added opt-in version-3 quality reports with planar and per-camera execution
   coverage, sweep/check counts and primary support. Stereo fields are verified
   when generating the report; residual amplitudes are not pooled across grids.
@@ -155,6 +163,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Saved-experiment controls use Files, Replay and Reports sections, with
+  persistent cancellation/progress/status and pagination sized to available
+  space. Inactive controls retain their settings and are removed from mouse
+  hit regions.
 - Native lazy explorers can inspect stereo execution companions, verifying raw
   reconstructed and camera fields before physical display. Camera residuals stay
   in dewarped pixels; stereo per-node history remains unavailable.

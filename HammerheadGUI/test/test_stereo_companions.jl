@@ -3,6 +3,26 @@ using HammerheadGUI.Controllers
 using HammerheadGUI.Hammerhead
 using HammerheadGUI.GLMakie
 
+function gui_workflow_report_pages(fig)
+    pager=only(filter(b->b isa Label && startswith(b.text[],"page "),fig.content))
+    previous=only(filter(b->b isa Button && b.label[]=="previous",fig.content))
+    next=only(filter(b->b isa Button && b.label[]=="next",fig.content))
+    body=only(filter(b->b isa Label && startswith(b.text[],"selected output:"),fig.content))
+    count=parse(Int,last(split(pager.text[]," / ")))
+    for _ in 1:count
+        previous.clicks[]+=1
+    end
+    pages=String[]
+    for _ in 1:count
+        push!(pages,body.text[])
+        next.clicks[]+=1
+    end
+    for _ in 1:count
+        previous.clicks[]+=1
+    end
+    pages
+end
+
 function gui_stereo_companion_fixture()
     grid=DewarpGrid(x=1.:48.,y=48.:-1.:1.)
     cameras=(PinholeCamera([100. 0 15. 0;0 100. 0 0;0 0 1. 100.]),
@@ -72,7 +92,8 @@ end
         saved=quality_report_data(load_quality_report(destination[]))
         @test saved["quality_report_format_version"]==3 && haskey(saved,"measurement_history")
         @test saved["provenance"]["run_id"]==run.run_id
-        @test any(b->b isa Label && occursin("Reported run",b.text[]),fig.content)
+        report_pages=gui_workflow_report_pages(fig)
+        @test occursin("Reported run: "*run.run_id,replace(join(report_pages),"\n"=>""))
         @test size(colorbuffer(fig;px_per_unit=1,visible=false))==(800,1100)
         if haskey(ENV,"HAMMERHEAD_EXECUTION_REPORT_SCREENSHOT")
             GLMakie.save(ENV["HAMMERHEAD_EXECUTION_REPORT_SCREENSHOT"],fig;visible=false)
@@ -81,7 +102,8 @@ end
         destination[]=output;before=read(output)
         save_button.clicks[]+=1
         @test occursin("failed",ec.status[]) && read(output)==before
-        @test any(b->b isa Label && occursin("Reported run",b.text[]),fig.content)
+        retained_pages=gui_workflow_report_pages(fig)
+        @test occursin("Reported run: "*run.run_id,replace(join(retained_pages),"\n"=>""))
         @test quality_report_data(load_quality_report(joinpath(dir,"view-quality.toml")))["provenance"]["run_id"]==run.run_id
         ec.running[]=true;save_button.clicks[]+=1
         @test calls[]==2

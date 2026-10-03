@@ -189,6 +189,17 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   checkpoint/replay and stereo timing persistence remain separate extensions.
   [Timing regressions](test/test_pair_timing.jl) cover exact epochs, metadata
   snapshots, complete preflight, callback integrity and bounded payload lifetime.
+- [x] Persist opt-in stereo sequence timing with both ordered camera descriptors,
+  exact per-camera exposure times/delays/midpoints, and the reconstructed field's
+  effective scaling delay. Preserve four-tuple and paired-list scaling behavior;
+  do not invent a common timestamp under tolerated camera skew. Preflight before
+  pixels/output and bind metadata to raw stereo fields. Stereo recipes, ensemble
+  timing and GUI/export integration remain separate extensions.
+  The [stereo timing guide](docs/src/howto/stereo_pair_timing.md) documents
+  normalized tolerances and explicit mixed/exact arithmetic. The
+  [167 new checks](test/test_stereo_pair_timing.jl) cover numerical parity,
+  frozen metadata, native binding, callback mutation, cleanup and lifetime;
+  370 existing timing/execution checks also pass.
 - [x] Check stereo exposure synchronization when timestamps are available;
   matching pair delays alone does not establish simultaneous acquisition.
   Sequence and ensemble drivers now check exposure times and declared/observed
@@ -360,6 +371,17 @@ and GPU memory in the documented ownership modes.
 - [ ] Propagate uncertainty into derived quantities after specifying spatial
   error-correlation assumptions (Wieneke 2015 §3.2). Distinguish correlation
   random error from calibration, timing, and other uncertainty contributions.
+- [x] Expose the actual neighboring stencils used by planar derivatives, with an
+  explicit policy requiring two-sided support when requested. Separate input-node
+  eligibility, stencil geometry and finite derivative output; validate axes and
+  preserve existing arithmetic on supported grids. Describe irregular-grid
+  secants without implying higher-order accuracy or uncertainty calibration.
+  The [support guide](docs/src/howto/derivative_support.md) and
+  [362 focused checks](test/test_derivative_support.jl) cover independent legacy
+  parity, masks/gaps, descending axes, native overflow, subnormal quotients and
+  physical units. Existing analysis/validity checks also pass.
+- [ ] Show derivative support and unavailable neighborhoods in the result
+  explorer after the core stencil contract is established.
 - [ ] Evaluate confidence estimates for means and Reynolds stresses with explicit
   assumptions about temporal dependence, finite samples, and measurement noise.
 - [x] Export `TrackingResult` in a language-neutral table with trajectory IDs,
@@ -464,6 +486,16 @@ evidence.
 - [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.
+- [x] Make the production saved-experiment workflow usable at smaller window
+  sizes. Keep replay cancellation/progress/status reachable, preserve hidden
+  section settings and report identity, and adapt text paging to available space.
+  Verify long paths/errors and all actions at 1100×800 and 900×600 offscreen;
+  retain separate native desktop and accessibility acceptance checks.
+  Files/Replay/Reports sections keep cancellation and status visible while
+  allocation-sized pages retain full paths, errors and report identities.
+  [Layout checks](HammerheadGUI/test/test_workflow_layout.jl) cover actual mouse
+  routing and persistent settings; 137 focused GUI assertions and 36 real
+  saved/refused-report checks pass, with both window sizes visually inspected.
 - [x] Inspect recorded stereo camera execution in the production GUI and expose
   execution-aware saved reports. Verify raw fields before physical conversion,
   retain transactional navigation and label dewarped-pixel diagnostics distinctly

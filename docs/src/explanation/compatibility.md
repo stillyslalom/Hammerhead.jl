@@ -12,6 +12,13 @@ The [release procedure](https://github.com/stillyslalom/Hammerhead.jl/blob/main/
 describes core-first/GUI-second validation and the dataset, device, and workflow
 evidence associated with a candidate release.
 
+`flow_derivatives` retains its default five-field return and existing quotients
+on supported grids. Stencil metadata and centered-only support are opt-in.
+Coordinate axes now require finite, strictly monotonic values and representable
+native spans; malformed geometry is rejected before calculation. Integer
+component subtraction overflow returns `NaN` instead of a wrapped finite value.
+See [derivative support](../howto/derivative_support.md).
+
 JLD2 is the lossless Julia round-trip format. Files carry `format_version`;
 readers reject unknown versions rather than silently misinterpreting data.
 An empty result vector (or a batch stopped before its first result) is a valid
@@ -37,7 +44,8 @@ interruptions and filesystem limits.
 Quality reports default to `quality_report_format_version = 1` in language-neutral
 TOML. Opt-in native-file history reports use version 2, with explicit recorded,
 missing and unsupported populations and verified final-sweep event counts.
-Readers accept both versions and validate counters, denominators, provenance,
+Opt-in execution-aware reports use version 3, optionally including history.
+Readers accept all three versions and validate counters, denominators, provenance,
 and unavailable diagnostic reasons. These summaries do not change native result
 structures or reconstruct missing history. See [the report schema](../reference/run_quality.md).
 
@@ -65,6 +73,15 @@ verification is explicit through `verify_result=true`. Result-only copies and
 current table exports omit timing companions. Existing `FrameSource` positional
 construction and default processing remain compatible; new source/clock/unit
 labels are optional metadata. See [pair timing](../reference/pair_timing.md).
+
+Stereo sequence timing uses a separate `stereo_pair_timing_format_version = 1`
+companion beside native results. It preserves both camera descriptors and
+midpoints, synchronization policy, reconstructed scaling delay and a raw
+stereo/camera measurement-field binding. The reconstructed time reference is
+explicitly camera 1's provided timestamp midpoint; tolerated skew does not create
+a common exposure time. Result-only copies omit this companion, and metadata
+inspection does not certify acquisition synchronization or calibration.
+See [stereo pair timing](../reference/stereo_pair_timing.md).
 
 Actual-time tracking is explicit through `TimedTrackingResult`; the registered
 `Trajectory` and `TrackingResult` layouts and default ordinal behavior remain
