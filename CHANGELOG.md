@@ -12,6 +12,10 @@ validation and the core-first, GUI-second release sequence.
   and grouped reference pages. Reworked the first PIV, real-data, GUI and ensemble
   examples to lead with images, results and experiments to try. Existing page URLs
   are retained; schema details and development studies have separate entry points.
+- Added worked saved-recipe guides for finer passes, high-pass filtering,
+  cropping with physical scale, and mask editing, with executed comparison figures.
+  Rewrote GUI and validation guides around methods, result interpretation and
+  reader actions, removing repetitive defensive caveats.
 
 ### Core
 
@@ -215,6 +219,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added saved-mask editing that retains imported pixels while adding polygon
+  exclusions, holes and morphology. A verified raw reference image guides the
+  edits; applying them and saving a new complete recipe are explicit actions.
 - Added saved-planar ROI and physical-scale revision with exact imported values,
   explicit disabling and retained raw drafts. Validation preserves the complete
   pass/preprocessing recipe and full-image mask/background geometry. Distinct

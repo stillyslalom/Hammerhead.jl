@@ -9,8 +9,8 @@ start with [a run-quality report](../howto/run_quality.md).
 
 The [validation scorecard](../howto/validation_scorecard.md) is the starting
 point for comparing a change with known synthetic motion and real-data smoke
-cases. The more specialized studies below answer narrower questions; their
-results do not establish accuracy for every experimental recording.
+cases. The studies below investigate particular sources of measurement error
+and show how the results depend on their inputs and processing settings.
 
 | Investigation | Study |
 |:--|:--|

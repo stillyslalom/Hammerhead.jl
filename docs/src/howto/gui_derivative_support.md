@@ -4,11 +4,9 @@ CurrentModule = HammerheadGUI
 
 # Inspect derivative support in the GUI
 
-Choose **derivative support** in the result explorer's tool menu for a planar
-grid with at least two points per axis. The lower details drawer shows support
-counts and a paged explanation of the selected node. Click a node to inspect
-its immediate contributors, including excluded locations. Other result kinds
-and singleton axes have no supported planar derivative analysis.
+For a planar grid with at least two points per axis, choose **derivative support**
+in the explorer's tool menu. Click a node to inspect its immediate contributors,
+including excluded locations. The lower drawer shows counts and a paged explanation.
 
 The field menu adds four maps while this tool is active:
 
@@ -18,22 +16,19 @@ The field menu adds four maps while this tool is active:
 | x stencil / y stencil | Unavailable, neighbor secant, forward or backward, with a discrete legend. |
 | Finite gradient components | Number of finite dudx, dudy, dvdx, dvdy quotients, from 0 to 4. |
 
-Excluded/unavailable nodes remain visible as categories; they are not erased
-by the scalar color-range filters. Manual scalar color limits remain stored
-while these fixed legends are displayed. In a derived scalar field, gray marks
-nonfinite output while the support tool is open. Four finite gradients still
-do not guarantee that a combined quantity such as Q is finite.
+The maps retain excluded/unavailable nodes as categories with fixed legends.
+Manual scalar limits remain stored for your other fields. Gray marks nonfinite
+derived output. Inspect both the gradient count and the selected quantity's
+finite status.
 
-**Available neighbors** preserves the default derivative arithmetic: two
-eligible immediate neighbors give their secant, otherwise one eligible
-neighbor permits a one-sided quotient. **Require both neighbors** selects
-`:centered`, refusing fallback at boundaries and gaps. The policy persists
-across tools and frames; derived-field labels show the two-neighbor requirement
-even after closing support details. Closed area-circulation contours recompute
-under the policy. Profiles and line circulation sample u/v and remain independent
-of derivative stencils. No excluded neighbor is skipped to find a farther one.
+**Available neighbors** uses a neighboring secant when both immediate neighbors
+are eligible, or a one-sided quotient when one is eligible. **Require both
+neighbors** selects `:centered`, keeping boundaries and gaps unavailable.
+This policy persists across tools and frames; field labels show the selection.
+Closed area-circulation contours use the policy, while profiles and line
+circulation sample u/v directly. Stencils use immediate neighbors.
 
-For example, this analytic controller setup needs no window or image processing:
+Try the tool on this analytic field:
 
 ```@example gui_derivative_support
 using Hammerhead, HammerheadGUI
@@ -56,32 +51,23 @@ summary = derivative_support_summary(explorer)
  finite_vorticity=count(isfinite, HammerheadGUI.Controllers.current_field_values(explorer)))
 ```
 
-The contributor explanation uses `(row, column)` grid indices and the displayed
-coordinates. After physical conversion, spans use the length unit and gradients
-use inverse time; the conversion happens once in the explorer. Descending axes
-keep signed spans. A centered neighbor secant excludes the center's algebraic
-value while still requiring center eligibility. On irregular grids it is not
-the general quadratic three-point derivative at the center and carries no
-second-order accuracy claim.
+Contributor details use `(row, column)` indices and displayed coordinates.
+After physical conversion, spans use the length unit and gradients use inverse
+time. Descending axes retain signed spans. A neighboring secant subtracts the
+two neighbors and divides by their separation, with an eligible center required.
+The [core stencil contract](derivative_support.md) gives the exact weights for
+regular and irregular axes.
 
-Representable spans and weights are separate from finite quotient outputs.
-Unrepresentable reciprocal weights can coexist with a usable native quotient.
-A current outlier flag means exclusion, not proof of replacement. Support for
-stored displayed values does not establish measurement origin, spatial
-resolution, propagated uncertainty or uncertainty applicability. Use
-[recorded processing details](gui_companions.md) for actual persisted events.
+Inspect span/weight availability separately from finite quotients: a direct
+quotient can remain usable when its reciprocal metadata weight overflows.
+Current outlier flags exclude a node. For recorded rejection and replacement
+events, open [recorded processing details](gui_companions.md).
 
-The support tool occupies the existing details drawer. Recorded details return
-when another tool is selected if their toggle remains enabled. Profiles keep
-their existing vector sampling semantics. Rich support metadata is released
-when leaving the tool and evicted on frame changes; stencil policy persists.
-Each complete display result must fit memory. Rich Float64 support and four
-gradient arrays cost roughly 110 MiB per million nodes, excluding the display,
-plots and temporary scalar maps. No per-recording support cache is retained.
+Support uses the existing details drawer. Select another tool to return to
+recorded details; close details to restore a profile graph. Frame changes release
+the previous support arrays. Allow roughly 110 MiB per million nodes for rich
+support and four gradients, plus the display and plot arrays.
 
-Inspection hashes current displayed analysis inputs in O(nodes) to detect
-mutation when accessed, rather than continuously monitoring them. If the
-display arrays were edited, reselect the support tool to rebuild the analysis.
-These checks do not reload or certify the original images. See the
-[core stencil contract](derivative_support.md) for arithmetic and eligibility
-details.
+After editing displayed arrays, reselect the support tool to rebuild its
+analysis. Access checks the current analysis inputs; the
+[core stencil contract](derivative_support.md) explains eligibility and arithmetic.

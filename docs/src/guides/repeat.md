@@ -35,8 +35,8 @@ specific to those methods. The [GUI](../howto/gui_experiments.md) provides a
 saved-experiment window for the same planar workflow.
 
 For long work that must survive interruption, use
-[checkpoints](../howto/checkpoints.md). Ordinary batch output retains completed
-results after a failure, but does not itself provide a resumable job.
+[checkpoints](../howto/checkpoints.md), which store the progress needed to resume.
+Ordinary batch output retains the results completed before a failure.
 
 ## Return to a questionable result
 

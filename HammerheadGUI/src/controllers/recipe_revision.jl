@@ -142,7 +142,7 @@ end
     RecipeRevisionController(record_or_path; protected_paths=[])
 
 Keep a detached complete planar experiment, ordered raw pass text drafts and
-ordered built-in preprocessing and ROI/scale drafts. All other recipe fields and each pass's
+ordered built-in preprocessing, ROI/scale and static-mask drafts. All other recipe fields and each pass's
 ordered validation tuple are retained. Untouched embedded backgrounds retain
 their exact type/content; repetitions and an empty preprocessing chain are valid.
 `candidate`, `diff` and `preview_text` describe the last successful preview;
@@ -154,7 +154,7 @@ Extra known output/history/report destinations must be supplied in
 record. Original record/input/script/run output paths are protected automatically.
 All revision destinations successfully saved by this controller are also protected
 for its lifetime; subsequent saves require another destination. Consumed background
-file paths are also lifetime-protected, independently of the public path list.
+and mask file paths are also lifetime-protected, independently of the public path list.
 Construction validates metadata and hashes embedded recipe arrays; launch outside
 native callbacks. Preview/save asynchronous scheduling can still pause rendering;
 processing cancellation is unavailable. No parent-recipe lineage is persisted.
@@ -168,6 +168,7 @@ struct RecipeRevisionController
     preprocessing_selected::Observable{Int}
     roi_draft::Observable{NamedTuple}
     scale_draft::Observable{NamedTuple}
+    mask_draft::Observable{NamedTuple}
     candidate::Observable{Union{Nothing,PIVRecipe}}
     diff::Observable{Union{Nothing,RecipeDiff}}
     preview_text::Observable{String}
@@ -194,6 +195,7 @@ function RecipeRevisionController(value;protected_paths=String[])
         Observable(isempty(original.recipe.preprocessing) ? 0 : 1),
         Observable{NamedTuple}(_revision_roi_draft(original.recipe.roi,original.input_files[1]["image_size"])),
         Observable{NamedTuple}(_revision_scale_draft(original.recipe.scale)),
+        Observable{NamedTuple}((enabled=original.recipe.mask!==nothing,raster=original.recipe.mask===nothing ? nothing : copy(original.recipe.mask))),
         Observable{Union{Nothing,PIVRecipe}}(nothing),Observable{Union{Nothing,RecipeDiff}}(nothing),
         Observable("No preview yet."),Observable(true),Observable(false),Observable(:ready),
         Observable("Edit recipe settings, preview, then save a distinct experiment record."),Observable{Any}(nothing),
@@ -235,6 +237,108 @@ saved metadata only; neither input pixels nor vector arrays are converted here.
 """
 set_revision_scale!(rc::RecipeRevisionController,values::AbstractDict;enabled::Bool=rc.scale_draft[].enabled)=
     _revision_geometry_edit!(rc,rc.scale_draft,revision_scale_fields(),values,enabled)
+
+_revision_mask_equal(a,b)=a.enabled===b.enabled && _revision_background_equal(a.raster,b.raster)
+function _revision_mask_value(draft)
+    keys(draft)==(:enabled,:raster) && draft.enabled isa Bool &&
+        (draft.raster===nothing || draft.raster isa BitMatrix) ||
+        throw(ArgumentError("mask drafts need enabled Bool and a detached BitMatrix or nothing"))
+    draft.enabled || return nothing
+    draft.raster===nothing && throw(ArgumentError("enabled mask needs an explicitly supplied full-image raster"))
+    copy(draft.raster)
+end
+function _revision_publish_mask!(rc,draft)
+    _revision_mask_equal(draft,rc.mask_draft[]) && return rc
+    rc.mask_draft.val=deepcopy(draft);rc.dirty.val=true
+    notify(rc.mask_draft);notify(rc.dirty)
+    rc
+end
+
+"""
+    set_revision_mask!(controller; raster=controller.mask_draft[].raster,
+                       enabled=controller.mask_draft[].enabled)
+
+Replace the raw static-mask draft with a copied Bool matrix or `nothing`.
+Disabling retains the raster for re-enabling; disabled drafts compose `nothing`,
+distinct from an enabled all-false mask. Enabled drafts need a raster when
+previewed/saved. Full-image geometry is checked against every acquisition then.
+Mask edits never condition image intensities or change `mask_threshold`.
+"""
+function set_revision_mask!(rc::RecipeRevisionController;raster=rc.mask_draft[].raster,
+                            enabled::Bool=rc.mask_draft[].enabled)
+    _revision_idle(rc)
+    raster===nothing || raster isa AbstractMatrix{Bool} || throw(ArgumentError("mask raster must contain Bool values"))
+    _revision_publish_mask!(rc,(enabled=enabled,raster=raster===nothing ? nothing : BitMatrix(raster)))
+end
+
+"""
+    reset_revision_mask!(controller)
+
+Restore the exact imported mask state, including `nothing` versus all-false.
+This differs from clearing editor pixels, which produces an explicit empty mask.
+"""
+reset_revision_mask!(rc::RecipeRevisionController)=set_revision_mask!(rc;
+    raster=rc.original.recipe.mask,enabled=rc.original.recipe.mask!==nothing)
+
+function _revision_mask_load_run!(rc,request,path_or_picker,threshold,invert)
+    try
+        chosen=path_or_picker isa Function ? path_or_picker() : path_or_picker
+        if chosen===nothing || (chosen isa AbstractString && isempty(chosen))
+            rc.state[]=:cancelled;rc.status[]="Mask choice cancelled; drafts retained."
+            return
+        end
+        chosen isa AbstractString || throw(ArgumentError("mask picker must return a path or nothing"))
+        path=Hammerhead._artifact_local_path(chosen)
+        digest=Hammerhead._experiment_file_digest(path)
+        raster=load_mask(path;threshold,invert)
+        Hammerhead._experiment_file_digest(path)==digest || throw(ArgumentError("mask file changed during loading"))
+        all(f->collect(size(raster))==f["image_size"],request.original.input_files) ||
+            throw(ArgumentError("mask must match every original full-image size"))
+        _revision_mask_equal(rc.mask_draft[],request.mask) || throw(ArgumentError("mask draft changed while loading replacement"))
+        # Session-only source provenance survives mutations of public paths.
+        path in rc.saved_protected[] || push!(rc.saved_protected[],path)
+        rc.protected_paths.val=unique(String[rc.protected_paths[];path])
+        _revision_publish_mask!(rc,(enabled=true,raster=raster));notify(rc.protected_paths)
+        rc.state[]=:completed;rc.status[]="Full-image mask snapshot loaded; preview is pending."
+    catch err
+        _revision_failure!(rc,err)
+    finally
+        rc.task[]=nothing;_revision_safe_set!(rc.running,false)
+    end
+    nothing
+end
+
+"""
+    load_revision_mask!(controller, path_or_picker; threshold=0.5,
+                        invert=false, async=true)
+
+Capture drafts, decoding options and known protected paths before notifications
+or the zero-argument picker. Decode with core `load_mask` (`true` is excluded),
+verify bytes across decoding, and require the original full-image size of every
+acquisition. Accepted replacement enables the mask. Cancel/failure before
+publication retains drafts; a newer mask draft refuses replacement.
+Consumed source paths remain protected for this controller's lifetime. The saved
+recipe embeds raster bits, not a filename or inferred polygon/source lineage.
+Queued I/O may pause rendering; no processing cancellation is offered.
+"""
+function load_revision_mask!(rc::RecipeRevisionController,path::Union{AbstractString,Function};
+                             threshold::Real=0.5,invert::Bool=false,async::Bool=true)
+    _revision_idle(rc);request=_revision_capture(rc)
+    level=Float64(threshold);isfinite(level) || throw(ArgumentError("mask threshold must be finite Float64"))
+    destination=path isa AbstractString ? (isempty(strip(path)) ? String(path) : Hammerhead._artifact_local_path(path)) : path
+    try
+        rc.running[]=true;rc.error[]=nothing;rc.state[]=:busy
+        rc.status[]="Loading captured mask replacement; cancellation is unavailable."
+    catch err
+        _revision_failure!(rc,err);_revision_safe_set!(rc.running,false);return rc
+    end
+    if async
+        rc.task[]=errormonitor(@async begin yield();_revision_mask_load_run!(rc,request,destination,level,invert);end)
+    else
+        _revision_mask_load_run!(rc,request,destination,level,invert)
+    end
+    rc
+end
 function _revision_index(rc,index;insertion=false)
     index isa Integer && !(index isa Bool) && 1<=index<=length(rc.drafts[])+(insertion ? 1 : 0) ||
         throw(ArgumentError("pass index is outside the draft sequence"))
@@ -483,6 +587,7 @@ function _revision_capture(rc)
     (original=deepcopy(rc.original),drafts=deepcopy(rc.drafts[]),templates=deepcopy(rc.templates[]),
      preprocessing=deepcopy(rc.preprocessing_drafts[]),
      roi=deepcopy(rc.roi_draft[]),scale=deepcopy(rc.scale_draft[]),
+     mask=deepcopy(rc.mask_draft[]),
      protected=protected)
 end
 function _revision_recipe(request)
@@ -501,6 +606,7 @@ function _revision_recipe(request)
     options[:preprocessing]=_revision_preprocess_steps(request.preprocessing)
     options[:roi]=_revision_roi_value(request.roi)
     options[:scale]=_revision_scale_value(request.scale)
+    options[:mask]=_revision_mask_value(request.mask)
     recipe=PIVRecipe(passes;options...)
     # Metadata-only geometry validation; do not claim a fresh record/environment.
     scratch=ExperimentRecord(recipe,deepcopy(original.input_files),deepcopy(original.pairs),
@@ -513,7 +619,7 @@ end
     revision_recipe(controller) -> PIVRecipe
 
 Synchronously validate all raw drafts and original metadata, returning a detached
-candidate preserving every field outside pass/preprocessing/ROI/scale edits. Hashes embedded arrays; does not read
+candidate preserving every field outside pass/preprocessing/ROI/scale/mask edits. Hashes embedded arrays; does not read
 input pixels or evaluate referenced scripts. Invalid text never uses a prior preview.
 Floating point text is parsed as Float64, matching the stored parameter precision.
 """
@@ -578,7 +684,8 @@ function _revision_publish_preview!(rc,recipe,difference,request)
     rc.candidate.val=recipe;rc.diff.val=difference;rc.preview_text.val=sprint(show,MIME"text/plain"(),difference)
     rc.dirty.val=rc.drafts[]!=request.drafts || rc.templates[]!=request.templates ||
         !_revision_preprocessing_equal(rc.preprocessing_drafts[],request.preprocessing) ||
-        rc.roi_draft[]!=request.roi || rc.scale_draft[]!=request.scale
+        rc.roi_draft[]!=request.roi || rc.scale_draft[]!=request.scale ||
+        !_revision_mask_equal(rc.mask_draft[],request.mask)
     for obs in (rc.candidate,rc.diff,rc.preview_text,rc.dirty);notify(obs);end
 end
 function _revision_run!(rc,request,destination)

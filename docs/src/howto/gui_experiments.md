@@ -16,10 +16,9 @@ The saved-experiment workflow opens in a **separate window**.
 3. Give the experiment a useful name, such as `vortex-medium.jld2`.
 
 The snapshot keeps the ordered file pairs, passes, preprocessing, mask, ROI,
-and scale. It uses the effective preset schedule, so **medium** is saved as
-explicit passes. Use the recipe pages to check the setup before saving.
-The record format needs image files; an array-only batch must first be saved
-as images. Saving a snapshot does not attach earlier batch results as run history.
+and scale. It saves the effective preset as explicit passes; use the recipe
+pages to check them. Save array-based frames as image files before snapshotting.
+The new experiment starts with an empty run history; replay adds its first run.
 
 ## Run the saved recipe
 
@@ -38,8 +37,7 @@ separate [checkpoint workflow](gui_checkpoints.md).
 ### Try it on a small recording
 
 This example uses a committed image pair, saves the settings, and replays them
-without opening desktop windows. The same actions are available through the
-buttons above.
+through the controller. The buttons above perform the same actions.
 
 ```@example gui_experiments
 using HammerheadGUI
@@ -62,7 +60,7 @@ mktempdir() do work
 end
 ```
 
-## Make a variation without losing the original
+## Save a variation
 
 Use **revise pass schedule…**, **revise preprocessing…**, or **revise ROI / scale…**
 to open a dedicated editor. Validate the changes, save a **distinct revision**,
@@ -70,18 +68,18 @@ then open that revision for replay. The source recipe and its history stay separ
 
 For a worked task, choose [pass settings](gui_recipe_revision.md),
 [ordered preprocessing and image previews](gui_preprocessing_revision.md), or
-[ROI and physical scale](gui_recipe_geometry_revision.md).
+[ROI and physical scale](gui_recipe_geometry_revision.md). To exclude another
+reflection while keeping the old mask, [change the saved mask](gui_recipe_mask_revision.md).
 [Compare saved recipes](gui_comparison.md) when you want to inspect the difference.
 
 ## Check a completed run
 
 In **Reports**, **save quality report…** writes a report and shows its summary.
-The report states which vectors were available, masked, or flagged; uncertainty
-availability alone does not establish accuracy. See [saved run-quality reports](run_quality.md)
-for interpreting those counts.
+Use its available, masked, flagged, and uncertainty counts to inspect the run.
+[Saved run-quality reports](run_quality.md) explains the populations.
 
-If replay refuses changed inputs or another software environment, check the
-message before enabling **allow environment changes**. Referenced custom scripts
-are never executed automatically. [Replay and cancellation](gui_experiment_replay.md)
-covers failures and partial outputs; the [experiment workflow reference](../reference/gui_experiments.md)
-covers full settings, verification, and custom callbacks.
+If replay reports changed inputs or another software environment, check the
+message before enabling **allow environment changes**. For recipes with custom
+scripts, follow the callback setup in the
+[experiment workflow reference](../reference/gui_experiments.md).
+[Replay and cancellation](gui_experiment_replay.md) covers partial outputs.

@@ -19,43 +19,34 @@ display(checkpoint_workflow())
 ```
 
 The experiment link copies its complete record as a creation candidate.
-**Choose complete recipe…** loads another saved experiment without changing
-its passes or projecting it onto the batch form. With
-`checkpoint_workflow(; batch=runner)`, **snapshot batch** uses the same exact
-effective-pass, preprocessing, mask/ROI and scale snapshot as the saved-experiment
-bridge. A script-based candidate remains inspectable with a creation refusal;
-**open checkpoint…** stays available. Checkpoint restart supports built-in
-preprocessing only and never evaluates or reconstructs arbitrary callbacks.
+**Choose complete recipe…** loads another saved experiment with its saved
+passes intact. With `checkpoint_workflow(; batch=runner)`, **snapshot batch**
+captures effective passes, preprocessing, mask/ROI, and scale. Use built-in
+preprocessing for checkpoint restart. A script-based recipe remains inspectable,
+and **open checkpoint…** lets you open an existing supported store.
 
 ## Create, cancel and resume
 
 Select separate new or empty **metadata directory…** and **per-pair result
-directory…**, then **create checkpoint**. Existing user data, aliases, changed
-inputs and incompatible software are refused by the core. Opening/creating a
-store verifies it before replacing the controller's previous valid snapshot.
-Its recipe pages show every saved pass and option; long paths and descriptions
-remain reachable with **previous** and **next**.
+directory…**, then **create checkpoint**. The core checks destinations, input
+content, and software compatibility before replacing the current store snapshot.
+Use **previous** and **next** to inspect the complete recipe and paths.
 
-**Resume committed prefix** validates the exact recipe, ordered input content,
-software environment and committed payloads, then starts at the first missing
-absolute pair. There is no environment override. The counter reports published
-commit descriptors, including earlier pairs. The controller keeps metadata and
-no growing result vector.
+**Resume committed prefix** checks the exact recipe, ordered inputs, software
+environment, and committed payloads, then starts at the first missing pair.
+Use the recorded software environment for restart. The counter includes all
+published commits, including pairs completed in earlier attempts.
 
-**Cancel after current pair** sets an independent cancellation request. The
-pair in flight commits before cancellation is acknowledged. Cancelling after
-the final pair records completion. Native cancellation is shown as `:cancelled`
-and does not become an error. A progress callback exception or processing error
-is a failure; the original exception and verified committed prefix remain
-available. **Refresh checkpoint state** is an explicit idle action that scans
-committed bytes, rather than a constant-time or per-pair status poll.
+**Cancel after current pair** lets the pair in flight commit before stopping.
+At the final pair, the attempt completes. The view shows cancellation as
+`:cancelled`; processing or callback errors appear as failures with the original
+exception and verified prefix. Use **Refresh checkpoint state** while idle to
+verify the currently committed bytes.
 
-The GUI uses a cooperative Julia task and yields between committed pairs.
-Initial verification and current-pair computation can pause rendering; this
-slice has no in-pass progress, immediate interruption or background worker that
-mutates GUI Observables.
+The GUI yields between committed pairs. Initial verification and current-pair
+computation finish before the next cancellation boundary.
 
-This executable controller example uses committed fixtures without a window:
+This controller example uses the supplied image pair:
 
 ```@example gui_checkpoints
 using HammerheadGUI
@@ -89,47 +80,36 @@ end
 
 ## Recover a stopped writer
 
-After process termination, a writer lock or unfinished attempt may remain.
-Stop the former writer before checking **former writer has stopped**, then
-resume. This is your explicit assertion, not an automatic stale-PID check.
-It resets after every open/create/start and after execution; each later recovery
-requires a new assertion. Known live writers in the same process are refused,
-and concurrent recovery is unsupported. Recognized old lock publication states
-are archived; unfamiliar files are preserved and refused.
+After process termination, stop the former writer, check **former writer has
+stopped**, then resume. This check is required anew after opening or running a
+store. Perform recovery with one owner at a time; the core archives recognized
+old lock states and preserves unfamiliar files for inspection.
 
-The checkpoint-state page separates **data complete** from native attempt status.
-All pairs can be committed while an attempt is unfinished or failed. Recovery
-records interruption without inventing a finish time and can finalize a complete
-prefix without recomputing it. This view shows current verified state and the
-last returned attempt in the current session; the detailed saved history stays
-in the core store. Local rename publication and process recovery do not establish
-power-loss durability or network-filesystem guarantees.
+The checkpoint-state page separates **data complete** from attempt status.
+Every pair can be committed while the last attempt is unfinished or failed.
+Recovery records the interruption and finalizes a complete prefix using the
+existing committed results. The view shows current verified state and the last
+returned attempt; the core store retains detailed history.
 
-For relocated input files, supply an equivalent core record explicitly through
-the controller API: `start!(controller; record=relocated_record)` or assign
-`controller.resume_record[]`. Reopening with an explicitly relocated result
-directory uses `open_checkpoint!(controller, path; output_dir=relocated_output)`.
-Those optional relocation choices are API operations in this first view; exact
-content identities and the strict software environment still apply.
+For moved input files, create an equivalent core record and pass
+`start!(controller; record=relocated_record)` or assign
+`controller.resume_record[]`. To open moved results, use
+`open_checkpoint!(controller, path; output_dir=relocated_output)`. These API
+operations retain the exact content and software checks.
 
 ## Browse a fixed prefix or export
 
-**Browse fixed prefix** opens a nonempty verified `CheckpointResults` index in
-the result explorer. It keeps one physical display frame and the current
-frame's derived fields. The index length is fixed: after resume, explicitly
-open another explorer to see later commits. Empty prefixes and busy execution
-disable browsing. Changed/unreadable entries report an error while retaining
-the prior displayed frame.
+**Browse fixed prefix** opens the currently verified, nonempty prefix in a
+separate result explorer. After resuming, open another explorer to see new
+commits. Browse while execution is idle. An unreadable or changed entry leaves
+the previously displayed frame available and shows its error.
 
-**Export complete native file…** is enabled when all pairs have committed,
-independent of the last attempt status. Select a fresh destination outside both
-owned directories. Core source/record/payload alias guards and an exclusive
-destination lock protect publication. Failed export leaves the checkpoint
-intact; after a terminated export leaves its lock, use another fresh path.
-Concurrent outside writers are unsupported. Export is optional and uses
-additional disk space; it does not replace the authoritative restart store.
+When **data complete** is true, use **Export complete native file…** and choose
+a fresh destination outside both checkpoint directories. The export adds an
+ordinary native results file alongside the restart store. If export fails, retain
+the checkpoint and retry at a fresh path; after termination, a destination lock
+may still occupy the old path.
 
 See the [GUI checkpoint API](../reference/gui_checkpoints.md) and
-[core checkpoint reference](../reference/checkpoints.md) for the schema and
-publication boundaries. Checkpoint controls do not add execution diagnostics or
-quality-report integration to per-pair checkpoint results in this slice.
+[core checkpoint reference](../reference/checkpoints.md) for recovery and
+publication details. Open the exported native file for ordinary result browsing.

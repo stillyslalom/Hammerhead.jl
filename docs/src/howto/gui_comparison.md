@@ -1,24 +1,20 @@
 # Compare saved recipes on one representative pair
 
 Open **compare a representative pair** from the saved-experiment workflow. The
-new window captures the current complete record as **before**. Open a separate
-saved experiment as **after**, then enter one pair index for each record. These
-are explicit choices: filenames, list positions and timestamps do not prove
-that two selected pairs have the same ordered image content.
+new window captures the current record as **before**. Open a second saved
+experiment as **after**, then choose its representative pair. Select pairs with
+the same ordered image content so the comparison measures your settings change.
 
-Choose **raw displacement (px)** or **physical velocity**, then run **compare
-selected pair**. Physical comparison requires identical attached scale factors
-and unit labels. The unchecked environment override is separate from replay's
-override; enabling it reruns both recipes under one recorded current environment.
-Custom preprocessing scripts/callbacks are unsupported and never executed here.
+Choose **raw displacement (px)** or **physical velocity**, then **compare
+selected pair**. Physical comparison requires matching scale factors and unit
+labels. An explicit environment override reruns both recipes under the recorded
+current environment. Use recipes with built-in preprocessing for this workflow.
 
-The core verifies selected ordered bytes, sizes and decoded dimensions before
-either computation, retains complete recipe settings, and checks inputs and
-software again afterward. It pairs only numerically exact common grid centers
-in raw image coordinates, including ROI offsets. It performs no interpolation
-to make different grids match. Differences are **after minus before** and
-describe recipe sensitivity; they do not establish accuracy or uncertainty
-coverage. Empty common/eligible populations are explicitly unavailable.
+The core checks the selected image content, dimensions, and settings before
+computation and checks input/software identities afterward. It compares exact
+common grid centers in original-image coordinates, including ROI offsets.
+Differences are **after minus before**: use them to inspect recipe sensitivity.
+The report lists each field's population and marks empty comparisons unavailable.
 
 ```julia
 using HammerheadGUI
@@ -31,33 +27,24 @@ save_comparison_report!(controller, "pair-comparison.toml")
 figure = recipe_comparison(controller)
 ```
 
-The **current request** page shows current record IDs, chosen pair indices and
-complete selected paths/content identities. Other sections describe only the
-**last report**, with its own before/after pair indices, recipe/input IDs and
-basis. Settings, populations and provenance pages expose every line. Embedded
-mask/background changes appear as shape/type/content summaries rather than
-large array dumps. Native-grid populations remain separate; common differences
-use finite, unmasked, currently unflagged vectors in both results. Stored UQ
-comparisons further require finite nonnegative components, without certifying
-applicability or coverage. Current flags do not reconstruct replacement history.
+The **current request** page shows your selected records, pairs, and paths.
+Other pages show the **last report** with its own choices and identities.
+Settings changes include compact shape/type/content summaries for masks and
+backgrounds. Common differences use finite, unmasked, unflagged vectors in both
+results; stored uncertainty comparisons additionally use finite nonnegative
+components. Each population has its own count.
 
-Changing choices or a failed comparison preserves the prior report with its own
-historical labels. **Save last report** exports that report without recomputing
-current choices. **Open report** loads a validated past TOML report for read-only
-inspection; it does not reopen/reverify input files or reconstruct runnable
-recipes from digest summaries. Loading failures preserve the previous report.
-Saving protects known inputs, records, scripts, result files and captured GUI
-destinations, including filesystem aliases. Writes are not atomic publication.
+Changing choices or a failed comparison keeps the previous report available.
+**Save last report** exports that captured report; **Open report** displays a
+saved TOML report. A failed load keeps the current report. Choose a distinct
+destination: inputs, records, scripts, results, and known workflow paths are
+protected. If a write fails, check for a partial TOML and retry at a fresh path.
 
-The controller freezes both record snapshots, indices, basis, environment
-override and protected paths before notifications or task scheduling. Busy
-record/report actions, pair edits and duplicate runs are refused. Basis and
-environment controls can change the next attempt, while the active request
-remains frozen. Invalid visible pair text is checked again on Run, so it cannot
-silently reuse old indices. Asynchronous scheduling does not promise responsive
-CPU preflight/computation, live progress or cancellation.
+The active request keeps the choices captured at its start. Wait for it to
+finish before opening records, editing pair indices, or starting another
+comparison. Basis/environment changes apply to the next request. Run parses the
+visible pair text again. Verification and computation complete as one action.
 
-Only two recipe snapshots and metadata from the last report remain after a run.
-No comparison image or numerical result arrays are retained. Copies of embedded
-recipe masks/backgrounds still have their normal storage cost. This independent
-comparison does not append experiment run history or replace production output.
+The comparison keeps its metadata report separately from experiment run history
+and result outputs. See the [comparison reference](../reference/gui_comparison.md)
+for matching populations, captured requests, and save behavior.
