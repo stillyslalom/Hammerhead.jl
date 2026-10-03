@@ -38,7 +38,8 @@ deviation for `u` and `v` separately.
 The estimate describes the **random error of the correlation measurement at
 that window**:
 
-- Systematic errors (peak locking, calibration bias) are invisible to it;
+- Systematic errors (peak locking, image-deformation interpolation error
+  with small particle images, calibration bias) are invisible to it;
   diagnose those with [`peak_locking`](@ref) and, for ground-truthed cases,
   [`error_statistics`](@ref).
 - The estimate is *not updated* when validation replaces or substitutes a
@@ -48,11 +49,24 @@ that window**:
   the distribution as well as its median. A few large estimates can dominate
   a mean.
 
-Synthetic images with known displacements let you compare estimated
-uncertainty with measured error. On clean synthetic images the stored σ is
-currently too small: about 15–18% of errors fall within 1σ instead of 68%.
-[How accurate are the measurements?](validation_results.md) summarizes those
-tests and the open investigation.
+Each σ is itself an estimate from the handful of particles in one window,
+so it scatters by roughly 30–40% from one image pair to the next. Read a
+single vector's error divided by its σ like a t-statistic with a few degrees
+of freedom: on noisy synthetic images about 52–62% of errors fall within 1σ
+and 89–93% within 2σ, and σ averaged over repeated pairs at the same
+window covers the random error at 60–65% / 91–95%, close to the Gaussian
+68% / 95%. Use about
+2.5σ (95–98% coverage in the same tests) when you need a 95% interval for
+an individual vector.
+
+The variance of the correlation asymmetry is never taken below its zero-lag
+term ``S_{0,0}``, the independent-pixel limit of [Wieneke2015](@citet). A
+window whose deformed images differ at all therefore always reports σ > 0;
+σ = 0 means the two deformed windows match exactly.
+
+[How accurate are the measurements?](validation_results.md) gives the
+synthetic coverage measurements, including the systematic error that
+dominates the total error on clean images with small particles.
 
 ## Use uncertainty alongside validation and sensitivity checks
 

@@ -10,8 +10,8 @@
 # uncertainty with the same 3-point Gaussian fit an actual asymmetry would
 # produce (eqs 4, 9): σ_u = f(C0, C± − σ_ΔC/2, C± + σ_ΔC/2), where
 # C± = (C₊ + C₋)/2. The linearization is accurate for σ_u ≲ 0.3 px; the
-# estimator captures the random error only (bias such as peak locking is
-# invisible to it).
+# estimator captures the random error only (bias such as peak locking or
+# deformation-interpolation error is invisible to it).
 
 const UQ_MAX_OFFSET = 4
 
@@ -84,8 +84,17 @@ end
 # the columns of A/B (the v component passes transposed views). Fills the
 # leading (nr, nc−1) block of dC with ΔC_i (eq 5) and accumulates into `s`:
 # C0/C+/C− over the same support, then the covariance sums S_{δ} (eq 7) of
-# the zero-meaned ΔC_i field after (1,2,1)/4 smoothing along the shift
-# direction (§2.1 — eliminates the negative pixel-noise covariance at δ = ±1).
+# the ΔC_i field after (1,2,1)/4 smoothing along the shift direction (§2.1 —
+# eliminates the negative pixel-noise covariance at δ = ±1).
+#
+# The products are raw, not centred on the window mean. The zero-mean
+# requirement of eq (6) is the convergence condition ΣΔC_i = ΔC ≈ 0, which the
+# predictor–corrector scheme establishes; it is not a request to subtract an
+# empirical mean (the paper's own implementation forms the S_δ as smoothed
+# product fields). Subtracting the sample mean forces the all-lag covariance
+# sum to exactly zero, which biases the ±4 truncated sum low by about
+# (number of summed lags)/(window pixels) — a third of the variance for
+# 16 × 16 windows — and drove many windows' sums negative.
 function uq_component!(s::AbstractVector{Float64}, dC, dCs, A, B)
     nr, nc = size(A)
     m = nc - 1
@@ -112,15 +121,9 @@ function uq_component!(s::AbstractVector{Float64}, dC, dCs, A, B)
         cr = min(c + 1, m)
         dCs[r, c] = quarter * (dC[r, cl] + 2 * dC[r, c] + dC[r, cr])
     end
-    # Eq (6) requires the ΔC_i to have zero mean; subtract the window mean.
-    μ = 0.0
-    @inbounds for c in 1:m, r in 1:nr
-        μ += Float64(dCs[r, c])
-    end
-    μ /= nr * m
     S00 = 0.0
     @inbounds for c in 1:m, r in 1:nr
-        d = Float64(dCs[r, c]) - μ
+        d = Float64(dCs[r, c])
         S00 += d * d
     end
     s[4] += S00
@@ -128,7 +131,7 @@ function uq_component!(s::AbstractVector{Float64}, dC, dCs, A, B)
         Sk = 0.0
         @inbounds for c in max(1, 1 - δc):min(m, m - δc),
                       r in max(1, 1 - δr):min(nr, nr - δr)
-            Sk += (Float64(dCs[r, c]) - μ) * (Float64(dCs[r + δr, c + δc]) - μ)
+            Sk += Float64(dCs[r, c]) * Float64(dCs[r + δr, c + δc])
         end
         s[4 + k] += Sk
     end
@@ -141,9 +144,22 @@ end
 # S/S0,0 drops below 0.05", §2.1). Inner rings are taken whole — their
 # negative members are real covariance (signal×noise anticorrelation) that
 # largely cancels against S00; truncation only guards against outer terms
-# that are pure sampling noise. Then eq (9). NaN when the window carries no
-# usable correlation signal or the noise exceeds the peak curvature.
-# There is no explicit cutoff on the returned uncertainty magnitude.
+# that are pure sampling noise.
+#
+# The variance is bounded below by the zero-lag term S00 — the random-walk
+# limit of eq (8). After the (1,2,1) smoothing the covariance matrix of the
+# ΔC_i is non-negative in the paper's model (§2.1, figure 5), so the true sum
+# can only exceed S00; a truncated sum below it (or below zero) is sampling
+# noise in the lag estimates of a small window, not evidence of a smaller
+# error. Without the bound such windows reported σ = 0 although repeated
+# noise realizations showed clearly positive error variance. On synthetic
+# data S00 alone is about a third of the true variance, so the bound only
+# engages for those noise-dominated windows. σ is exactly zero only when
+# every ΔC_i vanishes (identical deformed windows).
+#
+# Then eq (9). NaN when the window carries no usable correlation signal or
+# the noise exceeds the peak curvature. There is no explicit cutoff on the
+# returned uncertainty magnitude.
 function finalize_uncertainty(::Type{T}, s::AbstractVector{Float64}) where {T}
     C0, Cp, Cm, S00 = s[1], s[2], s[3], s[4]
     σ2 = S00
@@ -153,7 +169,7 @@ function finalize_uncertainty(::Type{T}, s::AbstractVector{Float64}) where {T}
             σ2 += 2 * s[4 + k]
         end
     end
-    σΔC = sqrt(max(σ2, 0.0))
+    σΔC = sqrt(max(σ2, S00))
     Cpm = (Cp + Cm) / 2
     lo = Cpm - σΔC / 2
     hi = Cpm + σΔC / 2

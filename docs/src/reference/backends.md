@@ -127,7 +127,7 @@ returns packed scalars.
 
 Correlation-statistics uncertainty has a distinct additive accumulator.
 `_ka_uq_fill!` materializes the smoothed correlation-difference field once,
-including its mean, and `_ka_uq_stats!` reduces it into Float64 statistics.
+and `_ka_uq_stats!` reduces it into Float64 statistics.
 Single-pair analysis copies those statistics back for finalization. Ensemble
 analysis keeps them device-resident across pairs and transfers them only when
 the accumulated field is finalized. A backend that cannot provide Float64
