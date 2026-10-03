@@ -1,7 +1,7 @@
 name = "HammerheadGUI"
 uuid = "759a4b49-c2fc-4731-b9e2-38749bc182b9"
 authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
-version = "0.1.1"
+version = "0.2.0"
 
 [deps]
 FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
@@ -21,7 +21,7 @@ Hammerhead = {path = ".."}
 [compat]
 FileIO = "1.16"
 GLMakie = "0.13"
-Hammerhead = "0.1"
+Hammerhead = "0.2"
 ImageCore = "0.10"
 ImageIO = "0.6"
 LinearAlgebra = "1"

@@ -1,7 +1,7 @@
 name = "Hammerhead"
 uuid = "5ded7e7b-b945-48ee-9a66-c5dce433a0a7"
 authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"

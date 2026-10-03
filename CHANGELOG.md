@@ -1,10 +1,8 @@
 # Release notes
 
-## Unreleased
+## Hammerhead 0.2.0 and HammerheadGUI 0.2.0 (2026-10-03)
 
 Changes since core v0.1.0 (2026-07-14) and HammerheadGUI v0.1.1 (2026-07-22).
-See [RELEASING.md](RELEASING.md) for the core-first, GUI-second release
-sequence.
 
 ### Core
 
@@ -46,6 +44,14 @@ Added:
 
 Changed and fixed:
 
+- Wieneke uncertainty estimates are no longer biased low. Covariance sums now
+  use the raw smoothed correlation-difference products instead of
+  window-mean-centred ones, and the variance is floored at the independent-pixel
+  term, so textured windows no longer report σ = 0. On synthetic data with
+  16 px final windows, coverage of the random error rises from about 43%/75% to
+  54%/90% at 1σ/2σ; σ values typically increase by 5–15%. Coverage of the
+  total error is lower where deformation interpolation bias dominates (small,
+  clean particle images); see "How accurate are the measurements?" in the docs.
 - Flat, nonpositive, or nonfinite correlation planes now give NaN displacement
   and an outlier flag instead of an arbitrary peak, on CPU, KA, and GPU
   backends. Deformed windows also need contrast in the original pixels they
@@ -93,6 +99,5 @@ Changed and fixed:
   name.
 - `result_spectrum` calls that relied on an attached `PhysicalScale` for the
   sampling interval must now pass `dt`.
-- Registered HammerheadGUI 0.1.1 calls `run_piv_sequence(...; on_result)`,
-  which core 0.1.0 lacks. Release the core first and raise the GUI's
-  Hammerhead compat bound.
+- HammerheadGUI 0.2.0 requires Hammerhead 0.2. (HammerheadGUI 0.1.1 called
+  `run_piv_sequence(...; on_result)`, which core 0.1.0 lacks; upgrade both.)
