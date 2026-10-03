@@ -139,5 +139,8 @@ The [saved-stereo GUI workflow](docs/src/howto/gui_stereo_experiments.md) preser
 fitted recipes, historical run selection and verified associated reports.
 [Ensemble execution diagnostics](docs/src/howto/ensemble_execution_diagnostics.md)
 describe actual pooled contributions and residuals separately from single-pair iterations.
+The isolated [Qt desktop prototype](docs/src/explanation/gui_framework.md)
+evaluates richer controls with a separate interactive scientific plot window;
+production HammerheadGUI continues to use GLMakie.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

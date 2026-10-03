@@ -1,6 +1,13 @@
 # Defaults to an offscreen, finite smoke run. --desktop is an explicit opt-in.
 const desktop = "--desktop" in ARGS
-const software = "--software" in ARGS
+const plot_options = filter(arg -> startswith(arg, "--plot="), ARGS)
+length(plot_options) <= 1 || error("duplicate --plot option")
+const plot_mode = isempty(plot_options) ? ("--software" in ARGS ? "preview" : "embedded") :
+    String(split(only(plot_options), '='; limit=2)[2])
+plot_mode in ("preview", "embedded", "glfw") || error("--plot must be preview, embedded or glfw")
+"--software" in ARGS && plot_mode == "embedded" && error("--software conflicts with --plot=embedded")
+const glfw_window = plot_mode == "glfw"
+const software = plot_mode != "embedded"
 const experiment_smoke = "--experiment-smoke" in ARGS
 if !desktop
     ENV["QT_QPA_PLATFORM"] = "offscreen"
@@ -15,8 +22,10 @@ software && GLMakie.activate!()
 include("adapter.jl")
 include("viewport.jl")
 include("viewport_lifecycle.jl")
+include("owned_glfw.jl")
 include("experiment_fixture.jl")
 include("shell_actions.jl")
+include("shell_cleanup.jl")
 const import_seconds = (time_ns() - started) / 1e9
 const state = Prototype.State()
 const fixture = experiment_smoke ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
@@ -39,6 +48,11 @@ function drain_actions()
     ShellActions.drain!(action_queue)
 end
 const viewports = ViewportLifecycle.Registry()
+const glfw_owner = glfw_window ? OwnedGLFW.WindowOwner(; visible=desktop) : nothing
+const weak_glfw_figures = WeakRef[] # finite evidence only, not an interactive-session history
+const glfw_closed_generation = Ref(0)
+const glfw_reopened_generation = Ref(0)
+const scientific_captured = Ref(false)
 const application_releases = Ref(0)
 const disposed_subscriptions = Ref(0)
 const lifecycle_done = Ref(false)
@@ -51,7 +65,9 @@ const font_path = isempty(font_option) ? GLMakie.Makie.assetpath("fonts", "TeXGy
     abspath(String(split(only(font_option), '='; limit = 2)[2]))
 isfile(font_path) || error("Qt prototype font file does not exist: $font_path")
 const font_sha256 = open(io -> bytes2hex(sha256(io)), font_path, "r")
-const capture_path = joinpath(@__DIR__, "artifacts", software ? "software_shell.png" : "native_shell.png")
+const artifact_stem = glfw_window ? "glfw_shell" : software ? "software_shell" : "native_shell"
+const capture_path = joinpath(@__DIR__, "artifacts", artifact_stem * ".png")
+const scientific_path = joinpath(@__DIR__, "artifacts", "glfw_scientific.png")
 const preview_path = joinpath(@__DIR__, "artifacts", "scientific_preview.png")
 const preview_url = Observable("")
 const preview_generation = Ref(0)
@@ -93,7 +109,18 @@ function prepare_viewport()
             nothing
         end
     end)
-    if software
+    if glfw_window
+        try
+            OwnedGLFW.open!(glfw_owner, lease.payload[1])
+        catch
+            release_viewport(); detach_viewport()
+            rethrow()
+        end
+        desktop || push!(weak_glfw_figures, WeakRef(lease.payload[1]))
+        if glfw_closed_generation[]>0 && glfw_reopened_generation[]==0
+            glfw_reopened_generation[]=glfw_owner.generations
+        end
+    elseif software
         refresh = lease.refresh
         state.refresh = () -> begin
             refresh()
@@ -110,7 +137,9 @@ function release_viewport()
     state.experiment.controller.running[] && (viewport_releases_while_replaying[]+=1)
     disposed_subscriptions[] += length(lease.subscriptions)
     ViewportLifecycle.request_release!(viewports)
-    if software
+    if glfw_window
+        OwnedGLFW.release!(glfw_owner)
+    elseif software
         # These are the hidden GLFW screens created by save(preview), whose
         # context switch is implemented. This does not release Qt native screens.
         for screen in copy(lease.payload[1].scene.current_screens)
@@ -172,6 +201,13 @@ function queue_transition(open,separate)
     end
 end
 viewport_created() = (state.visualizations += 1; nothing)
+function simulate_glfw_close()
+    glfw_window && !desktop || return nothing
+    enqueue() do
+        glfw_owner.screen === nothing && error("no GLFW screen for hidden close exercise")
+        GLMakie.GLFW.SetWindowShouldClose(glfw_owner.screen.glscreen,true)
+    end
+end
 lifecycle_complete() = (lifecycle_done[] = true; nothing)
 record_capture(success) = (captured[] = Bool(success); nothing)
 shutdown_prototype() = Prototype.request_shutdown(state)
@@ -264,6 +300,7 @@ record_font_family(family) = (qt_font_family[] = String(family); nothing)
 @qmlfunction change_schedule open_results navigate_frame run_batch cancel_batch close_mask set_mask_mode pick_preview viewport_created lifecycle_complete record_capture shutdown_prototype prepare_viewport viewport_scene release_viewport detach_viewport smoke_failed record_font_family
 @qmlfunction open_saved replay_saved cancel_saved inspect_saved saved_page saved_section experiment_smoke_step
 @qmlfunction queue_transition
+@qmlfunction simulate_glfw_close
 
 props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "openError" => state.open_error, "status" => state.status,
@@ -285,10 +322,37 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "transitionAck"=>transition_ack,"transitionOpen"=>transition_open,"transitionSeparate"=>transition_separate)
 const load_started = time_ns()
 const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props,
-                         bridgeEnabled = !software, offscreenDisplay = true,
+                         bridgeEnabled = !software, glfwPlotMode = glfw_window, offscreenDisplay = true,
                          smokeMode = !desktop,experimentSmoke=experiment_smoke,capturePath = capture_path,
                          fontSource = "file:///" * replace(font_path, '\\' => '/'))
 const load_seconds = (time_ns() - load_started) / 1e9
+shell_subscription_count=0
+report=Dict{String,Any}()
+function cleanup_shell()
+    Prototype.request_shutdown(state)
+    cleanup_deadline=time()+60
+    while Prototype.busy(state) && time()<cleanup_deadline
+        QML.process_eventloop_updates()
+        QML.process_events()
+        drain_actions()
+        glfw_window && OwnedGLFW.pump!(glfw_owner)
+        sleep(.01)
+    end
+    # Do not dispose model/context resources while a task can still publish.
+    # The child fails explicitly; the parent retains its timeout/exit evidence.
+    Prototype.busy(state) && error("prototype shutdown timed out waiting for processing cleanup")
+    release_viewport()
+    detach_viewport()
+    global shell_subscription_count=length(state.subscriptions)+length(state.experiment.subscriptions)
+    Prototype.dispose_state(state)
+    GLMakie.closeall()
+    QML.quit(qmlengine)
+    QML.quit()
+    QML.cleanup()
+    QML.process_events()
+    @assert isempty(state.subscriptions) && isempty(state.experiment.subscriptions)
+end
+ShellCleanup.with_cleanup(cleanup_shell) do
 deadline = time() + 180
 while (!state.shutdown || Prototype.busy(state)) &&
       (desktop || !(lifecycle_done[] && captured[] && !Prototype.busy(state)))
@@ -297,16 +361,31 @@ while (!state.shutdown || Prototype.busy(state)) &&
     QML.process_eventloop_updates()
     QML.process_events()
     drain_actions()
+    if glfw_window && OwnedGLFW.pump!(glfw_owner) === :closed
+        # A native window close is observed after polling returns. Destruction
+        # and Qt notifications happen here, outside both event callbacks.
+        glfw_closed_generation[]=glfw_owner.generations
+        release_viewport(); detach_viewport()
+        transition_open[]=false; transition_separate[]=true; transition_ack[]+=1
+    end
     experiment_smoke && advance_experiment_smoke()
     state.ticks += 1
     sleep(0.01)
 end
+if glfw_window && viewports.active !== nothing
+    Hammerhead.FileIO.save(scientific_path, OwnedGLFW.capture(glfw_owner))
+    scientific_captured[]=true
+end
 versions = Dict(info.name => string(info.version) for info in values(Pkg.dependencies())
                 if info.name in ("QML", "QMLMakie", "Qt6Base_jll", "Qt6Declarative_jll",
                                  "jlqml_jll", "CxxWrap", "Makie", "GLMakie", "HammerheadGUI"))
-report = Dict("julia" => string(VERSION), "os" => string(Sys.KERNEL),
+global report = Dict("julia" => string(VERSION), "os" => string(Sys.KERNEL),
               "versions" => versions, "qt_platform" => get(ENV, "QT_QPA_PLATFORM", "default"),
-              "software_fallback" => software, "import_seconds" => import_seconds,
+              "plot_mode" => plot_mode, "visible_desktop" => desktop,
+              "software_fallback" => plot_mode=="preview", "import_seconds" => import_seconds,
+              "qt_controls_backend"=>software ? "software" : "rhi_opengl",
+              "scientific_backend"=>glfw_window ? "independent_glfw_opengl" : software ? "static_preview" : "qmlmakie_embedding",
+              "qmlmakie_plugin_loaded"=>true,
               "qml_load_seconds" => load_seconds, "total_seconds" => (time_ns() - started) / 1e9,
               "qt_event_ticks" => state.ticks, "visualization_creations" => state.visualizations,
               "capture_succeeded" => captured[], "lifecycle_complete" => lifecycle_done[],
@@ -328,7 +407,14 @@ report = Dict("julia" => string(VERSION), "os" => string(Sys.KERNEL),
               "last_run_completed_pairs"=>state.experiment.controller.last_run[]===nothing ? 0 : state.experiment.controller.last_run[].completed_pairs,
               "viewport_releases_while_replaying"=>viewport_releases_while_replaying[],
               "displayed_identity"=>state.displayed[])
-open(joinpath(@__DIR__, "artifacts", software ? "software_shell.toml" : "native_shell.toml"), "w") do io
+glfw_window && (report["glfw_before_disposal"] = Dict(String(k)=>v for (k,v) in pairs(OwnedGLFW.data(glfw_owner))))
+if glfw_window
+    report["scientific_capture_succeeded"]=scientific_captured[]
+    report["scientific_sha256"]=scientific_captured[] ? open(io->bytes2hex(sha256(io)),scientific_path,"r") : ""
+    report["simulated_close_generation"]=glfw_closed_generation[]
+    report["single_reopen_generation"]=glfw_reopened_generation[]
+end
+open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
     TOML.print(io, report)
 end
 println(report)
@@ -343,16 +429,15 @@ if !desktop
         @assert isempty(state.schedule_error[]) && invalid_schedule_seen[] && open_error_seen[]
     end
 end
-# Dispose application callbacks first. Acknowledgement certifies application
-# ownership only; Qt ownership does not prove that a GL context is current.
-# Native GL/bridge failures are deliberately not suppressed or called a pass.
-release_viewport()
-detach_viewport()
-const shell_subscription_count=length(state.subscriptions)+length(state.experiment.subscriptions)
-Prototype.dispose_state(state)
-@assert isempty(state.subscriptions) && isempty(state.experiment.subscriptions)
-GLMakie.closeall()
-QML.quit(qmlengine)
-QML.quit()
-QML.cleanup()
-QML.process_events()
+end
+if glfw_window
+    GC.gc()
+    report["glfw_after_disposal"] = Dict(String(k)=>v for (k,v) in pairs(OwnedGLFW.data(glfw_owner)))
+    report["figures_still_reachable"] = count(ref -> ref.value !== nothing, weak_glfw_figures)
+    @assert report["figures_still_reachable"] == 0
+    @assert glfw_owner.generations == glfw_owner.releases
+    @assert length(GLMakie.ALL_SCREENS) == glfw_owner.baseline_screens
+    open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
+        TOML.print(io, report)
+    end
+end

@@ -186,6 +186,13 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added an opt-in separate GLMakie window to the isolated Qt prototype, with
+  serialized event servicing, explicit screen ownership and saved-planar replay.
+  Hidden demo/experiment lifecycle checks pass alongside the static preview;
+  native desktop input and embedded Qt GL lifetime remain unverified.
+- Added a manual three-platform prototype workflow with bounded child processes
+  and retained failure evidence. No hosted platform results are claimed from
+  the workflow definition or its local process-owner checks.
 - Added a separate saved-stereo workflow with complete fitted-recipe snapshots,
   captured replay/cancellation, historical run selection, verified lazy browsing
   and associated quality reports. Imported settings remain intact and read-only;

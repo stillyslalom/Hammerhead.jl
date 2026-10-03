@@ -1,0 +1,188 @@
+name: Isolated QML prototype validation
+
+# Opt-in evidence only: do not add push/PR triggers or expected-failure green.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prototype:
+    name: QML prototype / ${{ matrix.os }} / Julia 1.11
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      JULIA_NUM_THREADS: '1'
+      JULIA_PKG_PRECOMPILE_AUTO: '0'
+      QML_PROJECT: HammerheadGUI/prototypes/qml
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.11'
+          arch: 'default' # Runner-native; no x64 emulation on macos-15.
+
+      - name: Prepare workflow evidence and bounded process owner
+        id: owner
+        run: |
+          $evidence = Join-Path $env:QML_PROJECT 'artifacts/ci'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          @"
+          runner_os=$env:RUNNER_OS
+          runner_arch=$env:RUNNER_ARCH
+          runner_image=$env:ImageOS
+          runner_image_version=$env:ImageVersion
+          commit=$env:GITHUB_SHA
+          run_id=$env:GITHUB_RUN_ID
+          run_attempt=$env:GITHUB_RUN_ATTEMPT
+          "@ | Set-Content -LiteralPath (Join-Path $evidence 'runner.txt') -Encoding utf8
+          @'
+          # Workflow-only owner; no application package imports or ENV dump.
+          using TOML, Dates
+          function main(args)
+              length(args) >= 3 || error("label, timeout, script required")
+              label, seconds, script = args[1], parse(Float64, args[2]), args[3]
+              occursin(r"^[a-zA-Z0-9_-]+$", label) || error("invalid evidence label")
+              isfinite(seconds) && seconds > 0 || error("invalid timeout")
+              root = @__DIR__
+              incomplete = joinpath(root, "incomplete_owner.toml")
+              destination = joinpath(root, label)
+              mkdir(destination) # Refuse accidental evidence overwrite.
+              command = `$(Base.julia_cmd()) --startup-file=no --threads=1 --project=$(ENV["QML_PROJECT"]) $script $(args[4:end])`
+              command = Cmd(command; windows_hide=true)
+              report = Dict{String,Any}("command"=>collect(command.exec), "parent_pid"=>getpid(),
+                  "started_utc"=>string(now(UTC)), "timeout_seconds"=>seconds,
+                  "julia"=>string(VERSION), "os"=>string(Sys.KERNEL), "architecture"=>string(Sys.ARCH),
+                  "exit_code"=>-1, "timed_out"=>false, "owner_error"=>"")
+              process = nothing
+              try
+                  open(joinpath(destination,"stdout.log"),"w") do out
+                      open(joinpath(destination,"stderr.log"),"w") do err
+                          isfile(incomplete) && error("child launch refused: a prior owner timed out or failed cleanup; descendant lifetime is unverified")
+                          process = run(pipeline(command; stdout=out, stderr=err); wait=false)
+                          report["child_pid"] = getpid(process)
+                          if timedwait(()->process_exited(process),seconds;pollint=.1) != :ok
+                              report["timed_out"] = true
+                              kill(process, Base.SIGKILL) # Only this owner's child.
+                          end
+                          wait(process)
+                          report["exit_code"] = Int(process.exitcode)
+                      end
+                  end
+              catch exception
+                  report["owner_error"] = sprint(showerror,exception,catch_backtrace())
+              finally
+                  if process !== nothing && !process_exited(process)
+                      try
+                          kill(process, Base.SIGKILL)
+                          wait(process)
+                      catch cleanup_error
+                          report["owner_error"] *= "\ncleanup failed: " * sprint(showerror,cleanup_error,catch_backtrace())
+                      end
+                  end
+                  report["finished_utc"] = string(now(UTC))
+                  report["passed"] = report["exit_code"] == 0 && !report["timed_out"] && isempty(report["owner_error"])
+                  if (report["timed_out"] || !isempty(report["owner_error"])) && !isfile(incomplete)
+                      open(io->TOML.print(io,Dict("label"=>label,"descendant_cleanup_verified"=>false,
+                          "reason"=>"owner timeout/error; no further children permitted");sorted=true),incomplete,"w")
+                  end
+                  open(io->TOML.print(io,report;sorted=true),joinpath(destination,"process.toml"),"w")
+              end
+              println(label, ": passed=", report["passed"], " exit=", report["exit_code"], " timeout=", report["timed_out"])
+              report["passed"] || exit(1)
+          end
+          main(ARGS)
+          '@ | Set-Content -LiteralPath (Join-Path $evidence 'ci_runner.jl') -Encoding utf8
+          @'
+          include(abspath(joinpath(ENV["QML_PROJECT"], "setup.jl")))
+          using Pkg
+          Pkg.precompile() # Cold imports belong to bounded setup, under Xvfb on Linux.
+          '@ | Set-Content -LiteralPath (Join-Path $evidence 'setup_and_precompile.jl') -Encoding utf8
+
+      - name: Install Linux GL libraries and start Xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorg-dev mesa-utils xvfb libgl1 libegl1 libopengl0 freeglut3-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libxkbcommon-x11-0 libxcb-cursor0
+          Xvfb :99 -screen 0 1280x1024x24 > "$QML_PROJECT/artifacts/ci/xvfb.log" 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          # Require an actual usable GL context, rather than masking setup failure.
+          for attempt in $(seq 1 30); do
+            if DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B > "$QML_PROJECT/artifacts/ci/glxinfo.log" 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Resolve only the isolated prototype environment
+        id: setup
+        timeout-minutes: 26
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" setup 1500 "$env:QML_PROJECT/artifacts/ci/setup_and_precompile.jl"
+          exit $LASTEXITCODE
+
+      - name: Focused application and owned-GLFW contracts
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 35
+        run: |
+          $failed = $false
+          $files = @('shell_actions_tests', 'adapter_tests', 'experiment_adapter_tests', 'experiment_transaction_tests', 'viewport_tests', 'test_lifecycle_contract', 'viewport_ownership_tests', 'owned_glfw_tests')
+          foreach ($file in $files) {
+            julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" $file 240 "$env:QML_PROJECT/$file.jl"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Process-owner and evidence refusal contracts
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 7
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" harness-self-test 360 "$env:QML_PROJECT/lifecycle_runner.jl" --self-test
+          exit $LASTEXITCODE
+
+      - name: Hidden software Qt demo and saved-experiment lifecycle
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" software-shells 540 "$env:QML_PROJECT/lifecycle_runner.jl" --cases=shell-software,shell-experiment-software --timeout=240
+          exit $LASTEXITCODE
+
+      - name: Hidden owned-GLFW demo and saved-experiment lifecycle
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" owned-glfw-shells 540 "$env:QML_PROJECT/lifecycle_runner.jl" --cases=shell-glfw,shell-experiment-glfw --timeout=240
+          exit $LASTEXITCODE
+
+      - name: Native Qt construction and minimum render-release gate
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" native-gate 420 "$env:QML_PROJECT/lifecycle_runner.jl" --cases=construction,baseline,single-context --timeout=120
+          exit $LASTEXITCODE
+
+      - name: Upload complete prototype evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qml-prototype-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            HammerheadGUI/prototypes/qml/artifacts/
+            HammerheadGUI/prototypes/qml/Project.toml
+            HammerheadGUI/prototypes/qml/Manifest.toml
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

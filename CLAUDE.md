@@ -509,6 +509,19 @@ logs, relevant Qt environment, stages and source identities. Set Qt platform/
 backend selectors in the parent process environment before launching a child;
 Julia `ENV` values alone do not prove Qt's effective C-runtime configuration on
 Windows. Application observer release is distinct from native context cleanup.
+The opt-in `--plot=glfw` mode gives Qt controls a separate, dedicated GLMakie
+screen. Pump Qt and GLFW serially on the owning Julia thread, with no background
+renderer; allocate a dedicated screen before attaching the scene, since the
+scene constructor can reuse an unrelated singleton screen. Preserve ownership
+when destruction fails and report cleanup failures without replacing the
+original processing exception. Capture a screen directly; do not start a cached
+figure-level renderer. Geometry limits include arrow tips, while ordinary frame
+changes preserve manual pan/zoom. This mode still loads the QMLMakie plugin and
+does not establish embedded Qt context cleanup or native input behavior.
+The manual `.github/workflows/qml-prototype.yml` gathers isolated Julia 1.11
+evidence on three operating systems. Failed native prerequisites stay failed;
+an outer process-owner timeout/error prevents later launches because descendant
+cleanup is unverified. Workflow presence is not platform validation.
 
 `ExperimentController` and `experiment_workflow[!]` provide a separate, read-only
 complete-recipe workflow. `experiment_record` / `save_batch_experiment` export

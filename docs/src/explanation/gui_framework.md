@@ -15,15 +15,15 @@ by the production GUI; the isolated candidate does not reproduce those views.
 | Editable parameter forms | Invalid schedules leave controller parameters unchanged; valid correction clears the inline error | Controller adapter tested; native QML TextField and error label wired |
 | Large recordings | Browse indexed completed files while retaining one display payload and current view arrays | Existing ResultFile/ResultExplorer reused; O(number of entries) key index; no live-file tailing |
 | Keyboard and focus | Tab through labeled inputs; arrow keys browse; Esc cancels; Ctrl+Return runs; Ctrl+W reopens viewport | QML bindings and accessible input names present; native input/accessibility audit pending |
-| Layout and windows | Resize panels; compare settings plus separate visualization with an integrated layout using the same controllers | Software/offscreen smoke recreated five viewports across both layouts and exited cleanly; native bridge lifetime remains blocked |
+| Layout and windows | Resize panels; compare settings plus separate visualization with an integrated layout using the same controllers | Static-preview and separate-GLFW children exit cleanly; embedded Qt bridge lifetime remains blocked |
 | Image navigation | Pan/zoom a 1024-square image and retain precise data-coordinate picking | Makie axis interactions in bridge; image-transform fallback implemented; native gesture latency pending |
 | Dense vectors | Render 16,384 vectors over an image, inspect one vector, avoid frame-history caches | Hidden standalone and real embedded framebuffer captures inspected; native bridge reports render exceptions during reopen |
 | Masks and ROI | Draw/close a polygon on the demo image; edits reach the batch controller; retain production ROI semantics | Prototype mask adapter tested; native mask gesture/ROI editor parity pending |
 | Live results and cancellation | Completed pairs update the explorer; cancellation preserves the completed prefix and leaves shell responsive | Existing cooperative BatchRunner reused; cancellation adapter regression tested; CPU/GPU responsiveness audit pending |
-| Saved recipe replay | Preserve the full saved recipe; explicit output/history paths and environment policy; progress/cancel; verify completed run before lazy inspection | Dedicated ExperimentController lane and software-only evaluation; no automatic script execution or checkpoint resume |
+| Saved recipe replay | Preserve the full saved recipe; explicit output/history paths and environment policy; progress/cancel; verify completed run before lazy inspection | Dedicated ExperimentController lane passes hidden static-preview and separate-GLFW evaluation; no automatic script execution or checkpoint resume |
 | HiDPI and accessibility | Test 100/150/200% scaling, focus indicators, screen-reader labels, menus and shortcuts | Pending real desktop checks |
-| Resource lifetime | Close/reopen views repeatedly; exit without stale GL contexts or leaked payloads | Software shell completes and exits cleanly; native shutdown exposes GL context cleanup errors and has faulted during exception unwind |
-| Distribution and compatibility | Record startup/memory and build/install on supported Julia versions and each target OS | Isolated Windows Julia 1.11.4 resolution tested; Linux/macOS, lower Julia versions and packaging pending |
+| Resource lifetime | Close/reopen views repeatedly; exit without stale GL contexts or leaked payloads | Static-preview and dedicated GLFW screens release cleanly in hidden trials; embedded Qt shutdown has exposed GL cleanup errors |
+| Distribution and compatibility | Record startup/memory and build/install on supported Julia versions and each target OS | Windows Julia 1.11.4 tested; manual three-OS workflow prepared but not dispatched; other-platform results, lower Julia versions and packaging pending |
 
 ## Isolated Qt6 candidate
 
@@ -208,6 +208,61 @@ loop. Final children verify unchanged source maps and clean OS exit. This
 software event-loop boundary is not evidence of native bridge cleanup or desktop
 responsiveness.
 
+## Separate interactive scientific window
+
+The explicit `--plot=glfw` mode couples Qt software-rendered controls to a
+dedicated GLMakie window. It uses the same controllers and saved planar recipe
+workflow. Qt event processing returns before queued application work and GLFW
+events/rendering run on the owning Julia thread. No background GLMakie renderer
+is started. Each view owns its screen and figure; closing the scientific window
+keeps replay running, and Ctrl+W reopens the view. Native keyboard/mouse delivery
+still needs a desktop exercise. This environment still imports QMLMakie and its
+plugin; it does not prove that dependency can be removed.
+
+The dedicated owner avoids the GLMakie scene constructor's singleton screen,
+preserving unrelated screens in focused tests. Destruction uses GLFW's own
+context switch and retains ownership if release fails. The shell preserves the
+original exception when cleanup also fails and records the cleanup failure.
+Observed window closure is acknowledged before another transition. Render-error
+logs fail the lifecycle gate even when the underlying update did not throw.
+
+The added focused suite passes 87 checks for cleanup failure handling, screen
+ownership/events, saved replay/selection and rendered glyph bounds. Bounds allow
+for arrow tips and stroke width, including singleton grids and unequal axis
+spacing; changing frame values preserves a manually adjusted view. The lifecycle
+harness passes 38 checks, including refusal of inconsistent window counts and
+nonthrowing render errors.
+
+Four source-stable hidden Windows children exit zero: demo and saved-experiment
+lanes in both separate-GLFW and static-preview modes. In the separate-window
+lanes, demo creates/releases four screens and saved replay creates/releases five.
+Both return the screen registry to baseline, clear old figure weak references,
+dispose all shell subscriptions and finish with no active replay or background
+renderer. Independent visual review confirms readable controls, selected-vector
+agreement, physical mm/mm/s labels and complete arrowheads in the saved capture.
+Saved plots have no unrelated demo image or mask overlay.
+
+The observed maximum event-pump gaps were about 2.95 seconds for demo and 1.43
+seconds for saved replay under compilation and concurrent validation load. These
+are diagnostic observations, not responsiveness acceptance. This mode establishes
+bounded application and GLFW ownership in hidden trials; it leaves desktop
+input, HiDPI, accessibility, embedded Qt GL lifetime and other platforms open.
+
+## Manual platform evidence
+
+The opt-in [workflow guide](https://github.com/stillyslalom/Hammerhead.jl/blob/main/HammerheadGUI/prototypes/qml/ci_validation.md)
+describes a manually triggered Julia 1.11 matrix on Ubuntu, Windows and macOS.
+It resolves only the prototype environment, runs focused and hidden lifecycle
+checks, retains the native Qt prerequisite as a failing gate when unsupported,
+and uploads logs, captures and the resolved environment. No hosted run has been
+dispatched or observed. Local validation passes 18 process-owner checks and 20
+static workflow checks; this does not establish platform compatibility.
+
+The workflow owner records child exit, timeout and error evidence. An owner
+timeout/error prevents every subsequent child launch, since cleanup of possible
+descendants is unverified. It never treats an incomplete native run as a software
+pass. Hard runner loss can prevent artifact upload even with an always-run step.
+
 ## Reproduction and decision
 
 From the repository root:
@@ -221,10 +276,12 @@ julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experi
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/owned_glfw_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-experiment-software --timeout=240
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-glfw,shell-experiment-glfw --timeout=240
 ```
 
 The lifecycle runner writes its summary before returning nonzero for failed or

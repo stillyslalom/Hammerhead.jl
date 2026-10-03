@@ -16,6 +16,13 @@ function arrow_spacing(xs,ys)
     isempty(spacings) ? min(axis_padding(xs,ys),axis_padding(ys,xs)) : minimum(spacings)
 end
 
+function vector_glyph_padding(xs,ys)
+    # The furthest normalized glyph vertex is its tip (.65 * spacing).
+    # Arrowhead vertices have norm sqrt(.7^2+.15^2) of that displacement.
+    # Reserve another .1 spacing for the stroked line, in coordinate units.
+    max(axis_padding(xs,ys), .75arrow_spacing(xs,ys))
+end
+
 function viewport(state; managed = false)
     fig = Figure(size = (900, 650))
     ax = Axis(fig[1, 1]; title = "Dense planar PIV: 16,384 vectors",
@@ -76,8 +83,8 @@ function viewport(state; managed = false)
             limits!(ax, 0, 96, 0, 96)
         elseif geometry != last_geometry[]
             xmin, xmax = extrema(r.x); ymin, ymax = extrema(r.y)
-            padx = axis_padding(r.x,r.y)
-            pady = axis_padding(r.y,r.x)
+            padx = vector_glyph_padding(r.x,r.y)
+            pady = vector_glyph_padding(r.y,r.x)
             limits!(ax, xmin - padx, xmax + padx, ymin - pady, ymax + pady)
         end
         last_geometry[] = geometry

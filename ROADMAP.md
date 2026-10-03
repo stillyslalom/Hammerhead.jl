@@ -538,6 +538,19 @@ evidence.
   cleanly after five viewport generations each, with inspected physical-unit
   captures, no remaining shell subscriptions and no running replay at disposal.
   Native input, accelerated Qt rendering and other-platform support remain open.
+- [x] Evaluate Qt controls with a separately owned interactive GLMakie window.
+  The opt-in `--plot=glfw` mode serializes Qt and GLFW event servicing, preserves
+  replay across view closure, and owns each screen through final disposal.
+  It passes 87 focused checks and 38 harness checks. Demo and saved-experiment
+  children, plus both existing static-preview children, exit cleanly with
+  unchanged source identities and inspected captures. Programmatic picking and
+  view changes do not establish native desktop input or responsiveness.
+- [x] Add a manually triggered three-platform prototype evidence workflow.
+  The [workflow guide](HammerheadGUI/prototypes/qml/ci_validation.md) describes
+  Julia 1.11 on Ubuntu, Windows and macOS, bounded process ownership, retained
+  failure artifacts and the separate native rendering prerequisite. Local
+  process-owner checks pass; the workflow has not been dispatched, so platform
+  results and the full supported Julia-version range remain unverified.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.

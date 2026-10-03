@@ -7,7 +7,7 @@ import jlqml
 ApplicationWindow {
     id: root
     visible: offscreenDisplay
-    width: 1250; height: 820
+    width: glfwPlotMode ? 650 : 1250; height: glfwPlotMode ? 900 : 820
     title: "Hammerhead: isolated Qt6 shell evaluation"
     color: "#f3f4f6"
     font.family: shellFont.status === FontLoader.Ready ? shellFont.name : ""
@@ -50,8 +50,16 @@ ApplicationWindow {
     onSeparateChanged: transitionViewport()
     Timer { interval: 40; running: !bridgeEnabled; repeat: true
         onTriggered: {
-            if (!root.transitionPending || root.uiModel.transitionAck === root.acknowledgedTransition) return;
+            if (root.uiModel.transitionAck === root.acknowledgedTransition) return;
+            if (!root.transitionPending && !glfwPlotMode) return;
+            // A GLFW close is unsolicited. Update controls under the same guard
+            // as an acknowledged request, so one Ctrl+W reopens the window.
+            root.transitionPending = true;
             root.acknowledgedTransition = root.uiModel.transitionAck;
+            if (glfwPlotMode) {
+                root.viewportOpen = root.uiModel.transitionOpen;
+                root.separate = root.uiModel.transitionSeparate;
+            }
             root.actualSeparate = root.uiModel.transitionSeparate;
             root.viewportLoaded = root.uiModel.transitionOpen;
             root.transitionPending = false;
@@ -69,8 +77,8 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: "&View"
-            Action { text: "Separate visualization window"; checkable: true
-                checked: root.separate; onTriggered: root.separate = checked }
+            Action { text: glfwPlotMode ? "Separate interactive scientific plot" : "Separate visualization window"; checkable: true; enabled: !glfwPlotMode
+                checked: glfwPlotMode || root.separate; onTriggered: { if (!glfwPlotMode) root.separate = checked; } }
             Action { text: "Close / reopen visualization"; shortcut: "Ctrl+W"
                 onTriggered: root.viewportOpen = !root.viewportOpen }
         }
@@ -171,11 +179,11 @@ ApplicationWindow {
                 Button { text: "Close demo mask polygon"; enabled: root.uiModel.demoDisplayed; onClicked: Julia.close_mask() }
                 Label { text: root.uiModel.selection; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Label {
-                    text: "Wheel: zoom; drag: pan\nArrows: frames; Esc: cancel\nCtrl+W: close / reopen viewport"
+                    text: glfwPlotMode ? "Scientific window: wheel zoom, right-drag pan\nControls: arrows change frames; Esc cancels\nCtrl+W closes / reopens visualization" : "Wheel: zoom; drag: pan\nArrows: frames; Esc: cancel\nCtrl+W: close / reopen viewport"
                     wrapMode: Text.Wrap; Layout.fillWidth: true
                 }
                 Label {
-                    text: bridgeEnabled ? "QMLMakie OpenGL bridge" : "Static image fallback: refreshed after controller actions"
+                    text: glfwPlotMode ? "Separate interactive scientific plot" : bridgeEnabled ? "QMLMakie OpenGL bridge" : "Static image fallback: refreshed after controller actions"
                     wrapMode: Text.Wrap; color: "#555"; Layout.fillWidth: true
                 }
             }
@@ -183,14 +191,14 @@ ApplicationWindow {
         Loader {
             id: integrated
             SplitView.fillWidth: true
-            active: root.viewportLoaded && !root.actualSeparate
+            active: root.viewportLoaded && (!root.actualSeparate || glfwPlotMode)
             sourceComponent: viewportComponent
         }
     }
 
     Window {
         id: visualizationWindow
-        visible: offscreenDisplay && root.actualSeparate && root.viewportLoaded
+        visible: offscreenDisplay && root.actualSeparate && root.viewportLoaded && !glfwPlotMode
         width: 900; height: 650; title: "Hammerhead visualization (same controllers)"
         onClosing: function(close) { root.viewportOpen = false; close.accepted = false }
         Loader { anchors.fill: parent; active: root.viewportLoaded && root.actualSeparate
@@ -210,8 +218,26 @@ ApplicationWindow {
                 wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; font.pixelSize: 12; padding: 8
                 color: "#17212b"; background: Rectangle { color: "#f8fafc" } }
             Loader { Layout.fillWidth: true; Layout.fillHeight: true
-                sourceComponent: bridgeEnabled ? nativeViewport : fallbackViewport
+                sourceComponent: glfwPlotMode ? separateGLFWStatus : bridgeEnabled ? nativeViewport : fallbackViewport
                 property var currentPlot: viewportItem.ownedPlot }
+            }
+        }
+    }
+    Component {
+        id: separateGLFWStatus
+        Rectangle {
+            color: "#f8fafc"
+            ColumnLayout { anchors.fill: parent; anchors.margins: 12
+                Label { Layout.fillWidth: true; wrapMode: Text.Wrap
+                    text: "The interactive scientific plot is in a separate window. Closing it leaves processing running; Ctrl+W reopens it."
+                }
+                Label { Layout.fillWidth: true; wrapMode: Text.Wrap
+                    text: "Frame " + root.uiModel.frame + " / " + root.uiModel.count + "\n\n" + root.uiModel.selection
+                }
+                Item { Layout.fillHeight: true }
+                Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#555"
+                    text: "Hidden prototype capture; desktop input remains unverified."
+                }
             }
         }
     }
@@ -245,12 +271,28 @@ ApplicationWindow {
         interval: 120; running: smokeMode && !experimentSmoke; repeat: true
         onTriggered: {
             if (root.transitionPending) return;
+            if (glfwPlotMode && root.uiModel.transitionAck !== root.acknowledgedTransition) return;
             root.lifecycleStep += 1
             if (root.lifecycleStep === 1) Julia.change_schedule("invalid")
             if (root.lifecycleStep === 2) Julia.change_schedule("32")
-            if (root.lifecycleStep === 3) Julia.open_results("missing-results.jld2")
-            if (root.lifecycleStep === 4) root.viewportOpen = false
-            if (root.lifecycleStep === 5) root.viewportOpen = true
+            if (root.lifecycleStep === 3) {
+                Julia.open_results("missing-results.jld2");
+                if (glfwPlotMode) {
+                    // Wait for the owner before advancing another timer step
+                    // within this same Qt event pass.
+                    root.transitionPending = true;
+                    Julia.simulate_glfw_close();
+                }
+            }
+            if (root.lifecycleStep === 4) {
+                if (glfwPlotMode) {
+                    if (root.viewportOpen) Julia.smoke_failed("GLFW close was not acknowledged by controls");
+                } else root.viewportOpen = false;
+            }
+            if (root.lifecycleStep === 5) {
+                if (glfwPlotMode) root.viewportOpen = !root.viewportOpen;
+                else root.viewportOpen = true;
+            }
             if (root.lifecycleStep === 6) root.separate = true
             if (root.lifecycleStep === 7) root.viewportOpen = false
             if (root.lifecycleStep === 8) root.viewportOpen = true

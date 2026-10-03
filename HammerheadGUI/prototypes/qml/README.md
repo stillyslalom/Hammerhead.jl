@@ -38,9 +38,11 @@ julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experi
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/owned_glfw_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-experiment-software --timeout=240
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-glfw,shell-experiment-glfw --timeout=240
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
 ```
 
@@ -51,6 +53,77 @@ normalizes Windows environment keys and removes inherited selectors, including
 Julia ENV changes reaching Qt's separate Windows C runtime. Scientific ownership
 tests request invisible GLFW screens explicitly. No desktop probe is automated.
 An explicit `run.jl --desktop` remains an unvalidated interactive opt-in.
+
+## Independent interactive scientific window
+
+`run.jl --plot=glfw` uses Qt software controls with a separately owned OpenGL
+GLMakie window. It preserves the same demo and saved-planar controllers,
+physical units, selection and displayed-run identity. The settings window shows
+the identity and ownership status; the scientific figure is not a static Qt
+preview. Automatic non-demo limits include the full normalized arrow vertices,
+including singleton axes, while preserving subsequent manual pan/zoom. The
+demo keeps its original image-domain limits. The default remains the offscreen embedded diagnostic, `--software`
+selects the existing static preview, and `--plot=preview` / `--plot=embedded`
+name those modes explicitly.
+
+The new mode allocates a dedicated GLFW screen rather than Makie's singleton;
+an unrelated preexisting screen is preserved. One owner thread pumps Qt events,
+drains queued controller actions, then polls GLFW, updates render objects,
+renders and swaps buffers. No background GLFW rendering task is started.
+Closing the plot is observed after polling returns and synchronizes the Qt
+controls; one reopen action creates a fresh figure and screen. Plot closure
+leaves replay owned by the shell. Shutdown requests cancellation, waits for
+processing cleanup with a deadline, then disposes callbacks, the owned screen
+and Qt. A cleanup error is recorded separately without replacing an original
+processing/render failure. If processing remains busy after the deadline, the
+child fails without claiming safe model/context disposal. The desktop flag may
+make both windows visible, but no visible desktop
+trial is part of the automated checks.
+
+QMLMakie and its QML plugin remain loaded by the shared shell. This mode does
+not construct a `MakieArea` or attach the figure to a Qt screen; it avoids bridge
+rendering, rather than removing the candidate dependency. A passing independent
+GLFW lane does not satisfy the embedded native-Qt rendering/release gate.
+
+The hidden `shell-glfw` and `shell-experiment-glfw` children capture Qt controls
+as `framebuffer.png` and the actual independent scientific framebuffer as
+`scientific.png`, with a digest recorded in `shell_report.toml`. Their gates
+require rendered frames, hidden screens, no background renderer, matching
+generation/release counts, restored screen count, no retained old figures,
+disposed shell observers, completed cleanup and zero final process exit.
+The demo also checks a simulated unsolicited close followed by exactly one
+reopen. Logged nonthrowing render-object update failures fail the evidence gate.
+
+Focused checks deliver scroll, right-drag pan, selection and demo-mask events
+through Makie's event observables, and exercise real saved replay/cancellation,
+physical selection and retained display after failure. They are synthetic event
+routing checks, not native mouse/keyboard or desktop focus evidence. Hidden
+OpenGL screens still require a working graphics context; Linux validation would
+need a display such as Xvfb plus compatible GL support. Windows desktop,
+other platforms, HiDPI/accessibility, Qt GPU embedding and packaging remain open.
+The recorded maximum pump gap is a workload observation; preflight/computation,
+I/O, JIT and concurrent validation can delay both event loops. It is not an
+interaction-latency benchmark or a claim of responsive processing. Frame counts
+in these reports count explicit owner-pump renders; capture can perform another
+render and is not included in that count.
+
+The final local Windows evaluation on 2026-10-03 passed **87 focused independent
+window checks** and **38 process/evidence checks**. All four requested children
+in the ignored local `artifacts/lifecycle-hoXTGy` directory exited zero:
+independent demo/saved experiment and the existing static-preview demo/saved
+experiment. No timeout, retained observer/replay, render-error pattern or
+source drift was recorded. The independent demo completed four generations and
+four releases, including simulated close generation 1 followed by one reopen
+at generation 2. Its saved-experiment counterpart completed five generations
+and five releases, cancelled after one written pair, reran all three pairs,
+inspected the completed output and retained its displayed identity after an
+open error. Both restored the screen registry and released old figures.
+Inspected paired captures show all arrowheads inside automatic limits and
+readable physical mm/mm/s selection at frame 3/3. No visible window was launched.
+Recorded maximum pump gaps of about 2.95 s (demo) and 1.43 s (saved experiment)
+include JIT/workload and concurrent validation; they do not establish interactive
+latency or a performance target. These results support the independent-window
+candidate only; they do not close the embedded native-QML or desktop-input gate.
 
 `setup.jl` resolves only this environment and restores portable project source
 paths. Its Manifest is ignored. If the local core gains dependencies, refresh
@@ -115,10 +188,10 @@ production dependency is modified.
 
 ## Current blocker and ownership repair
 
-Current checks pass 250 focused assertions: 11 queued-action, 31 demo-adapter,
+Earlier preview/bridge checks passed 250 focused assertions: 11 queued-action, 31 demo-adapter,
 64 saved-experiment adapter, 26 display-transaction, 13 physical-geometry,
 15 viewport, 30 scientific ownership and 60 ownership-contract checks.
-The process/environment harness passes 24 assertions, including refusal of
+The earlier process/environment harness passed 24 assertions, including refusal of
 leftover subscriptions or replay work. Released leases retain neither
 subscriptions nor their old figures; invisible GLFW cycles return the screen
 registry to baseline.

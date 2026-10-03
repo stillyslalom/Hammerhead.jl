@@ -7,7 +7,7 @@ const NATIVE_ERROR_PATTERNS = ("exception in render", "ContextNotAvailable", "EX
     "Segmentation fault", "GLMakie can not display a scene in multiple Screens",
     "TypeError:", "ReferenceError:", "ERROR:", "LIFECYCLE_RENDER_ERROR",
     "QThreadStorage:", "QMutex: destroying locked mutex", "Failed to create RHI",
-    "does not support createPlatformOpenGLContext")
+    "does not support createPlatformOpenGLContext", "Failed to update renderobject - skipping update")
 
 function nonempty_png(path)
     isfile(path) && filesize(path) >= 1024 &&
@@ -40,7 +40,8 @@ function validate_lifecycle_evidence(directory, expected)
         count_expected = expected["cycles"]
         select(name) = filter(stage -> stage["stage"] == name, stages)
         if expected["scenario"] == "shell"
-            completed = select("software_shell_completed")
+            glfw = get(expected,"plot", "preview") == "glfw"
+            completed = select(glfw ? "glfw_shell_completed" : "software_shell_completed")
             if length(completed) != 1 || only(completed)["figure_generations"] < 4 ||
                only(completed)["application_releases"] < 4 || only(completed)["native_release_verified"] !== false
                 push!(errors, "software shell did not exercise acknowledged fresh viewport ownership")
@@ -51,6 +52,30 @@ function validate_lifecycle_evidence(directory, expected)
             if length(disposed)!=1 || typeof(only(disposed)["remaining"])!==Int || only(disposed)["remaining"]!=0 ||
                only(disposed)["replay_running"]!==false || typeof(only(disposed)["disposed"])!==Int || only(disposed)["disposed"]<1
                 push!(errors,"shell observers/replay were not released before disposal")
+            end
+            if glfw
+                report=TOML.parsefile(joinpath(directory,"shell_report.toml"))
+                after=report["glfw_after_disposal"]
+                before=report["glfw_before_disposal"]
+                report["plot_mode"] == "glfw" && report["visible_desktop"] === false &&
+                    report["scientific_capture_succeeded"] === true &&
+                    after["visible"] === false && after["screen_active"] === false &&
+                    after["background_rendering"] === false && before["background_rendering"] === false &&
+                    typeof(after["generations"]) === Int && after["generations"] >= 4 &&
+                    after["releases"] === after["generations"] &&
+                    typeof(after["frames"]) === Int && after["frames"] > 0 &&
+                    after["current_screens"] === after["baseline_screens"] &&
+                    report["figures_still_reachable"] === 0 ||
+                    push!(errors,"owned GLFW lifetime/rendering evidence incomplete")
+                if !get(expected,"experiment",false)
+                    typeof(report["simulated_close_generation"])===Int && report["simulated_close_generation"]>0 &&
+                        report["single_reopen_generation"]===report["simulated_close_generation"]+1 ||
+                        push!(errors,"unsolicited close did not reopen exactly once")
+                end
+                scientific=joinpath(directory,"scientific.png")
+                nonempty_png(scientific) || push!(errors,"independent scientific PNG missing or invalid")
+                isfile(scientific) && LifecycleEvidence.digest(scientific) == report["scientific_sha256"] ||
+                    push!(errors,"scientific capture digest differs")
             end
             if get(expected,"experiment",false)
                 report=TOML.parsefile(joinpath(directory,"shell_report.toml"))
@@ -192,6 +217,41 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
 end
 
 function harness_tests(root)
+    @testset "Owned GLFW evidence rejects stale rendering and incomplete lifetime" begin
+        directory=mktempdir(root)
+        journal=LifecycleEvidence.Journal(joinpath(directory,"stages"))
+        LifecycleEvidence.write_fresh(joinpath(directory,"provenance.toml"),Dict(
+            "pid"=>getpid(),"qt_environment"=>Dict("QT_QPA_PLATFORM"=>"offscreen","QSG_RENDER_LOOP"=>"basic")))
+        png=[UInt8[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];zeros(UInt8,1024)]
+        write(joinpath(directory,"framebuffer.png"),png)
+        write(joinpath(directory,"scientific.png"),png)
+        LifecycleEvidence.stage!(journal,"glfw_shell_completed";figure_generations=5,application_releases=5,native_release_verified=false)
+        LifecycleEvidence.stage!(journal,"shell_subscriptions_disposed";remaining=0,replay_running=false,disposed=10)
+        LifecycleEvidence.stage!(journal,"child_complete")
+        before=Dict("background_rendering"=>false)
+        after=Dict{String,Any}("visible"=>false,"screen_active"=>false,"background_rendering"=>false,
+            "generations"=>5,"releases"=>5,"frames"=>20,"current_screens"=>0,"baseline_screens"=>0)
+        data=Dict{String,Any}("plot_mode"=>"glfw","visible_desktop"=>false,
+            "scientific_capture_succeeded"=>true,"glfw_before_disposal"=>before,"glfw_after_disposal"=>after,
+            "figures_still_reachable"=>0,"simulated_close_generation"=>1,"single_reopen_generation"=>2,
+            "scientific_sha256"=>LifecycleEvidence.digest(joinpath(directory,"scientific.png")))
+        expected=Dict("scenario"=>"shell","cycles"=>1,"plot"=>"glfw")
+        for mutate in (d->nothing, d->d["glfw_after_disposal"]["screen_active"]=true,
+                       d->d["glfw_after_disposal"]["background_rendering"]=true,
+                       d->d["glfw_after_disposal"]["frames"]=0,
+                       d->d["glfw_after_disposal"]["releases"]=4,
+                       d->d["glfw_after_disposal"]["current_screens"]=1,
+                       d->d["figures_still_reachable"]=1,
+                       d->d["visible_desktop"]=true,
+                       d->d["single_reopen_generation"]=3,
+                       d->d["scientific_sha256"]=repeat("0",64))
+            candidate=deepcopy(data);mutate(candidate)
+            path=joinpath(directory,"shell_report.toml")
+            open(io->TOML.print(io,candidate),path,"w")
+            @test isempty(validate_lifecycle_evidence(directory,expected))==(candidate==data)
+        end
+        @test "Failed to update renderobject - skipping update" in NATIVE_ERROR_PATTERNS
+    end
     @testset "Software shell disposal evidence rejects live ownership" begin
         for (remaining,running,count,valid) in ((0,false,10,true),(1,false,10,false),(0,true,10,false),(0,false,0,false),
                                                (false,false,10,false),(0,false,true,false))
@@ -235,6 +295,17 @@ function harness_tests(root)
         @test !report["passed"]
         @test isempty(report["owner_error"])
         @test occursin("child alive", read(joinpath(root, "timeout", "stdout.log"), String))
+        log_script=joinpath(root,"logged_render_failure.jl")
+        write(log_script,"include("*repr(joinpath(@__DIR__,"lifecycle_evidence.jl"))*")\n"*
+            "j=LifecycleEvidence.Journal(joinpath(ARGS[1],\"stages\"))\n"*
+            "println(stderr,\"Error: Failed to update renderobject - skipping update\")\n"*
+            "LifecycleEvidence.stage!(j,\"child_complete\")\n")
+        logged_directory=joinpath(root,"logged-render-failure")
+        logged=`$(Base.julia_cmd()) --startup-file=no $log_script $logged_directory`
+        report=run_lifecycle_child(logged,logged_directory;timeout=30.)
+        @test report["exit_code"]==0 && report["child_complete"]
+        @test !report["passed"]
+        @test report["error_patterns"]==["Failed to update renderobject - skipping update"]
     end
 end
 
@@ -259,7 +330,7 @@ function main(args = ARGS)
     results = Dict{String,Any}()
     minimal_native_passed = false
     for name in cases
-        occursin(r"^(shell-(experiment-)?software|baseline|construction|(single|reopen|separate|resize|failure|reuse)-(observe|context))$", name) ||
+        occursin(r"^(shell-(experiment-)?(software|glfw)|baseline|construction|(single|reopen|separate|resize|failure|reuse)-(observe|context))$", name) ||
             throw(ArgumentError("unknown lifecycle case: $name"))
         scenario = first(split(name, '-'))
         if scenario in ("reopen", "separate", "resize", "failure", "reuse") && !minimal_native_passed
@@ -274,7 +345,8 @@ function main(args = ARGS)
         command = `$(Base.julia_cmd()) --startup-file=no --threads=1 --project=$(@__DIR__) $script --case=$name --cycles=$cycles --evidence=$directory`
         expected = Dict("scenario" => scenario, "release_mode" => last(split(name, '-')),
             "cycles" => scenario in ("reopen", "separate", "reuse") ? cycles : 1)
-        expected["experiment"]=name=="shell-experiment-software"
+        expected["experiment"]=name in ("shell-experiment-software","shell-experiment-glfw")
+        expected["plot"]=endswith(name,"-glfw") ? "glfw" : "preview"
         report = run_lifecycle_child(command, directory; timeout, expected)
         results[name] = report
         name == "single-context" && (minimal_native_passed = report["passed"])
