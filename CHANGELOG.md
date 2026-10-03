@@ -8,6 +8,13 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added calibrated bilinear sampling of planar PIV vectors and scalar images
+  onto explicit shared coordinates, with separate availability and contributor
+  diagnostics. Affine maps preserve vector bases; explicit pair delays convert
+  displacement to velocity. A PIV/PLIF guide covers unequal camera resolutions,
+  ROI coordinates and masks. Resampling does not propagate measurement uncertainty.
+- Manual affine registration now rejects malformed, nonfinite, rank-deficient
+  and singular calibrations while preserving the existing Float64 fit convention.
 - Added separate saved planar-ensemble recipes and run records with exact
   ordered inputs/settings, contribution progress, cooperative cancellation and
   one published pooled result. Associated format-5 quality reports retain

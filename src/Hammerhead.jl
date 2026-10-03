@@ -56,6 +56,7 @@ export Correlator, CrossCorrelator, PhaseCorrelator, correlate, correlate_deform
 export AffineTransform, warp_image, calculate_manual_registration, transform_vector_field
 export CameraCalibration, PinholeCamera, SoloffCamera, TransformedCamera, calibrate_camera
 export PlanarTransform, planar_calibration, transform_point, transform_vector
+export resample_planar, resample_image
 export world_to_pixel, pixel_to_world, reprojection_errors, calibration_quality
 export self_calibrate, SelfCalibrationReport
 export CalibrationGrid, detect_calibration_grid, calibration_points, render_calibration_target
@@ -100,6 +101,7 @@ include("ensemble.jl")
 include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
+include("calibrated_resampling.jl")
 include("artifact_paths.jl")
 include("experiments.jl")
 include("execution_diagnostics.jl")

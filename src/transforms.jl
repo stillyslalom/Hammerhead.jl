@@ -53,6 +53,11 @@ Fit an affine transform from image points to corresponding reference
 points, both supplied as vectors of `(x, y)` tuples or two-element vectors.
 At least three non-collinear pairs are required. The returned transform
 maps `x_image` to `A * x_image + b` in reference coordinates.
+Coordinates must be finite real numbers representable in Float64. Both
+point sets must have numerical affine rank three, and the fitted map must
+be finite and invertible. Rank checks center and scale each coordinate axis;
+they do not impose a fit-residual acceptance threshold. The least-squares
+fit itself retains the original Float64 coordinate convention.
 """
 function calculate_manual_registration(points_image::AbstractVector, points_reference::AbstractVector)
     N = length(points_image)
@@ -60,19 +65,63 @@ function calculate_manual_registration(points_image::AbstractVector, points_refe
         throw(ArgumentError("point counts differ: $N image vs $(length(points_reference)) reference"))
     N >= 3 || throw(ArgumentError("at least 3 point pairs are required, got $N"))
 
+    image = [_registration_point(p, "image", i) for (i, p) in enumerate(points_image)]
+    reference = [_registration_point(p, "reference", i) for (i, p) in enumerate(points_reference)]
+    _registration_full_rank(image) || throw(ArgumentError("image points must have affine rank three (non-collinear)"))
+    _registration_full_rank(reference) || throw(ArgumentError("reference points must have affine rank three (non-collinear)"))
+
     # Each pair contributes two rows to M * [a11, a12, b1, a21, a22, b2] = R.
     M = zeros(Float64, 2N, 6)
     R = zeros(Float64, 2N)
     for i in 1:N
-        xi, yi = Float64.(NTuple{2}(points_image[i]))
-        xr, yr = Float64.(NTuple{2}(points_reference[i]))
+        xi, yi = image[i]
+        xr, yr = reference[i]
         M[2i-1, :] .= (xi, yi, 1.0, 0.0, 0.0, 0.0)
         M[2i, :] .= (0.0, 0.0, 0.0, xi, yi, 1.0)
         R[2i-1] = xr
         R[2i] = yr
     end
     p = M \ R
+    all(isfinite, p) || throw(ArgumentError("registration fit produced nonfinite coefficients"))
+    # Exact determinant of the applied Float64 coefficients avoids determinant
+    # underflow for a valid small or anisotropic coordinate conversion.
+    q = Rational{BigInt}.(p)
+    q[1] * q[5] != q[2] * q[4] || throw(ArgumentError("registration fit is singular"))
     return AffineTransform([p[1] p[2]; p[4] p[5]], [p[3], p[6]])
+end
+
+function _registration_point(point, role, index)
+    (point isa Tuple || point isa AbstractVector) && length(point) == 2 ||
+        throw(ArgumentError("$role point $index must contain exactly two coordinates"))
+    converted = map(point) do value
+        value isa Real && !(value isa Bool) && isfinite(value) ||
+            throw(ArgumentError("$role point $index coordinates must be finite real numbers"))
+        number = try
+            Float64(value)
+        catch
+            throw(ArgumentError("$role point $index coordinates must be representable in Float64"))
+        end
+        isfinite(number) && !(value != 0 && number == 0) ||
+            throw(ArgumentError("$role point $index coordinates must be representable in Float64"))
+        number
+    end
+    x, y = converted
+    return (x, y)
+end
+
+function _registration_full_rank(points)
+    design = ones(Float64, length(points), 3)
+    for axis in 1:2
+        values = [p[axis] for p in points]
+        magnitude = maximum(abs, values)
+        magnitude == 0 && return false
+        scaled = values ./ magnitude
+        centered = scaled .- scaled[1]
+        spread = maximum(abs, centered)
+        spread == 0 && return false
+        design[:, axis] .= centered ./ spread
+    end
+    return rank(design) == 3
 end
 
 """

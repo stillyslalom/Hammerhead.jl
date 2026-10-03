@@ -155,6 +155,13 @@ The mask stored in a [`PIVResult`](@ref) uses `true` for excluded windows.
 selected and valid within the requested region. Its older `mask` field is an
 alias for `included`, so it also uses `true` for included windows.
 
+[`resample_planar`](@ref) and [`resample_image`](@ref) return `available=true`
+for usable target samples, while `masked_support=true` reports an excluded
+source contributor. Their separate arrays keep the `(length(y), length(x))`
+layout on explicit target axes. Every positive-weight contributor must be
+usable; exact nodes and edges ignore zero-weight neighbors. Sampled values
+do not acquire the original measurements' uncertainty or spatial support.
+
 For area-form [`circulation`](@ref), a masked or nonfinite cell can leave part
 of the requested region uncovered. The default call raises an error in that
 case. Use `coverage=:report` to inspect the valid and requested areas and

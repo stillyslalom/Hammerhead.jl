@@ -97,6 +97,12 @@ are a separate CPU export with affine position/vector conversion and a verified
 CSV/TOML pair. They accept unscaled PTV, ordinal tracking and timed tracking;
 existing grid exports and ordinary `export_table` keep their contracts.
 
+[Calibrated PIV/PLIF resampling](../howto/calibrated_resampling.md) is CPU
+postprocessing of raw planar fields and scalar images on an explicit shared
+grid. Affine vector conversion, masks and contributor availability accompany
+the sampled values. This does not propagate uncertainty, establish synchronized
+acquisition or equalize the measurement support of the two modalities.
+
 Timed artifacts and calibrated companions preserve foreign Windows/POSIX source
 locators as provenance. Local relocation and consumed-file protection are explicit;
 this does not provide automatic source-file discovery or source-byte verification.

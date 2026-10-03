@@ -318,9 +318,28 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   These ran on Windows; Linux/macOS and actual UNC-share execution remain separate
   platform evidence. Other persisted experiment/report formats retain their own
   locator restrictions.
-- [ ] Provide a documented calibrated registration/resampling workflow for
+- [x] Provide a documented calibrated registration/resampling workflow for
   simultaneous PIV/PLIF data, preserving vector basis and validity masks; this
   follows the use case recorded in [Design.md](reference/Design.md).
+  Fit corresponding dot-grid points from both cameras to one physical frame,
+  and sample image intensities and planar vectors on an explicit shared grid.
+  Preserve affine vector directions, units, ordered grid coordinates and source
+  validity; distinguish unsupported samples from measured zeros. Verify analytic
+  fields, unequal resolutions, ROI/descending coordinates, masks and invalid
+  contributors, precision, malformed calibration and unchanged inputs. Keep
+  resampled values separate from measured-result diagnostics and uncertainty;
+  bilinear point sampling is not conservative or anti-aliased averaging, and
+  static calibration does not correct transient refractive distortion.
+  The [PIV/PLIF workflow](docs/src/howto/calibrated_resampling.md) uses separate
+  dot-grid fits, an actual PIV ROI, cropped scalar coordinates and joint masks.
+  [665 resampling checks](test/test_calibrated_resampling.jl) and
+  [40 registration checks](test/test_registration_validation.jl) pass, including
+  independent affine fields, represented coordinates and tiny invertible maps.
+  Full validation passes 12,909 core and 2,035 GUI checks on Windows/Julia 1.11.4,
+  plus all seven documentation tutorials and the new executable guide. The core
+  suite ran with four threads and new cache generation disabled after an owned
+  precompile wait; the complete Pkg.test target and assertions were retained.
+  All 279 captured source/test/docs/environment files remained unchanged.
 
 Acceptance: reopen and reproduce an experiment; round-trip its timing and
 coordinate metadata; reject deliberately offset stereo acquisitions and

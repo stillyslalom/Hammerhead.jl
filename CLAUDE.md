@@ -91,6 +91,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 - `uncertainty.jl` — Wieneke 2015 correlation-statistics uncertainty
   (per-window `accumulate_uncertainty!` + `finalize_uncertainty`)
 - `transforms.jl` — affine transforms, image warping, registration
+  (manual fits validate finite Float64 coordinates, affine rank and invertibility;
+  fit residual acceptance remains the caller's responsibility)
 - `calibration.jl` — `PinholeCamera` (normalized DLT) / `SoloffCamera`
   (19-term polynomial) / `TransformedCamera` (rigid world pre-transform
   wrapper), `calibrate_camera`, `world_to_pixel` / `pixel_to_world`,
@@ -231,6 +233,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   and authoritative `complete` flag (no valid area gives `NaN` value).
   Its `stencil` keyword uses the same derivative policy as scalar analysis;
   centered-only support can reduce valid integrated area.
+- `calibrated_resampling.jl` — CPU bilinear point sampling of raw planar
+  vectors and scalar images onto explicit calibrated coordinates. Detached
+  outputs retain contributor flags and joint vector availability; masks and
+  numerical failures are distinct from measured zeros. Affine geometry and
+  vector bases share one applied map. No measurement/UQ records are synthesized.
 - `artifact_paths.jl` — portable lexical source-locator classification, explicit
   local-path resolution and prospective alias checks. Foreign provenance is not
   resolved against the receiving workspace; protect actual consumed local files.
@@ -1039,6 +1046,11 @@ as contrast evidence; preserve any genuine processing-precision difference.
 - `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
   unavailable populations and metadata detachment. Calibrated scattered export
   tests check affine bases, units, exact intervals and paired-artifact verification.
+- `test_calibrated_resampling.jl` uses independent scalar affine algebra and
+  analytic fields to check shared-grid image/vector sampling, contributor
+  validity, coordinate order, precision and input preservation. Registration
+  validation has separate malformed/rank/scale regressions. Sampled arrays
+  remain separate from measured PIV diagnostics and uncertainty.
 - `test_artifact_paths.jl` checks foreign source-locator preservation, explicit
   local relocation and protection of consumed artifacts, including prospective
   Windows aliases. Foreign fixtures on Windows do not establish other-OS runtime

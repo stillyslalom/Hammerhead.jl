@@ -691,6 +691,8 @@ end
 end
 
 include("test_synthetic.jl")
+include("test_registration_validation.jl")
+include("test_calibrated_resampling.jl")
 include("test_calibration.jl")
 include("test_dewarp.jl")
 include("test_stereo.jl")

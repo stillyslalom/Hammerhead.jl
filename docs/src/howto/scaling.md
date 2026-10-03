@@ -199,3 +199,10 @@ results and attached-scale combinations are rejected. Stereo grids, PTV, and
 tracking results do not accept this export keyword. Raw PTV and trajectories
 instead use [calibrated scattered tables](calibrated_scattered_export.md), whose
 separate CSV/TOML contract retains the transform and unit provenance.
+
+To combine a planar PIV field with an image from another camera, use the
+[calibrated PIV/PLIF resampling workflow](calibrated_resampling.md). It fits
+both cameras to common physical coordinates and samples onto explicit target
+axes, retaining separate contributor and availability diagnostics. This adds
+interpolation to coordinate conversion; uncertainty and interrogation-window
+support do not transfer automatically to the new grid.
