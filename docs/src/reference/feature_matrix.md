@@ -119,3 +119,9 @@ Its native prefix has no checkpoint resume guarantee.
 [GUI recipe comparison](../howto/gui_comparison.md) uses the shared selected-pair
 comparison and report contracts. It runs saved CPU/KA planar recipes; richer
 GUI controls do not expand the core recipe scope or supply accuracy ground truth.
+
+The [GUI recipe revision editor](../howto/gui_recipe_revision.md) edits ordered
+planar passes while retaining imported preprocessing, masks, ROI, scale and
+execution options. A metadata difference describes changed settings; it does
+not rerun images or measure their effect. Saving a new record verifies unchanged
+inputs and captures the current environment without copying prior run history.

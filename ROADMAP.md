@@ -652,6 +652,26 @@ evidence.
   provenance checks and metric definitions used by scripts.
   Its separate checkpoint view adds resumable built-in processing with committed
   progress and cancellation. Stereo calibration and broader integration remain open.
+- [x] Add a saved-planar recipe revision editor through the shared controller
+  boundary. Edit ordered pass settings while preserving all other imported
+  recipe fields, preview the scientific difference, and explicitly save a new
+  record with unchanged input identity and no inherited run history. Protect
+  original record, input, script, result and known history paths; reject invalid
+  visible drafts without applying stale settings. Keep source verification and
+  save work outside native callbacks, preserve the original display and record,
+  and verify compact layouts and actual interactions. Metadata-only draft
+  inspection may work offline; creating the new record must verify available
+  unchanged inputs and capture the current environment.
+  The [revision editor](docs/src/howto/gui_recipe_revision.md) exposes all 18
+  non-validation pass fields and retains ordered validator tuples. Raw invalid
+  drafts, last valid previews and saved revisions keep separate identities.
+  The 94 controller and 56 hidden interaction/layout checks pass, alongside
+  71 existing workflow layout checks and the full 2,035-check GUI suite on
+  Windows/Julia 1.11.4. Both 900×600 and 1100×800 captures were independently
+  inspected; all seven documentation tutorials and public API checks pass.
+  Source identities remained unchanged during final validation. File I/O is
+  cooperatively scheduled and may pause rendering; desktop acceptance and
+  broader recipe editing remain separate work.
 - [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.

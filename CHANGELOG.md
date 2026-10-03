@@ -201,6 +201,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a separate saved-planar recipe revision editor for ordered pass settings.
+  Other imported settings and validator tuples remain intact. Metadata previews
+  show changed settings; saving verifies unchanged inputs and creates a distinct
+  record with a current creation environment and empty run history. Invalid
+  visible drafts cannot silently reuse previous values.
 - Extended the isolated Qt prototype's saved-planar worker to x86_64 Linux with
   a guardian process and explicit kernel/libc capability checks. Ownership
   failures remain visible and prevent further replay while cleanup is unverified.

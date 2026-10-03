@@ -41,6 +41,8 @@ const r_track = TrackingResult(
     include("test_workflow_layout.jl")
     include("test_experiment_replay_progress.jl")
     include("test_recipe_comparison.jl")
+    include("test_recipe_revision.jl")
+    include("test_recipe_revision_view.jl")
     include("test_tracking_timing_explorer.jl")
     include("test_checkpoints.jl")
     include("test_companions.jl")

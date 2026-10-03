@@ -595,8 +595,8 @@ Replay captures state before notification, records completed/failed metadata,
 and checks recorded output content before lazy exploration. Progress reports
 completed pairs; cancellation is cooperative at pair boundaries and waits for
 loader cleanup. Cancelled ordinary runs retain failed core metadata and a native
-prefix, without checkpoint resume guarantees. Stereo/GPU recipes and full recipe
-editing remain open. The batch
+prefix, without checkpoint resume guarantees. GPU recipes and full recipe
+editing remain open. The separate stereo workflow is described below. The batch
 form links to this workflow; its API reference is split into `gui_experiments.md`.
 Files/Replay/Reports control sections retain their widgets and settings. Hidden
 Makie widget scenes still have active mouse regions, so inactive allocations
@@ -640,6 +640,21 @@ selected pairs and value basis before notifications or asynchronous scheduling.
 It uses the core selected-pair comparison and report contracts. Current choices
 and the last report's identities remain distinct after failure. No cancellation
 or uninterrupted CPU responsiveness is promised for a single-pair comparison.
+
+`RecipeRevisionController` / `recipe_revision[!]` edit ordered planar passes in
+a separate draft. Preserve all unedited pass fields, ordered validator tuples
+and the complete imported recipe options. Raw text remains separate from the
+last validated candidate; invalid visible edits must never fall back to stale
+parsed values. Metadata previews can work without source files. Creating or
+saving a new record verifies available unchanged inputs, retains the exact
+ordered input identity, captures the current creation environment and starts
+with no runs. Protect source record aliases, inputs, scripts, recorded results
+and caller-supplied history/output paths. Capture requests before notifications
+or pickers, and queue verification/save work outside native input callbacks.
+Cooperative scheduling does not guarantee responsive file I/O or cancellation.
+Opening a saved revision uses a separate experiment workflow; do not replace
+the original record, history or display. Revision lineage is session metadata,
+not an extension to the core version-1 record schema.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
@@ -1016,6 +1031,11 @@ as contrast evidence; preserve any genuine processing-precision difference.
   time support, scale/delay separation and dedicated artifact/table semantics.
   GUI `test_recipe_comparison.jl` checks captured requests, verified comparisons,
   failed-request report preservation, protected saves and paged inspection.
+- GUI `test_recipe_revision.jl` checks complete pass/recipe preservation, ordered
+  input identity, fresh creation provenance, empty history, offline metadata
+  inspection, invalid drafts and captured alias-protected saves. Revision view
+  checks exercise compact layouts, live raw text, rejected busy selections and
+  separate workflow launch; hidden controls do not establish desktop acceptance.
 - `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
   unavailable populations and metadata detachment. Calibrated scattered export
   tests check affine bases, units, exact intervals and paired-artifact verification.

@@ -8,6 +8,8 @@ Use the [saved-experiment workflow](../howto/gui_experiments.md) to snapshot
 current batch settings or reopen a complete planar recipe. Imported recipes
 retain their exact settings in a dedicated controller, including settings that
 the ordinary batch form cannot edit.
+Pass edits use the separate [recipe revision API](gui_recipe_revision.md).
+Opening a record in this workflow preserves its complete saved settings.
 Use the separate [recipe-comparison workflow](gui_comparison.md) to rerun two
 saved recipes on an explicitly selected pair without changing either run history.
 Ordinary replay has scalar written-pair progress and boundary cancellation;

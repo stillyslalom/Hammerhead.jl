@@ -51,6 +51,11 @@ are summarized by shape/type or excluded-pixel count; their full values remain
 in the saved record. Opening does not project settings onto the narrower batch
 or preprocessing forms, so nondefault fields and repeated operations survive.
 
+To change the ordered pass schedule, use the separate
+[saved-recipe revision editor](gui_recipe_revision.md). It preserves other
+imported settings and saves a new record with empty run history after verifying
+the original inputs. The source recipe and its prior runs remain separate.
+
 Choose a new result output and a run-record destination in **Files**, then use
 **replay exact recipe** in **Replay**. An opened record is the default destination
 for appended run history.

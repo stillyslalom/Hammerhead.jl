@@ -54,5 +54,13 @@ review calls [`detect_calibration_grid`](@ref) and
 [`calibrate_camera`](@ref). GUI output can therefore be read and processed
 with the same functions you use in a script.
 
+The [saved-recipe revision editor](../howto/gui_recipe_revision.md) keeps raw
+form text separate from its last validated recipe. Invalid edits remain visible
+and cannot silently reuse older parsed values. A metadata preview compares the
+complete recipes; saving verifies the original input identity and creates a
+separate record with a fresh creation environment and no inherited runs. The
+controller captures a request before notifying observers or opening a picker.
+Queued file work runs after the input callback, but can still delay rendering.
+
 HammerheadGUI is a separate package that depends on Hammerhead. The core
 package does not require GLMakie, so it can run without a display.

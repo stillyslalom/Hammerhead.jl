@@ -25,12 +25,18 @@ captured before selecting a path. Execution opts into core format 3; report
 verification is at generation time, and failed scans/saves retain the previous
 summary with its own run/recipe/input identity. `report_path_picker` optionally
 returns a destination string instead of opening the default TOML save dialog.
+"Revise pass schedule" opens a separate complete recipe editor, preserving the
+source recipe/history and known result/history/report paths. Construction is
+queued after capturing the record and absolute local protection paths;
+`revision_launcher` optionally receives the new `RecipeRevisionController`
+instead of opening the default editor window. Queued I/O may pause rendering.
 """
 function experiment_workflow(ec::ExperimentController=ExperimentController();
                              batch::Union{Nothing,BatchRunner}=nothing,size=(1100,800),
-                             report_path_picker::Function=()->save_file(;filterlist="toml"))
+                             report_path_picker::Function=()->save_file(;filterlist="toml"),
+                             revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)))
     fig=Figure(;size)
-    experiment_workflow!(fig[1,1],ec;batch,report_path_picker)
+    experiment_workflow!(fig[1,1],ec;batch,report_path_picker,revision_launcher)
     fig
 end
 
@@ -73,10 +79,13 @@ end
 
 Embed the saved-experiment workflow. The batch bridge creates a new intact
 record; reopened recipes are never projected onto the narrow batch form.
+`revision_launcher` receives a detached pass-revision controller on an owner
+task after the launch callback returns; it does not replace this workflow.
 """
 function experiment_workflow!(target,ec::ExperimentController;
                               batch::Union{Nothing,BatchRunner}=nothing,
-                              report_path_picker::Function=()->save_file(;filterlist="toml"))
+                              report_path_picker::Function=()->save_file(;filterlist="toml"),
+                              revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)))
     gl=GridLayout(target)
     controls=GridLayout(gl[1,1];valign=:top,tellheight=false)
     rowgap!(controls,3)
@@ -140,9 +149,11 @@ function experiment_workflow!(target,ec::ExperimentController;
     section=Observable(:recipe)
     page=Observable(1)
     report_text=Observable("Save a quality report to inspect its summary here.")
+    report_destinations=String[]
     tabs=Menu(content[1,1:2];options=[("complete recipe",:recipe),("run history",:history),("quality report",:quality)])
     checkpoint_btn=Button(content[1,3];label="checkpoint / resume…",tellwidth=false)
     comparison_btn=Button(content[4,1:3];label="compare a representative pair…",tellwidth=false)
+    revision_btn=Button(content[5,1:3];label="revise pass schedule...",height=28,fontsize=14,tellwidth=false)
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
@@ -234,7 +245,9 @@ function experiment_workflow!(target,ec::ExperimentController;
         guarded() do
             path=report_path_picker()
             isempty(path) && return
+            path=Hammerhead._artifact_local_path(String(path))
             report=save_experiment_quality_report(path,ec;include_measurement_history,include_execution_diagnostics)
+            push!(report_destinations,String(path))
             provenance=quality_report_data(report)["provenance"]
             report_text[]="Saved report: $path\nReported run: $(provenance["run_id"])\nRecipe: $(provenance["recipe_id"])\nInput: $(provenance["input_id"])\nVerification describes report generation time.\n\n"*sprint(show,MIME"text/plain"(),report)
             section[]=:quality
@@ -259,6 +272,26 @@ function experiment_workflow!(target,ec::ExperimentController;
             protected=filter(!isempty,[ec.output_path[],ec.run_record_path[]])
             controller=RecipeComparisonController(record;protected_paths=protected)
             display(GLMakie.Screen(),recipe_comparison(controller))
+        end
+    end
+    revision_launch_pending=Ref(false)
+    on(revision_btn.clicks) do _
+        revision_launch_pending[] && return
+        guarded() do
+            record=deepcopy(ec.record[])
+            record===nothing && throw(ArgumentError("open or snapshot an experiment first"))
+            protected=Hammerhead._artifact_local_path.(filter(!isempty,[ec.output_path[],ec.run_record_path[],report_destinations...]))
+            revision_launch_pending[]=true
+            @async begin
+                yield() # metadata hashing/controller construction is outside the callback
+                try
+                    revision_launcher(RecipeRevisionController(record;protected_paths=protected))
+                catch error
+                    ec.status[]="revision editor failed: $(Controllers._errmsg(error))"
+                finally
+                    revision_launch_pending[]=false
+                end
+            end
         end
     end
     gl
