@@ -13,36 +13,14 @@ using ImageCore: Colorant, Gray
 using ImageFiltering: imfilter, KernelFactors
 using JLD2: jldopen
 using ProgressMeter: Progress, next!
-import Pkg
-import SHA
-import TOML
-import UUIDs
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, PIVWorkspace, piv_workspace
 export benchmark_piv_configurations
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export ResultFile
-export PreprocessStep, ScriptReference, PIVRecipe, ExperimentRecord, ExperimentRun
-export recipe_identity, save_experiment, load_experiment, replay_experiment
-export recipe_diff, RecipeDiff, RecipeChange, RecipeArraySummary
-export RunQualityReport, quality_report, quality_report_data, save_quality_report, load_quality_report
-export RecipePairComparison, compare_recipe_pair, pair_comparison_data, save_pair_comparison, load_pair_comparison
-export PIVExecutionDiagnostics, PassDiagnostics, execution_diagnostics_data, load_execution_diagnostics
-export EnsemblePassDiagnostics, EnsemblePIVExecutionDiagnostics, load_ensemble_execution_diagnostics
-export StereoPIVExecutionDiagnostics, load_stereo_execution_diagnostics
-export PIVMeasurementHistory, measurement_history_data, load_measurement_history
-export verify_measurement_history, measurement_history_at
-export PairTiming, pair_timing_data, load_pair_timing
-export StereoPairTiming, load_stereo_pair_timing
-export StereoPIVRecipe, StereoExperimentRecord, load_stereo_experiment, verify_stereo_experiment_run
-export EnsemblePIVRecipe, EnsembleExperimentRecord, EnsembleExperimentRun
-export load_ensemble_experiment, verify_ensemble_experiment_run, EnsembleRunRecordError
-export TrackingTiming, TimedTrackingResult, tracking_timing_data, save_timed_tracking, load_timed_tracking
-export tracking_speed_summary
-export export_calibrated_table, CalibratedTableMetadata, load_calibrated_table_metadata, calibrated_table_data
-export ExperimentCheckpoint, CheckpointAttempt, CheckpointResults
-export create_checkpoint, load_checkpoint, resume_checkpoint!, checkpoint_state, checkpoint_results, save_checkpoint_results
+export PreprocessStep, PIVRecipe, save_recipe, load_recipe, apply_recipe
+export recipe_preprocess, recipe_diff
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask
@@ -102,25 +80,7 @@ include("selfcal.jl")
 include("statistics.jl")
 include("derived.jl")
 include("calibrated_resampling.jl")
-include("artifact_paths.jl")
-include("experiments.jl")
-include("execution_diagnostics.jl")
-include("measurement_history.jl")
-include("ensemble_execution_diagnostics.jl")
-include("stereo_execution_diagnostics.jl")
-include("pair_timing.jl")
-include("stereo_pair_timing.jl")
-include("stereo_experiments.jl")
-include("ensemble_experiments.jl")
-include("tracking_timing.jl")
-include("calibrated_table.jl")
-include("experiment_checkpoint.jl")
-include("experiment_comparison.jl")
-include("run_quality.jl")
-include("ensemble_run_quality.jl")
-include("ensemble_experiment_quality.jl")
-include("stereo_run_quality.jl")
-include("pair_comparison.jl")
+include("recipes.jl")
 
 # Auto arrow-length scale for plot_vector_field: the multiplier that maps the
 # 0.99-quantile magnitude among the selected vectors to `target_length` (the

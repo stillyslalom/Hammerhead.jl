@@ -68,12 +68,9 @@ between magnitude, components, and diagnostics; the slider browses frames.
 When a scale is attached, the explorer uses its physical units.
 
 Want a profile or a rotation estimate? Use the explorer's **tool** and **field**
-menus. Inspect flagged vectors before interpreting derivatives;
-[Inspect derivative support](gui_derivative_support.md) shows which neighbors
-contribute. [Recorded processing details](gui_companions.md) and
-[quality reports](run_quality.md) help examine a completed run more closely.
+menus. Inspect flagged vectors before interpreting derivatives such as vorticity.
 
-## Keep the work
+## Keep the results and the settings
 
 Reopen a completed native results file with:
 
@@ -81,66 +78,23 @@ Reopen a completed native results file with:
 result_explorer("vectors.jld2"; lazy=true)
 ```
 
-Lazy browsing loads one selected entry at a time. Keep the file unchanged while
-browsing. To keep the **settings** as well, use **saved experiments…** and
-[Save your settings and run them again](gui_experiments.md). That workflow also
-opens separate editors for [passes](gui_recipe_revision.md),
-[preprocessing](gui_preprocessing_revision.md), and
-[ROI/scale](gui_recipe_geometry_revision.md), and [masks](gui_recipe_mask_revision.md).
-For a long run that needs restart,
-use [checkpoints](gui_checkpoints.md).
+Lazy browsing loads one selected entry at a time.
 
-## [Try the experimental Qt interface](@id experimental-qt-interface)
-
-To use Qt controls with a separate interactive scientific plot, install the
-optional packages in your current Julia environment:
-
-```julia
-pkg> add QML QMLMakie
-```
-
-Then open your saved planar recipe:
-
-```julia
-using HammerheadGUI
-session = experimental_qml_gui(experiment="recipe.jld2")
-```
-
-Choose the **result output** and **run history** paths in the settings window,
-then replay. Progress follows written pairs; **cancel** retains the completed
-prefix; finishing the final pair completes the run. Inspect a completed run to
-see vectors in the recipe's physical units.
-Closing the scientific plot leaves the settings window and replay active;
-reopen the plot to continue inspecting.
-
-For an existing unscaled planar result, use
-`experimental_qml_gui(result="vectors.jld2")`. Calling
-`experimental_qml_gui()` opens the demonstration so you can try selection and
-window controls first.
-
-Close the settings window to cancel active work and release the session, or use:
-
-```julia
-close(session)
-```
-
-`close` waits for shutdown. After closing the settings window manually, use
-`wait(session)` to check its exit. Read `session.log_path` for the log and
-`session.directory` for readiness and shutdown reports. A cleanup error keeps
-the job and its diagnostic available for investigation. Supported replay ownership
-is currently 64-bit Windows and x86_64 Linux with the required kernel/libc
-capabilities; desktop and platform validation are tracked in the
-[framework evaluation](../explanation/gui_framework.md).
-The [launcher reference](@ref experimental-qt-session)
-covers projects, rendering modes and session lifecycle.
+**save settings…** writes the form's passes, preprocessing, mask, ROI and scale
+to a recipe file. **open settings…** loads a recipe file, or the results file of
+an earlier run, back into the form: its exact passes appear as the
+**saved settings** effort, and the mask, ROI, scale and preprocessing replace
+the current ones. Every run with an output file also stores its settings in that
+file, so a results file always records how it was made.
+[Save settings and reuse them](recipes.md) shows how to apply the same recipe
+from a script.
 
 ## Working with another kind of recording?
 
-For two cameras, start with [Calibrate a real stereo rig](stereo_rig.md), then
-use the [saved stereo workflow](gui_stereo_experiments.md). For repeated
-image pairs pooled into one measurement, use [saved ensembles](gui_ensemble_experiments.md).
-Particle and trajectory results open in the same explorer;
-[timed trajectories](gui_tracking_timing.md) explains their time and gap display.
+For two cameras, start with [Calibrate a real stereo rig](stereo_rig.md).
+`stereo_calibration(cr1, cr2; batch)` reviews both cameras' calibrations and
+installs the dewarpers into a `stereo_batch_runner` form, which runs the
+synchronized frames. Particle and trajectory results open in the same explorer.
 
 The [GUI reference](../reference/gui.md) covers scripted controls and embedding
 views when you are ready to customize the workflow.

@@ -49,8 +49,10 @@ that window**:
   a mean.
 
 Synthetic images with known displacements let you compare estimated
-uncertainty with measured error. Agreement depends on the image conditions;
-it does not establish the accuracy of estimates for a different recording.
+uncertainty with measured error. On clean synthetic images the stored σ is
+currently too small: about 15–18% of errors fall within 1σ instead of 68%.
+[How accurate are the measurements?](validation_results.md) summarizes those
+tests and the open investigation.
 
 ## Use uncertainty alongside validation and sensitivity checks
 

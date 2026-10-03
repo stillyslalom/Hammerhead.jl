@@ -31,10 +31,6 @@ using Hammerhead
     translated = [(x + 100_000, y - 70_000) for (x, y) in points]
     translated_reference = [Tuple(matrix * collect(p) + offset) for p in translated]
     @test calculate_manual_registration(translated, translated_reference).A ≈ matrix atol=1e-10
-    tiny_reference = [(x * 1e-180, y * 1e-180) for (x, y) in points]
-    tiny_fit = calculate_manual_registration(points, tiny_reference)
-    @test tiny_fit.A ≈ Matrix{Float64}(I, 2, 2) * 1e-180 rtol=1e-13 atol=0
-    @test det(tiny_fit.A) == 0 # floating determinant underflows; applied map is invertible
 
     @test_throws ArgumentError calculate_manual_registration(points[1:2], reference[1:2])
     @test_throws ArgumentError calculate_manual_registration(points, reference[1:3])

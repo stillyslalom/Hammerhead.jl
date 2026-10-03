@@ -56,6 +56,10 @@ results = run_piv_sequence(pairs, passes;
 )
 ```
 
+To keep these settings for another recording, put them in a recipe and run it
+with `apply_recipe`, which also stores the settings in the output file; see
+[Save settings and reuse them](recipes.md).
+
 With `output` set, each result is written to the JLD2-format Julia data file
 **as it completes**. If a later pair fails, the file keeps the finished
 prefix. For file-path pairs
@@ -171,9 +175,7 @@ stable `hammerhead-table-1` long-form schema. Its fixed columns are
 and leave inapplicable values empty. Identifiers, flags, quality values, uncertainties,
 and unit strings are included, and attached scaling is applied. Tracking rows
 preserve observed frame indices and gaps, with derived elapsed time and
-numerical validity flags; see the [I/O reference](../reference/io.md) and
-[compatibility policy](../explanation/compatibility.md) for their provenance
-and empty-track limitations. Planar and stereo grids can also be written for
+numerical validity flags; see the [I/O reference](../reference/io.md). Planar and stereo grids can also be written for
 ParaView with
 `export_vtk("field.vtk", result)` (legacy ASCII structured-grid VTK).
 The VTK `FIELD` metadata records coordinate and vector-component unit labels;
@@ -205,8 +207,6 @@ workspaces, and memory retained by the callback have their own costs. Loading
 the saved file with the default `load_results(path)` materializes the entire
 result vector; `load_results(path; lazy = true)` indexes a completed file
 without retaining its payloads. See [completed-file GUI browsing](gui.md).
-The GUI's live explorer retains results; this option does not make live
-browsing disk-backed.
 
 Exceptions and prefetch cleanup follow the same contract as collecting runs.
 Stereo cancellation returns `nothing` in this mode; completed acquisitions
@@ -231,9 +231,8 @@ have matching coordinates, component/mask/outlier dimensions, and attached
 scale factors and unit labels; these checks happen before changing the
 accumulator. An incompatible field leaves the completed prefix's statistics
 intact. Finalizing before the first update raises an error. Snapshots do not
-reset the accumulator and share no mutable arrays with it, so independent
-progress snapshots can be inspected during processing. These finalized
-statistics are not a checkpoint/restart API.
+reset the accumulator and share no mutable arrays with it, so you can inspect
+progress snapshots during processing.
 
 Statistics use the stored components. To calculate velocities, supply a
 scale to the driver and update with `physical(r)`:
@@ -255,8 +254,7 @@ not combine absent scales with attached ones or different numeric factors.
 Masks and nonfinite components always exclude a sample. Outliers are
 excluded by default; construct with `include_invalid = true` to include
 finite flagged vectors. Each node has its own valid count, and an unsampled
-node has `NaN` moments. Fluctuation RMS includes measurement noise and is
-not an uncertainty estimate for the mean. Use the same callback pattern
+node has `NaN` moments. Fluctuation RMS includes measurement noise. Use the same callback pattern
 with `run_piv_stereo_sequence`; one accumulator must hold only one result
 kind. Callbacks run serially, which suits the accumulator's serial updates.
 
@@ -277,9 +275,8 @@ velocity_stats = field_statistics(replay)
 
 This retains only the grid-sized accumulator and the field currently being
 read, plus O(number of results) entry-key metadata; it does not retain a
-payload for every saved result. Use the index only after the writer closes,
-and do not change or replace the file while reading. The index does not
-follow live writes or resume interrupted processing. For interactive access,
+payload for every saved result. Open the index after the writer closes,
+and keep the file unchanged while reading. For interactive access,
 see [completed-file GUI browsing](gui.md).
 
 ### Analyze collected results

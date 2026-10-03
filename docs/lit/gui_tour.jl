@@ -142,40 +142,38 @@ tour_picture(result_explorer(explorer; size=(1100,750)), "explorer") #hide
 # moves through the results.
 #
 # Use **cancel** during a batch to stop after the current pair. Finished pairs
-# remain available. For a resumable long run, use the separate
-# [checkpoint workflow](../howto/gui_checkpoints.md).
+# remain available in the output file.
 
-# ## 5. Keep the result and the recipe
+# ## 5. Keep the result and the settings
 #
 # The result is already in `vectors.jld2`. Reopen it with:
 
 reopened = ResultExplorer(batch.output_path[]; lazy=true)
 nframes(reopened)
 
-# Saving a **recipe** is a different task: it keeps the image pairs and settings
-# for another run. Click **saved experiments…** in the batch window, then
-# **snapshot batch** and **save experiment…**. The equivalent code is:
+# The same file also records the settings that produced it: passes, mask,
+# ROI, scale and preprocessing. Click **save settings…** to write them to a
+# separate recipe file, which you can open in a later session with
+# **open settings…**. The equivalent code is:
 
-recipe_path = joinpath(work, "vortex-experiment.jld2")
-save_batch_experiment(recipe_path, batch)
-saved = ExperimentController(recipe_path)
-saved_figure = experiment_workflow(saved; size=(1100,800)) #hide
-for (option, value) in (("Files", :files), ("run history", :history)) #hide
-    menu = only(filter(b -> b isa GUI.Menu && (option,value) in b.options[], saved_figure.content)) #hide
-    menu.i_selected[] = findfirst(==((option,value)), menu.options[]) #hide
-end #hide
-tour_picture(saved_figure, "saved-experiment") #hide
+settings_path = joinpath(work, "vortex-settings.jld2")
+save_settings(batch, settings_path)
+recipe = load_recipe(batch.output_path[])
+recipe == load_recipe(settings_path)
 
-# ![The saved-experiment window shows file actions and the new recipe's empty run history.](../assets/gui/saved-experiment.png)
-#
-# This new recipe has no run history yet; saving settings does not attach the
-# earlier batch run retroactively. On another session, open it, choose a result
-# destination, and use **replay exact recipe**. See
-# [Save your settings and run them again](../howto/gui_experiments.md).
-#
+# Opening either file in a new batch form loads its exact passes as the
+# **saved settings** effort, together with its mask and scale. Add the frames
+# of the next recording and press **run**:
+
+next_batch = BatchRunner()
+load_settings!(next_batch, settings_path)
+next_batch.status[]
+
 # You have now made a masked vector field, inspected it in physical units,
-# saved its native result, and saved a recipe for repeating the analysis.
+# saved its native result, and saved the settings for repeating the analysis.
+# [Save settings and reuse them](../howto/recipes.md) shows how to apply the same
+# recipe from a script.
 #
 # For your next task, use [the GUI task guide](../howto/gui.md). It points to
-# preprocessing, recipe revisions, profiles, stereo, and tracking without
-# requiring you to learn every tool at once.
+# preprocessing, profiles, stereo, and tracking without requiring you to learn
+# every tool at once.

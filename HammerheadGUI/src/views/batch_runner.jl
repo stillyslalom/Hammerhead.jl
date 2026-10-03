@@ -9,21 +9,19 @@ Open the planar PIV batch form. Add frames, choose a pairing mode, set the
 window schedule and processing options, then run. An optional mask excludes
 image regions. "Edit ROI" opens a rectangle editor on the first frame;
 "full image" resets the batch selection. An output path writes completed
-pairs to JLD2 as the run progresses. "Cancel" stops after the current pair. "View results" opens
+pairs to JLD2 as the run progresses, together with the settings that produced
+them. "Save settings" stores the form as a recipe file; "open settings" loads one,
+or the settings recorded in a results file, ready to run on new frames.
+"Cancel" stops after the current pair. "View results" opens
 [`result_explorer`](@ref) after the first pair finishes; later pairs appear
 there as they complete.
-"Saved experiments" opens the dedicated recipe workflow to snapshot these
-settings or reopen a saved experiment without narrowing its settings to this form.
-"Saved ensemble" opens the separate full-image pooled workflow. Its explicit
-CPU/KA and precision choices apply to the next snapshot; ROI/custom scripts refuse.
 
 Pass a prebuilt [`BatchRunner`](@ref) to supply in-memory frames or control
 the run programmatically.
 """
 batch_runner(; kwargs...) = batch_runner(BatchRunner(); kwargs...)
 
-function batch_runner(bc::BatchRunner; size = (960, 720),
-        ensemble_workflow_launcher::Function=f->display(GLMakie.Screen(),f))
+function batch_runner(bc::BatchRunner; size = (960, 720))
     fig = Figure(; size)
 
     # -- frames column ------------------------------------------------------
@@ -50,6 +48,9 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
     Label(files_col[6, 1], roi_obs; halign = :left, word_wrap = true, width = 180)
     roi_btn = Button(files_col[7, 1]; label = "edit ROI…", tellwidth = false)
     roi_clear_btn = Button(files_col[8, 1]; label = "full image", tellwidth = false)
+    Label(files_col[9, 1], "settings"; halign = :left, font = :bold)
+    save_settings_btn = Button(files_col[10, 1]; label = "save settings…", tellwidth = false)
+    open_settings_btn = Button(files_col[11, 1]; label = "open settings…", tellwidth = false)
 
     # -- parameters column --------------------------------------------------
     form = GridLayout(fig[1, 2]; tellheight = false, valign = :top)
@@ -57,7 +58,8 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
     Label(form[2, 1], "effort"; halign = :left)
     effort_menu = Menu(form[2, 2]; tellwidth = false,
                        options = [("custom", :custom), ("low", :low),
-                                  ("medium", :medium), ("high", :high)])
+                                  ("medium", :medium), ("high", :high),
+                                  ("saved settings", :saved)])
     Label(form[3, 1], "windows"; halign = :left)
     schedule_box = Textbox(form[3, 2];
                            placeholder = join(bc.window_schedule[], ", "),
@@ -107,8 +109,11 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
                          "mask: $(count(m)) px excluded", bc.mask)
     Label(run_col[4, 1], mask_obs; halign = :left, word_wrap = true, width = 160)
     mask_btn = Button(run_col[5, 1]; label = "load mask…", tellwidth = false)
-    pp_obs = lift(p -> p === nothing ? "preprocess: none" : "preprocess: set",
-                  bc.preprocess)
+    pp_obs = lift(bc.preprocess, bc.preprocess_steps) do p, steps
+        p === nothing ? "preprocess: none" :
+            steps === nothing ? "preprocess: custom function" :
+            "preprocess: $(length(steps)) step" * (length(steps) == 1 ? "" : "s")
+    end
     Label(run_col[6, 1], pp_obs; halign = :left, word_wrap = true, width = 160)
     pp_btn = Button(run_col[7, 1]; label = "preprocess…", tellwidth = false)
     run_btn = Button(run_col[8, 1]; label = "run", tellwidth = false)
@@ -122,10 +127,6 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
     explore_label = lift(v -> isempty(v) ? "view results" :
                               "view results ($(length(v)))", bc.completed)
     explore_btn = Button(run_col[12, 1]; label = explore_label, tellwidth = false)
-    saved = GridLayout(run_col[13, 1])
-    rowgap!(saved, 3)
-    experiment_btn = Button(saved[1, 1]; label = "saved experiments…", tellwidth = false, fontsize=13,height=27)
-    ensemble_btn = Button(saved[2, 1]; label = "saved ensemble…", tellwidth = false, fontsize=13,height=27)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -191,6 +192,25 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
             bc.status[] = Controllers._errmsg(err)
         end
     end
+    on(save_settings_btn.clicks) do _
+        path = save_file(; filterlist = "jld2")
+        isempty(path) && return
+        try
+            save_settings(bc, path)
+            bc.status[] = "settings saved → $(basename(path))"
+        catch err
+            bc.status[] = Controllers._errmsg(err)
+        end
+    end
+    on(open_settings_btn.clicks) do _
+        path = pick_file(; filterlist = "jld2")
+        isempty(path) && return
+        try
+            load_settings!(bc, path)
+        catch err
+            bc.status[] = Controllers._errmsg(err)
+        end
+    end
     on(output_btn.clicks) do _
         path = save_file(; filterlist = "jld2")
         isempty(path) || (bc.output_path[] = path)
@@ -222,12 +242,6 @@ function batch_runner(bc::BatchRunner; size = (960, 720),
     end
     on(_ -> start!(bc), run_btn.clicks)
     on(_ -> cancel!(bc), cancel_btn.clicks)
-    on(experiment_btn.clicks) do _
-        display(GLMakie.Screen(), experiment_workflow(; batch = bc))
-    end
-    on(ensemble_btn.clicks) do _
-        ensemble_workflow_launcher(ensemble_experiment_workflow(;batch=bc))
-    end
     # Live results hand-off: available as soon as one pair is done, opening
     # the explorer on the completed prefix; results finishing later append
     # into the open explorer (its frame slider grows). Starting a new run
@@ -261,6 +275,10 @@ function _form_summary(bc::BatchRunner)
                bc.apodization[] === :none ? "" : ", $(bc.apodization[])",
                ", ", bc.subpixel_method[],
                bc.uncertainty[] ? ", uncertainty" : "")
+    elseif bc.effort[] === :saved
+        passes = bc.saved_passes[]
+        passes === nothing ? "saved settings: none loaded" :
+            "saved settings: " * join((p.window_size[1] for p in passes), "/") * " px"
     else
         "effort: $(bc.effort[]) preset (manual schedule inactive)"
     end

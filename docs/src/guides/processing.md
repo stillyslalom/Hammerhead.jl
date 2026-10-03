@@ -36,9 +36,9 @@ come from filling rejected measurements, and a smaller window can reveal more
 detail while leaving too few particles for reliable correlation.
 [Validation](../howto/validation.md) explains the flags and how to tune the checks.
 
-For saved experiments, [compare two recipes on the same pair](../howto/pair_comparison.md).
-This makes the settings and numerical differences explicit; you still need
-physical knowledge or a reference measurement to decide which is better.
+Run both settings on the same representative pair and compare the fields
+side by side; [`recipe_diff`](@ref) lists exactly which settings differ
+between two saved recipes.
 
 Once the settings are useful, [run the recording](repeat.md).
 For supported hardware, [GPU processing](../howto/gpu.md) can accelerate that work.

@@ -2,366 +2,97 @@
 
 ## Unreleased
 
-These entries describe changes after the registered baseline. No new package
-version or release date has been assigned. See [RELEASING.md](RELEASING.md) for
-validation and the core-first, GUI-second release sequence.
-
-### Documentation
-
-- Reorganized the site around lessons and reader tasks, with a compact sidebar
-  and grouped reference pages. Reworked the first PIV, real-data, GUI and ensemble
-  examples to lead with images, results and experiments to try. Existing page URLs
-  are retained; schema details and development studies have separate entry points.
-- Added worked saved-recipe guides for finer passes, high-pass filtering,
-  cropping with physical scale, and mask editing, with executed comparison figures.
-  Rewrote GUI and validation guides around methods, result interpretation and
-  reader actions, removing repetitive defensive caveats.
+Changes since core v0.1.0 (2026-07-14) and HammerheadGUI v0.1.1 (2026-07-22).
+See [RELEASING.md](RELEASING.md) for the core-first, GUI-second release
+sequence.
 
 ### Core
 
-- Added calibrated bilinear sampling of planar PIV vectors and scalar images
-  onto explicit shared coordinates, with separate availability and contributor
-  diagnostics. Affine maps preserve vector bases; explicit pair delays convert
-  displacement to velocity. A PIV/PLIF guide covers unequal camera resolutions,
-  ROI coordinates and masks. Resampling does not propagate measurement uncertainty.
-- Manual affine registration now rejects malformed, nonfinite, rank-deficient
-  and singular calibrations while preserving the existing Float64 fit convention.
-- Added separate saved planar-ensemble recipes and run records with exact
-  ordered inputs/settings, contribution progress, cooperative cancellation and
-  one published pooled result. Associated format-5 quality reports retain
-  separate input, contribution and output counts. History-write failures carry
-  the actual completed/cancelled run instead of changing its processing status.
-- Added explicit format-4 ensemble quality reports for whole native files, with
-  raw measurement verification and separate pooled contribution populations.
-  Existing report defaults retain their formats; absent metadata does not identify
-  an ensemble. Tightened ensemble packet validation for feasible contributor
-  extrema and nonfinite-plane capacity without changing numerical processing.
-- Corrected the controlled PTV/tracking scorecard's recorded PIV threading
-  default to follow the process thread count. One-/four-thread regressions and
-  a regenerated eight-clip study verify the metadata; scientific outputs are
-  unchanged and historical artifacts retain their original values.
-- Added a bounded independent VSJ301 tracking study with guarded private caching,
-  sparse annotations and separate coordinate-origin hypotheses evaluated against
-  identical processing outputs. Unknown visibility and annotation gaps remain
-  explicit; association scores do not establish real-recording accuracy.
-- Added associated stereo run-quality reports with raw recipe/result and ordered
-  source verification, optional input-byte checks and explicit result relocation.
-  Existing stored-field and execution-report schemas remain unchanged.
-- Added separate CPU/KA ensemble execution diagnostics for pooled passes,
-  numerical contributions, source support and pre-addition residuals. Iteration
-  settings remain ignored by ensemble processing; vendor-device capture is
-  explicitly unsupported. Pooled report aggregation uses the separate format-4
-  opt-in described above.
-- Added a bench-only annotated-particle scorer for detection, correspondence,
-  identity changes, fragmentation and gap recovery. It separates localization
-  from identity ambiguity and preserves full versus detected-only populations.
-  Imported clips require complete visibility annotations and verified image
-  identities; controlled synthetic results do not establish real-recording accuracy.
-- Added separate stereo experiment records for replay from frozen fitted
-  cameras, signed dewarp grids, per-camera preprocessing and exact pair timing.
-  Run associations support artifact and raw-field verification. Calibration
-  fitting and self-calibration execution remain outside replay.
-- Area circulation accepts the same explicit derivative stencil policy as
-  planar flow gradients and reports the resulting valid-area coverage.
-- Added opt-in derivative stencil descriptions and a centered-only policy.
-  Contributor indices, signed spans and weights remain separate from input
-  eligibility and finite outputs. Invalid coordinate geometry is rejected;
-  native integer component overflow produces an unavailable derivative.
-- Added separate native stereo sequence timing companions with ordered camera
-  metadata, exact observed delays and midpoints, synchronization policy and
-  effective scaling-delay provenance. Frozen selections and measurement-field
-  binding protect callback delivery and persistence.
-- Added opt-in version-3 quality reports with planar and per-camera execution
-  coverage, sweep/check counts and primary support. Stereo fields are verified
-  when generating the report; residual amplitudes are not pooled across grids.
-  Existing default and history-only report formats remain unchanged.
-- Added a bounded synthetic spatial-response study comparing two complete
-  schedules at matched output spacing, with analytic midpoint truth, guarded
-  harmonic fits and original full-error/uncertainty populations.
-- Added opt-in stereo execution companions that retain each camera's planar
-  pass observations, common dewarp-grid geometry and measurement-field binding.
-  A separate reader distinguishes metadata inspection from verified result fields;
-  residuals remain in dewarped pixels.
-- Added a bounded rendering/interpolation diagnostic for clean synthetic scenes,
-  separating particle-support and pixel-area sampling contrasts from known-shift
-  image-warp comparisons. Original full-error controls and production uncertainty
-  defaults are retained.
-- Added explicit sample-time validation for temporal spectra, checking interval
-  regularity and accumulated timing drift with exact arithmetic and optional
-  tolerances. Result spectra reject incompatible grids, shapes and scales;
-  existing explicit-interval calculations retain their numerical behavior.
-- Dedicated timed artifacts and calibrated companions accept foreign absolute
-  source locators as provenance while protecting consumed local files. Explicit
-  local relocation does not rewrite historical source paths or imply verification
-  of unavailable source images.
-- Experiment replay accepts a completed-pair progress callback. Output guards
-  detect prospective aliases through parent links and Windows path spelling
-  before processing begins.
-- Added a separate calibrated CSV export for particle matches and trajectories,
-  with affine point/vector transformation and a versioned TOML companion for
-  transform settings, units, diagnostic availability and CSV verification.
-  Actual-time trajectories retain their recorded velocity intervals; scalar
-  particle residuals remain explicitly in their original pixel basis.
-- Added a bench-only repeated-noise study on fixed particle scenes, retaining
-  full truth-error metrics alongside conditional variability and disjoint-pair
-  diagnostics. A pre-specified covariance weighting is an experimental comparator;
-  production uncertainty defaults are unchanged.
-- Added `tracking_speed_summary` for validated bulk summaries of actual-time
-  trajectories, with explicit observation-mean secants and unavailable-track reasons.
-- Added explicit actual-time trajectory linking with exact sample metadata,
-  elapsed-time prediction and gap validation, and velocities over recorded
-  observation intervals. `TimedTrackingResult` preserves timing through its own
-  native artifact and CSV schema; ordinary tracking remains ordinal by default.
-- Added a bench-only uncertainty diagnostic that reproduces stored estimates
-  from retained final-sweep CPU windows and traces covariance-ring selection,
-  negative variance clamps and numerical zero outcomes. Full truth-error
-  coverage remains separate from centered and residual-inclusive alternatives;
-  production estimator defaults are unchanged.
-- Added opt-in planar pair-timing companions with exact timestamp values,
-  observed delays/midpoints, source identifiers, and effective scaling-delay
-  provenance. All selected metadata is checked before loading or opening output;
-  callbacks cannot redirect frozen frame selections or invalidate saved binding.
-- Added opt-in version-2 quality reports for verified final-sweep history,
-  with explicit missing/unsupported coverage and actual event/origin counts.
-  Default reports remain version 1. Public history verification and per-node
-  accessors support inspection without reloading a raw result or copying a packet.
-- Recheck captured measurement history and timing after function-output callbacks,
-  including callback-only capture, before opening their destination.
-- Added opt-in final-sweep planar measurement history: primary values and
-  residuals, first-observed rejection stages, accepted alternative ranks,
-  observed fill/restoration events, final origin and stored uncertainty status.
-  Separate native companions bind each history to its result; callback mutation
-  cannot silently change that binding. Uncertainty is not re-estimated after
-  substitution or filling, and history does not certify uncertainty coverage.
-- Added a seeded synthetic uncertainty scorecard with component coverage,
-  signed normalized errors, explicit zero/unavailable uncertainty populations,
-  and full-population versus uncertainty-subset error metrics. Independent seeds
-  and timing repeats remain distinct; pooled moments stream across seeds.
-- Added opt-in planar execution diagnostics for actual pass sweeps, tolerance
-  checks, stopping conditions, and primary residual displacement summaries.
-  Sequence files can retain versioned diagnostics beside each result; replay
-  associates them with the verified recipe and inputs. Result structures and
-  numerical stopping behavior are unchanged. Residuals describe the primary
-  correlation measurement before alternatives, replacement, or predictor addition.
-- `compare_recipe_pair` evaluates two complete built-in planar recipes on an
-  explicitly selected, content-matched pair. Reports compare exact common grid
-  nodes and retain native-grid quality populations, units, settings, and input
-  provenance. Saved TOML snapshots describe recipe sensitivity, not accuracy;
-  unequal grids are not interpolated and unsupported uncertainty is explicit.
-- Added separate version-1 planar checkpoints with immutable per-pair native
-  results and verified commit records. Built-in CPU/KA recipes resume only with
-  matching ordered inputs, recipe, and software identity. Interrupted writers
-  require explicit recovery; partial files are not adopted. Lazy committed
-  prefixes and native aggregate export preserve earlier committed results.
-  Same-directory publication does not promise power-loss durability.
-- Non-informative correlation planes (flat, nonpositive, or nonfinite) now
-  produce unavailable measurements instead of arbitrary boundary displacements.
-  Exact constant windows are centered without roundoff texture before
-  apodization. Unmasked missing measurements remain rejected independently of
-  optional validators; UOD and deformation predictors exclude nonfinite donors.
-  Deformed windows now require exact contrast in both original sampled raw
-  stencil unions. Distant B-spline coefficient leakage and virtual boundary
-  zeros alone do not establish source information. This convention preserves
-  any contrast present in the sampled original pixels, without an amplitude
-  threshold; uninformative correlation and UQ contributions are skipped.
-- `RunQualityReport` summarizes planar/stereo stored fields with node-weighted
-  counts and explicit denominator/availability rules, then saves validated TOML.
-  Completed experiment outputs can be associated by verified content identity.
-  Current flags are not replacement histories, and numerical uncertainty
-  availability does not establish accuracy, coverage, or measurement association.
-- `recipe_diff` reports deterministic, readable processing-setting changes
-  between verified planar recipe snapshots. Large mask/background payloads use
-  shape/precision/content summaries; script paths, inputs, and run environments
-  remain separate from scientific recipe settings.
-- Added version-1 planar experiment records with content-addressed recipes and
-  inputs, explicit built-in preprocessing, embedded backgrounds/masks/ROI,
-  environment provenance, and streaming replay with optional run records.
-  Replay supports CPU/KA and Float32/Float64; custom preprocessing requires a
-  caller-provided function matching a recorded script reference. Saved scripts
-  are never automatically executed. Frozen-camera stereo replay uses the
-  separate format described above; PTV, tracking and vendor-GPU experiment
-  recipes remain unsupported.
-- Added a reproducible validation scorecard command covering seeded synthetic
-  truth and committed Challenge A/4E smoke data. Reports separate error claims
-  from smoke checks and record source/input hashes, full settings, warmed CPU
-  timings, and cumulative Julia allocations (not peak memory).
-- Stereo sequence and ensemble processing validate available exposure times,
-  observed pair delays, and declared `FramePair.dt` before reading images or
-  opening output. `sync_atol` and `sync_rtol` control tolerance relative to pair
-  delay; `missing_timestamps = :error` requires metadata. The default `:allow`
-  preserves path/matrix workflows without asserting synchronization.
-- Planar, stereo, and PTV sequence drivers accept `collect_results = false`.
-  Results still reach callbacks and persistence, but the driver returns
-  `nothing` and does not retain a growing result vector. Existing defaults
-  continue to return results. Consumers may still retain their own copies.
-- `export_table` accepts `TrackingResult`. Eight columns are appended to the
-  existing CSV schema for trajectory/observation IDs, original frame indices,
-  derived elapsed time, gaps, and numerical validity. Readers should select
-  columns by name. Acquisition timestamps are not inferred from frame indices.
-- Effort presets fit the selected ROI. Deformation now handles predictor grids
-  with a single node along one or both axes by constant extension.
-- `FieldStatisticsAccumulator`, `update_statistics!`, and
-  `field_statistics(accumulator)` calculate planar/stereo population moments
-  without retaining result histories. Updates validate coordinates, dimensions,
-  and scale metadata before changing state; snapshots are independent copies.
-- `ResultFile(path)` and `load_results(path; lazy = true)` index completed native
-  files and read one entry per access. The index retains keys rather than result
-  payloads and rejects detectable file changes. Eager loading stays the default.
-  Saving an index or its standard array views over the source file is rejected
-  before opening output, including when the destination is a file alias.
-- Planar-grid table and VTK exports accept `transform = PlanarTransform(...)`
-  with explicit length units and optional pair delay/time units. Coordinates,
-  vectors, and component uncertainties use the transformed basis. Mixed-axis
-  uncertainty requires an explicit independence assumption or is reported as
-  unavailable. Transform export requires raw pixel results without attached
-  scale metadata. Scattered PTV/tracking calibration uses the separate paired
-  table API above; transformed stereo grids remain unsupported.
+Added:
+
+- Saved processing settings. `PIVRecipe` holds a pass schedule, ordered
+  built-in `PreprocessStep`s (backgrounds embedded), mask, ROI, scale,
+  sequence/ensemble mode, and precision. `save_recipe`/`load_recipe` store it
+  in JLD2; `apply_recipe` runs it on planar or stereo pairs and stores the
+  recipe alongside the results, so `load_recipe(results_path)` recovers the
+  settings. `recipe_diff` lists changed settings; `recipe_preprocess` returns
+  the preprocessing as a function.
+- `search_area_size` enlarges the frame-B search window around a concentric
+  frame-A window (CPU single-pair and ensemble).
+- `on_result` callback on all sequence drivers, including stereo, for
+  consuming each result as it completes.
+- `collect_results = false` on the planar, stereo, and PTV sequence drivers:
+  results go to callbacks and the output file without accumulating in memory.
+- `ResultFile(path)` / `load_results(path; lazy = true)` index a completed
+  results file and load one entry per access.
+- `FieldStatisticsAccumulator` and `update_statistics!` compute planar/stereo
+  field statistics incrementally in grid-sized memory.
+- `export_table` accepts `TrackingResult`, appending trajectory/observation
+  IDs, frame indices, gaps, and validity columns.
+- Planar-grid `export_table`/`export_vtk` accept
+  `transform = PlanarTransform(...)` with explicit length units and optional
+  pair delay; coordinates and vector components use the transformed basis.
+  VTK files record coordinate and component unit labels.
+- `resample_planar` and `resample_image` sample planar vectors and scalar
+  images onto shared calibrated coordinates (for example PIV with PLIF), with
+  per-sample availability.
+- Stereo sequence and ensemble drivers check camera exposure timestamps and
+  declared pair delays before loading images (`sync_atol`, `sync_rtol`,
+  `missing_timestamps`).
+- `flow_derivatives(...; stencil = :centered)` uses central differences only.
+- Area circulation over a region reports coverage; incomplete coverage errors
+  by default, and `coverage = :report` returns the value with valid/requested
+  area.
+
+Changed and fixed:
+
+- Flat, nonpositive, or nonfinite correlation planes now give NaN displacement
+  and an outlier flag instead of an arbitrary peak, on CPU, KA, and GPU
+  backends. Deformed windows also need contrast in the original pixels they
+  sample. Exact constant windows are centered before apodization, predictors
+  skip nonfinite neighbors, and alternative-peak candidates are reset between
+  windows.
+- Effort presets fit the selected ROI, and deformation handles predictor grids
+  with a single node along an axis.
+- `result_spectrum` requires an explicit sampling interval `dt`; the pair
+  delay in `PhysicalScale` is no longer used for it.
+- `extract_region` returns `included` (`true` = returned node).
+- Field statistics use numerically stable running moments.
+- PTV matches particles in one precision when frame element types differ;
+  tracking loads and detects frames one at a time.
+- Empty results files load as an empty vector; unknown `format_version`
+  values are rejected.
+- Sequence drivers wait for an in-flight frame prefetch before returning,
+  including on failure or cancellation, and report the original error.
+- Manual affine registration rejects nonfinite, rank-deficient, and singular
+  inputs.
 
 ### HammerheadGUI
 
-- Fixed experimental Qt launch from HammerheadGUI's own active project by
-  recognizing the project's package name and UUID alongside its dependencies.
-
-- Added `experimental_qml_gui`: optional Qt controls with an interactive
-  scientific plot, saved planar experiment/result startup, and a session handle
-  for orderly shutdown. Each launch captures its package paths and retains logs
-  and diagnostics in a separate writable directory.
-
-- Added saved-mask editing that retains imported pixels while adding polygon
-  exclusions, holes and morphology. A verified raw reference image guides the
-  edits; applying them and saving a new complete recipe are explicit actions.
-- Added saved-planar ROI and physical-scale revision with exact imported values,
-  explicit disabling and retained raw drafts. Validation preserves the complete
-  pass/preprocessing recipe and full-image mask/background geometry. Distinct
-  saves retain input identity and start with empty history; scale factors remain
-  metadata until physical conversion is requested.
-- Added ordered preprocessing revision with duplicate steps, every built-in
-  option and exact imported background precision. Explicit image-pair previews
-  verify original inputs and use replay preprocessing on full frames before ROI,
-  with shared display ranges and read-only mask/ROI overlays. Distinct saves
-  reuse the existing identity and path protections; scripts remain unexecuted.
-- Added a separate saved-planar recipe revision editor for ordered pass settings.
-  Other imported settings and validator tuples remain intact. Metadata previews
-  show changed settings; saving verifies unchanged inputs and creates a distinct
-  record with a current creation environment and empty run history. Invalid
-  visible drafts cannot silently reuse previous values.
-- Extended the isolated Qt prototype's saved-planar worker to x86_64 Linux with
-  a guardian process and explicit kernel/libc capability checks. Ownership
-  failures remain visible and prevent further replay while cleanup is unverified.
-- Added Browse dialogs to the isolated Qt prototype for experiment files,
-  completed results and replay destinations. Selections stage draft paths;
-  opening files and starting replay remain explicit actions.
-- Saved planar replay in the isolated Qt prototype uses an owned core-only Julia
-  process on 64-bit Windows, with captured requests, acknowledged progress and
-  cancellation at written-pair boundaries. Files, Replay and Inspection sections
-  keep cancel, progress and status visible in compact layouts. Other-platform
-  worker ownership and native Qt embedding remain unvalidated.
-- Added a saved-ensemble workflow for batch snapshots, complete imported recipes,
-  replay/cancellation, historical run selection, verified results and associated
-  quality reports. Contribution progress is separate from pooled publication;
-  retained results and reports keep their own run identities.
-- Added lazy ensemble execution inspection and a whole-file quality report view.
-  Inspection verifies raw fields before physical display; report requests capture
-  source/options and retain the prior report's identity after failure. Pooled
-  observations remain separate from per-node history and experiment association.
-- Added an opt-in separate GLMakie window to the isolated Qt prototype, with
-  serialized event servicing, explicit screen ownership and saved-planar replay.
-  Hidden demo/experiment lifecycle checks pass alongside the static preview;
-  native desktop input and embedded Qt GL lifetime remain unverified.
-- Added a manual three-platform prototype workflow with bounded child processes
-  and retained failure evidence. No hosted platform results are claimed from
-  the workflow definition or its local process-owner checks.
-- Added a separate saved-stereo workflow with complete fitted-recipe snapshots,
-  captured replay/cancellation, historical run selection, verified lazy browsing
-  and associated quality reports. Imported settings remain intact and read-only;
-  calibration fitting and checkpoint/resume remain separate workflows.
-- The planar result explorer can inspect derivative eligibility, neighboring
-  stencils and finite gradient components with discrete maps and selected-node
-  details. One stencil policy applies across derived scalars and area
-  circulation; profiles continue to sample velocity components. Current outlier
-  flags no longer imply that replacement history was recorded.
-- Saved-experiment controls use Files, Replay and Reports sections, with
-  persistent cancellation/progress/status and pagination sized to available
-  space. Inactive controls retain their settings and are removed from mouse
-  hit regions.
-- Native lazy explorers can inspect stereo execution companions, verifying raw
-  reconstructed and camera fields before physical display. Camera residuals stay
-  in dewarped pixels; stereo per-node history remains unavailable.
-- Saved-experiment quality reports have separate history and execution options.
-  Scaled magnitude fields are labelled as speed. The Qt prototype permits vector
-  picking after leaving a demo with mask drawing enabled.
-- Extended the isolated Qt software prototype with saved planar experiments,
-  complete recipe/history inspection, replay controls and verified lazy result
-  inspection with physical units. The native rendering/lifecycle gate remains
-  separate from software-shell validation.
-- Ordinary saved-experiment replay now reports completed-pair progress and
-  supports cooperative cancellation. Requests capture their settings before
-  observer notifications; cancellation waits for pair persistence and loader
-  cleanup. This workflow restarts from the beginning on a subsequent replay.
-- Added explicit loading and inspection of single actual-time trajectory
-  artifacts, preserving timing through physical display, selection and export.
-  Speed colors use observation-mean secants, with unavailable values identified.
-- Added a saved-recipe comparison workflow with explicit pair selection,
-  pixel/physical value bases, and shared core verification and report persistence.
-  Current choices remain separate from a previous report after edits or failures.
-- Added lazy inspection of recorded measurement history and execution diagnostics,
-  with raw-result verification before physical display and transactional navigation.
-  The experiment workflow can include recorded history in saved quality reports.
-- Added an isolated Qt lifecycle harness with owned child processes, bounded
-  timeouts, complete logs, source identities, and render/release/exit gates.
-  Prototype viewports now dispose application callbacks and use fresh figures.
-  The enforced Windows offscreen OpenGL trial cannot create a native context;
-  native bridge cleanup and production framework adoption remain unvalidated.
-- Added a checkpoint workflow for creating or reopening complete planar
-  experiments, progress, cancellation between committed pairs, and explicit
-  recovery after a stopped writer. Browsing retains a fixed lazy prefix and
-  exports use the core's fresh-destination checks. Processing within a pair and
-  identity verification can still delay UI interaction.
-- The saved-experiment workflow generates, saves, and displays the shared core
-  quality report after verifying the completed run. Report saves protect known
-  inputs, outputs, and experiment records; changed/failed/busy runs are refused.
-- Added a dedicated saved-experiment controller and workflow, accessible from
-  the batch form. Supported form settings export complete recipes; imported
-  recipes retain fields that the ordinary form cannot edit. Replay records run
-  status and opens completed results lazily, with explicit environment-change
-  consent. This first workflow has no live progress or cancellation.
-- Added an opt-in, isolated Qt6/QML prototype and desktop requirements matrix.
-  Windows resolution, controller reuse, and native framebuffer capture have
-  evidence; native OpenGL teardown fails and broader platform/input checks remain
-  open. This adds no toolkit dependencies to the production GUI.
-- Built preprocessing pipelines now copy a background used for subtraction,
-  so later in-place preview edits cannot change a captured batch pipeline.
-- Added `ROIEditor`, `roi_editor`/`roi_editor!`, and batch ROI controls, with
-  two-corner selection, numeric bounds, reset, and full-image coordinate
-  preservation. Invalid or oversized custom windows are rejected before opening
-  batch output. The selected ROI is captured when the run starts.
-- `ResultExplorer(path; lazy = true)` and `result_explorer(path; lazy = true)`
-  browse completed files with one displayed result and bounded derivative
-  caching. Failed reads preserve the previous frame and report an error.
-  Lazy explorers do not follow live writes or accept appended results.
+- The batch form saves and opens its settings as a core recipe ("save
+  settings…" / "open settings…"), including the recipe stored in a results
+  file. A loaded recipe runs its exact pass schedule through the "saved
+  settings" effort, and batch output files carry their recipe.
+- `ROIEditor` / `roi_editor`: select an analysis region by two corners or
+  numeric bounds and apply it to the batch form; results keep original image
+  coordinates.
+- `ResultExplorer(path; lazy = true)` browses a completed results file one
+  entry at a time.
+- Circulation reports area coverage; the self-calibration review explains
+  non-converged runs and labels disparity medians as magnitudes.
+- Preprocessing pipelines exported to a batch copy their background image.
 
 ### Compatibility
 
-Native JLD2 `format_version` remains **1**; persisted result structures are
-unchanged. Experiment records have their own `experiment_format_version = 1`
-and do not change the native result schema. Checkpoints use a separate version-1
-format. Quality reports default to version 1; opt-in history-only reports use
-version 2 and execution-aware reports use version 3, optionally with history.
-Readers accept all three. `TABLE_SCHEMA_VERSION` remains
-**`hammerhead-table-1`** under its
-additive-column policy. Fixed-column-count CSV readers need to accommodate the
-eight tracking columns. Existing columns retain their order and meaning.
-
-Optional execution, measurement-history and pair-timing companions and standalone
-recipe-comparison reports also use independent version-1 schemas. Existing
-result readers ignore companions; result-only copies may drop them. No execution
-history is inferred from older files' requested settings.
-
-Actual-time tracking uses a separate `timed_tracking_format_version = 1`
-artifact without the ordinary native `format_version` marker. Generic native
-readers reject it rather than silently discarding timing. Its table schema is
-`hammerhead-tracking-time-table-1`; the ordinary table schema is unchanged.
-
-The production GUI framework remains GLMakie. Qt/QML and other toolkit
-candidates are evaluations in [ROADMAP.md](ROADMAP.md), not supported
-replacement shells. Qt/QML dependencies belong only to the opt-in prototype.
+- Results files keep `format_version = 1`; result structures are unchanged.
+  Files written by `apply_recipe` add a `recipe` entry that existing readers
+  ignore.
+- Recipe files use a separate `recipe_format_version = 1`.
+- `TABLE_SCHEMA_VERSION` remains `hammerhead-table-1`. Tracking tables add
+  columns; existing columns keep their order and meaning, so read columns by
+  name.
+- `result_spectrum` calls that relied on an attached `PhysicalScale` for the
+  sampling interval must now pass `dt`.
+- Registered HammerheadGUI 0.1.1 calls `run_piv_sequence(...; on_result)`,
+  which core 0.1.0 lacks. Release the core first and raise the GUI's
+  Hammerhead compat bound.

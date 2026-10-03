@@ -4,23 +4,6 @@
 # whose individual pairs are too noisy for reliable peaks — micro-PIV and
 # other low-SNR recordings.
 
-# Saved ensemble replay uses contribution-boundary hooks. They carry no result
-# arrays and do not change the public driver meter or ordinary arithmetic.
-struct _EnsembleCancelled <: Exception end
-Base.showerror(io::IO,::_EnsembleCancelled)=print(io,"ensemble replay cancelled before pooled publication")
-function _ensemble_replay_hooks(on_contribution,cancel_requested)
-    on_contribution===nothing || on_contribution isa Function || throw(ArgumentError("_on_contribution must be a function or nothing"))
-    cancel_requested===nothing || cancel_requested isa Function || throw(ArgumentError("_cancel_requested must be a function or nothing"))
-    nothing
-end
-function _ensemble_cancel_check(cancel_requested)
-    cancel_requested===nothing && return nothing
-    requested=cancel_requested()
-    requested isa Bool || throw(ArgumentError("cancel_requested must return Bool"))
-    requested && throw(_EnsembleCancelled())
-    nothing
-end
-
 """
     run_piv_ensemble(pairs, params = PIVParameters(); kwargs...) -> PIVResult
     run_piv_ensemble(pairs; effort = :low/:medium/:high, kwargs...) -> PIVResult
@@ -56,13 +39,6 @@ Keyword arguments `threaded`, `predictor_smoothing`, `mask`,
 sets the loaded image precision, and `progress` controls the progress display,
 as in [`run_piv_sequence`](@ref). `subpixel_method = :gauss2d` and
 `keep_correlation_planes = true` require `backend = :cpu`.
-
-`on_diagnostics(d)` observes a separate immutable ensemble execution packet;
-`output=path, record_diagnostics=true` saves it beside one native result. Capture
-supports CPU/KA and reports one pooled sweep/pass, ignored iteration settings,
-numerical plane/source-support populations and pre-addition pooled residuals.
-It certifies neither stationarity nor independent samples or convergence.
-Known input aliases and invalid recording options reject before image loading.
 """
 function run_piv_ensemble(pairs::AbstractVector,
                           params::Union{PIVParameters,AbstractVector{PIVParameters}};
@@ -75,12 +51,7 @@ function run_piv_ensemble(pairs::AbstractVector,
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
                           progress::Bool = true,
-                          scale::Union{Nothing,PhysicalScale} = nothing,
-                          on_diagnostics = nothing, output = nothing,
-                          record_diagnostics = false,
-                          _on_contribution = nothing, _cancel_requested = nothing)
-    _ensemble_replay_hooks(_on_contribution,_cancel_requested)
-    options=_ensemble_options(pairs,backend,image_type,on_diagnostics,output,record_diagnostics)
+                          scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
     be = _resolve_backend(backend)
@@ -90,17 +61,6 @@ function run_piv_ensemble(pairs::AbstractVector,
     isempty(passes) && throw(ArgumentError("at least one pass is required"))
     0 < mask_threshold <= 1 ||
         throw(ArgumentError("mask_threshold must be in (0, 1], got $mask_threshold"))
-
-    if options.capture || output!==nothing || _on_contribution!==nothing || _cancel_requested!==nothing
-        # Freeze selection/container metadata, not mutable pixel contents.
-        pairs=[(pair[1],pair[2]) for pair in pairs]
-        mask=mask===nothing ? nothing : BitMatrix(mask)
-        passes=copy(passes)
-    end
-    _ensemble_cancel_check(_cancel_requested)
-    total_contributions=_on_contribution===nothing ? nothing : _ensemble_mul(length(passes),length(pairs))
-    reports=options.capture ? EnsemblePassDiagnostics[] : nothing
-    source_before=options.capture ? _experiment_software()["core_source_sha256"] : nothing
 
     meter = Progress(length(passes) * length(pairs);
                      desc = "Ensemble PIV: ", enabled = progress)
@@ -113,28 +73,12 @@ function run_piv_ensemble(pairs::AbstractVector,
     for (k, p) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
-        settings=(;threaded,mask,mask_threshold,preprocess,image_type,
-            force_replace=k<length(passes),meter,workspace,backend=be,
-            on_contribution=_on_contribution,cancel_requested=_cancel_requested,
-            contribution_pass=k,scheduled_passes=length(passes),total_contributions)
-        result = options.capture ? ensemble_pass(pairs,p,predictor;settings...,diagnostics=reports,pass_index=k) :
-            ensemble_pass(pairs,p,predictor;settings...)
+        result = ensemble_pass(pairs, p, predictor; threaded, mask, mask_threshold,
+                               preprocess, image_type,
+                               force_replace = k < length(passes), meter, workspace,
+                               backend = be)
     end
-    result=scale === nothing ? result : with_scale(result, scale)
-    diagnostics=options.capture ? _ensemble_finish(reports,backend,image_type,length(pairs),result,source_before) : nothing
-    on_diagnostics===nothing || on_diagnostics(diagnostics)
-    diagnostics===nothing || _ensemble_check_result(diagnostics,result)
-    _ensemble_cancel_check(_cancel_requested)
-    if output!==nothing
-        path=_ensemble_output_guard(output,options.inputs)
-        diagnostics===nothing || _ensemble_check_result(diagnostics,result)
-        jldopen(path,"w") do file
-            file["format_version"]=RESULTS_FORMAT_VERSION
-            file[result_key(1)]=result
-            record_diagnostics && _write_ensemble_execution_diagnostics(file,result_key(1),diagnostics,result)
-        end
-    end
-    return result
+    return scale === nothing ? result : with_scale(result, scale)
 end
 
 function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} = nothing,
@@ -147,26 +91,14 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           image_type::Type{<:AbstractFloat} = Float64,
                           progress::Bool = true,
                           scale::Union{Nothing,PhysicalScale} = nothing,
-                          on_diagnostics = nothing, output = nothing,
-                          record_diagnostics = false,
-                          _on_contribution = nothing, _cancel_requested = nothing,
                           kwargs...)
-    _ensemble_replay_hooks(_on_contribution,_cancel_requested)
-    options=_ensemble_options(pairs,backend,image_type,on_diagnostics,output,record_diagnostics)
-    if options.capture || output!==nothing || _on_contribution!==nothing || _cancel_requested!==nothing
-        # Effort discovers image size via the public preprocessor too: freeze
-        # frame selection and mask before that first load/callback boundary.
-        pairs=[(pair[1],pair[2]) for pair in pairs]
-        mask=mask===nothing ? nothing : BitMatrix(mask)
-    end
-    _ensemble_cancel_check(_cancel_requested)
     if effort === nothing
         isempty(kwargs) ||
             throw(ArgumentError("unsupported run_piv_ensemble keyword(s): " *
                                 join(string.(keys(kwargs)), ", ")))
         return run_piv_ensemble(pairs, PIVParameters(); backend, threaded, predictor_smoothing,
                                 mask, mask_threshold, preprocess, image_type, progress,
-                                scale,on_diagnostics,output,record_diagnostics,_on_contribution,_cancel_requested)
+                                scale)
     end
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     !isempty(driver_kwargs) &&
@@ -175,8 +107,7 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
     imgsize = first_pair_image_size(pairs; preprocess, image_type)
     passes = effort_schedule(effort; ensemble = true, image_size = imgsize, piv_kwargs...)
     return run_piv_ensemble(pairs, passes; backend, threaded, predictor_smoothing, mask,
-                            mask_threshold, preprocess, image_type, progress, scale,
-                            on_diagnostics,output,record_diagnostics,_on_contribution,_cancel_requested)
+                            mask_threshold, preprocess, image_type, progress, scale)
 end
 
 function first_pair_image_size(pairs; preprocess, image_type)
@@ -198,16 +129,11 @@ end
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
                        image_type, force_replace::Bool, meter, workspace = nothing,
-                       backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
-                       diagnostics = nothing, pass_index = 1,
-                       on_contribution = nothing, cancel_requested = nothing,
-                       contribution_pass = 1, scheduled_passes = 1, total_contributions = nothing)
+                       backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND)
     local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
     source_gate = nothing
-    observation = nothing
-    for (pair_index,pair) in enumerate(pairs)
-        _ensemble_cancel_check(cancel_requested)
+    for pair in pairs
         frameA, frameB = pair
         imgA = load_frame(frameA, image_type)
         imgB = load_frame(frameB, image_type)
@@ -223,10 +149,6 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                 throw(DimensionMismatch("mask must have the same size as the images, got $(size(mask))"))
             T = float(promote_type(eltype(imgA), eltype(imgB)))
             grid = pass_grid(T, imgsize, params, mask, mask_threshold)
-            if diagnostics!==nothing
-                T in (Float32,Float64) || _execution_error("actual ensemble processing precision must be Float32/64 for capture")
-                observation=_ensemble_observation(grid,T,length(pairs))
-            end
             nchunks = _engine_nchunks(backend,
                                       threaded ? min(Threads.nthreads(), length(grid.jobs)) : 1)
             chunk_size = max(cld(length(grid.jobs), max(nchunks, 1)), 1)
@@ -298,30 +220,20 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
         source_context = _original_support_context(imgA, imgB, mask, T, workspace)
         source_gate = _original_source_gate(source_context, predictor, grid, params, mask;
                                            gate = source_gate, threaded)
-        observation===nothing || _ensemble_source!(observation,source_context,predictor,source_gate,grid.jobs)
         u, v = pu, pv  # identical for every pair (shared predictor)
-        observing=observation===nothing ? (;source_gate) : (;source_gate,diagnostics=observation)
         if length(chunks) == 1
             accumulate_planes!(accum, chunks[1], engines[1], warpA, warpB,
                                grid.jobs, params, mask, uacc,
-                               uscratch === nothing ? nothing : uscratch[1]; observing...)
+                               uscratch === nothing ? nothing : uscratch[1]; source_gate)
         elseif !isempty(chunks)
             @sync for (ci, cr) in enumerate(chunks)
                 Threads.@spawn accumulate_planes!(accum, cr, engines[ci],
                                                   warpA, warpB, grid.jobs, params, mask,
                                                   uacc,
-                                                  uscratch === nothing ? nothing : uscratch[ci]; observing...)
+                                                  uscratch === nothing ? nothing : uscratch[ci]; source_gate)
             end
         end
         next!(meter)
-        if on_contribution!==nothing
-            event=(pass_index=contribution_pass,pair_index=pair_index,
-                completed_contributions=_ensemble_add(_ensemble_mul(contribution_pass-1,length(pairs)),pair_index),
-                total_contributions=total_contributions,input_pairs=length(pairs),scheduled_passes=scheduled_passes,
-                completed_pools=0,published_results=0)
-            on_contribution(event)
-        end
-        _ensemble_cancel_check(cancel_requested)
     end
 
     ny, nx = length(grid.y), length(grid.x)
@@ -335,11 +247,10 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     n_alt = params.n_peaks - 1
     alt_u = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
     alt_v = n_alt > 0 ? fill(T(NaN), ny, nx, n_alt) : nothing
-    observing=observation===nothing ? (;) : (;diagnostics=observation)
     isempty(grid.jobs) ||
         ensemble_analyze!(accum, engines[1], u, v, peak_ratio, correlation_moment,
                           uncertainty_u, uncertainty_v, planes, alt_u, alt_v,
-                          grid.jobs, params, uacc;observing...)
+                          grid.jobs, params, uacc)
     if any(grid.grid_mask)
         for f in (u, v, peak_ratio, correlation_moment)
             f[grid.grid_mask] .= T(NaN)
@@ -349,7 +260,6 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
     result = PIVResult(grid.x, grid.y, u, v, peak_ratio, correlation_moment,
                        uncertainty_u, uncertainty_v,
                        falses(ny, nx), grid.grid_mask, params, planes)
-    observation===nothing || push!(diagnostics,_ensemble_pass_finish(observation,pass_index,params,T,imgsize,grid,predictor,force_replace,uacc,uncertainty_u,uncertainty_v))
     return validate_and_replace!(result, params, force_replace;
                                  alternatives = alt_u === nothing ? nothing : (alt_u, alt_v))
 end
@@ -373,8 +283,7 @@ _plane_accumulator(::_CPUCorrelationEngine, params::PIVParameters,
 # and the total displacement on exit.
 function ensemble_analyze!(accum::AbstractVector, engine, u, v, peak_ratio,
                            correlation_moment, uncertainty_u, uncertainty_v,
-                           planes, alt_u, alt_v, jobs, params::PIVParameters, uacc;
-                           diagnostics = nothing)
+                           planes, alt_u, alt_v, jobs, params::PIVParameters, uacc)
     T = eltype(u)
     k = max(params.n_peaks, 2)
     vals = Vector{T}(undef, k)
@@ -383,7 +292,6 @@ function ensemble_analyze!(accum::AbstractVector, engine, u, v, peak_ratio,
         R = accum[j]
         planes === nothing || (planes[gi, gj] = copy(R))
         res = analyze_plane!(vals, locs, R, params)
-        diagnostics===nothing || _ensemble_residual!(diagnostics,gi,gj,res.du,res.dv)
         if alt_u !== nothing
             # Total alternative displacement = shared predictor + residual.
             for m in 2:min(res.found, params.n_peaks)
@@ -408,8 +316,7 @@ end
 # and (when enabled) pool each window's uncertainty statistics across pairs.
 function accumulate_planes!(accum, jobrange, engine, imgA, imgB, jobs,
                             params::PIVParameters, mask,
-                            uacc = nothing, uscratch = nothing; source_gate = nothing,
-                            diagnostics = nothing)
+                            uacc = nothing, uscratch = nothing; source_gate = nothing)
     wr, wc = params.window_size
     sr, sc = params.search_area_size
     mr, mc = div.(params.search_area_size .- params.window_size, 2)
@@ -428,9 +335,7 @@ function accumulate_planes!(accum, jobrange, engine, imgA, imgB, jobs,
         # Fully clean windows take the unmasked fast path.
         submaskA !== nothing && !any(submaskA) && (submaskA = nothing)
         submaskB !== nothing && !any(submaskB) && (submaskB = nothing)
-        R=_correlation_plane!(engine, subA, subB, (submaskA, submaskB))
-        diagnostics===nothing || _ensemble_plane!(diagnostics,j,_ensemble_plane_category(R))
-        accum[j] .+= R
+        accum[j] .+= _correlation_plane!(engine, subA, subB, (submaskA, submaskB))
         uacc === nothing ||
             accumulate_uncertainty!(uacc[j], uscratch, subA, subB_uq, submaskA,
                                     _correlation_apod(engine))

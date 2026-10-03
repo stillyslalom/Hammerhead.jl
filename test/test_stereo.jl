@@ -362,6 +362,12 @@ end
     @test median(ens.v) ≈ truth[2] atol = 0.05
     @test median(ens.w) ≈ truth[3] atol = 0.07
 
+    # A recipe applies the same settings to stereo sequences and ensembles.
+    @test isequal(apply_recipe(PIVRecipe(params), [(A1, B1)], [(A2, B2)], dws[1], dws[2];
+                               progress = false)[1].w, seq[1].w)
+    @test isequal(apply_recipe(PIVRecipe(params; mode = :ensemble), [(A1, B1)], [(A2, B2)],
+                               dws[1], dws[2]; progress = false).w, ens.w)
+
     # JLD2 roundtrip, including a mixed PIVResult/StereoPIVResult file.
     mktempdir() do dir
         sequence_path = joinpath(dir, "sequence.jld2")

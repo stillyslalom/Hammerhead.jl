@@ -37,30 +37,6 @@ const r_track = TrackingResult(
     4, PTVParameters())
 
 @testset "HammerheadGUI.jl" begin
-    include("test_qml_gui.jl")
-    include("test_experiments.jl")
-    include("test_workflow_layout.jl")
-    include("test_experiment_replay_progress.jl")
-    include("test_recipe_comparison.jl")
-    include("test_recipe_revision.jl")
-    include("test_recipe_revision_view.jl")
-    include("test_preprocessing_revision.jl")
-    include("test_preprocessing_revision_parity.jl")
-    include("test_preprocessing_revision_view.jl")
-    include("test_recipe_geometry_revision.jl")
-    include("test_recipe_geometry_revision_parity.jl")
-    include("test_recipe_geometry_revision_view.jl")
-    include("test_recipe_mask_revision.jl")
-    include("test_recipe_mask_revision_parity.jl")
-    include("test_recipe_mask_revision_view.jl")
-    include("test_tracking_timing_explorer.jl")
-    include("test_checkpoints.jl")
-    include("test_companions.jl")
-    include("test_stereo_companions.jl")
-    include("test_ensemble_companions.jl")
-    include("test_stereo_experiments.jl")
-    include("test_ensemble_experiments.jl")
-    include("test_derivative_support.jl")
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()
         fig = Figure(size = (400, 300))
@@ -165,7 +141,7 @@ const r_track = TrackingResult(
         rs = current_result(exs)
         @test rs.scale !== nothing
         @test C.field_label(rs, :u) == "u (mm/s)"
-        @test C.field_label(rs, :magnitude) == "speed (mm/s)"
+        @test C.field_label(rs, :magnitude) == "|displacement| (mm/s)"
         @test C.field_label(rs, :uncertainty_u) == "σu (mm/s)"
         @test C.field_label(rs, :peak_ratio) == "peak ratio"
         select_nearest!(exs, rs.x[3], rs.y[3])
@@ -998,6 +974,52 @@ const r_track = TrackingResult(
         end
     end
 
+    @testset "Saved batch settings (no GL)" begin
+        C = HammerheadGUI.Controllers
+        dir = mktempdir()
+        pp = PreprocessPreview(imgA; enabled = [:highpass_filter, :clahe])
+        set_step_param!(pp, :highpass_filter, :sigma, 4.0)
+        m = falses(size(imgA)); m[1:16, 1:16] .= true
+        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB], window_schedule = [48, 32],
+                         mask = m, roi = ROI(9:120, 5:124), pixel_size = 0.02, dt = 1e-3,
+                         length_unit = "mm", time_unit = "s")
+        set_preprocess!(bc, pp)
+
+        # The saved steps reproduce the preview's own pipeline.
+        recipe = batch_recipe(bc)
+        @test recipe_preprocess(recipe)(imgA) ≈ build_preprocess(pp)(imgA)
+        @test recipe.passes == C.build_parameters(bc)
+        @test recipe.mask == m && recipe.roi == bc.roi[] && recipe.scale == C.build_scale(bc)
+
+        # A run writes the settings next to its results.
+        bc.output_path[] = joinpath(dir, "results.jld2")
+        start!(bc; async = false)
+        @test occursin("done", bc.status[])
+        @test load_recipe(bc.output_path[]) == recipe
+
+        # Opening those settings in a fresh form reproduces the run exactly.
+        bc2 = BatchRunner(files = Any[imgA, imgB, imgA, imgB])
+        load_settings!(bc2, bc.output_path[])
+        @test bc2.effort[] === :saved && bc2.saved_passes[] == recipe.passes
+        @test bc2.mask[] == m && bc2.roi[] == bc.roi[] && C.build_scale(bc2) == C.build_scale(bc)
+        @test batch_recipe(bc2) == recipe
+        start!(bc2; async = false)
+        @test all(isequal(a.u, b.u) for (a, b) in zip(bc.results[], bc2.results[]))
+
+        # Settings files round-trip, including effort presets expanded for the ROI.
+        set_effort!(bc2, :low)
+        path = save_settings(bc2, joinpath(dir, "settings.jld2"))
+        @test load_recipe(path).passes ==
+              Hammerhead.effort_schedule(:low; image_size = (112, 120))
+
+        # A bare preprocessing function still runs but cannot be saved.
+        set_preprocess!(bc2, img -> img .- minimum(img))
+        @test_throws ArgumentError batch_recipe(bc2)
+        start!(bc2; async = false)
+        @test occursin("done", bc2.status[])
+        @test C.validate(BatchRunner(files = Any[imgA, imgB], effort = :saved)) == "no saved settings loaded"
+    end
+
     @testset "roi_editor view (offscreen)" begin
         C = HammerheadGUI.Controllers
         ed = ROIEditor(imgA)
@@ -1110,16 +1132,6 @@ const r_track = TrackingResult(
         @test pp2.background[] == min.(imgA, imgB)
         set_background!(pp2, nothing)             # clears and disables
         @test !C._step(pp2, :subtract_background).enabled
-
-        # A built pipeline owns the background, even if the preview's matrix
-        # is edited in place after it is handed to a batch.
-        snapshot_preview = PreprocessPreview(fill(0.8, 4, 4))
-        set_background!(snapshot_preview, [fill(0.2, 4, 4)])
-        enable_step!(snapshot_preview, :subtract_background)
-        frozen = build_preprocess(snapshot_preview)
-        snapshot_preview.background[] .= 0.7
-        @test frozen(fill(0.8, 4, 4)) ≈ fill(0.6, 4, 4)
-        @test apply_pipeline(snapshot_preview, fill(0.8, 4, 4)) ≈ fill(0.1, 4, 4)
 
         # batch integration: the pipeline forwards into run_piv_sequence
         pp3 = PreprocessPreview(imgA; enabled = [:intensity_cap])

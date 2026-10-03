@@ -88,11 +88,10 @@ An empty image pair, including a deformed window skipped by the original stencil
 guard, contributes zero correlation and zero uncertainty statistics to an
 ensemble. It cannot produce a measurement by itself, but does not erase
 information contributed by other pairs. A completely uninformative ensemble
-remains flagged. This does not establish per-pair validity counts or normalize an
-ensemble by informative-pair yield.
+remains flagged.
 
 The generic [`find_peaks`](@ref) function retains its plateau and nonpositive
-candidate behavior; finding a candidate does not establish a measurement. The
+candidate behavior, so its candidates still need the checks above. The
 public [`correlate`](@ref) convenience function returns `NaN` displacement, peak,
 and refined location for an uninformative plane, with integer `peakloc = (0, 0)`
 as an absent-location sentinel. The returned correlation plane still aliases the

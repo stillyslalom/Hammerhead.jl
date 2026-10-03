@@ -44,18 +44,7 @@ struct PinholeCamera <: CameraCalibration
             throw(ArgumentError("degenerate projection matrix: third-row rotation part is zero"))
         new(SMatrix{3,4,Float64}(P) / n)
     end
-
-    # Exact frozen fitted coefficients: avoid normalizing an already rounded
-    # normalized projection again when decoding a versioned experiment snapshot.
-    function PinholeCamera(P::SMatrix{3,4,Float64,12}, ::Val{:fitted_snapshot})
-        n=hypot(P[3,1],P[3,2],P[3,3])
-        all(isfinite,P) && isfinite(n) && abs(n-1.0)<=1e-12 ||
-            throw(ArgumentError("fitted pinhole snapshot must contain finite normalized Float64 coefficients"))
-        new(P)
-    end
 end
-
-_pinhole_fitted_snapshot(P::Matrix{Float64}) = PinholeCamera(SMatrix{3,4,Float64,12}(P),Val(:fitted_snapshot))
 
 function PinholeCamera(K::AbstractMatrix{<:Real}, R::AbstractMatrix{<:Real},
                        t::AbstractVector{<:Real})

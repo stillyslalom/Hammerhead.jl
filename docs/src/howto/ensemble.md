@@ -61,7 +61,8 @@ individual vectors. For fluctuations, measure the pairs separately and follow
 [From image pairs to flow statistics](../tutorials/sequence_statistics.md).
 
 Compare separate subsets or increasing pair counts to see how the field moves.
-A clearer peak alone does not establish that the estimate has stabilized.
+The estimate has stabilized when the field stops changing, not merely when
+the peak becomes clearer.
 
 ## Add uncertainty or save the workflow
 
@@ -79,8 +80,8 @@ see [uncertainty quantification](../explanation/uncertainty.md).
 The ensemble driver performs one sweep per pass and ignores `max_iterations`
 and `convergence_tol`. Repeating a window is an explicit additional pass.
 
-To retain inputs and settings, [save an ensemble experiment](ensemble_experiments.md).
-To inspect recorded contributions, [check an ensemble result](ensemble_quality_reports.md).
+To reuse these settings on another recording, save them as an ensemble
+recipe; see [Save settings and reuse them](recipes.md).
 
 For other configurations, see [GPU sizing and execution](gpu.md) or use
 `run_piv_stereo_ensemble(cam1_pairs, cam2_pairs, dw1, dw2, passes)` with

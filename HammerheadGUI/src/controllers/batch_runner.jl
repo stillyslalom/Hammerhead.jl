@@ -21,7 +21,8 @@ and run state are `Observables`.
 - `files = Any[]` (frame paths and/or in-memory matrices), `pair_mode = :paired`
 - `effort = :custom` — `:custom` runs the manual window schedule below;
   `:low` / `:medium` / `:high` use [`run_piv_sequence`](@ref)'s effort presets
-  and ignore the schedule/option widgets.
+  and ignore the schedule/option widgets; `:saved` runs the exact pass
+  schedule loaded with [`load_settings!`](@ref).
 - `window_schedule = [64, 32, 32]`, `overlap_fraction = 0.5`
 - `correlation_method = :cross`, `padding = true`, `apodization = :gauss`
   `subpixel_method = :gauss3`,
@@ -37,7 +38,9 @@ and run state are `Observables`.
 Drive it with [`add_files!`](@ref), [`set_schedule!`](@ref),
 [`set_effort!`](@ref), [`set_preprocess!`](@ref) (an optional per-frame
 preprocessing pipeline, e.g. from a [`PreprocessPreview`](@ref)),
-[`start!`](@ref) and [`cancel!`](@ref); watch
+[`start!`](@ref) and [`cancel!`](@ref). [`save_settings`](@ref) and
+[`load_settings!`](@ref) store and restore the form as a core `PIVRecipe`;
+runs with an output file record their recipe there too. Watch
 `progress` (`(done, total)`), `status`, `running`, `results` (a
 `Vector{PIVResult}` after a completed run, `nothing` before), and
 `completed` (finished pairs appended during a run; feed them to a
@@ -69,7 +72,8 @@ struct BatchRunner
     results::Observable{Union{Nothing,Vector{PIVResult}}}
     completed::Observable{Vector{PIVResult}}
     preprocess::Observable{Union{Nothing,Function}}
-    preprocess_snapshot::Observable{Union{Nothing,NamedTuple}}
+    preprocess_steps::Observable{Union{Nothing,Vector{PreprocessStep}}}
+    saved_passes::Observable{Union{Nothing,Vector{PIVParameters}}}
 end
 
 function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
@@ -101,7 +105,8 @@ function BatchRunner(; files = Any[], pair_mode::Symbol = :paired,
                        Observable{Union{Nothing,Vector{PIVResult}}}(nothing),
                        Observable(PIVResult[]),
                        Observable{Union{Nothing,Function}}(nothing),
-                       Observable{Union{Nothing,NamedTuple}}(nothing))
+                       Observable{Union{Nothing,Vector{PreprocessStep}}}(PreprocessStep[]),
+                       Observable{Union{Nothing,Vector{PIVParameters}}}(nothing))
 end
 
 function Base.show(io::IO, bc::BatchRunner)
@@ -207,14 +212,15 @@ function set_schedule!(bc::BatchRunner, s::AbstractVector{<:Integer})
     return bc
 end
 
-const EFFORT_LEVELS = (:custom, :low, :medium, :high)
+const EFFORT_LEVELS = (:custom, :low, :medium, :high, :saved)
 
 """
     set_effort!(bc::BatchRunner, effort::Symbol)
 
 Set the analysis effort. `:custom` uses the manual window schedule and
 option widgets; `:low` / `:medium` / `:high` use [`run_piv_sequence`](@ref)'s
-effort presets and ignore the manual schedule.
+effort presets and ignore the manual schedule; `:saved` uses the schedule from
+the last [`load_settings!`](@ref).
 """
 function set_effort!(bc::BatchRunner, effort::Symbol)
     effort in EFFORT_LEVELS ||
@@ -271,21 +277,19 @@ closure is snapshotted now), a bare function `img -> img′`, or `nothing` to
 clear.
 """
 function set_preprocess!(bc::BatchRunner, ::Nothing)
-    bc.preprocess_snapshot[] = nothing
+    bc.preprocess_steps[] = PreprocessStep[]
     bc.preprocess[] = nothing
     bc
 end
+# A bare function runs, but cannot be saved with the settings.
 function set_preprocess!(bc::BatchRunner, f::Function)
-    bc.preprocess_snapshot[] = nothing
+    bc.preprocess_steps[] = nothing
     bc.preprocess[] = f
     bc
 end
 function set_preprocess!(bc::BatchRunner, pp::PreprocessPreview)
-    steps = preprocess_steps(pp)
-    callback = build_preprocess(pp)
-    identity = recipe_identity(PIVRecipe(PIVParameters();preprocessing=steps))
-    bc.preprocess_snapshot[] = (; callback, steps, identity)
-    bc.preprocess[] = callback
+    bc.preprocess_steps[] = preprocess_steps(pp)
+    bc.preprocess[] = build_preprocess(pp)
     bc
 end
 
@@ -318,6 +322,74 @@ build_parameters(bc::BatchRunner) =
                          subpixel_method = bc.subpixel_method[],
                          uncertainty = bc.uncertainty[])
 
+# Image size the passes run on: the ROI, or the first frame.
+function _analysis_size(bc::BatchRunner)
+    bc.roi[] === nothing || return (length(bc.roi[].rows), length(bc.roi[].cols))
+    frame = first(bc.files[])
+    return size(frame isa AbstractMatrix ? frame : load_image(frame))
+end
+
+function _batch_passes(bc::BatchRunner)
+    bc.effort[] === :custom && return build_parameters(bc)
+    if bc.effort[] === :saved
+        bc.saved_passes[] === nothing && throw(ArgumentError("no saved pass schedule is loaded"))
+        return bc.saved_passes[]
+    end
+    isempty(bc.files[]) && throw(ArgumentError("add frames to size the $(bc.effort[]) preset"))
+    return Hammerhead.effort_schedule(bc.effort[]; image_size = _analysis_size(bc))
+end
+
+"""
+    batch_recipe(bc::BatchRunner) -> PIVRecipe
+
+The current form settings as a core `PIVRecipe`: pass schedule, preprocessing,
+mask, ROI and physical scale. Effort presets are expanded for the first
+frame's (or ROI's) size. Preprocessing set as a bare function cannot be saved.
+"""
+function batch_recipe(bc::BatchRunner)
+    steps = bc.preprocess_steps[]
+    steps === nothing &&
+        throw(ArgumentError("custom preprocessing functions cannot be saved; use the preprocess window"))
+    PIVRecipe(_batch_passes(bc); preprocessing = steps, mask = bc.mask[],
+              roi = bc.roi[], scale = build_scale(bc))
+end
+
+"""
+    save_settings(bc::BatchRunner, path) -> path
+
+Save the form settings with `Hammerhead.save_recipe`.
+"""
+save_settings(bc::BatchRunner, path::AbstractString) = save_recipe(path, batch_recipe(bc))
+
+"""
+    load_settings!(bc::BatchRunner, recipe_or_path)
+
+Load a `PIVRecipe` (or a file saved with `save_recipe`, or a results file
+written by a run) into the form. Its exact pass schedule becomes the `:saved`
+effort; mask, ROI, physical scale and preprocessing replace the current ones.
+"""
+load_settings!(bc::BatchRunner, path::AbstractString) = load_settings!(bc, load_recipe(path))
+function load_settings!(bc::BatchRunner, recipe::PIVRecipe)
+    recipe.mode === :sequence ||
+        throw(ArgumentError("the batch form runs sequences; this recipe is :$(recipe.mode)"))
+    bc.saved_passes[] = copy(recipe.passes)
+    bc.window_schedule[] = [p.window_size[1] for p in recipe.passes]
+    bc.effort[] = :saved
+    bc.mask[] = recipe.mask === nothing ? nothing : copy(recipe.mask)
+    bc.roi[] = recipe.roi
+    sc = recipe.scale
+    sc === nothing ?
+        set_scale!(bc; pixel_size = 1.0, dt = 1.0, length_unit = "px", time_unit = "frame") :
+        set_scale!(bc; pixel_size = sc.pixel_size, dt = sc.dt,
+                   length_unit = sc.length_unit, time_unit = sc.time_unit)
+    bc.preprocess_steps[] = copy(recipe.preprocessing)
+    bc.preprocess[] = recipe_preprocess(recipe)
+    nsteps = length(recipe.preprocessing)
+    bc.status[] = "loaded settings: $(length(recipe.passes)) passes" *
+                  (nsteps == 0 ? "" : ", $nsteps preprocessing steps")
+    return bc
+end
+
 """
     validate(bc::BatchRunner) -> Union{Nothing,String}
 
@@ -335,14 +407,14 @@ function validate(bc::BatchRunner)
         return _errmsg(err)
     end
     isempty(prs) && return "no pairs to process"
+    bc.effort[] in EFFORT_LEVELS || return "unknown effort :$(bc.effort[])"
+    bc.effort[] === :saved && bc.saved_passes[] === nothing && return "no saved settings loaded"
     if bc.effort[] === :custom
         try
             build_parameters(bc)
         catch err
             return _errmsg(err)
         end
-    elseif !(bc.effort[] in EFFORT_LEVELS)
-        return "unknown effort :$(bc.effort[])"
     end
     try
         build_scale(bc)
@@ -351,9 +423,7 @@ function validate(bc::BatchRunner)
             image = frame isa AbstractMatrix ? frame : load_image(frame)
             Hammerhead.roi_views(image, image, bc.mask[], bc.roi[])
             roi_size = (length(bc.roi[].rows), length(bc.roi[].cols))
-            passes = bc.effort[] === :custom ? build_parameters(bc) :
-                Hammerhead.effort_schedule(bc.effort[]; image_size = roi_size)
-            for pass in passes
+            for pass in _batch_passes(bc)
                 all(pass.search_area_size .<= roi_size) ||
                     return "ROI size $roi_size is smaller than search area $(pass.search_area_size); enlarge the ROI or choose smaller windows"
             end
@@ -410,17 +480,17 @@ function _run!(bc::BatchRunner; roi = bc.roi[])
         # views can follow along.
         on_result = (i, r) -> (push!(bc.completed[], r); notify(bc.completed))
         output = isempty(bc.output_path[]) ? nothing : bc.output_path[]
-        scale = build_scale(bc)
-        preprocess = bc.preprocess[]
-        maskkw = bc.mask[] === nothing ? (;) : (; mask = bc.mask[])
-        results = if bc.effort[] === :custom
-            run_piv_sequence(prs, build_parameters(bc);
-                             progress = callback, on_result, output, scale,
-                             preprocess, roi, maskkw...)
+        results = if bc.preprocess_steps[] === nothing
+            # Custom preprocessing function: run directly, without a recipe.
+            run_piv_sequence(prs, _batch_passes(bc); progress = callback, on_result,
+                             output, scale = build_scale(bc), preprocess = bc.preprocess[],
+                             roi, mask = bc.mask[])
         else
-            run_piv_sequence(prs; effort = bc.effort[],
-                             progress = callback, on_result, output, scale,
-                             preprocess, roi, maskkw...)
+            r = batch_recipe(bc)
+            # Use the ROI captured when the run started.
+            recipe = PIVRecipe(r.passes; preprocessing = r.preprocessing, mask = r.mask,
+                               roi, scale = r.scale)
+            apply_recipe(recipe, prs; progress = callback, on_result, output)
         end
         bc.results[] = results
         bc.status[] = "done: $(length(results)) pairs" *

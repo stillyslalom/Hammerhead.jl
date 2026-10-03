@@ -485,91 +485,13 @@ function peak_locking(displacements::AbstractArray{<:Real}; nbins::Int = 21)
     return (; fractions, counts, index)
 end
 
-function _spectrum_sampling(n, dt, sample_times, atol, rtol, time_unit, report;
-                            require_timing=false)
-    n >= 2 || throw(ArgumentError("signal must have at least 2 samples, got $n"))
-    unit = time_unit === nothing ? nothing :
-        time_unit isa AbstractString && !isempty(time_unit) ? String(time_unit) :
-        throw(ArgumentError("time_unit must be a nonempty string or nothing"))
-    a, r = _timing_ratio(atol), _timing_ratio(rtol)
-    a >= 0 && r >= 0 || throw(ArgumentError("sampling tolerances must be nonnegative"))
-    if sample_times === nothing
-        a == 0 && r == 0 || throw(ArgumentError("sampling tolerances require sample_times"))
-        require_timing && dt === nothing && throw(ArgumentError("supply dt or sample_times between successive results"))
-        period = dt === nothing ? 1.0 : dt
-        isfinite(period) && period > 0 || throw(ArgumentError("dt must be finite and positive, got $period"))
-        data = report ? Dict{String,Any}("source"=>dt === nothing ? "default_interval" : "provided_interval",
-            "sample_count"=>n, "period"=>_timing_number(period), "applied_period"=>deepcopy(period),
-            "first_time"=>nothing, "last_time"=>nothing, "uniformity"=>"assumed_from_interval",
-            "time_unit"=>unit, "time_unit_provenance"=>unit === nothing ? "unknown" : "provided_label") : nothing
-        return period, data
-    end
-    dt === nothing || throw(ArgumentError("dt and sample_times are mutually exclusive"))
-    sample_times isa AbstractVector && length(sample_times)==n ||
-        throw(ArgumentError("sample_times must be a vector with one value per sample"))
-    first_value, last_value = first(sample_times), last(sample_times)
-    first_time, last_time = _timing_ratio(first_value), _timing_ratio(last_value)
-    period = (last_time-first_time)/(n-1)
-    period > 0 || throw(ArgumentError("sample_times must be strictly increasing"))
-    bound = a + r*period
-    max_interval = max_grid = big(0)//big(1)
-    previous = first_time
-    for (k,value) in enumerate(sample_times)
-        k == 1 && continue
-        current = _timing_ratio(value)
-        interval = current-previous
-        interval > 0 || throw(ArgumentError("sample_times must be strictly increasing"))
-        interval_residual = abs(interval-period)
-        grid_residual = abs((current-first_time)-(k-1)*period)
-        interval_residual <= bound || throw(ArgumentError("sample_times are irregular: interval residual exceeds sampling tolerance"))
-        grid_residual <= bound || throw(ArgumentError("sample_times are irregular: cumulative grid residual exceeds sampling tolerance"))
-        max_interval = max(max_interval,interval_residual)
-        max_grid = max(max_grid,grid_residual)
-        previous = current
-    end
-    applied = Float64(period)
-    isfinite(applied) && applied > 0 || throw(ArgumentError("inferred FFT sampling interval is not representable in Float64"))
-    rate = 1/applied
-    isfinite(rate) && rate > 0 && rate/n > 0 ||
-        throw(ArgumentError("inferred FFT frequency spacing is not representable in Float64"))
-    data = report ? Dict{String,Any}("source"=>"provided_sample_times", "sample_count"=>n,
-        "period"=>_timing_number(period;derived=true), "applied_period"=>applied,
-        "first_time"=>_timing_number(first_value), "last_time"=>_timing_number(last_value),
-        "uniformity"=>max_interval==0 && max_grid==0 ? "exact" : "within_explicit_tolerance",
-        "timing_atol"=>_timing_number(atol), "timing_rtol"=>_timing_number(rtol),
-        "max_interval_residual"=>_timing_number(max_interval;derived=true),
-        "max_grid_residual"=>_timing_number(max_grid;derived=true),
-        "time_unit"=>unit, "time_unit_provenance"=>unit === nothing ? "unknown" : "provided_label") : nothing
-    applied, data
-end
-
 """
-    power_spectrum(signal; dt=nothing, sample_times=nothing, window=:hann,
-        timing_atol=0, timing_rtol=0, time_unit=nothing, return_timing=false)
+    power_spectrum(signal; dt = 1.0, window = :hann) -> (frequencies, psd)
 
 Estimate a one-sided power spectral density from at least two uniformly
 spaced samples. The mean is removed before applying `window=:hann` or `:none`.
 Supply a finite, positive sampling interval `dt`. Frequencies are in cycles
 per time unit; PSD has units of signal squared per frequency unit.
-With neither `dt` nor `sample_times`, the legacy interval is 1.0. The ordinary
-return remains `(; frequencies, psd)`.
-
-Alternatively supply explicit `sample_times`, mutually exclusive with `dt`.
-Supported timing numbers are finite standard integers, Float16/32/64 and integer
-rationals; Bool, BigFloat and custom Real values are refused. Exact subtraction
-preserves large integer epochs. Times must be strictly increasing. The reference
-period is `(last-first)/(n-1)`; every interval residual and every residual from
-the corresponding uniform grid must be at most `timing_atol + timing_rtol*period`.
-Both tolerances default to zero and never depend on epoch magnitude. Ordinary
-Float64 ranges can require explicit tolerance for roundoff. Accepted tolerance
-means an approximate regular FFT grid, with no resampling; genuinely irregular
-sampling outside the supplied bound is rejected before FFT.
-
-Set `return_timing=true` to return `(; frequencies, psd, timing)`, with detached,
-bounded exact endpoint/period encodings, residuals and provided/unknown time-unit
-provenance. This option requires supported timing-number types for `dt` too.
-No timestamp or unit is discovered from a source or image-pair delay. Labels do
-not convert time coordinates. Inferred FFT spacing must be representable.
 
 With `:none`, `sum(psd) * Δf` equals the population variance (division by
 the sample count). With `:hann`, it equals the power-normalized mean square
@@ -581,11 +503,10 @@ use [`result_spectrum`](@ref) to handle validation flags explicitly. Its `dt`
 is the interval between fields, separate from the delay within an image pair.
 """
 function power_spectrum(signal::AbstractVector{<:Real};
-                        dt::Union{Nothing,Real} = nothing, sample_times=nothing,
-                        timing_atol=0, timing_rtol=0, time_unit=nothing,
-                        return_timing::Bool=false, window::Symbol = :hann)
+                        dt::Real = 1.0, window::Symbol = :hann)
     n = length(signal)
-    dt, timing = _spectrum_sampling(n,dt,sample_times,timing_atol,timing_rtol,time_unit,return_timing)
+    n >= 2 || throw(ArgumentError("signal must have at least 2 samples, got $n"))
+    isfinite(dt) && dt > 0 || throw(ArgumentError("dt must be finite and positive, got $dt"))
     x = Float64.(signal)
     x .-= sum(x) / n
     if window === :hann && n > 2
@@ -596,12 +517,9 @@ function power_spectrum(signal::AbstractVector{<:Real};
     else
         throw(ArgumentError("window must be :hann or :none, got :$window"))
     end
-    sample_times === nothing || isfinite(2*dt/wnorm) ||
-        throw(ArgumentError("inferred FFT PSD normalization is not representable in Float64"))
     X = rfft(x)
     psd = abs2.(X) .* (2 * dt / wnorm)
     psd[1] /= 2                    # DC is not doubled
     iseven(n) && (psd[end] /= 2)   # nor is Nyquist
-    frequencies = collect(rfftfreq(n, 1 / dt))
-    return_timing ? (; frequencies, psd, timing) : (; frequencies, psd)
+    return (frequencies = collect(rfftfreq(n, 1 / dt)), psd = psd)
 end

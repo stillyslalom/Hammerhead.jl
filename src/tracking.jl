@@ -91,8 +91,7 @@ end
     track_particles(frames, params = PTVParameters();
                     predictor = :piv, piv_passes = multipass_parameters([64, 32]),
                     min_track_length = 3, max_gap = 0, mask = nothing, scale = nothing,
-                    image_type = Float64, progress = true,
-                    sample_times = nothing, time_unit = nothing, clock_id = nothing)
+                    image_type = Float64, progress = true) -> TrackingResult
 
 Link detections across at least two frames, supplied as file paths or
 real-valued matrices. Each frame is detected once. Tracks with two or more
@@ -114,23 +113,6 @@ transition. Frames are loaded and detected one at a time. For lazy
 [`FrameRef`](@ref) sources whose later element types cannot be inspected
 without loading, the first frame sets result precision and later detections
 are converted to it.
-
-`sample_times=nothing` preserves legacy frame-interval linking and returns a
-`TrackingResult`, even when source timestamps exist. Opt in with a complete
-numeric vector or `sample_times=:source` for timestamped `FrameRef`s to return a
-[`TimedTrackingResult`](@ref). Every time/frame descriptor is snapshotted and
-validated before loading. Missing, unordered or conflicting source times are
-rejected without ordinal fallback. `time_unit`/`clock_id` are optional labels for
-the chosen time coordinate; explicit vectors define their own coordinate and
-source descriptors remain provenance. Source-mode labels must agree with known
-source metadata. No conversion or clock synchronization is inferred.
-
-Actual-time linking normalizes field predictions and scattered UOD to the first
-actual transition's reference interval: `uod_epsilon` is then pixels per reference
-interval. Initial predictors are pixel displacements over that first transition;
-scaled PIV predictors are refused. `max_gap` still counts missed selected frames.
-Use the returned wrapper for actual-time velocities/export/persistence; extracting
-its raw payload discards those semantics. See the actual-time tracking how-to.
 """
 function track_particles(frames::AbstractVector, params::PTVParameters = PTVParameters();
                          predictor = :piv,
@@ -140,21 +122,12 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                          scale::Union{Nothing,PhysicalScale} = nothing,
                          image_type::Type{<:AbstractFloat} = Float64,
-                         progress::Union{Bool,Function} = true,
-                         sample_times = nothing, time_unit = nothing, clock_id = nothing)
+                         progress::Union{Bool,Function} = true)
     n_frames = length(frames)
     n_frames >= 2 || throw(ArgumentError("track_particles needs at least 2 frames, got $n_frames"))
     min_track_length >= 2 ||
         throw(ArgumentError("min_track_length must be at least 2, got $min_track_length"))
     max_gap >= 0 || throw(ArgumentError("max_gap must be nonnegative, got $max_gap"))
-    timing = sample_times === nothing ? nothing :
-        _tracking_preflight(frames, sample_times, time_unit, clock_id, scale, predictor)
-    if timing === nothing
-        time_unit === nothing && clock_id === nothing ||
-            throw(ArgumentError("time_unit and clock_id require sample_times"))
-    else
-        frames = timing.frames
-    end
     img_first = load_frame(frames[1], image_type)
     image_size = size(img_first)
     # In-memory matrices retain their element type. Inspect their metadata
@@ -196,27 +169,14 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
             elapsed = (k + 1) - tr.frames[end]
             if length(tr.x) >= 2
                 dtlast = tr.frames[end] - tr.frames[end - 1]
-                if timing === nothing
-                    pred_x[i] = hx + (tr.x[end] - tr.x[end - 1]) * elapsed / dtlast
-                    pred_y[i] = hy + (tr.y[end] - tr.y[end - 1]) * elapsed / dtlast
-                else
-                    ratio = (timing.times[k + 1] - timing.times[tr.frames[end]]) /
-                        (timing.times[tr.frames[end]] - timing.times[tr.frames[end - 1]])
-                    pred_x[i] = _tracking_predict(T, hx, tr.x[end] - tr.x[end - 1], ratio)
-                    pred_y[i] = _tracking_predict(T, hy, tr.y[end] - tr.y[end - 1], ratio)
-                end
+                pred_x[i] = hx + (tr.x[end] - tr.x[end - 1]) * elapsed / dtlast
+                pred_y[i] = hy + (tr.y[end] - tr.y[end - 1]) * elapsed / dtlast
             elseif interp === nothing
                 pred_x[i] = hx
                 pred_y[i] = hy
             else
-                if timing === nothing
-                    pred_x[i] = hx + T(interp[1](hy, hx)) * elapsed
-                    pred_y[i] = hy + T(interp[2](hy, hx)) * elapsed
-                else
-                    ratio = (timing.times[k + 1] - timing.times[tr.frames[end]]) / timing.reference
-                    pred_x[i] = _tracking_predict(T, hx, interp[1](hy, hx), ratio)
-                    pred_y[i] = _tracking_predict(T, hy, interp[2](hy, hx), ratio)
-                end
+                pred_x[i] = hx + T(interp[1](hy, hx)) * elapsed
+                pred_y[i] = hy + T(interp[2](hy, hx)) * elapsed
             end
         end
 
@@ -232,14 +192,8 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
         hx = T[active[index_a[m]].x[end] for m in 1:nm]
         hy = T[active[index_a[m]].y[end] for m in 1:nm]
         gaps = Int[(k + 1) - active[index_a[m]].frames[end] for m in 1:nm]
-        if timing === nothing
-            mu = T[(pb.x[index_b[m]] - hx[m]) / gaps[m] for m in 1:nm]
-            mv = T[(pb.y[index_b[m]] - hy[m]) / gaps[m] for m in 1:nm]
-        else
-            ratios = [timing.reference / (timing.times[k + 1] - timing.times[active[index_a[m]].frames[end]]) for m in 1:nm]
-            mu = T[_tracking_product(T, pb.x[index_b[m]] - hx[m], ratios[m]) for m in 1:nm]
-            mv = T[_tracking_product(T, pb.y[index_b[m]] - hy[m], ratios[m]) for m in 1:nm]
-        end
+        mu = T[(pb.x[index_b[m]] - hx[m]) / gaps[m] for m in 1:nm]
+        mv = T[(pb.y[index_b[m]] - hy[m]) / gaps[m] for m in 1:nm]
         flags = params.uod_enable ? scattered_uod(hx, hy, mu, mv, params) : falses(nm)
 
         extended = falses(M)
@@ -284,8 +238,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     kept = [tr for tr in all_tracks if length(tr.x) >= min_track_length]
     sort!(kept; by = tr -> (tr.start_frame, tr.x[1], tr.y[1]))
     trajectories = [Trajectory{T}(tr.start_frame, tr.x, tr.y, tr.frames) for tr in kept]
-    result = TrackingResult{T}(trajectories, n_frames, params, scale)
-    return timing === nothing ? result : _tracking_bind(result, timing.data)
+    return TrackingResult{T}(trajectories, n_frames, params, scale)
 end
 
 """

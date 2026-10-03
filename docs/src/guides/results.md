@@ -26,10 +26,10 @@ The [units guide](../howto/scaling.md) covers the other result types.
 | Question | Example or guide |
 |:--|:--|
 | What is the mean flow, and how much does it fluctuate? | [From image pairs to flow statistics](../tutorials/sequence_statistics.md) |
-| Where does the flow rotate or stretch? | [Compute gradients and check their neighboring vectors](../howto/derivative_support.md) |
-| Is there a periodic motion? | [Check sampling times before computing a spectrum](../howto/spectrum_timing.md) |
-| How fast do individual particles move? | [Use actual tracking sample times](../howto/tracking_timing.md) |
-| How much of the recording produced usable vectors? | [Read a run-quality report](../howto/run_quality.md) |
+| Where does the flow rotate or stretch? | [Gradients, vorticity and circulation](../reference/derived.md) |
+| Is there a periodic motion? | [`result_spectrum`](@ref) with the interval between successive fields |
+| How fast do individual particles move? | [Particle tracking](../tutorials/ptv.md) |
+| How much of the recording produced usable vectors? | [Validation flags and their counts](../howto/validation.md) |
 
 Try the same analysis with and without a suspicious region. Near a mask or a
 gap, a velocity may be available while its derivative is not. Keep those gaps
@@ -38,9 +38,8 @@ The [measurement concepts](../explanation/index.md) explain these distinctions.
 
 ## Share the result
 
-Use [native files, CSV and VTK](../howto/batch.md) to save fields or move them to
-another analysis tool. For particles and trajectories, see
-[calibrated table export](../howto/calibrated_scattered_export.md).
+Use [native files, CSV and VTK](../howto/batch.md) to save fields, particles and
+trajectories or move them to another analysis tool.
 If velocity and an intensity measurement come from different cameras,
 [register PIV and PLIF on a common grid](../howto/calibrated_resampling.md)
 before comparing them point by point.
