@@ -291,7 +291,8 @@ end
     params=PTVParameters(uod_enable=false)
     bundle=PTVC.run_study(;clips=[clean,gap],params,predictor=nothing,max_gaps=(0,1))
     report=bundle.report
-    @test report["environment"]["processing_threaded"]===true
+    @test report["environment"]["processing_threaded"]===(Threads.nthreads()>1)
+    @test all(row["recipe"]["piv_driver_threaded_default"]===(Threads.nthreads()>1) for row in report["groups"])
     @test report["calls"]["ptv_pairs"]==8
     @test report["calls"]["tracking"]==4
     @test report["calls"]["matcher_transitions"]==24
@@ -357,5 +358,69 @@ end
         @test !empty.row["detection"]["recall"]["available"]
         @test empty.row["correspondence"]["raw"]["counts"]["predictions"]==0
         @test !empty.row["tracking"][1]["metrics"]["edge_precision_bounds"]["strict_lower"]["available"]
+    end
+end
+
+@testset "Controlled benchmark provenance follows the actual 1/4-thread PIV default" begin
+    mktempdir() do directory
+        script=joinpath(directory,"threading.jl")
+        write(script,raw"""
+using Test, Hammerhead
+include(ARGS[1])
+const P=ValidationPTVTracking
+n=parse(Int,ARGS[2]); expected=n>1
+@test Threads.nthreads()==n
+clip=P.synthetic_clip(7321,"clean";size=64,nframes=5)
+A,B=clip.images[1:2]
+passes=[PIVParameters(window_size=32,overlap=16,max_iterations=1,uncertainty=false)]
+params=PTVParameters(uod_enable=false)
+recipe=P.scientific_recipe(params,:piv,passes,(0,),2)
+env=P.environment_record()
+@test recipe["threads"]==env["julia_threads"]==n
+@test recipe["piv_driver_threaded_default"]===expected
+@test env["processing_threaded"]===expected
+# Observe actual default CPU fan-out, independently of metadata arithmetic.
+workspace=piv_workspace()
+actual=run_piv(A,B,passes;workspace)
+@test length(only(values(workspace.correlators)))==n
+explicit=run_piv(A,B,passes;threaded=expected)
+@test isequal(actual.u,explicit.u) && isequal(actual.v,explicit.v)
+@test isequal(actual.outliers,explicit.outliers) && isequal(actual.mask,explicit.mask)
+# :piv resolves a production PIV field, with no truth-derived predictor.
+pair=run_ptv(A,B,params;predictor=:piv,piv_passes=passes)
+reference=run_ptv(A,B,params;predictor=actual,piv_passes=passes)
+@test !isempty(pair.u)
+@test pair.index_a==reference.index_a && pair.index_b==reference.index_b
+@test isequal(pair.u,reference.u) && isequal(pair.v,reference.v)
+@test isequal(pair.match_residual,reference.match_residual)
+println("THREADING_PROVENANCE_OK ",n," ",expected)
+""")
+        for threads in (1,4)
+            command=Cmd(`$(Base.julia_cmd()) --startup-file=no --compiled-modules=yes --project=$(dirname(Base.active_project())) --threads=$threads $script $(joinpath(@__DIR__,"..","bench","validation_ptv_tracking.jl")) $threads`;windows_hide=true)
+            stdout_path=joinpath(directory,"threads-$threads.stdout")
+            stderr_path=joinpath(directory,"threads-$threads.stderr")
+            process=nothing
+            status=:timed_out
+            try
+                open(stdout_path,"w") do out
+                    open(stderr_path,"w") do err
+                        process=run(pipeline(command;stdout=out,stderr=err);wait=false)
+                        status=timedwait(()->process_exited(process),180;pollint=.1)
+                        status==:ok || kill(process,Base.SIGKILL)
+                        wait(process)
+                    end
+                end
+            finally
+                if process!==nothing && !process_exited(process)
+                    kill(process,Base.SIGKILL);wait(process)
+                end
+            end
+            @test status==:ok
+            if status!=:ok || !success(process)
+                @info "Threading provenance child failed" threads stdout=read(stdout_path,String) stderr=read(stderr_path,String)
+            end
+            @test success(process)
+            @test occursin("THREADING_PROVENANCE_OK $threads $(threads>1)",read(stdout_path,String))
+        end
     end
 end

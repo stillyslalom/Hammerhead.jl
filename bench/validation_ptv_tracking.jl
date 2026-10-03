@@ -453,7 +453,7 @@ function scientific_recipe(params,predictor,piv_passes,max_gaps,min_track_length
     Dict("ptv_parameters"=>Dict(String(k)=>V.serial(getfield(params,k)) for k in fieldnames(PTVParameters)),
         "predictor"=>predictor===nothing ? "none_zero_displacement" : "production_piv",
         "piv_passes"=>[V.pass_recipe(p) for p in piv_passes],"backend"=>"cpu","processing_precision"=>"Float64",
-        "threads"=>Threads.nthreads(),"piv_driver_threaded_default"=>true,"mask"=>"none","roi"=>"none",
+        "threads"=>Threads.nthreads(),"piv_driver_threaded_default"=>Threads.nthreads()>1,"mask"=>"none","roi"=>"none",
         "preprocessing"=>"none","scale"=>"none","timestamps"=>"none_ordinal_frames",
         "max_gap_values"=>collect(max_gaps),"min_track_length"=>min_track_length,
         "later_tracking_field_predictor"=>"production bin/smooth previous accepted links; 32px window/16px overlap/min_count3",
@@ -532,7 +532,7 @@ function environment_record()
     env=U.environment_record();append!(env["source_files"],V.fixture_identity([@__FILE__]))
     # PTV's internal run_piv keeps its threaded default; the older PIV scorecard
     # source of this environment mapping uses explicit threaded=false instead.
-    env["processing_threaded"]=true
+    env["processing_threaded"]=Threads.nthreads()>1
     env
 end
 function run_study(;clips=nothing,params=PTVParameters(),predictor=:piv,piv_passes=multipass_parameters([64,32]),max_gaps=(0,1,2),min_track_length=2,gate=GATE)

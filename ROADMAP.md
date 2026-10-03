@@ -146,10 +146,13 @@ existing implementation is preferable; they are not commitments to add an API.
   A frozen eight-clip run and independent CSV/source audits preserve all
   predictions: stress accepted recalls are 170/190 and 168/190 despite unit
   accepted precision. This does not establish independent or real-data accuracy.
-- [ ] Correct the controlled PTV/tracking scorer's recorded PIV threading
+- [x] Correct the controlled PTV/tracking scorer's recorded PIV threading
   default to reflect `Threads.nthreads() > 1`, add a provenance regression and
   regenerate the affected one-thread study. Historical artifacts retain their
   original recorded values; the sparse VSJ301 study records the actual default.
+  The focused suite passes 2,204 parent and 22 one-/four-thread child checks.
+  A fresh eight-clip run passes 36,600 audit checks with stable source hashes;
+  all 144 scientific CSVs remain byte-identical to the historical run.
 - [ ] Add a reproducible larger-data evaluation command with download/cache and
   checksums; keep a small deterministic regression subset in ordinary CI.
 - [x] Evaluate a fixed eight-frame VSJ301 independent synthetic clip with guarded

@@ -8,6 +8,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Corrected the controlled PTV/tracking scorecard's recorded PIV threading
+  default to follow the process thread count. One-/four-thread regressions and
+  a regenerated eight-clip study verify the metadata; scientific outputs are
+  unchanged and historical artifacts retain their original values.
 - Added a bounded independent VSJ301 tracking study with guarded private caching,
   sparse annotations and separate coordinate-origin hypotheses evaluated against
   identical processing outputs. Unknown visibility and annotation gaps remain

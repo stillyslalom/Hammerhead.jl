@@ -45,7 +45,10 @@ Each clip uses the production detector, `run_ptv` on every adjacent pair and
 The full command uses default `PTVParameters`, `predictor = :piv`, and the
 complete default `[64, 32]` PIV pass schedule. Inputs and processing use Float64,
 CPU, no mask/ROI/preprocessing/scale, and ordinal frame intervals. Every
-parameter and the actual process thread count are recorded.
+parameter and the actual process thread count are recorded. Internal PIV uses
+its production default, `threaded = Threads.nthreads() > 1`; the recipe and
+environment record that Boolean independently of whether the chosen predictor
+requires PIV. It is a driver setting, not a measured parallel speedup.
 
 The budget is 64 standalone detector calls, 56 two-frame PTV calls and 24
 tracking calls. Including repeated detection inside these APIs, that is 368
@@ -64,11 +67,22 @@ The frozen Windows CPU run in
 matrix with stable source/environment identities. The focused regression suite
 passed 2,197 checks. An independent persisted-artifact audit passed 36,571 checks,
 including exact scientific report equality and all 144 CSVs byte-identical to
-the preceding run after correcting an inherited threading-provenance label.
-The preceding `validation-ptv-tracking-final/` directory is marked superseded;
-use the `refrozen` report for environment evidence. Both runs used one Julia
-thread, and the corrected report records PTV's internal PIV threaded default
-accurately.
+the preceding run. Both historical runs used one Julia thread, but their
+recorded PIV-threading Boolean was incorrectly hardcoded to `true`; those
+artifacts remain unchanged and must not be used as evidence for that setting.
+The production default is `false` with one thread and `true` with multiple
+threads. Separate one- and four-thread regression processes check the recorded
+values, actual CPU correlator fan-out and production PIV/PTV equivalence.
+
+The corrected one-thread run in
+`bench/profile-output/validation-ptv-tracking-threading-corrected/` completes
+all eight clips with stable sources and records both threading Booleans as
+`false`. Its audit verifies 51 source hashes and passes 36,600 checks: scientific
+report fields remain identical after excluding environment, generation time and
+the corrected recipe Boolean, and all 144 scientific CSVs match prior bytes.
+The focused regression suite passes 2,204 parent assertions plus 22 assertions
+in separate one- and four-thread children. Use this fresh report for threading
+provenance; retain historical reports with their original values.
 
 For each seed, all six scheduled one-frame gaps were recovered with
 `max_gap ≥ 1`, and all six two-frame gaps with `max_gap = 2`. With a smaller
@@ -231,10 +245,10 @@ refused. Input and manifest identities are rechecked after processing and
 before publication. Source/environment drift refuses publication too. These
 checks do not authenticate the annotation's accuracy or independence.
 
-No external recording has been evaluated by the default command. The publisher's
-[VSJ301 dataset](https://www.vsj.jp/~pivstd/image3d/image301.html) documents
-persistent particle IDs and projected positions and is a candidate for a later
-independent **synthetic** import. Download/checksums, usage permission,
-coordinate/visibility conventions and continuity still need verification.
+No external recording has been evaluated by the default command. The separate
+[VSJ301 study](validation_vsj301.md) evaluates a fixed independent synthetic
+clip with guarded acquisition hashes and sparse ID/position annotations. It
+keeps unknown visibility and alternative coordinate-origin hypotheses explicit;
+that sparse format does not satisfy this scorer's complete-visibility contract.
 Independent real-recording evidence remains unavailable until an actual
 recording and reviewed annotations are supplied and processed.
