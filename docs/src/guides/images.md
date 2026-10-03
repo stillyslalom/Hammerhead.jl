@@ -33,7 +33,7 @@ filtered = run_piv(highpass_filter(imgA; sigma=5),
 
 Use windows that fit your images. Compare the same region in both fields:
 did a suspicious pattern disappear, or did the filter also remove useful
-particle detail? A cleaner-looking image alone does not answer that question.
+particle detail? Judge the change through both the particle images and the vectors.
 The [preprocessing guide](../howto/preprocessing.md) explains the available
 operations and how to reuse a chain for a recording.
 

@@ -56,6 +56,20 @@ before resuming additional GUI features.
   and 299 source/test/docs/environment identities stayed unchanged during final
   validation. Browser-level layout review remains unverified because no browser
   connection was available; the site has not been published from this checkout.
+- [x] Rewrite the remaining saved-recipe pass, preprocessing and geometry guides
+  around one worked task each. Introduce runnable inputs, show the changed
+  setting and its visible effect, explain the result, and offer one experiment
+  to try. Move duplicated persistence and observer contracts into reference.
+  Keep the compact navigation and verify every new example and figure.
+  The pass, filtering, geometry and new mask examples execute against bundled
+  images. Their comparison figures were inspected, including image-coordinate
+  orientation. All seven tutorials pass; the 119-page site retains 17 main
+  navigation links and passes 6,222 local link/anchor checks.
+- [x] Edit study and GUI guides for direct explanations of methods, populations,
+  artifacts and reader actions. Remove repetitive unsolicited negation caveats;
+  place interpretation-changing limits beside the decision they affect.
+  Rewrote VSJ301, the uncertainty/PTV studies, GUI workflows and recipe references.
+  Updated repository writing guidance and verified the edited site build.
 
 Start a quantitative validation baseline and the experiment-record design first.
 Timing integrity and measurement diagnostics should inform that record. Build
@@ -750,7 +764,7 @@ evidence.
   900×600 and 1100×800 captures were inspected, with 292 source/test/docs/
   environment identities unchanged during final validation. Native desktop
   and other-platform acceptance remain separate.
-- [ ] Add lossless saved-planar mask revision with a detached full-image raster.
+- [x] Add lossless saved-planar mask revision with a detached full-image raster.
   Preserve imported bits and distinguish `nothing` from an enabled all-false
   mask. Seed the existing polygon/morphology editor without reconstructing
   polygons or discarding the raster on recomputation. Keep clear-all and
@@ -763,6 +777,11 @@ evidence.
   Verify exact round trips, disable/re-enable, polygon/hole/morphology behavior,
   replacement and save guards, full-frame-before-ROI replay parity, bounded
   retained image state and compact actual interactions.
+  The [saved-mask editor](docs/src/howto/gui_recipe_mask_revision.md) passes
+  80 controller, 158 independent parity and 139 interaction/layout checks.
+  The full GUI suite passes 3,384 checks on Windows/Julia 1.11.4. Both compact
+  captures and the executed guide figure were inspected. Final documentation
+  validation preserved 306 source/test/docs/environment identities.
 - [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.

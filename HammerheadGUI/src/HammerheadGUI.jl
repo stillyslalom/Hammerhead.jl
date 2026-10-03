@@ -35,6 +35,7 @@ include("controllers/experiment_controller.jl")
 include("controllers/recipe_comparison.jl")
 include("controllers/recipe_revision.jl")
 include("controllers/recipe_image_preview.jl")
+include("controllers/recipe_mask_reference.jl")
 include("controllers/checkpoint_controller.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
@@ -79,6 +80,8 @@ export preprocessing_fields, set_revision_preprocess!, insert_revision_preproces
        move_revision_preprocess!, delete_revision_preprocess!, set_revision_background!,
        load_revision_background!, RecipeImagePreviewController, preview_recipe_images!
 export revision_roi_fields, revision_scale_fields, set_revision_roi!, set_revision_scale!
+export set_revision_mask!, reset_revision_mask!, load_revision_mask!,
+       RecipeMaskReferenceController, load_recipe_mask_reference!, apply_revision_mask!
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -129,6 +132,9 @@ export preprocessing_fields, set_revision_preprocess!, insert_revision_preproces
 export preprocessing_revision, preprocessing_revision!
 export revision_roi_fields, revision_scale_fields, set_revision_roi!, set_revision_scale!,
        recipe_geometry_revision, recipe_geometry_revision!
+export set_revision_mask!, reset_revision_mask!, load_revision_mask!,
+       RecipeMaskReferenceController, load_recipe_mask_reference!, apply_revision_mask!,
+       recipe_mask_revision, recipe_mask_revision!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,
@@ -146,6 +152,7 @@ include("views/recipe_comparison.jl")
 include("views/recipe_revision.jl")
 include("views/preprocessing_revision.jl")
 include("views/recipe_geometry_revision.jl")
+include("views/recipe_mask_revision.jl")
 include("views/experiment_workflow.jl")
 include("views/checkpoint_workflow.jl")
 include("views/mask_editor.jl")

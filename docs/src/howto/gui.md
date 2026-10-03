@@ -42,10 +42,10 @@ Choose **medium** effort for an initial run; the preset chooses the window
 schedule. Use **custom** when you want to enter your own schedule, such as
 `64, 32, 32`. [Choose an effort level](effort.md) explains the trade-off.
 
-Enter your measured **pixel size**, the exposure-pair **dt**, and their unit
+Enter your measured **pixel size**, the exposure-pair **dt**, and matching unit
 labels. For example, `0.02`, `0.001`, `mm`, and `s` mean 0.02 mm per pixel and
-1 ms between exposures. Labels do not convert the numbers. If you have a
-calibration image, [the scale tool](scaling.md) helps measure a known separation.
+1 ms between exposures. If you have a calibration image,
+[the scale tool](scaling.md) helps measure a known separation.
 
 ![The tutorial's batch form, with one pair, a mask, and a physical scale.](../assets/gui/batch.png)
 
@@ -86,7 +86,8 @@ browsing. To keep the **settings** as well, use **saved experiments…** and
 [Save your settings and run them again](gui_experiments.md). That workflow also
 opens separate editors for [passes](gui_recipe_revision.md),
 [preprocessing](gui_preprocessing_revision.md), and
-[ROI/scale](gui_recipe_geometry_revision.md). For a long run that needs restart,
+[ROI/scale](gui_recipe_geometry_revision.md), and [masks](gui_recipe_mask_revision.md).
+For a long run that needs restart,
 use [checkpoints](gui_checkpoints.md).
 
 ## Working with another kind of recording?

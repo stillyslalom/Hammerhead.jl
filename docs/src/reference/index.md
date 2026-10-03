@@ -46,7 +46,7 @@ the [result explorer](gui_results.md) for fields and trajectories.
 | Workflow | Reference |
 |:--|:--|
 | Open, save and replay experiments | [Planar](gui_experiments.md), [stereo](gui_stereo_experiments.md), [ensemble](gui_ensemble_experiments.md) |
-| Revise a saved recipe | [Passes](gui_recipe_revision.md), [preprocessing](gui_preprocessing_revision.md), [ROI and scale](gui_recipe_geometry_revision.md) |
+| Revise a saved recipe | [Passes](gui_recipe_revision.md), [preprocessing](gui_preprocessing_revision.md), [ROI and scale](gui_recipe_geometry_revision.md), [masks](gui_recipe_mask_revision.md) |
 | Compare saved recipes | [Comparison](gui_comparison.md) |
 | Resume from a checkpoint | [Checkpoint tools](gui_checkpoints.md) |
 | Inspect pooled results | [Ensemble inspection](gui_ensemble_companions.md) |

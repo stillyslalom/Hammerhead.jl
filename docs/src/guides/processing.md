@@ -18,7 +18,7 @@ result = run_piv(imgA, imgB; effort=:medium)
 The [first vector-field lesson](../tutorials/first_vector_field.md) shows what
 the arrows mean. Then use [window sizes and effort](../howto/effort.md) to
 trade spatial detail against the particle signal within each window.
-Increasing effort cannot repair an obscured or poorly recorded region.
+Mask obscured regions and check the image quality when weak signal persists.
 
 ## Match the method to the question
 

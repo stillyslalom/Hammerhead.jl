@@ -4,7 +4,7 @@
 # presses into the gesture API below.
 
 """
-    MaskEditor(image; polygons = [])
+    MaskEditor(image; polygons = [], raster = nothing)
     MaskEditor(path::AbstractString)
 
 Edit an exclusion mask over a reference image (matrix or image path). Editing
@@ -20,6 +20,9 @@ close the active polygon. Export the combined mask with
 `polygon_mask(editor)` or [`save_mask`](@ref). Use [`begin_hole!`](@ref) to
 draw a region that is restored inside an exclusion polygon. Seed `polygons`
 to resume editing an existing set.
+An optional full-image Bool `raster` is copied exactly, without reconstructing
+polygons. Ordered hole polygons remove exclusions from the combined raster,
+including the imported base. Clear-all removes both raster and polygons.
 """
 struct MaskEditor
     image::Matrix{Float64}
@@ -33,7 +36,9 @@ struct MaskEditor
 end
 
 function MaskEditor(image::AbstractMatrix{<:Real}; polygons = Vector{Tuple{Float64,Float64}}[],
-                    holes = falses(length(polygons)))
+                    holes = falses(length(polygons)), raster = nothing)
+    raster===nothing || (raster isa AbstractMatrix{Bool} && size(raster)==size(image)) ||
+        throw(ArgumentError("seed raster must be a same-size Bool matrix"))
     polys = [[(Float64(v[1]), Float64(v[2])) for v in p] for p in polygons]
     all(p -> length(p) >= 3, polys) ||
         throw(ArgumentError("every seeded polygon needs at least 3 vertices"))
@@ -42,7 +47,7 @@ function MaskEditor(image::AbstractMatrix{<:Real}; polygons = Vector{Tuple{Float
     return MaskEditor(Matrix{Float64}(image), Observable(polys), Observable(Bool.(holes)),
                       Observable(Tuple{Float64,Float64}[]), Observable(false),
                       Observable{Union{Nothing,Int}}(nothing), Observable(false),
-                      Observable{Union{Nothing,BitMatrix}}(nothing))
+                      Observable{Union{Nothing,BitMatrix}}(raster===nothing ? nothing : BitMatrix(raster)))
 end
 
 MaskEditor(path::AbstractString; kwargs...) = MaskEditor(load_image(path); kwargs...)

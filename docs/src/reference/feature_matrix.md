@@ -144,3 +144,7 @@ same complete-recipe controller. Disabling either setting restores `nothing`;
 masks and backgrounds retain their full-image geometry. Numeric scale factors
 must agree with the caller's unit labels. Attaching a scale leaves stored pixel
 coordinates and displacement unchanged; display conversion remains separate.
+
+The [saved-mask editor](../howto/gui_recipe_mask_revision.md) preserves imported
+pixels while adding exclusions or holes on a verified raw reference. Apply
+updates the shared recipe draft; saving and replay remain explicit actions.

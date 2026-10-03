@@ -56,6 +56,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   File-format versions, field schemas and edge-case contracts belong in API
   reference; test inventories and framework evaluations belong in development
   material. Page titles describe a reader's task, not an internal delivery slice.
+- Explain what a command does, what a result measures, and how the reader uses
+  it in direct, affirmative language. Include a limitation when it changes an
+  interpretation or next action, and place it with that decision. Avoid habitual
+  negative caveats about unrelated claims, guarantees, unsupported scenarios or
+  hypothetical misunderstandings. Define populations and artifact identities
+  directly instead of repeatedly stating what they are not.
 - Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
   them into `docs/src/tutorials/` (gitignored) with executable `@example`
   blocks, so the docs build runs them end to end — they are integration
@@ -670,6 +676,13 @@ retain their raw text but compose `nothing`; enabling never invents a calibratio
 Metadata preflight checks each recorded pass and frame. Full-image masks and
 backgrounds stay in original coordinates, while stored result pixels/displacements
 remain unscaled until physical conversion. Capture all drafts before notifications.
+Saved-mask revision retains a detached enabled/full-image raster draft. Disabling
+retains bits but composes `nothing`; an enabled all-false mask stays distinct.
+Seed `MaskEditor` with copied raster bits, then apply ordered exclusions and holes;
+clear-all removes both raster and polygons. A verified raw reference has its own
+captured identity and never executes preprocessing scripts. Applying editor pixels
+refuses unfinished drawing and changed mask content. Mask imports capture options
+before pickers and protect consumed source paths for the controller lifetime.
 Preserve all unedited pass fields, ordered validator tuples
 and the complete imported recipe options. Raw text remains separate from the
 last validated candidate; invalid visible edits must never fall back to stale
