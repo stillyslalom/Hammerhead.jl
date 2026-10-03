@@ -75,7 +75,13 @@ end
         # before opening a writer, including normal views/reshape wrappers.
         before_copy = read(path)
         @test_throws ArgumentError save_results(path, index)
-        @test_throws ArgumentError save_results(relpath(path), index)
+        # A relative alias must be relative to the source volume. CI may
+        # check out on D: while the temporary directory lives on C:.
+        cd(dir) do
+            relative_alias=relpath(path)
+            @test Base.samefile(relative_alias,path)
+            @test_throws ArgumentError save_results(relative_alias, index)
+        end
         @test_throws ArgumentError save_results(path, view(index, 1:2))
         @test_throws ArgumentError save_results(path, view(view(index, :), [1, 3]))
         @test_throws ArgumentError save_results(path, reshape(index, (4,)))

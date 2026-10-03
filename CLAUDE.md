@@ -962,6 +962,16 @@ as contrast evidence; preserve any genuine processing-precision difference.
 
 ## Testing notes
 
+- Windows CI can put the checkout and system temporary directory on different
+  volumes and expose temporary paths through an 8.3 short spelling. Compare
+  canonical stored file locators against `realpath` expectations; retain plain
+  absolute-path expectations where that is the API contract. Exercise relative
+  aliases from a directory on the source volume. Hardlink fixtures must live on
+  the source volume; guarded benchmark outputs should use temporary directories
+  under `bench/profile-output`. Assert the empty output is admitted before adding
+  an alias, then verify same-file identity, alias rejection and unchanged source
+  bytes. Do not skip protection coverage on Windows or accept an unrelated
+  directory-policy error as evidence that alias detection works.
 - `test/runtests.jl` defines the `particle_pair`/`add_particle!` helpers used
   by all included test files; new test files can rely on them.
 - `SyntheticData` ground truth is a forward-Euler step: each particle's true

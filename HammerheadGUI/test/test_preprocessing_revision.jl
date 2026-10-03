@@ -127,7 +127,9 @@ end
         load_revision_background!(rc,1,()->bgfile;async=false);off(listener)
         @test seen[] && rc.state[]===:completed && rc.preprocessing_selected[]==1
         @test rc.preprocessing_drafts[][1].background isa Matrix{Float32}
-        @test realpath(bgfile) in rc.protected_paths[]
+        # File replacement protects the normalized absolute spelling; it need
+        # not match realpath's expanded Windows short-name spelling.
+        @test Hammerhead._artifact_local_path(bgfile) in rc.protected_paths[]
         # Public path-list mutation cannot erase lifetime consumed-source guards.
         erased=on(rc.preprocessing_drafts) do _
             rc.protected_paths[]=String[]
@@ -176,7 +178,7 @@ end
         @test pc.state[]===:completed && !pc.running[]
         bundle=pc.bundle[]
         @test bundle.recipe_id==recipe.recipe_id && bundle.input_id==record.input_id && bundle.pair_index==1
-        @test bundle.input_paths==[files[2],files[1]]
+        @test bundle.input_paths==[f["path"] for f in record.input_files[record.pairs[1]]]
         @test bundle.raw_a isa Matrix{Float32} && bundle.processed_a isa Matrix{Float32}
         @test bundle.processed_a==invert_image(bundle.raw_a)
         @test size(bundle.processed_a)==(24,32) && bundle.roi==recipe.roi

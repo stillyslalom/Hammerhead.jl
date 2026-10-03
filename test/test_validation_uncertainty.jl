@@ -144,7 +144,8 @@ end
     empty = Dict("status" => "no_valid_measurements", "metrics" => U.metrics(empty_result, (x, y) -> (0.0, 0.0)).data)
     report = Dict("schema_version" => U.SCHEMA, "provenance_status" => "test only", "groups" => [Dict("condition" => "test", "pooled" => pooled)],
         "empty_failure" => empty, "limitations" => ["test only"], "unsupported" => Dict("known_motion" => "not supplied"))
-    mktempdir() do directory
+    alias_parent = mkpath(joinpath(U.ROOT, "bench", "profile-output"))
+    mktempdir(alias_parent) do directory
         paths = U.write_report(joinpath(directory, "report"), report)
         loaded = TOML.parsefile(first(paths))
         @test loaded["groups"][1]["pooled"] == pooled
@@ -157,16 +158,14 @@ end
         @test read(joinpath(unrelated, "uncertainty.md"), String) == "user content"
         alias_dir = joinpath(directory, "alias"); mkpath(alias_dir)
         link = joinpath(alias_dir, "uncertainty.md")
-        try
-            source = joinpath(U.ROOT, "bench", "validation_scorecard.jl")
-            saved = read(source)
-            hardlink(source, link)
-            error = try U.write_report(alias_dir, report); nothing catch caught; caught end
-            @test error isa ArgumentError && occursin("aliases source", sprint(showerror, error))
-            @test read(source) == saved
-        catch error
-            error isa Base.IOError || rethrow()
-        end
+        source = joinpath(U.ROOT, "bench", "validation_scorecard.jl")
+        saved = read(source)
+        @test U.check_output(alias_dir) isa Vector
+        hardlink(source, link)
+        @test Base.samefile(source, link)
+        error = try U.write_report(alias_dir, report); nothing catch caught; caught end
+        @test error isa ArgumentError && occursin("aliases source", sprint(showerror, error))
+        @test read(source) == saved
         dangling_dir = joinpath(directory, "dangling"); mkpath(dangling_dir)
         dangling = joinpath(dangling_dir, "uncertainty.toml")
         escaped = joinpath(directory, "escaped.toml")

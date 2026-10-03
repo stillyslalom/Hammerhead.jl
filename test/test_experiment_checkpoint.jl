@@ -89,7 +89,7 @@ end
             native=load_results(aggregate;lazy=true)
             @test native isa ResultFile && length(native)==3
             @test all(checkpoint_test_same(native[i],expected[i]) for i in 1:3)
-            @test JLD2.load(aggregate,"sources/000001")==collect(pairs[1])
+            @test JLD2.load(aggregate,"sources/000001")==realpath.(collect(pairs[1]))
             @test JLD2.load(aggregate,"checkpoint_id")==cp.checkpoint_id
             @test_throws ArgumentError save_checkpoint_results(aggregate,cp)
             @test_throws ArgumentError save_checkpoint_results(pairs[1][1],cp)
@@ -153,8 +153,8 @@ end
                 @test resume_checkpoint!(mixed;progress=(i,n)->(stop[]=true),cancel=()->stop[]).committed==1
                 @test resume_checkpoint!(mixed,moved).start_committed==1
                 mixed_export=save_checkpoint_results(joinpath(dir,"mixed-native.jld2"),mixed)
-                @test JLD2.load(mixed_export,Hammerhead.source_key(1))==collect(pairs[1])
-                @test all(JLD2.load(mixed_export,Hammerhead.source_key(i))==collect(relocated[i]) for i in 2:3)
+                @test JLD2.load(mixed_export,Hammerhead.source_key(1))==realpath.(collect(pairs[1]))
+                @test all(JLD2.load(mixed_export,Hammerhead.source_key(i))==realpath.(collect(relocated[i])) for i in 2:3)
                 @test all(checkpoint_test_same(ResultFile(mixed_export)[i],expected[i]) for i in 1:3)
                 output_copy=joinpath(dir,"relocated-output");mkdir(output_copy)
                 for file in readdir(empty_cp.output_dir);Base.cp(joinpath(empty_cp.output_dir,file),joinpath(output_copy,file));end

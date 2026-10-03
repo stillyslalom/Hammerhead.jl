@@ -123,7 +123,7 @@ end
                 @test bundle.recipe_id == recipe_identity(recipe)
                 @test bundle.source_recipe_id == recipe_identity(record.recipe)
                 @test bundle.input_id == record.input_id && bundle.pair_index == 1
-                @test bundle.input_paths == [paths[2], paths[1]]
+                @test bundle.input_paths == [f["path"] for f in record.input_files[record.pairs[1]]]
                 @test bundle.input_descriptors == record.input_files[record.pairs[1]]
                 @test bundle.mask == recipe.mask && bundle.mask !== recipe.mask
                 @test bundle.roi.rows == recipe.roi.rows && bundle.roi.cols == recipe.roi.cols
@@ -146,7 +146,8 @@ end
             original_bundle = pc.bundle[]
             @test original_bundle.processed_a == preprocessing_parity_oracle(load_image(T, paths[2]), chain)
             @test original_bundle.processed_b == preprocessing_parity_oracle(load_image(T, paths[3]), chain)
-            @test original_bundle.pair_index == 3 && original_bundle.input_paths == [paths[2], paths[3]]
+            @test original_bundle.pair_index == 3 && original_bundle.input_paths ==
+                [f["path"] for f in record.input_files[record.pairs[3]]]
             move_revision_preprocess!(rc, 1, 2)
             reordered = revision_recipe(rc)
             preview_recipe_images!(pc, rc; pair_index=3, async=false)
@@ -176,13 +177,14 @@ end
         off(subscription)
         @test pc.state[] === :completed
         bundle = pc.bundle[]
-        @test bundle.recipe_id == captured_id && bundle.input_paths == [paths[2], paths[1]]
+        @test bundle.recipe_id == captured_id && bundle.input_paths ==
+            [f["path"] for f in record.input_files[record.pairs[1]]]
         @test bundle.processed_a == intensity_cap(load_image(Float32, paths[2]); n_sigma=0.7)
         # A later valid request has its own new capture, not the former identities.
         reverse!(rc.original.pairs[1])
         preview_recipe_images!(pc, rc; pair_index=2, async=false)
         @test pc.state[] === :completed && pc.bundle[].recipe_id != captured_id
-        @test pc.bundle[].input_paths == [paths[1], paths[3]]
+        @test pc.bundle[].input_paths == [f["path"] for f in record.input_files[record.pairs[2]]]
         prior = pc.bundle[]
         original = read(paths[1]); changed = copy(original); changed[end] ⊻= 0x01
         write(paths[1], changed)

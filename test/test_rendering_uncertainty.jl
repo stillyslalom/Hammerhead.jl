@@ -168,7 +168,9 @@ end
     end
     @test_throws ArgumentError RU.check_output(joinpath(RU.ROOT,"docs"))
     @test_throws ArgumentError RU.main(["--unrecognized"])
-    mktempdir() do dir
+    # Hardlinks require the source volume; use an admitted report directory.
+    alias_parent=mkpath(joinpath(RU.ROOT,"bench","profile-output"))
+    mktempdir(alias_parent) do dir
         paths=RU.write_report(dir,report)
         loaded=TOML.parsefile(paths[1])
         @test isequal(loaded["groups"][1]["renderers"][1]["scientific_row"],baseline)
@@ -186,8 +188,11 @@ end
         @test read(paths[2],String)=="user output"
         alias=joinpath(dir,"alias");mkdir(alias)
         source=joinpath(RU.ROOT,"bench","rendering_uncertainty.jl");before=read(source)
+        @test RU.check_output(alias) isa Vector
         hardlink(source,joinpath(alias,"rendering_uncertainty.toml"))
-        @test_throws ArgumentError RU.write_report(alias,report)
+        @test Base.samefile(source,joinpath(alias,"rendering_uncertainty.toml"))
+        alias_error=try RU.write_report(alias,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(source)==before
         same=joinpath(dir,"same");mkdir(same)
         p=joinpath(same,"rendering_uncertainty.toml");write(p,"# $(RU.MARKER)\n")

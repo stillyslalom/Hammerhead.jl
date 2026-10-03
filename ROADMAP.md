@@ -841,3 +841,19 @@ accumulating duplicate checklists.
   with each release; documented checks are not claims of completed validation.
 - [ ] Exercise the saved-experiment and desktop workflow with a lab user and
   record concrete friction before promoting optional features into delivery work.
+- [x] Repair Windows CI filesystem fixtures for canonical versus short path
+  spellings and separate checkout/temp volumes. Preserve real relative aliases
+  and same-file hardlink protection; verify admitted output directories before
+  inserting protected aliases so directory-policy rejection cannot mask failure.
+  Keep runtime, thread count and numerical behavior unchanged. Compare affected
+  four-thread regressions locally and record remote CI confirmation separately.
+  The [reported Windows job](https://github.com/stillyslalom/Hammerhead.jl/actions/runs/37097719060/job/111130958566)
+  and the preceding run expose path-spelling, cross-volume relative-path and
+  hardlink fixture failures; the same-version Ubuntu four-thread job passes.
+  Eight affected core files pass 1,359 local checks, with 174 final checks after
+  strengthening the relative-alias and mandatory hardlink fixtures. Related GUI
+  path expectations pass 376 checks. These Windows/Julia 1.11.4 runs use four
+  threads; a distinct local short-path spelling was also verified as the same
+  file. Production code and the CI matrix are unchanged.
+- [ ] Confirm the hosted Windows/Julia 1.13.1 four-thread job passes after the
+  fixture repair reaches CI. Local checks do not establish hosted-run success.
