@@ -389,6 +389,7 @@ end
 function _quality_validate(data)
     data isa AbstractDict || _quality_error("malformed quality report")
     version=get(data,"quality_report_format_version",nothing)
+    version === 5 && return _quality_validate_ensemble_experiment(data)
     version isa Int && version in (1,2,3,4) || _quality_error("unsupported quality report format version")
     include_history=version==2 || version in (3,4) && haskey(data,"measurement_history")
     include_execution=version==3 || version==4 && haskey(data,"execution_diagnostics")
@@ -757,7 +758,7 @@ end
 """
     load_quality_report(path) -> RunQualityReport
 
-Read and validate a version-1 or opt-in version-2/3/4 TOML quality report without opening any recorded
+Read and validate a version-1 or opt-in version-2/3/4/5 TOML quality report without opening any recorded
 source/input/script locators. Unknown versions, malformed identities/counters,
 invented unsupported diagnostics, and inconsistent fractions are rejected.
 Stored provenance records a past verification; loading does not reverify files.
@@ -781,8 +782,10 @@ function Base.show(io::IO, ::MIME"text/plain", report::RunQualityReport)
     denominators = Dict("nodes" => "all nodes", "unmasked" => "unmasked nodes",
         "unflagged_finite_output_unmasked" => "unflagged finite output nodes",
         "uncertainty_requested_unmasked_nodes" => "unmasked nodes with uncertainty requested")
-    association = data["provenance"]["association"] == "recorded_output_verified" ? "verified recorded output" : "unassociated"
+    association = data["quality_report_format_version"] === 5 ? "verified recorded ensemble output" :
+        data["provenance"]["association"] == "recorded_output_verified" ? "verified recorded output" : "unassociated"
     print(io, "Run quality: stored-array counts (node-weighted)\nExperiment association: ", association)
+    data["quality_report_format_version"] === 5 && _quality_show_ensemble_experiment(io,data["provenance"])
     for (kind, group) in sort!(collect(data["groups"]); by = first)
         print(io, '\n', uppercasefirst(kind), ": ", group["counts"]["entries"], " entries, ", group["counts"]["nodes"], " nodes")
         for (name, metric) in sort!(collect(group["fractions"]); by = first)

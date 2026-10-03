@@ -203,7 +203,7 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Extend experiment records to stereo calibration/dewarping/self-calibration,
   PTV/tracking, and supported GPU devices. Define migrations when extending the
   format; keep toolkit dependencies in the GUI package.
-- [ ] Save, reopen and replay complete planar ensemble experiments, then connect
+- [x] Save, reopen and replay complete planar ensemble experiments, then connect
   them to GUI creation, progress/cancellation, verified inspection and associated
   quality reports. Preserve ordered input pairs, explicit passes, preprocessing,
   mask, scale, backend and precision. Distinguish input-pair contributions from
@@ -211,6 +211,15 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   Preserve existing sequence run-count and report contracts. Validate direct/replay
   parity and exact imported settings; checkpoint resume and estimator applicability
   remain separate requirements.
+  [Saved ensembles](docs/src/howto/ensemble_experiments.md) use a separate record
+  and associated report format 5, with staged output publication and accurate
+  completed/cancelled metadata when optional history saving fails. Core replay
+  passes [136 focused checks](test/test_ensemble_experiments.jl); associated
+  reports pass [177 checks](test/test_ensemble_experiment_quality.jl). The
+  [GUI workflow](docs/src/howto/gui_ensemble_experiments.md) passes 198 focused
+  checks with inspected 900/1100-pixel layouts and a 960-pixel batch launch.
+  Final full suites pass 12,204 core and 1,885 GUI checks; the docs build executes
+  all seven tutorials plus the committed-input saved-ensemble example.
 - [x] Add separate replayable stereo sequence records with exact frozen fitted
   builtin camera coefficients, signed dewarp geometry, complete two-camera
   processing and explicit timing/scaling provenance. Verify ordered files,
@@ -569,6 +578,16 @@ evidence.
   children, plus both existing static-preview children, exit cleanly with
   unchanged source identities and inspected captures. Programmatic picking and
   view changes do not establish native desktop input or responsiveness.
+- [ ] Move saved-planar replay in the Qt prototype outside the Qt/GLFW event
+  thread using an owned core-only Julia subprocess. Capture complete requests,
+  bound progress/status messages and preserve ordinary written-pair cancellation,
+  failed-prefix metadata, selected/displayed run identities and verified browsing.
+  Keep controls and plot servicing active during computation and shutdown; missing
+  terminal metadata or child exit alone must not imply completed processing.
+  Repair compact sidebar scrolling/layout and verify active-work control handling,
+  direct/worker parity, cancellation/error boundaries and child/window disposal.
+  Record workload-specific event-pump gaps; desktop input, other platforms and
+  embedded native rendering remain separate acceptance gates.
 - [x] Add a manually triggered three-platform prototype evidence workflow.
   The [workflow guide](HammerheadGUI/prototypes/qml/ci_validation.md) describes
   Julia 1.11 on Ubuntu, Windows and macOS, bounded process ownership, retained

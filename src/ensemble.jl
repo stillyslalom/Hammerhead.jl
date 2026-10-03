@@ -4,6 +4,23 @@
 # whose individual pairs are too noisy for reliable peaks — micro-PIV and
 # other low-SNR recordings.
 
+# Saved ensemble replay uses contribution-boundary hooks. They carry no result
+# arrays and do not change the public driver meter or ordinary arithmetic.
+struct _EnsembleCancelled <: Exception end
+Base.showerror(io::IO,::_EnsembleCancelled)=print(io,"ensemble replay cancelled before pooled publication")
+function _ensemble_replay_hooks(on_contribution,cancel_requested)
+    on_contribution===nothing || on_contribution isa Function || throw(ArgumentError("_on_contribution must be a function or nothing"))
+    cancel_requested===nothing || cancel_requested isa Function || throw(ArgumentError("_cancel_requested must be a function or nothing"))
+    nothing
+end
+function _ensemble_cancel_check(cancel_requested)
+    cancel_requested===nothing && return nothing
+    requested=cancel_requested()
+    requested isa Bool || throw(ArgumentError("cancel_requested must return Bool"))
+    requested && throw(_EnsembleCancelled())
+    nothing
+end
+
 """
     run_piv_ensemble(pairs, params = PIVParameters(); kwargs...) -> PIVResult
     run_piv_ensemble(pairs; effort = :low/:medium/:high, kwargs...) -> PIVResult
@@ -60,7 +77,9 @@ function run_piv_ensemble(pairs::AbstractVector,
                           progress::Bool = true,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           on_diagnostics = nothing, output = nothing,
-                          record_diagnostics = false)
+                          record_diagnostics = false,
+                          _on_contribution = nothing, _cancel_requested = nothing)
+    _ensemble_replay_hooks(_on_contribution,_cancel_requested)
     options=_ensemble_options(pairs,backend,image_type,on_diagnostics,output,record_diagnostics)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
@@ -72,12 +91,14 @@ function run_piv_ensemble(pairs::AbstractVector,
     0 < mask_threshold <= 1 ||
         throw(ArgumentError("mask_threshold must be in (0, 1], got $mask_threshold"))
 
-    if options.capture || output!==nothing
+    if options.capture || output!==nothing || _on_contribution!==nothing || _cancel_requested!==nothing
         # Freeze selection/container metadata, not mutable pixel contents.
         pairs=[(pair[1],pair[2]) for pair in pairs]
         mask=mask===nothing ? nothing : BitMatrix(mask)
         passes=copy(passes)
     end
+    _ensemble_cancel_check(_cancel_requested)
+    total_contributions=_on_contribution===nothing ? nothing : _ensemble_mul(length(passes),length(pairs))
     reports=options.capture ? EnsemblePassDiagnostics[] : nothing
     source_before=options.capture ? _experiment_software()["core_source_sha256"] : nothing
 
@@ -93,7 +114,9 @@ function run_piv_ensemble(pairs::AbstractVector,
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
         settings=(;threaded,mask,mask_threshold,preprocess,image_type,
-            force_replace=k<length(passes),meter,workspace,backend=be)
+            force_replace=k<length(passes),meter,workspace,backend=be,
+            on_contribution=_on_contribution,cancel_requested=_cancel_requested,
+            contribution_pass=k,scheduled_passes=length(passes),total_contributions)
         result = options.capture ? ensemble_pass(pairs,p,predictor;settings...,diagnostics=reports,pass_index=k) :
             ensemble_pass(pairs,p,predictor;settings...)
     end
@@ -101,6 +124,7 @@ function run_piv_ensemble(pairs::AbstractVector,
     diagnostics=options.capture ? _ensemble_finish(reports,backend,image_type,length(pairs),result,source_before) : nothing
     on_diagnostics===nothing || on_diagnostics(diagnostics)
     diagnostics===nothing || _ensemble_check_result(diagnostics,result)
+    _ensemble_cancel_check(_cancel_requested)
     if output!==nothing
         path=_ensemble_output_guard(output,options.inputs)
         diagnostics===nothing || _ensemble_check_result(diagnostics,result)
@@ -125,21 +149,24 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           on_diagnostics = nothing, output = nothing,
                           record_diagnostics = false,
+                          _on_contribution = nothing, _cancel_requested = nothing,
                           kwargs...)
+    _ensemble_replay_hooks(_on_contribution,_cancel_requested)
     options=_ensemble_options(pairs,backend,image_type,on_diagnostics,output,record_diagnostics)
-    if options.capture || output!==nothing
+    if options.capture || output!==nothing || _on_contribution!==nothing || _cancel_requested!==nothing
         # Effort discovers image size via the public preprocessor too: freeze
         # frame selection and mask before that first load/callback boundary.
         pairs=[(pair[1],pair[2]) for pair in pairs]
         mask=mask===nothing ? nothing : BitMatrix(mask)
     end
+    _ensemble_cancel_check(_cancel_requested)
     if effort === nothing
         isempty(kwargs) ||
             throw(ArgumentError("unsupported run_piv_ensemble keyword(s): " *
                                 join(string.(keys(kwargs)), ", ")))
         return run_piv_ensemble(pairs, PIVParameters(); backend, threaded, predictor_smoothing,
                                 mask, mask_threshold, preprocess, image_type, progress,
-                                scale,on_diagnostics,output,record_diagnostics)
+                                scale,on_diagnostics,output,record_diagnostics,_on_contribution,_cancel_requested)
     end
     piv_kwargs, driver_kwargs = split_effort_kwargs(kwargs)
     !isempty(driver_kwargs) &&
@@ -149,7 +176,7 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
     passes = effort_schedule(effort; ensemble = true, image_size = imgsize, piv_kwargs...)
     return run_piv_ensemble(pairs, passes; backend, threaded, predictor_smoothing, mask,
                             mask_threshold, preprocess, image_type, progress, scale,
-                            on_diagnostics,output,record_diagnostics)
+                            on_diagnostics,output,record_diagnostics,_on_contribution,_cancel_requested)
 end
 
 function first_pair_image_size(pairs; preprocess, image_type)
@@ -172,12 +199,15 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
                        image_type, force_replace::Bool, meter, workspace = nothing,
                        backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND,
-                       diagnostics = nothing, pass_index = 1)
+                       diagnostics = nothing, pass_index = 1,
+                       on_contribution = nothing, cancel_requested = nothing,
+                       contribution_pass = 1, scheduled_passes = 1, total_contributions = nothing)
     local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
     source_gate = nothing
     observation = nothing
-    for pair in pairs
+    for (pair_index,pair) in enumerate(pairs)
+        _ensemble_cancel_check(cancel_requested)
         frameA, frameB = pair
         imgA = load_frame(frameA, image_type)
         imgB = load_frame(frameB, image_type)
@@ -284,6 +314,14 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
             end
         end
         next!(meter)
+        if on_contribution!==nothing
+            event=(pass_index=contribution_pass,pair_index=pair_index,
+                completed_contributions=_ensemble_add(_ensemble_mul(contribution_pass-1,length(pairs)),pair_index),
+                total_contributions=total_contributions,input_pairs=length(pairs),scheduled_passes=scheduled_passes,
+                completed_pools=0,published_results=0)
+            on_contribution(event)
+        end
+        _ensemble_cancel_check(cancel_requested)
     end
 
     ny, nx = length(grid.y), length(grid.x)

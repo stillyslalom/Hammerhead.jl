@@ -36,6 +36,8 @@ export verify_measurement_history, measurement_history_at
 export PairTiming, pair_timing_data, load_pair_timing
 export StereoPairTiming, load_stereo_pair_timing
 export StereoPIVRecipe, StereoExperimentRecord, load_stereo_experiment, verify_stereo_experiment_run
+export EnsemblePIVRecipe, EnsembleExperimentRecord, EnsembleExperimentRun
+export load_ensemble_experiment, verify_ensemble_experiment_run, EnsembleRunRecordError
 export TrackingTiming, TimedTrackingResult, tracking_timing_data, save_timed_tracking, load_timed_tracking
 export tracking_speed_summary
 export export_calibrated_table, CalibratedTableMetadata, load_calibrated_table_metadata, calibrated_table_data
@@ -107,12 +109,14 @@ include("stereo_execution_diagnostics.jl")
 include("pair_timing.jl")
 include("stereo_pair_timing.jl")
 include("stereo_experiments.jl")
+include("ensemble_experiments.jl")
 include("tracking_timing.jl")
 include("calibrated_table.jl")
 include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
 include("run_quality.jl")
 include("ensemble_run_quality.jl")
+include("ensemble_experiment_quality.jl")
 include("stereo_run_quality.jl")
 include("pair_comparison.jl")
 

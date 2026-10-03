@@ -47,6 +47,7 @@ const r_track = TrackingResult(
     include("test_stereo_companions.jl")
     include("test_ensemble_companions.jl")
     include("test_stereo_experiments.jl")
+    include("test_ensemble_experiments.jl")
     include("test_derivative_support.jl")
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()

@@ -14,7 +14,9 @@ creating provenance or counts. No raw payload is loaded by a valid mapping check
 The root adds `ensemble_execution_diagnostics` and `entry_kinds` to the standard
 report fields. Optional `measurement_history` and `execution_diagnostics`
 sections have their existing schemas and denominators. `provenance.association`
-is `unassociated`: there is no supported ensemble experiment-recipe mapping.
+is `unassociated`: this direct-file format does not attach a saved recipe or run.
+The separate [associated ensemble format](ensemble_experiment_quality.md)
+verifies a completed `EnsembleExperimentRecord` run and emits version 5.
 The generator's `value_basis` appends
 `_and_verified_recorded_ensemble_execution` to the corresponding existing
 basis; weighting is `field_nodes_and_execution_observations`.

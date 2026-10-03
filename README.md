@@ -142,6 +142,9 @@ describe actual pooled contributions and residuals separately from single-pair i
 Explicit [ensemble quality reports](docs/src/howto/ensemble_quality_reports.md)
 aggregate recorded pools, with [GUI inspection and whole-file reports](docs/src/reference/gui_ensemble_companions.md)
 preserving raw verification and separate report identity.
+[Saved ensemble experiments](docs/src/howto/ensemble_experiments.md) retain the
+ordered inputs and complete processing recipe for replay, with contribution
+progress, cancellation and reports associated with the single pooled output.
 The isolated [Qt desktop prototype](docs/src/explanation/gui_framework.md)
 evaluates richer controls with a separate interactive scientific plot window;
 production HammerheadGUI continues to use GLMakie.

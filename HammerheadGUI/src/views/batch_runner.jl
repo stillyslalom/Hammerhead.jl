@@ -14,13 +14,16 @@ pairs to JLD2 as the run progresses. "Cancel" stops after the current pair. "Vie
 there as they complete.
 "Saved experiments" opens the dedicated recipe workflow to snapshot these
 settings or reopen a saved experiment without narrowing its settings to this form.
+"Saved ensemble" opens the separate full-image pooled workflow. Its explicit
+CPU/KA and precision choices apply to the next snapshot; ROI/custom scripts refuse.
 
 Pass a prebuilt [`BatchRunner`](@ref) to supply in-memory frames or control
 the run programmatically.
 """
 batch_runner(; kwargs...) = batch_runner(BatchRunner(); kwargs...)
 
-function batch_runner(bc::BatchRunner; size = (960, 720))
+function batch_runner(bc::BatchRunner; size = (960, 720),
+        ensemble_workflow_launcher::Function=f->display(GLMakie.Screen(),f))
     fig = Figure(; size)
 
     # -- frames column ------------------------------------------------------
@@ -119,7 +122,10 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
     explore_label = lift(v -> isempty(v) ? "view results" :
                               "view results ($(length(v)))", bc.completed)
     explore_btn = Button(run_col[12, 1]; label = explore_label, tellwidth = false)
-    experiment_btn = Button(run_col[13, 1]; label = "saved experiments…", tellwidth = false)
+    saved = GridLayout(run_col[13, 1])
+    rowgap!(saved, 3)
+    experiment_btn = Button(saved[1, 1]; label = "saved experiments…", tellwidth = false, fontsize=13,height=27)
+    ensemble_btn = Button(saved[2, 1]; label = "saved ensemble…", tellwidth = false, fontsize=13,height=27)
 
     colsize!(fig.layout, 1, Fixed(190))
     colsize!(fig.layout, 3, Fixed(170))
@@ -218,6 +224,9 @@ function batch_runner(bc::BatchRunner; size = (960, 720))
     on(_ -> cancel!(bc), cancel_btn.clicks)
     on(experiment_btn.clicks) do _
         display(GLMakie.Screen(), experiment_workflow(; batch = bc))
+    end
+    on(ensemble_btn.clicks) do _
+        ensemble_workflow_launcher(ensemble_experiment_workflow(;batch=bc))
     end
     # Live results hand-off: available as soon as one pair is done, opening
     # the explorer on the completed prefix; results finishing later append

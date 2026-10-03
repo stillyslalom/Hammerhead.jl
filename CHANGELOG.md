@@ -8,6 +8,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added separate saved planar-ensemble recipes and run records with exact
+  ordered inputs/settings, contribution progress, cooperative cancellation and
+  one published pooled result. Associated format-5 quality reports retain
+  separate input, contribution and output counts. History-write failures carry
+  the actual completed/cancelled run instead of changing its processing status.
 - Added explicit format-4 ensemble quality reports for whole native files, with
   raw measurement verification and separate pooled contribution populations.
   Existing report defaults retain their formats; absent metadata does not identify
@@ -196,6 +201,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a saved-ensemble workflow for batch snapshots, complete imported recipes,
+  replay/cancellation, historical run selection, verified results and associated
+  quality reports. Contribution progress is separate from pooled publication;
+  retained results and reports keep their own run identities.
 - Added lazy ensemble execution inspection and a whole-file quality report view.
   Inspection verifies raw fields before physical display; report requests capture
   source/options and retain the prior report's identity after failure. Pooled

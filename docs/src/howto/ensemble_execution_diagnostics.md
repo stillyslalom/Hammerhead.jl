@@ -109,8 +109,10 @@ unchanged sources to relate it to loaded code.
 
 Native result layout/version and planar/stereo companion schemas remain
 unchanged. `save_results` on a bare result cannot recreate execution observations.
-Stereo ensemble, experiment/checkpoint integration and timing/history companions
-remain unsupported. [Ensemble quality reports](ensemble_quality_reports.md)
+Stereo ensemble, checkpoint integration and timing/history companions remain
+unsupported. [Saved planar ensemble experiments](ensemble_experiments.md) retain
+the complete replay settings and bind their single published result separately.
+[Ensemble quality reports](ensemble_quality_reports.md)
 use explicit `include_ensemble_execution_diagnostics=true` opt-in and a separate
 format-4 section for pooled populations. Earlier execution-report formats still
 refuse the ensemble marker; ordinary default result reports remain available.

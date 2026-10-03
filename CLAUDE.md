@@ -309,6 +309,18 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   PIV; calibration fitting, self-calibration execution, custom cameras/scripts,
   and checkpoints remain separate work. The GUI can inspect and replay the
   exact saved recipe through its dedicated controller.
+- `ensemble_experiments.jl` — separate planar `EnsemblePIVRecipe`,
+  `EnsembleExperimentRecord` and `EnsembleExperimentRun` schemas for a saved pool.
+  Preserve ordered file inputs, exact CPU/KA passes, built-in preprocessing,
+  full-image mask and scale. Input pairs, joined pair contributions across passes
+  and the single published result have distinct counts. Private ensemble-driver
+  hooks deliver immutable progress after joined work; cancellation can stop the
+  last contribution before pooled analysis/publication. Snapshot before callbacks
+  and run final integrity/path checks after the last user callback. Stage the
+  complete artifact beside its destination and use native rename without a
+  copy/delete fallback. Output and history are separate publications:
+  `EnsembleRunRecordError` retains completed/cancelled run metadata when history
+  saving fails; ordinary processing errors keep their original exception.
 - `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
   `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
   ordinal. Actual-time prediction and scattered validation normalize elapsed
@@ -364,6 +376,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Validate the complete sorted native entry mapping and detach its key vector
   before provenance/iteration. GUI whole-file reports use this guard for all
   formats and capture it before observable notifications or save dialogs.
+- `ensemble_experiment_quality.jl` adds associated report format 5. Verify the
+  completed pooled artifact, raw fields, recipe geometry and requested companions
+  before/after aggregation. Keep input/contribution/publication counts separate
+  from sequence `completed_pairs`. Validate v5 provenance independently, then
+  reuse existing v1/v4 scientific-counter validators without changing their
+  schemas. Saved reports describe past verification; they do not re-open inputs.
 - `stereo_run_quality.jl` extends associated reports to completed frozen-camera
   stereo records. Snapshot record/run, verify raw fields/geometry/ordered sources
   and native companions before/after the streaming report; optionally check input
@@ -685,6 +703,12 @@ report keep their own identities. Verify completed outputs before lazy physical
 display; reports use the dedicated stereo core overload. Cancellation waits for
 an acquisition boundary and records failure history without implying resumability.
 Files/Replay/Reports pages retain reachable cancellation/progress controls;
+`EnsembleExperimentController`/`ensemble_experiment_workflow` snapshots supported
+file-based batches using ensemble effort presets and preserves full imported
+recipes. Backend/precision controls affect the next snapshot only. Keep selected
+historical runs, active requests, displayed results and reports distinct; joined
+contribution progress is not result publication. Retain a known terminal run if
+history save/reopen fails, and show that persistence error separately.
 `CalibrationReview`/
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an
@@ -911,6 +935,13 @@ as contrast evidence; preserve any genuine processing-precision difference.
   variable pair delay, physical conversion, and lazy replay.
 - `test_experiments.jl` checks explicit recipe/record round trips, content
   identities, replay and environment guards, alias rejection, and failure records.
+  `test_ensemble_experiments.jl` checks separate pooled-run counts, CPU/KA
+  Float32/64 direct parity, cancellation before publication, captured settings,
+  input/staging mutation guards and accurate outcomes after history-save errors.
+  `test_ensemble_experiment_quality.jl` checks associated format-5 reports,
+  raw/recipe/companion verification, relocation and protected persistence.
+  GUI `test_ensemble_experiments.jl` checks exact snapshots/imports, contribution
+  progress, retained terminal/report identities and hidden-window mouse routing.
   `test_validation_scorecard.jl` checks deterministic rendering/hashes, selection
   rules, population error RMS, analytic midpoint shear truth, complete recipes,
   report round trips, and output protection. Real A/4E rows have no displacement

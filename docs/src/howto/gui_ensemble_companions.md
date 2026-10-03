@@ -69,8 +69,9 @@ The window captures options before
 observers or a save dialog run. A failed scan, save or cancelled dialog retains
 the previous report with its own source path and SHA256. Text pages contain the
 full status, identities and summary. Changing the explorer frame does not relabel
-that report. Reports are explicitly unassociated with a saved recipe or run;
-ensemble recipe association is not available. Generation verifies the unchanged
+that report. These explorer reports are unassociated with a saved recipe or run.
+Use the [saved ensemble workflow](gui_ensemble_experiments.md) for a report tied
+to a verified ensemble run. Generation verifies the unchanged
 whole file before and after scanning. Loading a saved report does not reverify
 the source.
 

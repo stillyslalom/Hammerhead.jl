@@ -38,6 +38,7 @@ include("controllers/scale_tool.jl")           # after batch_runner (apply_scale
 include("controllers/calibration_review.jl")
 include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
 include("controllers/stereo_experiment_controller.jl")
+include("controllers/ensemble_experiments.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -75,6 +76,7 @@ export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
 export StereoExperimentController, select_experiment_run!
+export EnsembleExperimentController, ensemble_experiment_record, save_ensemble_batch_experiment
 
 end # module Controllers
 
@@ -116,6 +118,8 @@ export CalibrationReview, calibration_review, calibration_review!,
 export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
 export StereoExperimentController, select_experiment_run!, stereo_experiment_workflow, stereo_experiment_workflow!
+export EnsembleExperimentController, ensemble_experiment_record, save_ensemble_batch_experiment
+export ensemble_experiment_workflow, ensemble_experiment_workflow!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
@@ -131,6 +135,7 @@ include("views/scale_tool.jl")
 include("views/calibration_review.jl")
 include("views/stereo_batch.jl")
 include("views/stereo_experiment_workflow.jl")
+include("views/ensemble_experiments.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload
 

@@ -89,6 +89,9 @@ Format 4 requires a direct whole-file `ResultFile`; bare/physical result arrays,
 views, checkpoints and experiment-record association are unsupported for this
 opt-in. No replayable ensemble recipe association is inferred from planar or
 stereo experiment records.
+For a saved ensemble recipe and completed run, use the dedicated
+[ensemble experiment workflow](ensemble_experiments.md); its associated report
+uses format 5 while retaining these pooled-count definitions.
 
 ## Verification and memory
 

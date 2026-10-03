@@ -154,7 +154,10 @@ Format 4 verifies ensemble companions against raw measurements before counting
 their populations. Retained history and ordinary execution sections preserve
 their earlier definitions; pooled contributions do not establish independent
 sample size or uncertainty coverage. Saved planar/stereo experiment overloads
-refuse ensemble reporting because ensemble recipe/run association is unsupported.
+refuse ensemble reporting because their sequence records do not describe pools.
+Separate ensemble experiment records use their own run-count contract and
+[associated report format 5](../reference/ensemble_experiment_quality.md), with
+distinct input-pair, processed-contribution and published-result counts.
 GUI inspection also verifies raw binding before physical conversion and keeps
 display integrity separate from the packet's processing-pixel basis.
 
