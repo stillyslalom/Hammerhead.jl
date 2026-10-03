@@ -151,7 +151,7 @@ end
             moved=ExperimentRecord([(moved_a,moved_b)],recipe)
             relocated=compare_recipe_pair(before,moved;pair_indices=[1,1])
             @test pair_comparison_data(relocated)["provenance"]["ordered_pair_id"]==pair_comparison_data(report)["provenance"]["ordered_pair_id"]
-            @test pair_comparison_data(relocated)["provenance"]["after"]["files"][1]["path"]==moved_a
+            @test pair_comparison_data(relocated)["provenance"]["after"]["files"][1]["path"]==realpath(moved_a)
             for indices in ((true,1),(0,1),(1,2),(1,),"1,1")
                 @test_throws ArgumentError compare_recipe_pair(before,after;pair_indices=indices)
             end

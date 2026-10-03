@@ -199,16 +199,24 @@ end
         @test_throws ArgumentError CU.write_report(directory,report)
         @test read(paths[2],String)=="unrelated data"
     end
-    mktempdir() do directory
+    # Hardlinks require the source volume; use an admitted report directory.
+    alias_parent=mkpath(joinpath(CU.ROOT,"bench","profile-output"))
+    mktempdir(alias_parent) do directory
         alias=joinpath(directory,"source");mkpath(alias)
         source=joinpath(CU.ROOT,"bench","conditional_uncertainty.jl");bytes=read(source)
+        @test CU.check_output(alias) isa Vector
         hardlink(source,joinpath(alias,"conditional_uncertainty.toml"))
-        @test_throws ArgumentError CU.write_report(alias,report)
+        @test Base.samefile(source,joinpath(alias,"conditional_uncertainty.toml"))
+        alias_error=try CU.write_report(alias,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(source)==bytes
         alias=joinpath(directory,"project");mkpath(alias)
         source=joinpath(CU.ROOT,"Project.toml");bytes=read(source)
+        @test CU.check_output(alias) isa Vector
         hardlink(source,joinpath(alias,"conditional_uncertainty.toml"))
-        @test_throws ArgumentError CU.write_report(alias,report)
+        @test Base.samefile(source,joinpath(alias,"conditional_uncertainty.toml"))
+        alias_error=try CU.write_report(alias,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(source)==bytes
         alias=joinpath(directory,"same");mkpath(alias)
         a=joinpath(alias,"conditional_uncertainty.toml");write(a,"# $(CU.MARKER)\n")

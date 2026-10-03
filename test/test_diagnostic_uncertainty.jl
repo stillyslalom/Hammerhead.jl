@@ -215,7 +215,9 @@ end
     D=DiagnosticUncertainty
     report=Dict("schema_version"=>D.SCHEMA,"source_and_environment_stable"=>true,
         "provenance_status"=>"test only","groups"=>Any[],"contrasts"=>Any[],"limitations"=>["test only"])
-    mktempdir() do dir
+    # Hardlinks require the source volume; use an admitted report directory.
+    alias_parent=mkpath(joinpath(D.ROOT,"bench","profile-output"))
+    mktempdir(alias_parent) do dir
         paths=D.write_report(joinpath(dir,"report"),report)
         @test TOML.parsefile(paths[1])["schema_version"]==D.SCHEMA
         @test occursin("Original full-error coverage",read(paths[2],String))
@@ -231,8 +233,11 @@ end
         aliases=joinpath(dir,"alias");mkpath(aliases)
         source=joinpath(D.ROOT,"bench","diagnostic_uncertainty.jl")
         original=read(source)
+        @test D.check_output(aliases) isa Vector
         hardlink(source,joinpath(aliases,"diagnostic_uncertainty.toml"))
-        @test_throws ArgumentError D.write_report(aliases,report)
+        @test Base.samefile(source,joinpath(aliases,"diagnostic_uncertainty.toml"))
+        alias_error=try D.write_report(aliases,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(source)==original
         same=joinpath(dir,"same");mkpath(same)
         a=joinpath(same,"diagnostic_uncertainty.toml");write(a,"# $(D.MARKER)\n")
@@ -240,8 +245,11 @@ end
         @test_throws ArgumentError D.write_report(same,report)
         project_alias=joinpath(dir,"project-alias");mkpath(project_alias)
         project=joinpath(D.ROOT,"Project.toml");project_bytes=read(project)
+        @test D.check_output(project_alias) isa Vector
         hardlink(project,joinpath(project_alias,"diagnostic_uncertainty.toml"))
-        @test_throws ArgumentError D.write_report(project_alias,report)
+        @test Base.samefile(project,joinpath(project_alias,"diagnostic_uncertainty.toml"))
+        alias_error=try D.write_report(project_alias,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(project)==project_bytes
         dangling=joinpath(dir,"dangling");mkpath(dangling)
         escaped=joinpath(dir,"escaped.toml")

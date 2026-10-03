@@ -183,7 +183,9 @@ end
     @test_throws ArgumentError ST.check_output(joinpath(ST.ROOT,"docs"))
     @test_throws ArgumentError ST.main(["--unknown"])
     @test_throws ArgumentError ST.run_study(;interior_margin=200)
-    mktempdir() do dir
+    # Hardlinks require the source volume; use an admitted report directory.
+    alias_parent=mkpath(joinpath(ST.ROOT,"bench","profile-output"))
+    mktempdir(alias_parent) do dir
         paths=ST.write_report(dir,report)
         loaded=TOML.parsefile(paths[1]);@test isequal(loaded["groups"],report["groups"])
         @test occursin("Full-error 2sigma",read(paths[2],String))
@@ -200,8 +202,11 @@ end
         @test read(paths[2],String)=="user file"
         alias=joinpath(dir,"source-alias");mkdir(alias)
         source=joinpath(ST.ROOT,"bench","spatial_transfer.jl");before=read(source)
+        @test ST.check_output(alias) isa Vector
         hardlink(source,joinpath(alias,"spatial_transfer.toml"))
-        @test_throws ArgumentError ST.write_report(alias,report)
+        @test Base.samefile(source,joinpath(alias,"spatial_transfer.toml"))
+        alias_error=try ST.write_report(alias,report); nothing catch error; error end
+        @test alias_error isa ArgumentError && occursin("aliases source",sprint(showerror,alias_error))
         @test read(source)==before
         same=joinpath(dir,"same");mkdir(same)
         p=joinpath(same,"spatial_transfer.toml");write(p,"# $(ST.MARKER)\n")
