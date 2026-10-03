@@ -219,6 +219,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Fixed experimental Qt launch from HammerheadGUI's own active project by
+  recognizing the project's package name and UUID alongside its dependencies.
+
 - Added `experimental_qml_gui`: optional Qt controls with an interactive
   scientific plot, saved planar experiment/result startup, and a session handle
   for orderly shutdown. Each launch captures its package paths and retains logs
