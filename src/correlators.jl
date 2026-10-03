@@ -187,14 +187,16 @@ end
 # must be re-zeroed on every call. Masked pixels (submask true) are loaded at
 # the valid-pixel mean, so they contribute exactly zero after mean subtraction
 # — no intensity step at the mask edge to bias the correlation peak.
+function _window_mean(::Type{T}, sub, ::Nothing) where {T}
+    first_value = T(first(sub))
+    # Summing a repeated floating value can round its mean away from that
+    # value. Apodization would turn the residual into artificial texture.
+    all(v -> T(v) == first_value, sub) && return first_value
+    return T(sum(sub) / length(sub))
+end
+
+# Separate method: reassigning a variable that a closure captures would box it.
 function _window_mean(::Type{T}, sub, mask) where {T}
-    if mask === nothing
-        first_value = T(first(sub))
-        # Summing a repeated floating value can round its mean away from that
-        # value. Apodization would turn the residual into artificial texture.
-        all(v -> T(v) == first_value, sub) && return first_value
-        return T(sum(sub) / length(sub))
-    end
     total = zero(T)
     first_value = zero(T)
     same = true

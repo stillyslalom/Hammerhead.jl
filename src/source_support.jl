@@ -142,7 +142,8 @@ function _original_source_gate(context, predictor, grid, params, mask;
     maps = _prepare_original_support!(context)
     maps === nothing && return nothing
     shape = (length(grid.y), length(grid.x))
-    gate = gate === nothing ? fill(true, shape) : fill!(gate, true)
+    # A fresh name: reassigning a captured variable would box it.
+    out = gate === nothing ? fill(true, shape) : fill!(gate, true)
     itpu = predictor_interpolant(predictor.y, predictor.x, predictor.u)
     itpv = predictor_interpolant(predictor.y, predictor.x, predictor.v)
     wr, wc = params.window_size
@@ -150,7 +151,7 @@ function _original_source_gate(context, predictor, grid, params, mask;
     mr, mc = div.(params.search_area_size .- params.window_size, 2)
     function check_jobs(jobs)
         for (gi, gj, rs, cs) in jobs
-            gate[gi, gj] =
+            out[gi, gj] =
                 _original_window_contrast(maps[1], rs, cs, wr, wc, mask,
                                           predictor, itpu, itpv, -1) &&
                 _original_window_contrast(maps[2], rs - mr, cs - mc, sr, sc, mask,
@@ -165,7 +166,7 @@ function _original_source_gate(context, predictor, grid, params, mask;
     else
         check_jobs(grid.jobs)
     end
-    return gate
+    return out
 end
 
 @inline _source_informative(gate, gi, gj) = gate === nothing || gate[gi, gj]
