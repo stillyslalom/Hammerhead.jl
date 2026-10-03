@@ -109,9 +109,13 @@ The development checkout also includes [saved planar experiments](docs/src/howto
 [actual pass diagnostics](docs/src/howto/execution_diagnostics.md),
 [final-vector measurement history](docs/src/howto/measurement_history.md) with
 [GUI inspection](docs/src/howto/gui_companions.md),
-[exact pair-timing metadata](docs/src/howto/pair_timing.md), and
-[representative-pair recipe comparisons](docs/src/howto/pair_comparison.md).
+[exact pair-timing metadata](docs/src/howto/pair_timing.md),
+[actual-time tracking](docs/src/howto/tracking_timing.md), and
+[representative-pair recipe comparisons](docs/src/howto/pair_comparison.md)
+with [GUI controls](docs/src/howto/gui_comparison.md).
 The [synthetic uncertainty scorecard](docs/src/howto/validation_uncertainty.md)
 evaluates coverage and normalized errors with explicit measurement populations.
+The [uncertainty diagnostic](docs/src/howto/diagnostic_uncertainty.md) traces
+stored estimates without changing estimator defaults.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

@@ -38,6 +38,7 @@ const r_track = TrackingResult(
 
 @testset "HammerheadGUI.jl" begin
     include("test_experiments.jl")
+    include("test_recipe_comparison.jl")
     include("test_checkpoints.jl")
     include("test_companions.jl")
     @testset "Offscreen GL rendering" begin

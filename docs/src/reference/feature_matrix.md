@@ -62,3 +62,13 @@ this supported association. Numerical UQ availability is not applicability.
 metadata for planar sequences through an optional native companion. It does not
 add timing-aware tracking, exports, replay, checkpoint or stereo persistence;
 those workflows require separate timing semantics.
+
+[Actual-time tracking](../howto/tracking_timing.md) is a separate explicit CPU
+workflow. Its wrapper, dedicated native artifact and CSV schema preserve sample
+times through elapsed-time linking and secant velocity evaluation. Default
+tracking remains ordinal. The GUI currently supports ordinary `TrackingResult`
+only; extracting that payload from a timed result discards its timing semantics.
+
+[GUI recipe comparison](../howto/gui_comparison.md) uses the shared selected-pair
+comparison and report contracts. It runs saved CPU/KA planar recipes; richer
+GUI controls do not expand the core recipe scope or supply accuracy ground truth.

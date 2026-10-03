@@ -84,6 +84,15 @@ existing implementation is preferable; they are not commitments to add an API.
   report independent-seed evidence before changing estimator defaults. Account
   separately for zero-sigma cases, including the effects of covariance-ring
   truncation and the existing nonnegative variance clamp.
+- [x] Add a bounded diagnostic command that reproduces stored uncertainty from
+  retained final-sweep CPU windows and traces covariance-ring selection,
+  pre-clamp variance and numerical zero outcomes. Compare a few fixed-seed
+  baseline/noise/window-size and residual/phase cases without changing estimator
+  defaults; keep full truth-error coverage and supplementary alternatives distinct.
+  The [diagnostic investigation](docs/src/howto/diagnostic_uncertainty.md) and
+  [292 focused checks](test/test_diagnostic_uncertainty.jl) preserve the original
+  scorecard metrics. Negative pre-clamp variance explains the observed zero-sigma
+  cases; the broader coverage investigation remains open.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -156,9 +165,16 @@ provenance, supported claims, failure cases, and comparable timing conditions.
   delays before loading or opening output; `sync_atol`/`sync_rtol` and
   `missing_timestamps = :allow/:error` define tolerance and missing-data policy.
   Covered by [stereo timing regressions](test/test_stereo_timing.jl).
-- [ ] Support actual sample times for tracking and reject or explicitly handle
-  irregular sampling in analyses that assume a fixed interval. Validate unit and
-  coordinate compatibility before combining results.
+- [ ] Reject or explicitly handle irregular sampling in analyses that assume a
+  fixed interval. Validate unit and coordinate compatibility before combining results.
+- [x] Add explicit actual-time tracking with exact sample metadata, elapsed-time
+  prediction/gap validation, secant velocities and table export. Keep legacy
+  ordinal tracking unchanged and use a dedicated persisted artifact that cannot
+  silently lose timing through an older native-result reader. GUI inspection
+  and other irregular-time analysis remain separate extensions.
+  [Actual-time tracking](docs/src/howto/tracking_timing.md) has
+  [218 focused checks](test/test_tracking_timing.jl) for timing, linking, gaps,
+  exact secants, binding integrity, persistence and CSV provenance.
 - [x] Apply `PlanarTransform` consistently to planar-grid table and VTK exports,
   including origin, rotation, reflection, anisotropic scaling, and vector basis.
   Raw pixel results require explicit units and optional pair delay; attached
@@ -370,8 +386,17 @@ evidence.
   It also saves and displays the shared core quality report with the same
   provenance checks and metric definitions used by scripts.
   Its separate checkpoint view adds resumable built-in processing with committed
-  progress and cancellation. Stereo calibration, revision-result comparison,
-  ordinary replay progress/cancellation, and broader integration remain open.
+  progress and cancellation. Stereo calibration, ordinary replay
+  progress/cancellation, and broader integration remain open.
+- [x] Add a saved-recipe GUI comparison for an explicitly selected ordered image
+  pair. Share core recipe/input verification, populations, value bases and report
+  persistence; show the saved report's own identities after a failed rerun.
+  Keep differences between recipes distinct from accuracy measurements.
+  The [comparison workflow](docs/src/howto/gui_comparison.md) has
+  [57 focused checks](HammerheadGUI/test/test_recipe_comparison.jl) for captured
+  requests, failure recovery, protected outputs, report identity and view controls.
+- [ ] Inspect dedicated actual-time tracking artifacts in the GUI while retaining
+  timing metadata, actual-time units, trajectory selection and explicit gap semantics.
 - [x] Add editable GUI ROI selection using the existing core `ROI` semantics.
   The editor supports two-corner selection, numeric bounds, and full-image reset;
   batches preserve mask and coordinate semantics and snapshot the selected ROI.

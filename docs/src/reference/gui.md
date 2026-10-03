@@ -8,6 +8,8 @@ The desktop GUI uses GLMakie. The application and view functions below open
 interactive tools; `HammerheadGUI.Controllers` holds their state and actions
 for scripted use without a display. Start with the
 [GUI tour](../tutorials/gui_tour.md) for a worked session.
+Result browsing, interactive analysis and recorded processing details have a
+separate [result explorer reference](gui_results.md).
 Saved-recipe controls and views have their own
 [experiment workflow reference](gui_experiments.md).
 Resumable processing has a separate [checkpoint workflow reference](gui_checkpoints.md).
@@ -21,7 +23,7 @@ Pages = ["gui.md"]
 ```@autodocs
 Modules = [HammerheadGUI]
 Order = [:module, :type, :function, :constant, :macro]
-Pages = ["HammerheadGUI.jl", "widgets.jl", "result_explorer.jl", "mask_editor.jl",
+Pages = ["HammerheadGUI.jl", "widgets.jl", "mask_editor.jl",
          "preprocess_preview.jl", "roi_editor.jl", "batch_runner.jl", "scale_tool.jl",
          "calibration_review.jl", "stereo_batch.jl"]
 ```
@@ -36,15 +38,9 @@ For planar image selection, `ROIEditor` edits core `ROI` bounds and
 also operate directly on a batch controller. The `roi_editor!` view can
 be embedded alongside an image or result comparison.
 
-`ResultExplorer(path; lazy = true)` or `ResultExplorer(ResultFile(path))`
-browses a closed results file with one cached display result. Only the current
-frame's derived fields are retained; lazy navigation errors set `status` and
-preserve the prior frame. The key index has O(number of entries) metadata and
-does not follow live writes. Each complete selected result must fit memory.
-
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
-Pages = ["result_explorer.jl", "mask_editor.jl", "preprocess_preview.jl", "roi_editor.jl",
+Pages = ["mask_editor.jl", "preprocess_preview.jl", "roi_editor.jl",
          "batch_runner.jl", "scale_tool.jl", "calibration_review.jl", "stereo_batch.jl"]
 ```

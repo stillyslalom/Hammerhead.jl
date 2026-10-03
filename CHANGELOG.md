@@ -8,6 +8,15 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added explicit actual-time trajectory linking with exact sample metadata,
+  elapsed-time prediction and gap validation, and velocities over recorded
+  observation intervals. `TimedTrackingResult` preserves timing through its own
+  native artifact and CSV schema; ordinary tracking remains ordinal by default.
+- Added a bench-only uncertainty diagnostic that reproduces stored estimates
+  from retained final-sweep CPU windows and traces covariance-ring selection,
+  negative variance clamps and numerical zero outcomes. Full truth-error
+  coverage remains separate from centered and residual-inclusive alternatives;
+  production estimator defaults are unchanged.
 - Added opt-in planar pair-timing companions with exact timestamp values,
   observed delays/midpoints, source identifiers, and effective scaling-delay
   provenance. All selected metadata is checked before loading or opening output;
@@ -108,6 +117,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added a saved-recipe comparison workflow with explicit pair selection,
+  pixel/physical value bases, and shared core verification and report persistence.
+  Current choices remain separate from a previous report after edits or failures.
 - Added lazy inspection of recorded measurement history and execution diagnostics,
   with raw-result verification before physical display and transactional navigation.
   The experiment workflow can include recorded history in saved quality reports.
@@ -159,6 +171,11 @@ Optional execution, measurement-history and pair-timing companions and standalon
 recipe-comparison reports also use independent version-1 schemas. Existing
 result readers ignore companions; result-only copies may drop them. No execution
 history is inferred from older files' requested settings.
+
+Actual-time tracking uses a separate `timed_tracking_format_version = 1`
+artifact without the ordinary native `format_version` marker. Generic native
+readers reject it rather than silently discarding timing. Its table schema is
+`hammerhead-tracking-time-table-1`; the ordinary table schema is unchanged.
 
 The production GUI framework remains GLMakie. Qt/QML and other toolkit
 candidates are evaluations in [ROADMAP.md](ROADMAP.md), not supported

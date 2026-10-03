@@ -93,6 +93,15 @@ A [`TrackingResult`](@ref) stores positions, with velocities calculated from
 successive positions. Its converted scale retains `dt`; pass that scale to
 [`trajectory_velocities`](@ref) to obtain physical velocities.
 
+With explicit `sample_times`, [`track_particles`](@ref) returns a
+[`TimedTrackingResult`](@ref). Prediction and validation then use actual elapsed
+intervals. Its velocity method applies spatial `pixel_size` and divides by
+recorded time differences; `PhysicalScale.dt` does not divide these values again.
+Endpoint velocities span adjacent observations; interior velocities span the
+two outer observations. On irregular samples, those secants are interval-average
+slopes, not instantaneous derivatives at the central observation. See
+[actual-time tracking](../howto/tracking_timing.md) for units and persistence.
+
 **Frame-A attribution.** A [`PTVResult`](@ref) reports `x`/`y` as the
 *frame-A* particle positions and `u`/`v` as the displacement to frame B. This
 differs from multipass PIV with symmetric image deformation, which attributes

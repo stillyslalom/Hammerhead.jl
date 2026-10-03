@@ -66,6 +66,15 @@ current table exports omit timing companions. Existing `FrameSource` positional
 construction and default processing remain compatible; new source/clock/unit
 labels are optional metadata. See [pair timing](../reference/pair_timing.md).
 
+Actual-time tracking is explicit through `TimedTrackingResult`; the registered
+`Trajectory` and `TrackingResult` layouts and default ordinal behavior remain
+unchanged. Dedicated artifacts use `timed_tracking_format_version = 1` and omit
+the ordinary native marker, so generic native readers reject them. Use
+`save_timed_tracking` and `load_timed_tracking` to retain essential timing.
+The separate `hammerhead-tracking-time-table-1` CSV schema preserves exact
+timestamps and velocity time support. Explicitly extracting the legacy payload
+discards timing semantics. See [tracking timing](../reference/tracking_timing.md).
+
 Representative-pair comparisons use independent version-1 TOML snapshots,
 identified by `pair_comparison_format_version`. They preserve selected-input
 provenance, settings differences, units and comparison populations. Loading

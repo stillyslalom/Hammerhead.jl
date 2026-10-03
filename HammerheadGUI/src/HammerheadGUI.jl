@@ -30,6 +30,7 @@ include("controllers/preprocess_preview.jl")   # before batch_runner (set_prepro
 include("controllers/roi_editor.jl")
 include("controllers/batch_runner.jl")
 include("controllers/experiment_controller.jl")
+include("controllers/recipe_comparison.jl")
 include("controllers/checkpoint_controller.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
@@ -61,6 +62,8 @@ export preprocess_steps, experiment_record, save_batch_experiment,
        experiment_quality_report, save_experiment_quality_report
 export CheckpointController, create_checkpoint!, open_checkpoint!, refresh_checkpoint!,
        checkpoint_explorer, export_checkpoint_results!
+export RecipeComparisonController, open_comparison_record!, set_comparison_pairs!,
+       compare!, open_comparison_report!, save_comparison_report!, comparison_summary
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -95,6 +98,9 @@ export preprocess_steps, experiment_record, save_batch_experiment,
        experiment_workflow, experiment_workflow!
 export CheckpointController, create_checkpoint!, open_checkpoint!, refresh_checkpoint!,
        checkpoint_explorer, export_checkpoint_results!, checkpoint_workflow, checkpoint_workflow!
+export RecipeComparisonController, open_comparison_record!, set_comparison_pairs!,
+       compare!, open_comparison_report!, save_comparison_report!, comparison_summary,
+       recipe_comparison, recipe_comparison!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,
@@ -104,6 +110,7 @@ export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
+include("views/recipe_comparison.jl")
 include("views/experiment_workflow.jl")
 include("views/checkpoint_workflow.jl")
 include("views/mask_editor.jl")

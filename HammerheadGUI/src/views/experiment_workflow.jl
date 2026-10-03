@@ -78,6 +78,7 @@ function experiment_workflow!(target,ec::ExperimentController;
     report_text=Observable("Save a quality report to inspect its summary here.")
     tabs=Menu(content[1,1:2];options=[("complete recipe",:recipe),("run history",:history),("quality report",:quality)])
     checkpoint_btn=Button(content[1,3];label="checkpoint / resume…",tellwidth=false)
+    comparison_btn=Button(content[4,1:3];label="compare a representative pair…",tellwidth=false)
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
@@ -180,6 +181,15 @@ function experiment_workflow!(target,ec::ExperimentController;
         guarded() do
             record=deepcopy(ec.record[])
             display(GLMakie.Screen(),checkpoint_workflow(CheckpointController();record))
+        end
+    end
+    on(comparison_btn.clicks) do _
+        guarded() do
+            record=deepcopy(ec.record[])
+            record===nothing && throw(ArgumentError("open or snapshot an experiment first"))
+            protected=filter(!isempty,[ec.output_path[],ec.run_record_path[]])
+            controller=RecipeComparisonController(record;protected_paths=protected)
+            display(GLMakie.Screen(),recipe_comparison(controller))
         end
     end
     gl

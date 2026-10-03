@@ -252,6 +252,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Observed, declared and effective scaling delays remain distinct. Source IDs
   are opaque and missing clock/unit labels remain unknown. Bind the current
   packet to raw numerical result content; generic copies/exports omit it.
+- `tracking_timing.jl` — explicit `TimedTrackingResult` owning an unchanged
+  `TrackingResult` and exact `TrackingTiming` metadata. Default tracking remains
+  ordinal. Actual-time prediction and scattered validation normalize elapsed
+  intervals to the first transition; returned secants divide by actual time and
+  use only the spatial scale. Validate binding before conversion or rebinding.
+  Dedicated timed artifacts omit the generic native marker so older readers
+  cannot discard timing silently; timed CSV preserves exact stamps and stencil
+  support. GUI timed-result inspection remains unsupported.
 - `experiment_checkpoint.jl` — separate version-1 built-in planar checkpoint
   protocol: disjoint metadata/result directories, immutable singleton native
   payloads and commit descriptors, strict ordered input/recipe/environment
@@ -441,6 +449,12 @@ against the raw result before physical conversion and commit navigation state
 only after preflight succeeds. Retain one display payload/current packet; a
 separate display digest detects later array edits. Execution companions v1 bind
 entry keys, not numerical result content. Missing history is never inferred.
+
+The separate recipe-comparison controller captures complete before/after records,
+selected pairs and value basis before notifications or asynchronous scheduling.
+It uses the core selected-pair comparison and report contracts. Current choices
+and the last report's identities remain distinct after failure. No cancellation
+or uninterrupted CPU responsiveness is promised for a single-pair comparison.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
@@ -776,11 +790,19 @@ as contrast evidence; preserve any genuine processing-precision difference.
   `test_quality_history.jl` checks report-v2 coverage, event/origin populations,
   packet/run association and v1 compatibility. GUI `test_companions.jl` checks
   transactional loading, physical-display binding, release and panel layouts.
+- `test_tracking_timing.jl` checks elapsed-time linking, exact metadata, secant
+  time support, scale/delay separation and dedicated artifact/table semantics.
+  GUI `test_recipe_comparison.jl` checks captured requests, verified comparisons,
+  failed-request report preservation, protected saves and paged inspection.
 - `bench/validation_uncertainty.jl` evaluates controlled primary-only synthetic
   outputs across fixed seeds. Component UQ populations include zero sigma;
   normalized errors require positive sigma. Counts retain arithmetic failures,
   pooled moments stream, and quantiles remain per seed. Its regression file
   checks population arithmetic, origin guards, reproducibility and output paths.
+- `bench/diagnostic_uncertainty.jl` audits retained final-sweep CPU windows with
+  independent covariance tests and explicit numerical zero classifications.
+  Keep full truth-error coverage, in-sample centering and residual-inclusive
+  sensitivity results distinct; these are diagnostics, not estimator calibration.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)
