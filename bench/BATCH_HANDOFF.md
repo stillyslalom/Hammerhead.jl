@@ -151,7 +151,7 @@ array currently allocated in `_ensure_batch!`:
 - `CA`, `CB`, `Rt`;
 - `meanA_d`, `meanB_d`;
 - `vals_d`, `locs_d`, `out_d`;
-- `uqstats_d`, `uqmeans_d`, `uqdcs_d`;
+- `uqstats_d`, `uqdcs_d`;
 - `origins_d`;
 - `fwd` and the underlying inverse plan `bwd.p`.
 

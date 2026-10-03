@@ -129,7 +129,6 @@ mutable struct _AMDGPUCorrelationEngine{T}
     out_d::ROCArray{T,2}                  # (5 + 2*(kpk-1), bs) packed analysis output
     out_host::Matrix{T}
     uqstats_d::ROCArray{Float64,3}
-    uqmeans_d::ROCArray{Float64,2}
     uqdcs_d::ROCArray{T,4}                # (bs+1, 2, mm, mm) cached smoothed ΔC
     uqstats_host::Array{Float64,3}
     origins_host::Matrix{Int}
@@ -155,7 +154,7 @@ function _amdgpu_release_batch!(engine::_AMDGPUCorrelationEngine{T}) where {T}
     engine.bs == 0 && return engine
     for a in (engine.CA, engine.CB, engine.Rt, engine.meanA_d, engine.meanB_d,
               engine.vals_d, engine.locs_d, engine.out_d, engine.uqstats_d,
-              engine.uqmeans_d, engine.uqdcs_d, engine.origins_d)
+              engine.uqdcs_d, engine.origins_d)
         AMDGPU.unsafe_free!(a)
     end
     engine.fwd === nothing || AMDGPU.unsafe_free!(engine.fwd)
@@ -170,7 +169,6 @@ function _amdgpu_release_batch!(engine::_AMDGPUCorrelationEngine{T}) where {T}
     engine.out_d = AMDGPU.zeros(T, 0, 0)
     engine.out_host = Matrix{T}(undef, 0, 0)
     engine.uqstats_d = AMDGPU.zeros(Float64, 0, 0, 0)
-    engine.uqmeans_d = AMDGPU.zeros(Float64, 0, 0)
     engine.uqdcs_d = AMDGPU.zeros(T, 0, 0, 0, 0)
     engine.uqstats_host = Array{Float64,3}(undef, 0, 0, 0)
     engine.origins_host = Matrix{Int}(undef, 0, 2)
@@ -259,7 +257,7 @@ function _make_amdgpu_engine(params::PIVParameters, ::Type{T},
         AMDGPU.zeros(T, 0, 0, 0), AMDGPU.zeros(T, 0), AMDGPU.zeros(T, 0),
         AMDGPU.zeros(T, 0, 0), AMDGPU.zeros(Int32, 2, 0, 0), AMDGPU.zeros(T, 0, 0),
         Matrix{T}(undef, 0, 0), AMDGPU.zeros(Float64, 0, 0, 0),
-        AMDGPU.zeros(Float64, 0, 0), AMDGPU.zeros(T, 0, 0, 0, 0),
+        AMDGPU.zeros(T, 0, 0, 0, 0),
         Array{Float64,3}(undef, 0, 0, 0),
         Matrix{Int}(undef, 0, 2), AMDGPU.zeros(Int, 0, 0), nothing, nothing)
     push!(cache.engines, engine)
@@ -314,7 +312,6 @@ function _ensure_batch!(engine::_AMDGPUCorrelationEngine{T}, bs::Int) where {T}
         engine.out_d = AMDGPU.zeros(T, 5 + 2 * (engine.kpk - 1), bs)
         engine.out_host = Matrix{T}(undef, 5 + 2 * (engine.kpk - 1), bs)
         engine.uqstats_d = AMDGPU.zeros(Float64, 2, UQ_NSTATS, bs)
-        engine.uqmeans_d = AMDGPU.zeros(Float64, 2, bs)
         mm = max(engine.wsize...)
         engine.uqdcs_d = AMDGPU.zeros(T, bs + 1, 2, mm, mm)  # +1: channel-conflict pad
         engine.uqstats_host = Array{Float64,3}(undef, 2, UQ_NSTATS, bs)
@@ -438,9 +435,9 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         if uncertainty_u !== nothing
-            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.CA, engine.CB,
                              wr, wc; ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d, engine.uqdcs_d,
+            _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqdcs_d,
                               engine.CA, engine.CB, wr, wc, nreal, 0, false;
                               ndrange = (2, UQ_NSTATS, nreal))
         end
@@ -517,9 +514,9 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
         _ka_gather!(ka)(engine.CA, engine.CB, A_d, B_d, engine.origins_d,
             engine.apod_d, engine.meanA_d, engine.meanB_d, maskarg, hasmask;
             ndrange = (wr, wc, nreal))
-        _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+        _ka_uq_fill!(ka)(engine.uqdcs_d, engine.CA, engine.CB,
                          wr, wc; ndrange = (2, nreal))
-        _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqmeans_d, engine.uqdcs_d,
+        _ka_uq_stats!(ka)(engine.uqstats_d, engine.uqdcs_d,
                           engine.CA, engine.CB, wr, wc, nreal, 0, false;
                           ndrange = (2, UQ_NSTATS, nreal))
         KernelAbstractions.synchronize(ka)
@@ -595,9 +592,9 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
                         engine.origins_d, engine.apod_d, engine.meanA_d,
                         engine.meanB_d, maskarg, hasmask; ndrange = (wr, wc, nreal))
         if uacc !== nothing
-            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.uqmeans_d, engine.CA, engine.CB,
+            _ka_uq_fill!(ka)(engine.uqdcs_d, engine.CA, engine.CB,
                              wr, wc; ndrange = (2, nreal))
-            _ka_uq_stats!(ka)(uacc.stats, engine.uqmeans_d, engine.uqdcs_d,
+            _ka_uq_stats!(ka)(uacc.stats, engine.uqdcs_d,
                               engine.CA, engine.CB, wr, wc, nreal,
                               first(jobrange) + start - 2, true;
                               ndrange = (2, UQ_NSTATS, nreal))

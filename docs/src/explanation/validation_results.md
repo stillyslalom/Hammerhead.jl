@@ -23,39 +23,74 @@ An image pair with no particles produces no accepted vectors: every window is
 reported as unavailable (`NaN`) rather than as a zero displacement. See
 [windows without displacement information](noninformative_windows.md).
 
-## Stored uncertainty is too small
+## How well the stored uncertainty covers the error
 
 The correlation-statistics uncertainty ([Wieneke2015](@citet); see
-[uncertainty quantification](uncertainty.md)) under-covers the true error on
-these clean synthetic images:
+[uncertainty quantification](uncertainty.md)) estimates the random part of
+the error. These measurements come from a repeated-noise study made for
+release 0.2. To measure that part directly, each scene was processed with 8
+independent realizations of Gaussian pixel noise (standard deviation 3% of
+the particle peak intensity) on 256 × 256 px pairs with 0.02 particles per
+pixel and 3 px particle images (``e^{-2}`` diameter). The spread of a
+vector's error over the realizations is its random error; the mean is its
+systematic error.
 
-| Population | 1σ coverage u / v | 2σ coverage u / v |
-|:--|--:|--:|
-| Baseline translation, 3 seeds | 18% / 15% | 46% / 54% |
-| Baseline translation, 8 seeds | 18% / 17% | 45% / 56% |
-| Gaussian reference | 68% | 95% |
+| Final windows | Random error within 1σ / 2σ | RMS σ / RMS random error | Windows with σ = 0 |
+|:--|--:|--:|--:|
+| 32 px, `[64, 32, 32]` | 60–62% / 92–93% | 0.92–0.94 | none |
+| 16 px, `[32, 16, 16]` | 53–55% / 89–90% | 0.90–0.91 | none |
+| Gaussian reference | 68% / 95% | 1 | |
 
-Two effects contribute:
+The ranges span the u and v components. Gentle shear with midpoint truth,
+higher noise (10% of peak) and 5 px particles give the same picture. The
+average of σ over the 8 realizations covers each window's random error at
+60–65% / 91–95%, so the estimate is right on average for a given window. A
+single σ comes from the few particles in one window and scatters by 30–40%
+between realizations; that scatter, not a bias, lowers the coverage of
+individual vectors, in the way a t-statistic with three to six degrees of
+freedom covers less than a Gaussian. For 16 px windows σ is also about 10%
+low, which matches the underestimation [Wieneke2015](@citet) reports for
+small windows.
 
-- About 12% of windows report **σ = 0**. The covariance sum entering the
-  estimate comes out negative for those windows and is clamped to zero. With
-  repeated independent noise on the same scene, those windows show clearly
-  positive error variance.
-- For windows with σ > 0, the estimate is still small compared with the
-  observed error. Adding noise (uniform half-width 0.03) raises 2σ coverage to
-  about 68%, so the shortfall is largest on clean images.
+## Systematic error on clean images
 
-A Bartlett-weighted covariance sum (all lags to ±4 with triangular weights,
-which cannot go negative) covered noticeably better in paired repeated-noise
-tests: 2σ coverage of paired differences rose from about 90% to about 97%.
-Changing the production estimator in `src/uncertainty.jl` is an open
-investigation.
+Without image noise, the error of these 3 px particle images is almost
+entirely systematic: 0.010–0.014 px, nearly the same in every window. It
+depends on the fractional part of half the displacement (it vanishes for
+even-integer displacements) and falls quickly with particle size, to
+0.004–0.006 px for 4 px and below 0.003 px for 5 px particle images, which
+identifies it as interpolation error of the image deformation on
+under-sampled particle images. The uncertainty estimate does not see
+systematic error: with `[32, 16, 16]` on 128 × 128 px pairs its median σ is
+0.005–0.009 px, so only 18–28% of total errors fall within 1σ and 59–72%
+within 2σ. Check systematic error with
+[`peak_locking`](@ref) or a ground-truthed [`error_statistics`](@ref), and use
+particle images of 4 px or more when errors at the 0.01 px level matter.
 
-Until then, treat stored σ as a relative indicator for comparing windows and
-recipes, and use a median over accepted vectors when comparing it with an
-independent error estimate. Rendering particles by pixel-area integration
-instead of point sampling lowered the error and lowered coverage further, so a
-more realistic renderer widens the gap rather than closing it.
+## How the estimate is formed
+
+Two details of the covariance sum decide whether σ covers the random error.
+
+- The covariance sums use raw products of the smoothed correlation-difference
+  field. The zero-mean condition of the method is the converged correlation
+  peak itself. Centring each window's field on its own mean, as releases
+  before 0.2 did, forces the sum over all lags to zero and biased the
+  truncated ±4 px sum low by about the number of summed lags divided by the
+  window's pixel count, a third of the variance for 16 px windows.
+- The variance is never taken below its zero-lag term, the independent-pixel
+  limit of the method. A truncated sum below that bound is sampling noise in
+  a small window. Before 0.2 such sums were clamped to zero and 5–12% of
+  16 px windows (1–2% of 32 px windows) reported σ = 0 although their errors
+  varied between noise realizations.
+
+Together these raised the 16 px coverage from 42–44% / 74–75% to the values
+in the table above. A Bartlett-weighted (triangular) covariance sum, which
+also cannot go negative, was evaluated as an alternative; it gave σ 17–20%
+below the measured random error and no better coverage.
+
+When comparing σ with an independent error estimate, report the
+valid-vector selection and use a median over accepted vectors, since a few
+near-outlier windows report very large σ.
 
 ## Spatial response
 

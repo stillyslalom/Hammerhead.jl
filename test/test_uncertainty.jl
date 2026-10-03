@@ -3,6 +3,7 @@ using Test
 using Random
 using Statistics
 using JLD2: jldopen
+using StableRNGs
 
 # Wieneke (2015) correlation-statistics uncertainty. The sweep below
 # reproduces the paper's own validation (its figure 6): on uniform flow with
@@ -49,6 +50,53 @@ using JLD2: jldopen
         # Monotone trend across the sweep.
         @test issorted(med_pred)
         @test med_pred[end] > 4 * med_pred[1]
+    end
+
+    # Per-vector coverage against midpoint truth on a gently sheared flow,
+    # with the repeated-final-window schedule of the synthetic validation
+    # study. Random error dominates here (2 px particles, moderate noise), so
+    # σ must cover the error at about the nominal rate. A single-window σ is
+    # itself a noisy estimate (few independent particle contributions), so
+    # 1σ coverage sits near 55%, as for a t-statistic with few degrees of
+    # freedom (this scene: 55% / 92% at 1σ / 2σ). The pre-0.2 estimator gave
+    # 40% / 70% and σ = 0 on 11% of these windows (negative truncated
+    # covariance sums clamped to zero).
+    @testset "Coverage of midpoint-truth error; no zero σ" begin
+        n, g, u0, v0 = 160, 0.01, 2.3, -1.4
+        c = (n + 1) / 2
+        cpasses = multipass_parameters([32, 16, 16]; padding = true,
+                                       apodization = :gauss, uncertainty = true)
+        errs = Float64[]
+        sigmas = Float64[]
+        for seed in (1, 2)
+            rng = StableRNG(seed)
+            imgA = zeros(n, n)
+            imgB = zeros(n, n)
+            for _ in 1:780
+                row, col = rand(rng) * (n + 16) - 8, rand(rng) * (n + 16) - 8
+                add_particle!(imgA, (row, col), 2.0)
+                add_particle!(imgB, (row + v0, col + u0 + g * (row - c)), 2.0)
+            end
+            imgA .+= 0.05 .* randn(rng, n, n)
+            imgB .+= 0.05 .* randn(rng, n, n)
+            r = run_piv(imgA, imgB, cpasses)
+            valid = .!(r.outliers .| r.mask)
+            valid[[1, end], :] .= false     # interior, fully textured windows
+            valid[:, [1, end]] .= false
+            for j in axes(r.u, 2), i in axes(r.u, 1)
+                valid[i, j] || continue
+                # Symmetric deformation measures at the trajectory midpoint.
+                push!(errs, r.u[i, j] - (u0 + g * (r.y[i] - v0 / 2 - c)), r.v[i, j] - v0)
+                push!(sigmas, r.uncertainty_u[i, j], r.uncertainty_v[i, j])
+            end
+        end
+        @test length(errs) > 1000
+        @test count(==(0), sigmas) == 0
+        @test count(isfinite, sigmas) >= 0.99 * length(sigmas)
+        cover1 = count(abs.(errs) .<= sigmas) / length(errs)
+        cover2 = count(abs.(errs) .<= 2 .* sigmas) / length(errs)
+        @test 0.45 < cover1 < 0.85
+        @test 0.82 < cover2 < 0.99
     end
 
     @testset "Clean images give small σ; threaded ≡ serial" begin

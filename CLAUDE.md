@@ -306,8 +306,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   smoothed field once per (component, window) into a batch-major device scratch
   buffer `uqdcs[k, comp, r, c]` (window index leading for coalesced wavefront
   reads, like `Rt`; +1 leading-dim pad) in plane precision T — so the Float64
-  read-back is bitwise-identical to the recompute — and fuses in the window
-  mean; the stats kernel reads the cache. Result: the stats kernel dropped
+  read-back is bitwise-identical to the recompute; the stats kernel reads the
+  cache (raw products, no window-mean centring, matching the CPU). Result: the stats kernel dropped
   ~5–8×, the whole UQ-multipass pipeline ~2× (e.g. Float64 2048² 1.50 s →
   0.74 s device time), `:ka`↔`:cpu` still ~3e-15 and ensemble bitwise, all on
   hardware. Phase 5 flipped the plane batch to *plane-major* `Rt[i, j, k]`
@@ -514,15 +514,24 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   multipass schedule (`max_iterations` on the final pass, or the equivalent
   explicit repeated final window size). Statistics accumulate
   in Float64 (`2 × UQ_NSTATS` per window) and are additive across pairs
-  (that's how the ensemble path pools them). The covariance sums S_δ are
-  summed ring by ring until a ring's max drops below `0.05·S00`; inner rings
-  are taken whole because their negative members are real signal×noise
+  (that's how the ensemble path pools them). The S_δ are raw products of the
+  (1,2,1)-smoothed ΔC_i field — never centre it on the window mean: that
+  forces the all-lag sum to zero and biased the ±4 truncated sum low by
+  ~81/N (a third of the variance at 16 px; it caused every σ = 0). The sums
+  are taken ring by ring until a ring's max drops below `0.05·S00`; inner
+  rings are taken whole because their negative members are real signal×noise
   anticorrelation — a per-term positive threshold inflates σ 2–5× at high
-  noise. Estimates describe the random error only; near-outlier windows
+  noise. The variance is floored at S00 (eq 8 independent limit; smoothed
+  covariance is non-negative in the paper's model), so σ = 0 only for
+  identical deformed windows. Bartlett weighting was evaluated and rejected
+  (σ ~18% low). Estimates describe the random error only; near-outlier windows
   legitimately report huge σ, so validation comparisons use medians over
-  non-outlier vectors. Known open issue: σ under-covers the actual error on
-  synthetic data and a clamped negative covariance sum yields σ = 0 for some
-  windows (see ROADMAP).
+  non-outlier vectors. Measured with repeated noise realizations, σ is ~0.9–1×
+  the random error; single-vector coverage is ~52–62% / 89–93% (1σ/2σ)
+  because σ̂ itself scatters 30–40% (t-like, few dof) — that is intrinsic,
+  not a bug. Clean-image total error with 3 px (4σ) SyntheticData particles is
+  ~0.01 px systematic deformation-interpolation bias that UQ cannot see, so
+  coverage tests must add noise and use midpoint truth.
 - **Physical units:** result arrays always stay in measured units (px/frame
   for planar and PTV, world-per-frame for stereo); a `PhysicalScale`
   (Float64 pixel_size + dt, display-only unit label strings) attached via
