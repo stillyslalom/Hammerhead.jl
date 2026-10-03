@@ -16,6 +16,15 @@ inputs. Runtime-only verification distinguishes capture, metadata-only loading a
 loading with an independently checked selected result. Parameters and correlation
 planes are explicitly excluded from binding.
 
+`execution_diagnostics_data(packet; result=raw)` verifies already loaded raw
+measurement fields and geometry without rereading a native payload. Its detached
+data has `inspection_state="supplied_measurement_fields_verified"`; the immutable
+packet's original state is unchanged and no result is retained. Omitting `result`
+preserves existing capture/metadata/read status. Verification concerns supplied
+fields, not the source file or calibration. This is the shared path used by
+[version-3 quality reports](run_quality.md#Opt-in-format-3) and lazy GUI inspection;
+report loading preserves past generation checks and does not reverify results.
+
 ```@autodocs
 Modules = [Hammerhead]
 Pages = ["stereo_execution_diagnostics.jl"]

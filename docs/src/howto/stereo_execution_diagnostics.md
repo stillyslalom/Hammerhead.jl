@@ -106,6 +106,23 @@ inspection status is runtime-only and is not persisted as a verification claim.
 Missing metadata returns `nothing`; unsupported versions or malformed metadata
 raise errors. File size/mtime checks do not provide concurrent-writer safety.
 
+When a consumer already loaded the raw payload, verify it without loading it
+again:
+
+```@example stereo_execution_diagnostics
+raw = index[2]
+checked = execution_diagnostics_data(metadata_only; result=raw)
+@assert checked["verification"]["inspection_state"] == "supplied_measurement_fields_verified"
+@assert checked["verification"]["measurement_field_binding_checked"]
+@assert execution_diagnostics_data(metadata_only)["verification"]["inspection_state"] == "metadata_only"
+```
+
+The returned dictionary is detached; the packet remains unchanged and retains
+no supplied result. The fields must match the captured **raw** values and scale,
+before any physical display conversion. This verifies measurement fields and
+geometry, without checking native source bytes or the excluded parameters/planes.
+For bounded aggregate counts, use [execution-aware quality reports](run_quality.md).
+
 The packet retains O(camera passes) scalar observations, not field/image arrays or
 sweep traces. Noncollecting execution retains the current result and bounded
 prefetched images; retaining packets alone does not retain earlier results. Opt-in
@@ -115,9 +132,10 @@ to loaded code; it does not identify edited code already loaded into a process.
 
 Neither reader nor packet verifies calibration, input bytes, synchronization,
 physical accuracy or final-vector measurement origin. Checksums are integrity
-checks, not signatures. Ensemble diagnostics, stereo measurement history,
-checkpoint/replay integration, GUI companion inspection and quality-report
-consumption are outside this slice. Existing stereo output, GUI field display and
-stored-field quality metrics continue to work without consuming this companion.
+checks, not signatures. Ensemble diagnostics, stereo measurement history
+and checkpoint/replay integration remain unsupported. Lazy native GUI inspection
+uses the same supplied-raw verification before physical conversion; see
+[recorded processing details](gui_companions.md). Stored-field quality metrics
+remain separate from the opt-in execution report section.
 
 See the [stereo diagnostics reference](../reference/stereo_execution_diagnostics.md).

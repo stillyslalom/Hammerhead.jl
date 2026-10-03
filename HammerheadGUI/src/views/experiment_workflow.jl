@@ -16,11 +16,17 @@ offscreen tests do not establish responsive interaction. Open the checkpoint
 workflow for resumable built-in recipes; its candidate preserves the complete recipe.
 Referenced custom scripts require a caller-supplied controller function and are
 never loaded by this view. Large recipe/history text can be inspected in pages.
+Report history/execution toggles are independent, unchecked by default and
+captured before selecting a path. Execution opts into core format 3; report
+verification is at generation time, and failed scans/saves retain the previous
+summary with its own run/recipe/input identity. `report_path_picker` optionally
+returns a destination string instead of opening the default TOML save dialog.
 """
 function experiment_workflow(ec::ExperimentController=ExperimentController();
-                             batch::Union{Nothing,BatchRunner}=nothing,size=(1100,800))
+                             batch::Union{Nothing,BatchRunner}=nothing,size=(1100,800),
+                             report_path_picker::Function=()->save_file(;filterlist="toml"))
     fig=Figure(;size)
-    experiment_workflow!(fig[1,1],ec;batch)
+    experiment_workflow!(fig[1,1],ec;batch,report_path_picker)
     fig
 end
 
@@ -46,7 +52,8 @@ Embed the saved-experiment workflow. The batch bridge creates a new intact
 record; reopened recipes are never projected onto the narrow batch form.
 """
 function experiment_workflow!(target,ec::ExperimentController;
-                              batch::Union{Nothing,BatchRunner}=nothing)
+                              batch::Union{Nothing,BatchRunner}=nothing,
+                              report_path_picker::Function=()->save_file(;filterlist="toml"))
     gl=GridLayout(target)
     controls=GridLayout(gl[1,1];valign=:top,tellheight=false)
     rowgap!(controls,3)
@@ -79,6 +86,8 @@ function experiment_workflow!(target,ec::ExperimentController;
     quality_mode=GridLayout(controls[14,1])
     quality_history_toggle=Toggle(quality_mode[1,1];active=false,halign=:left)
     Label(quality_mode[1,2],"include recorded history in report";halign=:left,fontsize=13,word_wrap=true,width=195,tellwidth=false)
+    quality_execution_toggle=Toggle(quality_mode[2,1];active=false,halign=:left)
+    Label(quality_mode[2,2],"include recorded execution in report";halign=:left,fontsize=13,word_wrap=true,width=195,tellwidth=false)
     status_label=lift(s->_experiment_wrap_text(s;max_lines=3),ec.status)
     Label(controls[16,1],status_label;halign=:left,justification=:left,
           font=mono,fontsize=12,width=240,tellwidth=false)
@@ -178,11 +187,13 @@ function experiment_workflow!(target,ec::ExperimentController;
     end
     on(quality_btn.clicks) do _
         include_measurement_history=quality_history_toggle.active[]
+        include_execution_diagnostics=quality_execution_toggle.active[]
         guarded() do
-            path=save_file(;filterlist="toml")
+            path=report_path_picker()
             isempty(path) && return
-            report=save_experiment_quality_report(path,ec;include_measurement_history)
-            report_text[]="Saved report: $path\n\n"*sprint(show,MIME"text/plain"(),report)
+            report=save_experiment_quality_report(path,ec;include_measurement_history,include_execution_diagnostics)
+            provenance=quality_report_data(report)["provenance"]
+            report_text[]="Saved report: $path\nReported run: $(provenance["run_id"])\nRecipe: $(provenance["recipe_id"])\nInput: $(provenance["input_id"])\nVerification describes report generation time.\n\n"*sprint(show,MIME"text/plain"(),report)
             section[]=:quality
             ec.status[]="quality report saved"
         end

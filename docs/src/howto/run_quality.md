@@ -127,12 +127,74 @@ unsupported stereo/PTV/tracking history; PTV/tracking entries have no numerical
 quality group in format 2. Existing malformed packets or a planar packet attached
 to an unsupported result kind are refused. Each selected raw result is loaded
 once and its companion verified before aggregation; neither payload is retained
-in the report. Source identities and overwrite protections apply to both formats.
+in the report. Source identities and overwrite protections apply to all report formats.
 
-The GUI experiment workflow's unchecked **include recorded history in report**
-toggle selects format 2. Its default remains format 1. The GUI controller methods
+Opt into recorded planar or per-camera stereo execution with
+`include_execution_diagnostics=true`:
+
+```@example quality_execution
+using Hammerhead, Random
+a = rand(MersenneTwister(238), Float32, 48, 48)
+b = circshift(a, (1,2))
+grid = DewarpGrid(x=1.:48., y=48.:-1.:1.)
+cam1 = PinholeCamera([100. 0 15. 0; 0 100. 0 0; 0 0 1. 100.])
+cam2 = PinholeCamera([100. 0 -15. 0; 0 100. 0 0; 0 0 1. 100.])
+dw1 = ImageDewarper(cam1, grid, (48,48))
+dw2 = ImageDewarper(cam2, grid, (48,48))
+p = PIVParameters(window_size=16, overlap=8, max_iterations=4,
+    convergence_tol=1e6, uod_enable=false)
+mktempdir() do directory
+    path = joinpath(directory, "stereo.jld2")
+    run_piv_stereo_sequence(fill((a,b,a,b),2), dw1, dw2, p; output=path,
+        record_diagnostics=true, collect_results=false, progress=false, threaded=false)
+    report = quality_report(ResultFile(path); include_execution_diagnostics=true)
+    saved = save_quality_report(joinpath(directory,"quality-v3.toml"), report)
+    data = quality_report_data(load_quality_report(saved))
+    @assert data["quality_report_format_version"] == 3
+    @assert data["execution_diagnostics"]["verification_time"] == "report_generation"
+    data["execution_diagnostics"]["groups"]["cam1"]["counts"]
+end
+```
+
+This emits format 3. Adding `include_measurement_history=true` includes the
+existing history section in the same version-3 report; without the execution
+option, formats 1 and 2 retain their definitions. Both options require a direct
+whole-file `ResultFile` or the verified record/run overload. A present planar
+execution packet in an associated report must match the selected recipe/input
+IDs and absolute pair index. Stereo packets have no supported recipe association;
+consume them through generic native-file reports without inventing one.
+
+Execution coverage and discrete counts are separate from stored-field quality.
+Fixed groups `planar`, `cam1`, and `cam2` count eligible/recorded/missing entries,
+passes, requested/executed sweeps, actual tolerance checks and stopping reasons.
+Last-check support describes each pass's **last recorded check**, not every
+check. Final primary support describes only each execution's final pass before
+validation/filling. Missing metadata reduces coverage; it is not a zero-event
+observation. Native result types cannot identify an unrecorded ensemble run,
+so an absent packet is not classified by its inferred workflow.
+
+Planar execution format 1 provides entry-key linkage without measurement-field
+binding. Stereo companions additionally check both camera roles, reconstructed
+raw measurement fields and independent grid geometry against the already loaded
+result. Each native payload is read once. Invalid markers are rejected even in
+empty files; wrong-kind or malformed companions are refused. PTV/tracking have
+explicit unsupported counts and no execution group.
+
+Camera observations stay in **dewarped pixels**, even when displayed fields use
+physical units. Residual amplitudes are not pooled across entries with possibly
+different processing grids; use individual companions for mean/RMS/max values.
+Tolerance outcomes, including empty comparisons, do not establish measurement
+acceptance or accuracy. No 3C residual, calibration check, source authentication,
+uncertainty association or replacement history is inferred from execution counts.
+The saved section records checks **when the report was generated**. Loading its
+TOML does not open result files or perform fresh measurement-field verification.
+
+The GUI experiment workflow's **include recorded history in report** toggle
+selects format 2; **include recorded execution in report** selects format 3,
+with history included if both are enabled. Both default to unchecked, preserving
+format 1. The GUI controller methods
 `experiment_quality_report` and `save_experiment_quality_report` expose the same
-`include_measurement_history` keyword. The result explorer offers separate
+`include_measurement_history` and `include_execution_diagnostics` keywords. The result explorer offers separate
 [recorded processing details](gui_companions.md) for one selected frame/node.
 
 Saving validates and serializes before opening the destination, and rejects

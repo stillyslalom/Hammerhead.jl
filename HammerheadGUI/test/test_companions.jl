@@ -118,7 +118,7 @@ end
         stereo=StereoPIVResult(raw.x,raw.y,0.,raw.u,raw.v,raw.u,raw.uncertainty_u,raw.uncertainty_v,raw.uncertainty_u,raw.outliers,raw.mask,raw,raw,raw.parameters)
         mixed=joinpath(dir,"mixed.jld2");companion_native_file(mixed,[raw,stereo],[packet[],nothing])
         mixed_ex=ResultExplorer(mixed;lazy=true);set_companion_inspection!(mixed_ex);set_frame!(mixed_ex,2)
-        @test occursin("unsupported",companion_summary(mixed_ex)) && isempty(describe_companion_selection(mixed_ex))
+        @test occursin("not recorded",companion_summary(mixed_ex)) && occursin("not recorded",describe_companion_selection(mixed_ex))
         unsupported=joinpath(dir,"unsupported-packet.jld2");companion_native_file(unsupported,[raw,stereo],[packet[],packet[]])
         unsupported_ex=ResultExplorer(unsupported;lazy=true);set_companion_inspection!(unsupported_ex)
         @test_throws ArgumentError set_frame!(unsupported_ex,2)

@@ -20,8 +20,9 @@ reference conventions, timing scope, and unsupported claims.
 The uncertainty investigations use separate, bounded commands rather than timing
 samples: [coverage](../docs/src/howto/validation_uncertainty.md),
 [retained-window diagnostics](../docs/src/howto/diagnostic_uncertainty.md),
-[conditional noise](../docs/src/howto/conditional_uncertainty.md), and
-[rendering/interpolation](../docs/src/howto/rendering_uncertainty.md). Their guides
+[conditional noise](../docs/src/howto/conditional_uncertainty.md),
+[rendering/interpolation](../docs/src/howto/rendering_uncertainty.md), and
+[spatial response](../docs/src/howto/spatial_transfer.md). Their guides
 state the populations and limits of each comparison; none changes production
 estimator defaults.
 

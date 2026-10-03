@@ -8,6 +8,13 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in version-3 quality reports with planar and per-camera execution
+  coverage, sweep/check counts and primary support. Stereo fields are verified
+  when generating the report; residual amplitudes are not pooled across grids.
+  Existing default and history-only report formats remain unchanged.
+- Added a bounded synthetic spatial-response study comparing two complete
+  schedules at matched output spacing, with analytic midpoint truth, guarded
+  harmonic fits and original full-error/uncertainty populations.
 - Added opt-in stereo execution companions that retain each camera's planar
   pass observations, common dewarp-grid geometry and measurement-field binding.
   A separate reader distinguishes metadata inspection from verified result fields;
@@ -148,6 +155,12 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Native lazy explorers can inspect stereo execution companions, verifying raw
+  reconstructed and camera fields before physical display. Camera residuals stay
+  in dewarped pixels; stereo per-node history remains unavailable.
+- Saved-experiment quality reports have separate history and execution options.
+  Scaled magnitude fields are labelled as speed. The Qt prototype permits vector
+  picking after leaving a demo with mask drawing enabled.
 - Extended the isolated Qt software prototype with saved planar experiments,
   complete recipe/history inspection, replay controls and verified lazy result
   inspection with physical units. The native rendering/lifecycle gate remains
@@ -203,8 +216,9 @@ validation and the core-first, GUI-second release sequence.
 Native JLD2 `format_version` remains **1**; persisted result structures are
 unchanged. Experiment records have their own `experiment_format_version = 1`
 and do not change the native result schema. Checkpoints use a separate version-1
-format. Quality reports default to version 1; opt-in history-aware reports use
-version 2, and readers accept both. `TABLE_SCHEMA_VERSION` remains
+format. Quality reports default to version 1; opt-in history-only reports use
+version 2 and execution-aware reports use version 3, optionally with history.
+Readers accept all three. `TABLE_SCHEMA_VERSION` remains
 **`hammerhead-table-1`** under its
 additive-column policy. Fixed-column-count CSV readers need to accommodate the
 eight tracking columns. Existing columns retain their order and meaning.

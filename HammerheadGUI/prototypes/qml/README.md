@@ -19,7 +19,9 @@ shown separately; failure retains a labelled previous display. Referenced script
 are inspectable but never loaded/executed by this shell. The production explorer
 supports all four result types and dedicated actual-time tracking artifacts.
 Masks belong to the synthetic 96-square demo and are hidden/refused on experiment
-output. Saved ROI/mask/preprocessing settings are preserved, not projected into
+output. A previously checked demo drawing mode is ignored/cleared for file or
+saved-experiment picking, so it cannot swallow result inspection. Saved
+ROI/mask/preprocessing settings are preserved, not projected into
 the demo's form. There is no experiment tree, ROI/preprocessing editor, resumability
 or concurrent-writer support.
 
@@ -113,8 +115,8 @@ production dependency is modified.
 
 ## Current blocker and ownership repair
 
-Current checks pass 248 focused assertions: 11 queued-action, 30 demo-adapter,
-63 saved-experiment adapter, 26 display-transaction, 13 physical-geometry,
+Current checks pass 250 focused assertions: 11 queued-action, 31 demo-adapter,
+64 saved-experiment adapter, 26 display-transaction, 13 physical-geometry,
 15 viewport, 30 scientific ownership and 60 ownership-contract checks.
 The process/environment harness passes 24 assertions, including refusal of
 leftover subscriptions or replay work. Released leases retain neither

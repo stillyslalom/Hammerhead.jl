@@ -358,8 +358,9 @@ function result_explorer!(target, ex::ResultExplorer)
           ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result,ex.companion_enabled)
 
     function refresh_menu!()
-        fields = available_fields(current_result(ex))
-        opts = [(field_name(f), f) for f in fields]
+        r=current_result(ex)
+        fields = available_fields(r)
+        opts = [(f===:magnitude && r.scale!==nothing ? "speed" : field_name(f), f) for f in fields]
         opts == menu.options[] || (menu.options[] = opts)
         i = something(findfirst(==(ex.field[]), fields), 1)
         i == menu.i_selected[] || (menu.i_selected[] = i)

@@ -124,5 +124,7 @@ The [conditional noise study](docs/src/howto/conditional_uncertainty.md) varies
 image noise on fixed scenes and reports conditional and full-error populations separately.
 The [rendering study](docs/src/howto/rendering_uncertainty.md) compares particle
 support, pixel-area sampling and known-shift interpolation on fixed clean scenes.
+The [spatial-response study](docs/src/howto/spatial_transfer.md) compares complete
+schedules at matched vector spacing using analytic truth and explicit populations.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

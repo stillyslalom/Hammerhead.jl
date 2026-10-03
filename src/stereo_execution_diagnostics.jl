@@ -196,7 +196,7 @@ function _stereo_execution_check_result(d,result)
 end
 
 """
-    execution_diagnostics_data(diagnostics::StereoPIVExecutionDiagnostics)
+    execution_diagnostics_data(diagnostics::StereoPIVExecutionDiagnostics; result=nothing)
 
 Return detached stereo metadata and inspection-only verification status. Camera
 pass observations retain planar processing-pixel semantics, including empty
@@ -204,12 +204,19 @@ tolerance comparisons and primary residuals before validation/filling. World
 grid spacing is signed; scalar pixel residual magnitudes cannot be transformed
 into an anisotropic world norm or reconstructed 3C residual. No convergence,
 accuracy, calibration, synchronization or final-vector association is certified.
-The runtime verification-at-capture/read status is not persisted.
+The runtime verification-at-capture/read status is not persisted. With `result`
+supplied, verify its RAW measurement fields and independent geometry without
+reading another payload. The returned data then has inspection state
+`supplied_measurement_fields_verified`; the packet is unchanged and no result
+is retained. Converted/edited fields are refused. This checks neither source
+bytes nor calibration, and parameters/correlation planes remain excluded.
 """
-function execution_diagnostics_data(d::StereoPIVExecutionDiagnostics)
+function execution_diagnostics_data(d::StereoPIVExecutionDiagnostics;result=nothing)
     data=_stereo_execution_checked(d)
-    data["verification"]=Dict{String,Any}("inspection_state"=>String(d._verification),
-        "measurement_field_binding_checked"=>d._verification!==:metadata_only,
+    result===nothing || _stereo_execution_check_result(d,result)
+    state=result===nothing ? d._verification : :supplied_measurement_fields_verified
+    data["verification"]=Dict{String,Any}("inspection_state"=>String(state),
+        "measurement_field_binding_checked"=>state!==:metadata_only,
         "calibration"=>false,"source_inputs"=>false,"full_result_serialization"=>false)
     data
 end

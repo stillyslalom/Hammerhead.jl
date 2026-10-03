@@ -82,7 +82,7 @@ companion readers for those observations, or explicitly request format 2 below.
 `include_measurement_history=true` adds `entry_kinds` and `measurement_history`
 to the root, with generator
 `value_basis="stored_arrays_and_verified_final_sweep_history"`. The loader accepts
-both report versions. The opt-in requires a whole direct native index or the
+all three report versions. The opt-in requires a whole direct native index or the
 verified record/run overload; anonymous/converted iterators and array views are
 refused. Existing current-array groups retain their definitions. `entry_kinds`
 counts planar, stereo, PTV and tracking entries; PTV/tracking contribute no
@@ -126,7 +126,86 @@ scoped section, adds `earlier_pass_and_sweep_history: not_recorded`, and labels
 `uncertainty_measurement_association: applicability_not_established`. Accuracy,
 coverage, peak locking and sensitivity remain unevaluated. Finite stored
 uncertainty never establishes applicability, including for primary-origin nodes.
-Execution tolerance counts/outcomes are not quality metrics in either version.
+Execution tolerance counts/outcomes are not quality metrics in formats 1 or 2.
+
+## Opt-in format 3
+
+`include_execution_diagnostics=true` emits version 3, adding `entry_kinds` and
+`execution_diagnostics`. It requires the same direct whole-file native mapping
+as format 2. `include_measurement_history=true` can additionally retain the
+unchanged history section. The generator's `value_basis` is
+`stored_arrays_and_recorded_execution`, or
+`stored_arrays_recorded_execution_and_verified_final_sweep_history` when both
+are requested. `weighting="field_nodes_and_execution_observations"` separates
+the existing node-weighted field counts from execution entry/pass observations.
+Defaults continue to emit formats 1 and 2. Older report loaders reject version 3;
+the native result format and companion versions do not change.
+
+The execution section has fixed fields:
+
+| Field | Value or meaning |
+|:--|:--|
+| `scope` | `recorded_passes_and_final_pass_primary_support` |
+| `aggregation_basis` | `entry_and_pass_counts` |
+| `verification_time` | `report_generation`, never fresh verification on TOML loading |
+| `last_check_scope` | `last_recorded_check_per_pass` |
+| `primary_support_scope` | `final_pass_before_validation` |
+| `unsupported_entries` | PTV/tracking native-entry counts |
+| `groups` | Fixed `planar`, `cam1`, `cam2` groups, including empty groups |
+
+Each execution group has `coordinate_basis`, `residual_unit="px"`, `binding`,
+`counts`, and `fractions`. Planar coordinates are
+`planar_processing_pixels_x_columns_y_rows` with `binding="entry_key_only"`.
+Camera coordinates are `dewarped_pixels_x_columns_y_rows` with
+`binding="raw_measurement_fields_checked_at_report_generation"`. Camera binding
+independently checks reconstructed/camera dimensions, world-grid mapping and
+captured measurement fields against the already loaded raw result. Parameters
+and correlation planes remain excluded. Calibration, source bytes,
+synchronization and scientific accuracy are not verified. A report loader opens
+no recorded locators and preserves these statements as past generation checks.
+
+All counters are nonnegative `Int` values, with checked additions and partitions:
+
+| Counter family | Scope |
+|:--|:--|
+| `eligible_entries`, `recorded_entries`, `missing_entries` | Planar native entries for `planar`; stereo native entries independently for each camera. Eligible = recorded + missing. |
+| `passes` | All recorded passes; no unique-execution-ID deduplication is implied. |
+| `requested_sweeps`, `executed_sweeps`, `tolerance_checks` | Actual recorded requested budgets, sweeps and checks across passes. |
+| `stop_single_sweep`, `stop_iteration_budget`, `stop_tolerance_condition_met` | A partition of recorded passes. A tolerance condition is not measurement acceptance. |
+| `last_checks_present`, `last_checks_absent` | A partition of passes. A budgeted final sweep can be unchecked. |
+| `last_check_finite`, `last_check_nan`, `last_check_infinite` | A partition of present last checks; not a histogram of every check in a pass. |
+| `last_check_empty` | Present last checks with zero included support; the finite zero-valued comparison may satisfy tolerance. |
+| `last_check_included`, `last_check_finite_support`, `last_check_infinite_support`, `last_check_excluded` | Sum support over each pass's last recorded check; included = finite + infinite. |
+| `final_primary_nodes`, `final_primary_masked`, `final_primary_unmasked` | Final-pass primary support only; nodes = masked + unmasked. |
+| `final_primary_finite`, `final_primary_nonfinite` | A partition of final primary unmasked nodes using finite residual magnitude, before validation/substitution/filling. |
+
+`recorded_entry_fraction` uses recorded/eligible entries.
+`final_primary_finite_fraction` uses final finite/unmasked primary support.
+Both retain the existing explicit denominator/availability convention. Missing
+entries contribute neither support nor zero events. Camera groups remain
+separate from reconstructed `groups.stereo` field quality and from each other.
+The two camera groups must agree on associated entry coverage, requested pass
+budgets and final grid-node counts; their residual states and actual stopping
+behavior can differ.
+
+No residual means/RMS/max values, world-norm conversions or reconstructed 3C
+residuals are aggregated. Processing geometry can vary across entries; read
+individual packets for their amplitude statistics. The additional unavailable
+reason is `pooled_execution_residual_amplitudes: not_aggregated`. Without history,
+the existing unavailable event-history reasons remain; with history, the scoped
+format-2 changes still apply. Finite primary support never establishes UQ
+applicability or final-vector measurement origin.
+
+Both execution companion root markers are checked even for empty files.
+Unknown versions, missing markers for present groups, wrong result-key linkage,
+crossed planar/stereo companions and companions attached to PTV/tracking are
+refused. A native PIV result does not identify whether an unrecorded driver was
+an ensemble, so workflow categories are not inferred from missing metadata.
+Associated planar execution packets must match the selected recipe/input IDs
+and absolute pair index; generic files remain unassociated. Stereo packets have
+no supported experiment recipe association and are refused in that associated
+mode. Each raw payload is loaded once, and only fixed-size counters survive;
+indexes and protected locators retain their existing documented memory costs.
 
 Report snapshots retain no payload arrays and dictionary access returns a
 copy. Known protected locators are authoritative when saving, with normalized

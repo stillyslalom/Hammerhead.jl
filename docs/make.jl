@@ -51,6 +51,7 @@ makedocs(;
             "Diagnose uncertainty estimates" => "howto/diagnostic_uncertainty.md",
             "Measure conditional noise variability" => "howto/conditional_uncertainty.md",
             "Compare rendering and interpolation effects" => "howto/rendering_uncertainty.md",
+            "Measure spatial response of complete schedules" => "howto/spatial_transfer.md",
             "Ensemble correlation for low SNR" => "howto/ensemble.md",
             "Validate sampling times for spectra" => "howto/spectrum_timing.md",
             "Batch processing and result files" => "howto/batch.md",

@@ -22,7 +22,9 @@ using .Prototype
         @test state.count[] == 2
         @test Prototype.navigate(state, 2)
         @test state.frame[] == 2
-        Prototype.pick(state, 4, 4)
+        state.drawing=true # stale demo checkbox must not swallow file inspection
+        Prototype.pick(state, 4, 4;drawing=state.drawing)
+        @test !state.drawing
         @test state.explorer.selection[] !== nothing
         @test !isempty(state.selection[])
         selection = state.explorer.selection[]

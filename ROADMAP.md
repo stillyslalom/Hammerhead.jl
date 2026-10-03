@@ -112,6 +112,16 @@ existing implementation is preferable; they are not commitments to add an API.
   run with unchanged baseline scientific rows. Wider point support has a small
   effect in these scenes; pixel-area sampling changes the results more, without
   consistently improving uncertainty coverage. The broader investigation remains open.
+- [x] Measure spatial response on fixed synthetic transverse-shear scenes with
+  analytic midpoint truth, matched output stride and two final window sizes.
+  Preserve full-error/yield/UQ populations alongside guarded harmonic fits and
+  exact common-coordinate comparisons; do not infer a universal resolution limit.
+  The [bounded study](docs/src/howto/spatial_transfer.md) has
+  [209 focused checks](test/test_spatial_transfer.jl) and a frozen 16-call run.
+  At the shortest 32 px wavelength, common accepted populations shrink to
+  43/256 and 59/256 interior nodes; fitted response describes those subsets.
+  Full-grid yield/error and uncertainty populations remain visible, and broader
+  spatial-resolution validation stays open below.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -319,6 +329,15 @@ and GPU memory in the documented ownership modes.
   The [stereo companion guide](docs/src/howto/stereo_execution_diagnostics.md)
   describes verification limits; [157 focused checks](test/test_stereo_execution_diagnostics.jl)
   cover CPU/KA parity, signed geometry, callback failures, persistence and cleanup.
+- [x] Add opt-in execution-aware quality reports with explicit planar/stereo
+  coverage and per-camera sweep/check/support counts. Preserve existing report
+  defaults, avoid pooling pixel residual amplitudes across different grids, and
+  distinguish generation-time binding checks from verification when loading a report.
+  Version 3 retains per-role entry coverage and execution/support counts;
+  existing default and history-only schemas stay unchanged.
+  [130 focused checks](test/test_quality_execution.jl) cover mixed/missing
+  companions, raw stereo binding, malformed counters, source protection and
+  verified experiment associations without inventing planar measurement binding.
 - [x] Generate a [saved run-quality report](docs/src/howto/run_quality.md) shared
   by scripts and the GUI for stored planar/stereo fields. Version-1 TOML reports
   preserve explicit node-weighted counts/denominators, numerical uncertainty
@@ -418,7 +437,7 @@ evidence.
   lazy results with physical units, and explicit displayed-run identity after
   failed actions. Validate application ownership and shutdown without relaxing
   the native rendering/lifecycle gate.
-  The [prototype](HammerheadGUI/prototypes/qml/README.md) passes 248 focused
+  The [prototype](HammerheadGUI/prototypes/qml/README.md) passes 250 focused
   checks and 24 harness checks. Demo and saved-experiment software children exit
   cleanly after five viewport generations each, with inspected physical-unit
   captures, no remaining shell subscriptions and no running replay at disposal.
@@ -442,12 +461,24 @@ evidence.
   provenance checks and metric definitions used by scripts.
   Its separate checkpoint view adds resumable built-in processing with committed
   progress and cancellation. Stereo calibration and broader integration remain open.
-- [ ] Make scalar-field labels distinguish raw displacement magnitude from scaled
+- [x] Make scalar-field labels distinguish raw displacement magnitude from scaled
   speed. Keep the existing physical-unit conversion and neutral component labels;
   a quantity labeled displacement must not carry length/time units.
-- [ ] Keep result picking available when the Qt shell switches from demo mask
+- [x] Inspect recorded stereo camera execution in the production GUI and expose
+  execution-aware saved reports. Verify raw fields before physical conversion,
+  retain transactional navigation and label dewarped-pixel diagnostics distinctly
+  from world-coordinate fields and unavailable per-node history.
+  [Stereo/report tests](HammerheadGUI/test/test_stereo_companions.jl) exercise
+  supplied-raw verification, retained-camera display integrity, transactional
+  navigation, missing companions, captured report options and protected saves.
+  The combined focused GUI checks pass 242 assertions; offscreen stereo and
+  saved-report layouts were inspected. Native desktop validation remains separate.
+- [x] Keep result picking available when the Qt shell switches from demo mask
   drawing to a saved/native result; the disabled demo-only mode must not intercept
   inspection clicks.
+  Native-file and saved-experiment regressions exercise stale drawing mode;
+  250 prototype checks, 24 lifecycle-harness checks and both final software
+  children pass. Native Qt rendering/input and other-platform gates stay open.
 - [x] Add completed-pair progress and cooperative cancellation to ordinary saved
   GUI replay. Capture the full request before notifications, retain original
   errors, wait for loader cleanup, and distinguish native prefixes from resumable

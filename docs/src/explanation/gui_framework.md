@@ -187,7 +187,7 @@ The saved-experiment child also rejects changes to core/GUI source maps during
 its trial. These checks do not certify Qt native GL cleanup or cross-platform
 availability.
 
-Final focused prototype checks pass 248 assertions, including 63 saved-recipe
+Final focused prototype checks pass 250 assertions, including 64 saved-recipe
 adapter checks, 26 rendering transactions, 13 physical-geometry checks and
 11 queued-action checks alongside the existing adapter/view/lifetime tests.
 Both software children exit zero after five viewport generations and inspected

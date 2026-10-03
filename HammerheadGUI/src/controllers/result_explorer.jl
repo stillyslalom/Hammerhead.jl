@@ -36,7 +36,7 @@ mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
     inspection::Bool
     companions::NamedTuple
 end
-_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,display_sha256=nothing)
+_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,stereo_diagnostics=nothing,display_sha256=nothing)
 _LazyDisplayResults(source,index,result)=_LazyDisplayResults(source,index,result,false,_empty_companions())
 Base.size(results::_LazyDisplayResults) = size(results.source)
 Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
@@ -55,22 +55,30 @@ function _prepare_lazy_frame(results,i,inspection)
         results.source isa Hammerhead.ResultFile || throw(ArgumentError("checkpoint companion inspection is not supported"))
         history=Hammerhead.load_measurement_history(results.source,i)
         diagnostics=Hammerhead.load_execution_diagnostics(results.source,i)
+        stereo=Hammerhead.load_stereo_execution_diagnostics(results.source,i)
         if raw isa PIVResult
+            stereo===nothing || throw(ArgumentError("stereo companion attached to a planar result"))
             history===nothing || Hammerhead.verify_measurement_history(history,raw)
             state=history===nothing ? :history_missing : :verified
+        elseif raw isa StereoPIVResult
+            history===nothing && diagnostics===nothing || throw(ArgumentError("planar companion attached to a stereo result"))
+            stereo===nothing || Hammerhead.execution_diagnostics_data(stereo;result=raw)
+            state=stereo===nothing ? :stereo_missing : :stereo_verified
         else
-            history===nothing && diagnostics===nothing || throw(ArgumentError("planar companion attached to an unsupported result kind"))
+            history===nothing && diagnostics===nothing && stereo===nothing || throw(ArgumentError("recorded companion attached to an unsupported result kind"))
             state=:unsupported
         end
         result=physical(raw)
-        digest=result isa PIVResult ? Hammerhead._history_result_digest(result) : nothing
-        companions=(state=state,history=history,diagnostics=diagnostics,display_sha256=digest)
+        digest=result isa GridResult ? _display_measurement_digest(result) : nothing
+        companions=(state=state,history=history,diagnostics=diagnostics,stereo_diagnostics=stereo,display_sha256=digest)
     else
         result=physical(raw)
         companions=_empty_companions()
     end
     result,companions
 end
+_display_measurement_digest(r::PIVResult)=Hammerhead._history_result_digest(r)
+_display_measurement_digest(r::StereoPIVResult)=Hammerhead._stereo_execution_measurement_digest(r)
 function _commit_lazy_frame!(results,i,result,companions,inspection)
     results.result=result
     results.index=i
@@ -260,9 +268,12 @@ end
 """
     set_companion_inspection!(ex::ResultExplorer, enabled::Bool=true)
 
-Opt into recorded planar history/execution inspection for a lazy native
+Opt into recorded planar history/execution or stereo camera execution inspection for a lazy native
 `ResultFile` explorer. Raw results and companions are read and history binding
-verified before physical display conversion/cache replacement. Failure preserves
+verified before physical display conversion/cache replacement. Stereo binding
+checks reconstructed and retained camera measurement fields against the raw
+result. The physical display has a separate mutation digest; it is not the raw
+binding. Failure preserves
 the old mode, frame, selection and display/companion bundle, and sets `status`.
 Disabling releases the current packet. Bare/eager inputs and checkpoint indexes
 have no supported native-companion association. This retains one display result
@@ -277,9 +288,10 @@ function _checked_companions(ex)
     result=current_result(ex)
     c=ex.results.companions
     try
-        c.display_sha256===nothing || Hammerhead._history_result_digest(result)==c.display_sha256 ||
+        c.display_sha256===nothing || _display_measurement_digest(result)==c.display_sha256 ||
             throw(ArgumentError("physical display fields changed after companion verification; disable and reenable inspection to reload"))
         c.history===nothing || Hammerhead._history_checked_data(c.history)
+        c.stereo_diagnostics===nothing || Hammerhead.execution_diagnostics_data(c.stereo_diagnostics)
     catch err
         ex.status[]=first(split(sprint(showerror,err),'\n'))
         rethrow()
@@ -292,8 +304,11 @@ end
 
 Describe off/missing/unsupported/verified recorded-companion states and actual
 pass execution observations. History binds raw measurement content; execution
-diagnostics v1 bind an entry key, not numerical content or the independent
-history UUID. Stored uncertainty availability never certifies applicability.
+planar diagnostics v1 bind an entry key, not numerical content or the independent
+history UUID. Stereo companions verify raw reconstructed/camera measurement
+fields on loading, without verifying calibration or source images. Their
+residuals remain dewarped pixels, not world 3C residuals. Stored uncertainty
+availability never certifies applicability.
 When enabled, integrity/display checks scan/hash the current arrays (O(nodes));
 no result reload or full packet copy occurs on inspection.
 """
@@ -310,23 +325,40 @@ function companion_summary(ex::ResultExplorer)
 end
 function _companion_summary(c)
     c.state===:unsupported && return "Recorded companions: unsupported for this result kind."
+    if c.state in (:stereo_missing,:stereo_verified)
+        c.stereo_diagnostics===nothing && return "Stereo execution diagnostics: not recorded.\nStereo per-node measurement history: unavailable."
+        d=c.stereo_diagnostics
+        lines=["Stereo execution: raw reconstructed and camera measurement binding verified at load.",
+            "Current physical display integrity is checked separately."]
+        for (role,camera) in enumerate((d.cam1,d.cam2))
+            push!(lines,"Camera $role: dewarped pixels (not reconstructed world 3C residuals).")
+            _append_execution_passes!(lines,camera;unit="dewarped px")
+        end
+        push!(lines,"Stereo per-node measurement history: unavailable.",
+            "Tolerance outcomes are not measurement validity. Calibration, source inputs, uncertainty applicability, accuracy and coverage are not verified.")
+        return join(lines,"\n")
+    end
     lines=[c.history===nothing ? "Measurement history: not recorded." : "Measurement history: raw measurement binding verified."]
     if c.diagnostics===nothing
         push!(lines,"Execution diagnostics: not recorded.")
     else
         push!(lines,"Recorded execution counts; not verified against the displayed vector values.")
-        for pass in c.diagnostics.passes
-            push!(lines,"Pass $(pass.pass_index): $(pass.executed_iterations)/$(pass.requested_iterations) sweeps; $(replace(String(pass.stop_reason),'_'=>' ')); $(pass.checks) tolerance checks.")
-            check=pass.last_check
-            push!(lines,check===nothing ? "  Tolerance comparison: not evaluated." :
-                "  Last q95 component change: $(check.value_state===:finite ? _fmt(check.value) : check.value_state) px; $(check.included_count) contributing nodes (empty support can meet tolerance).")
-            residual=pass.residual
-            push!(lines,"  Primary residual mean/RMS/max: $(residual.mean_magnitude===nothing ? "unavailable" : _fmt(residual.mean_magnitude))/$(residual.rms_magnitude===nothing ? "unavailable" : _fmt(residual.rms_magnitude))/$(residual.maximum_magnitude===nothing ? "unavailable" : _fmt(residual.maximum_magnitude)) px; $(residual.finite_count) finite unmasked nodes.")
-        end
+        _append_execution_passes!(lines,c.diagnostics)
         push!(lines,"Tolerance outcomes are not measurement validity.")
     end
     push!(lines,"History scope: final pass/final sweep only. Uncertainty applicability, accuracy and coverage are not established.")
     join(lines,"\n")
+end
+function _append_execution_passes!(lines,diagnostics;unit="px")
+        for pass in diagnostics.passes
+            push!(lines,"Pass $(pass.pass_index): $(pass.executed_iterations)/$(pass.requested_iterations) sweeps; $(replace(String(pass.stop_reason),'_'=>' ')); $(pass.checks) tolerance checks.")
+            check=pass.last_check
+            push!(lines,check===nothing ? "  Tolerance comparison: not evaluated." :
+                "  Last q95 component change: $(check.value_state===:finite ? _fmt(check.value) : check.value_state) $unit; $(check.included_count) contributing nodes (empty support can meet tolerance).")
+            residual=pass.residual
+            push!(lines,"  Primary residual mean/RMS/max: $(residual.mean_magnitude===nothing ? "unavailable" : _fmt(residual.mean_magnitude))/$(residual.rms_magnitude===nothing ? "unavailable" : _fmt(residual.rms_magnitude))/$(residual.maximum_magnitude===nothing ? "unavailable" : _fmt(residual.maximum_magnitude)) $unit; $(residual.finite_count) finite unmasked nodes.")
+        end
+    lines
 end
 
 """
@@ -346,6 +378,7 @@ function describe_companion_selection(ex::ResultExplorer)
     _companion_selection(ex,c)
 end
 function _companion_selection(ex,c)
+    c.state in (:stereo_missing,:stereo_verified) && return "Stereo per-node measurement history and world 3C residuals are not recorded.\nUse the ordinary selection panel for displayed vector values."
     c.history===nothing && return ""
     sel=ex.selection[]
     sel isa CartesianIndex{2} || return "Select a grid node to inspect its recorded history."
@@ -607,6 +640,7 @@ unit; the derived gradient fields carry `1/time_unit` (`1/time_unit²` for Q,
 `1/frame` when unscaled); dimensionless diagnostics carry no unit.
 """
 function field_label(r::AnyResult, field::Symbol)
+    field===:magnitude && r.scale!==nothing && return string("speed (",_field_unit(r),")")
     field in (:peak_ratio, :correlation_moment) && return field_name(field)
     field === :match_residual && return string(field_name(field), " (", _length_unit(r), ")")
     field === :q_criterion && return string(field_name(field), " (1/", _time_unit(r), "²)")

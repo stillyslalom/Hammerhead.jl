@@ -68,6 +68,9 @@ end
         @test state.dataset[]===:experiment
         @test state.explorer.results isa HammerheadGUI.Controllers._LazyDisplayResults
         @test nframes(state.explorer)==3 && state.explorer.results.index==1
+        state.drawing=true
+        Prototype.pick(state,first(current_result(state.explorer).x),first(current_result(state.explorer).y);drawing=true)
+        @test !state.drawing && state.explorer.selection[]===CartesianIndex(1,1)
         @test occursin(ec.last_run[].run_id,state.displayed[])
         raw=load_results(fixture.output;lazy=true)[1]
         displayed=current_result(state.explorer)

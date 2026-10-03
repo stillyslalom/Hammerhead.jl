@@ -132,6 +132,8 @@ function open_results(state, path)
 end
 
 function pick(state, x, y; drawing = false)
+    # Demo-only mask mode cannot swallow ordinary file/experiment inspection.
+    state.dataset[]===:demo && state.explorer.path===nothing || (drawing=false;state.drawing=false)
     if drawing
         state.dataset[]===:demo && state.explorer.path === nothing || return nothing
         click!(state.mask, x, y)

@@ -105,6 +105,14 @@ record and known input/result paths. The scan is synchronous and can delay the U
 on large recordings. Opening another experiment or running again clears the
 displayed summary.
 
+Unchecked report toggles preserve the stored-field format-1 default. **Include
+recorded history in report** selects format 2; **include recorded execution in
+report** selects format 3, optionally with history. Missing entries remain
+explicit. A report's checks describe generation time; its displayed summary
+names the reported run, recipe and inputs. Failed scans/saves keep the prior
+summary with that identity. See [recorded processing details](gui_companions.md)
+for camera residual units and the separation from per-node history.
+
 ## Handle refusals and custom processing
 
 **Checkpoint / resume…** opens the [checkpoint workflow](gui_checkpoints.md).

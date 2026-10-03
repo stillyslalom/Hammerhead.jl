@@ -43,6 +43,7 @@ const r_track = TrackingResult(
     include("test_tracking_timing_explorer.jl")
     include("test_checkpoints.jl")
     include("test_companions.jl")
+    include("test_stereo_companions.jl")
     @testset "Offscreen GL rendering" begin
         GLMakie.activate!()
         fig = Figure(size = (400, 300))
@@ -147,7 +148,7 @@ const r_track = TrackingResult(
         rs = current_result(exs)
         @test rs.scale !== nothing
         @test C.field_label(rs, :u) == "u (mm/s)"
-        @test C.field_label(rs, :magnitude) == "|displacement| (mm/s)"
+        @test C.field_label(rs, :magnitude) == "speed (mm/s)"
         @test C.field_label(rs, :uncertainty_u) == "σu (mm/s)"
         @test C.field_label(rs, :peak_ratio) == "peak ratio"
         select_nearest!(exs, rs.x[3], rs.y[3])

@@ -263,6 +263,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   A separate native sibling group/reader leaves planar diagnostics unchanged;
   runtime verification status distinguishes metadata-only inspection from field
   checks and is never persisted as a verification claim.
+  `execution_diagnostics_data(d; result=raw)` verifies an already loaded raw
+  payload and returns detached metadata without retaining or reloading it.
 - `pair_timing.jl` — opt-in planar sequence timing companions. Freeze selected
   frame references and O(pairs) scalar metadata before loading/output; exact
   rational encodings preserve integer epochs and timestamp midpoint halves.
@@ -302,6 +304,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   version-2 reports verify final-sweep history, report missing/unsupported entry
   populations and keep event/origin counts on history-covered denominators.
   Associated reports also require matching packet recipe/input/pair identities.
+  Opt-in version-3 execution reports require a whole native index and retain
+  planar/per-camera entry coverage, pass/check counts and final primary support.
+  Verify stereo companions against each raw payload while it is loaded; planar
+  execution packets remain entry-key linked. Do not pool residual amplitudes
+  across grids or describe report loading as fresh measurement verification.
   Counts are node-weighted
   with explicit denominators; flags/finite values are not replacement history,
   and numerical UQ availability is not coverage or measurement association.
@@ -473,6 +480,8 @@ form links to this workflow; its API reference is split into `gui_experiments.md
 The same workflow saves and displays core quality reports through
 `experiment_quality_report` / `save_experiment_quality_report`. These synchronous
 scans protect the selected result and run record, and refuse busy/changed runs.
+Capture both history/execution options before dialogs or observer notifications;
+retain the previous report's own identity after a failed save.
 
 `CheckpointController` / `checkpoint_workflow[!]` provide a separate resumable
 built-in recipe path, linked from the saved-experiment view. Capture checkpoint,
@@ -486,8 +495,11 @@ resets after use. Preflight and work within a pair can delay UI interaction.
 Lazy native explorers can opt into recorded processing details. Verify history
 against the raw result before physical conversion and commit navigation state
 only after preflight succeeds. Retain one display payload/current packet; a
-separate display digest detects later array edits. Execution companions v1 bind
-entry keys, not numerical result content. Missing history is never inferred.
+separate display digest detects later array edits, including retained stereo
+camera fields. Planar execution companions v1 bind entry keys, not numerical
+result content; stereo companions bind raw reconstructed and camera fields.
+Stereo residuals remain dewarped pixels and per-node history stays unavailable.
+Missing history is never inferred. Scaled magnitude fields are labelled speed.
 
 The separate recipe-comparison controller captures complete before/after records,
 selected pairs and value basis before notifications or asynchronous scheduling.

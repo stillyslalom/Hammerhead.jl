@@ -24,7 +24,8 @@ The file must have recorded optional
 [measurement history](measurement_history.md) and/or
 [execution diagnostics](execution_diagnostics.md) during processing. Missing
 entries say **not recorded**; current outlier flags never substitute for absent
-history. Stereo/PTV/tracking entries say unsupported. Eager/in-memory inputs
+history. Stereo entries show optional per-camera execution observations; PTV
+and tracking entries say unsupported. Eager/in-memory inputs
 have no checked native association merely because their title names a file.
 Checkpoint companion inspection is not supported.
 
@@ -50,6 +51,16 @@ the execution format-1 companion. History separately verifies numerical content;
 the two packets have independent UUIDs. Tolerance outcomes do not establish
 measurement validity, and an empty eligible comparison can meet tolerance.
 
+Stereo execution companions are verified against the raw reconstructed and both
+retained camera measurement fields before physical display conversion. The
+panel labels **Camera 1** and **Camera 2**, with actual pass sweeps, checks,
+stop reasons and primary residual summaries in **dewarped px**. Those residuals
+are not converted to world units or reconstructed into a 3C residual. There is
+no stereo per-node measurement history: selecting a node shows the ordinary
+displayed vector values and explicitly states that recorded node history is
+unavailable. Calibration, input images, synchronization, uncertainty applicability
+and measurement accuracy are not verified by this inspection.
+
 A load or verification error leaves the previous frame, selection, display and
 recorded-data bundle visible and reports the error. A failed attempt to enable
 inspection preserves the previous mode too. The setter and direct
@@ -58,6 +69,7 @@ completed source after an external change; these indexes do not follow writers.
 
 The controller retains one physical display result, one current history packet,
 and the current execution metadata. It releases the raw result after conversion,
+with retained camera fields remaining part of the ordinary stereo result,
 evicts previous packets on navigation and clears them when disabled. Inspection
 refreshes scan/hash the current history and physical display arrays to detect
 edits, so inspection costs O(grid nodes). They do not reload results or copy a
@@ -68,3 +80,20 @@ data. Caller-retained objects/copies have their own memory cost.
 For aggregate event counts, the experiment workflow has an independent
 **include recorded history in report** toggle. It opts into
 [quality report format 2](run_quality.md); its unchecked default remains format 1.
+The separate **include recorded execution in report** toggle selects format 3;
+history can also be included. Counts have explicit recorded/missing/unsupported
+coverage, with primary-support counts kept separate for planar and each stereo
+camera; report v3 does not aggregate residual amplitudes. Verification describes the files at report generation time, not future
+edits. The displayed report identifies its own saved run, recipe and inputs;
+a failed scan/save retains that previous report with its identity.
+
+```julia
+controller = ExperimentController("experiment-with-run-history.jld2")
+report = save_experiment_quality_report("quality-execution.toml", controller;
+    include_execution_diagnostics=true, include_measurement_history=true)
+```
+
+The saved experiment workflow currently records/replays planar recipes. It can
+report their recorded planar execution entries; a generic native stereo file's
+format-3 report is generated through the core `quality_report(ResultFile(path);
+include_execution_diagnostics=true)` API. No stereo experiment replay is implied.

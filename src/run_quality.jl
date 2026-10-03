@@ -1,6 +1,7 @@
 # Saved quality summaries describe stored fields, not absent measurement history.
 const QUALITY_REPORT_FORMAT_VERSION = 1
 const QUALITY_HISTORY_REPORT_FORMAT_VERSION = 2
+const QUALITY_EXECUTION_REPORT_FORMAT_VERSION = 3
 const _QUALITY_UNAVAILABLE = Dict(
     "rejection_events" => "not_persisted", "replacement_history" => "not_persisted",
     "alternative_peak_history" => "not_persisted", "uncertainty_measurement_association" => "not_persisted",
@@ -10,16 +11,177 @@ const _QUALITY_UNAVAILABLE = Dict(
 const _QUALITY_HISTORY_KINDS = ("planar", "stereo", "ptv", "tracking")
 const _QUALITY_REJECTION_BUCKETS = ("nonfinite_primary", "implicit_uod", "implicit_peak_ratio",
     "configured_builtin", "configured_custom", "unclassified")
-function _quality_unavailable(version)
+function _quality_unavailable(version;include_history=version==2)
     unavailable=copy(_QUALITY_UNAVAILABLE)
-    if version==2
+    if include_history
         for name in ("rejection_events","replacement_history","alternative_peak_history")
             delete!(unavailable,name)
         end
         unavailable["earlier_pass_and_sweep_history"]="not_recorded"
         unavailable["uncertainty_measurement_association"]="applicability_not_established"
     end
+    version==3 && (unavailable["pooled_execution_residual_amplitudes"]="not_aggregated")
     Dict(k=>Dict("available"=>false,"reason_code"=>v) for (k,v) in unavailable)
+end
+
+const _QUALITY_EXECUTION_ROLES=("planar","cam1","cam2")
+const _QUALITY_EXECUTION_STOPS=("single_sweep","iteration_budget","tolerance_condition_met")
+function _quality_execution_counter_names()
+    ["eligible_entries","recorded_entries","missing_entries","passes","requested_sweeps","executed_sweeps",
+     "tolerance_checks",["stop_$name" for name in _QUALITY_EXECUTION_STOPS]...,
+     "last_checks_present","last_checks_absent","last_check_finite","last_check_nan","last_check_infinite",
+     "last_check_empty","last_check_included","last_check_finite_support","last_check_infinite_support","last_check_excluded",
+     "final_primary_nodes","final_primary_masked","final_primary_unmasked","final_primary_finite","final_primary_nonfinite"]
+end
+_quality_execution_fractions(c)=_quality_make_fractions(c,Dict(
+    "recorded_entry_fraction"=>("recorded_entries","eligible_entries"),
+    "final_primary_finite_fraction"=>("final_primary_finite","final_primary_unmasked")))
+function _quality_execution_group(role,counts)
+    Dict{String,Any}("coordinate_basis"=>role=="planar" ? "planar_processing_pixels_x_columns_y_rows" : "dewarped_pixels_x_columns_y_rows",
+        "residual_unit"=>"px","binding"=>role=="planar" ? "entry_key_only" : "raw_measurement_fields_checked_at_report_generation",
+        "counts"=>counts,"fractions"=>_quality_execution_fractions(counts))
+end
+function _quality_execution_section(counters,kinds)
+    for role in _QUALITY_EXECUTION_ROLES
+        counts=counters[role]
+        counts["eligible_entries"]=kinds[role=="planar" ? "planar" : "stereo"]
+        counts["missing_entries"]=counts["eligible_entries"]-counts["recorded_entries"]
+    end
+    Dict{String,Any}("scope"=>"recorded_passes_and_final_pass_primary_support",
+        "aggregation_basis"=>"entry_and_pass_counts","verification_time"=>"report_generation",
+        "last_check_scope"=>"last_recorded_check_per_pass","primary_support_scope"=>"final_pass_before_validation",
+        "unsupported_entries"=>Dict(k=>kinds[k] for k in ("ptv","tracking")),
+        "groups"=>Dict(role=>_quality_execution_group(role,counters[role]) for role in _QUALITY_EXECUTION_ROLES))
+end
+function _quality_check_execution_format(source)
+    _check_result_file(source)
+    jldopen(source.path,"r") do file
+        for (group,marker,version) in (("execution_diagnostics","execution_diagnostics_format_version",EXECUTION_DIAGNOSTICS_FORMAT_VERSION),
+                ("stereo_execution_diagnostics","stereo_execution_diagnostics_format_version",STEREO_EXECUTION_DIAGNOSTICS_FORMAT_VERSION))
+            if haskey(file,marker)
+                file[marker]===version || _quality_error("unsupported $group version")
+            else
+                haskey(file,group) && _quality_error("$group metadata lacks version")
+            end
+        end
+    end
+    _check_result_file(source)
+    nothing
+end
+function _quality_execution_passes!(counts,data)
+    _quality_add!(counts,"recorded_entries")
+    for pass in data["passes"]
+        _quality_add!(counts,"passes")
+        _quality_add!(counts,"requested_sweeps",pass["requested_iterations"])
+        _quality_add!(counts,"executed_sweeps",pass["executed_iterations"])
+        _quality_add!(counts,"tolerance_checks",pass["checks"])
+        _quality_add!(counts,"stop_"*pass["stop_reason"])
+        check=pass["last_check"]
+        if check===nothing
+            _quality_add!(counts,"last_checks_absent")
+        else
+            _quality_add!(counts,"last_checks_present")
+            _quality_add!(counts,"last_check_"*check["value_state"])
+            check["included_count"]==0 && _quality_add!(counts,"last_check_empty")
+            for (key,stored) in (("last_check_included","included_count"),("last_check_finite_support","finite_count"),
+                    ("last_check_infinite_support","infinite_count"),("last_check_excluded","excluded_count"))
+                _quality_add!(counts,key,check[stored])
+            end
+        end
+    end
+    residual=last(data["passes"])["residual"]
+    finite,nonfinite,masked=residual["finite_count"],residual["nonfinite_count"],residual["masked_count"]
+    _quality_add!(counts,"final_primary_nodes",_quality_sum(finite,nonfinite,masked))
+    _quality_add!(counts,"final_primary_unmasked",_quality_sum(finite,nonfinite))
+    _quality_add!(counts,"final_primary_finite",finite)
+    _quality_add!(counts,"final_primary_nonfinite",nonfinite)
+    _quality_add!(counts,"final_primary_masked",masked)
+    nothing
+end
+function _quality_execution_update!(counters,index,i,result,expected_association)
+    planar=load_execution_diagnostics(index,i)
+    stereo=load_stereo_execution_diagnostics(index,i)
+    if result isa PIVResult
+        stereo===nothing || _quality_error("stereo diagnostics attached to planar result")
+        if planar!==nothing
+            data=execution_diagnostics_data(planar)
+            expected_association===nothing || (data["association"]==expected_association && data["pair_index"]===i) ||
+                _quality_error("recorded execution recipe/input or pair association disagrees with the selected run")
+            _quality_execution_passes!(counters["planar"],data)
+        end
+    elseif result isa StereoPIVResult
+        planar===nothing || _quality_error("planar diagnostics attached to stereo result")
+        if stereo!==nothing
+            expected_association===nothing || _quality_error("stereo execution diagnostics have no supported experiment recipe/input association")
+            data=execution_diagnostics_data(stereo;result)
+            for (role,camera) in zip(("cam1","cam2"),data["cameras"])
+                _quality_execution_passes!(counters[role],camera["diagnostics"])
+            end
+        end
+    else
+        planar===stereo===nothing || _quality_error("execution diagnostics attached to unsupported result kind")
+    end
+    nothing
+end
+function _quality_validate_execution(section,kinds,groups)
+    _experiment_keys(section,["scope","aggregation_basis","verification_time","last_check_scope","primary_support_scope","unsupported_entries","groups"],"quality execution")
+    section["scope"]=="recorded_passes_and_final_pass_primary_support" && section["aggregation_basis"]=="entry_and_pass_counts" &&
+        section["verification_time"]=="report_generation" && section["last_check_scope"]=="last_recorded_check_per_pass" &&
+        section["primary_support_scope"]=="final_pass_before_validation" || _quality_error("unsupported execution-report scope")
+    unsupported=section["unsupported_entries"]
+    _experiment_keys(unsupported,["ptv","tracking"],"unsupported execution kinds")
+    all(k->unsupported[k] isa Int && unsupported[k]==kinds[k],("ptv","tracking")) || _quality_error("inconsistent unsupported execution counts")
+    roles=section["groups"]
+    _experiment_keys(roles,collect(_QUALITY_EXECUTION_ROLES),"execution camera groups")
+    for role in _QUALITY_EXECUTION_ROLES
+        group=roles[role]
+        _experiment_keys(group,["coordinate_basis","residual_unit","binding","counts","fractions"],"execution camera group")
+        c=group["counts"]
+        _experiment_keys(c,_quality_execution_counter_names(),"execution counters")
+        all(v->v isa Int && v>=0,values(c)) || _quality_error("execution counts must be nonnegative integers")
+        kind=role=="planar" ? "planar" : "stereo"
+        c["eligible_entries"]==kinds[kind] && c["eligible_entries"]==_quality_sum(c["recorded_entries"],c["missing_entries"]) || _quality_error("inconsistent execution coverage")
+        c["passes"]>=c["recorded_entries"] && c["requested_sweeps"]>=c["executed_sweeps"]>=c["passes"] &&
+            c["passes"]==_quality_sum((c["stop_$name"] for name in _QUALITY_EXECUTION_STOPS)...) &&
+            c["passes"]==_quality_sum(c["last_checks_present"],c["last_checks_absent"]) &&
+            c["last_checks_present"]<=c["tolerance_checks"]<=c["executed_sweeps"]-c["passes"] &&
+            c["last_checks_present"]==_quality_sum(c["last_check_finite"],c["last_check_nan"],c["last_check_infinite"]) &&
+            c["last_check_empty"]<=c["last_check_finite"] && c["stop_tolerance_condition_met"]<=c["last_check_finite"] &&
+            c["last_check_included"]==_quality_sum(c["last_check_finite_support"],c["last_check_infinite_support"]) &&
+            c["final_primary_nodes"]==_quality_sum(c["final_primary_masked"],c["final_primary_unmasked"]) &&
+            c["final_primary_unmasked"]==_quality_sum(c["final_primary_finite"],c["final_primary_nonfinite"]) &&
+            c["recorded_entries"]<=c["final_primary_nodes"] || _quality_error("inconsistent execution pass/support counts")
+        c["executed_sweeps"]>=_quality_sum(c["passes"],c["passes"]-c["stop_single_sweep"]) &&
+            (c["stop_single_sweep"]!=c["passes"] || c["executed_sweeps"]==c["passes"]) &&
+            c["requested_sweeps"]-c["executed_sweeps"]>=c["stop_tolerance_condition_met"] &&
+            (c["stop_tolerance_condition_met"]!=0 || c["requested_sweeps"]==c["executed_sweeps"]) &&
+            c["last_checks_absent"]>=c["stop_single_sweep"] &&
+            c["tolerance_checks"]<=c["executed_sweeps"]-c["passes"]-c["stop_iteration_budget"] ||
+            _quality_error("execution budgets/checks disagree with stop outcomes")
+        if c["recorded_entries"]==0
+            all(k->k in ("eligible_entries","missing_entries") || c[k]==0,keys(c)) || _quality_error("execution observations without recorded entries")
+        end
+        c["last_checks_present"]==0 && any(k->c[k]!=0,("last_check_included","last_check_excluded")) && _quality_error("support without tolerance checks")
+        c["last_check_included"]>=c["last_checks_present"]-c["last_check_empty"] || _quality_error("nonempty tolerance observations require support")
+        c["last_check_empty"]==c["last_checks_present"] && c["last_check_included"]!=0 && _quality_error("nonempty support for only empty checks")
+        if kind=="stereo" && haskey(groups,kind)
+            nodes=groups[kind]["counts"]["nodes"]
+            c["final_primary_nodes"]<=nodes && (c["recorded_entries"]!=c["eligible_entries"] || c["final_primary_nodes"]==nodes) || _quality_error("verified camera support disagrees with stereo grid coverage")
+        end
+        expected=_quality_execution_group(role,c)
+        for key in ("coordinate_basis","residual_unit","binding")
+            group[key]==expected[key] || _quality_error("unsupported execution coordinate/binding basis")
+        end
+        fractions=group["fractions"]
+        fractions isa AbstractDict && all(v->v isa AbstractDict && get(v,"available",nothing) isa Bool &&
+            get(v,"numerator",nothing) isa Int && get(v,"denominator",nothing) isa Int &&
+            (!haskey(v,"value") || v["value"] isa AbstractFloat),values(fractions)) || _quality_error("invalid execution fractions")
+        isequal(fractions,expected["fractions"]) || _quality_error("execution fractions disagree with covered denominators")
+    end
+    first,second=roles["cam1"]["counts"],roles["cam2"]["counts"]
+    all(k->first[k]==second[k],("eligible_entries","recorded_entries","missing_entries","passes","requested_sweeps","final_primary_nodes")) ||
+        _quality_error("camera association/schedule/grid counts disagree")
+    nothing
 end
 function _quality_history_counter_names()
     ["planar_entries","recorded_entries","missing_entries","unsupported_stereo_entries","unsupported_ptv_entries","unsupported_tracking_entries",
@@ -219,15 +381,18 @@ end
 function _quality_validate(data)
     data isa AbstractDict || _quality_error("malformed quality report")
     version=get(data,"quality_report_format_version",nothing)
-    version isa Int && version in (1,2) || _quality_error("unsupported quality report format version")
-    extra=version==2 ? ["entry_kinds","measurement_history"] : String[]
+    version isa Int && version in (1,2,3) || _quality_error("unsupported quality report format version")
+    include_history=version==2 || version==3 && haskey(data,"measurement_history")
+    extra=version==1 ? String[] : ["entry_kinds";include_history ? ["measurement_history"] : String[];
+        version==3 ? ["execution_diagnostics"] : String[]]
     _experiment_keys(data, ["quality_report_format_version", "generated_at_unix_s", "generator",
         "provenance", "protected_locators", "groups", "unavailable",extra...], "quality report")
     data["generated_at_unix_s"] isa Real && !(data["generated_at_unix_s"] isa Bool) &&
         isfinite(data["generated_at_unix_s"]) && data["generated_at_unix_s"] >= 0 || _quality_error("invalid report timestamp")
     _experiment_keys(data["generator"], ["julia_version", "hammerhead_version", "core_source_sha256", "value_basis", "weighting"], "quality generator")
-    all(v -> v isa String, values(data["generator"])) && data["generator"]["value_basis"] == (version==1 ? "stored_arrays" : "stored_arrays_and_verified_final_sweep_history") &&
-        data["generator"]["weighting"] == "node_weighted" && _experiment_hash(data["generator"]["core_source_sha256"]) || _quality_error("unsupported quality metric basis")
+    all(v -> v isa String, values(data["generator"])) && data["generator"]["value_basis"] == _quality_value_basis(include_history,version==3) &&
+        data["generator"]["weighting"] == (version==3 ? "field_nodes_and_execution_observations" : "node_weighted") &&
+        _experiment_hash(data["generator"]["core_source_sha256"]) || _quality_error("unsupported quality metric basis")
     locators = data["protected_locators"]
     locators isa AbstractVector && all(p -> p isa String && isabspath(p), locators) || _quality_error("invalid protected report locators")
     provenance = data["provenance"]
@@ -285,18 +450,19 @@ function _quality_validate(data)
         counts["entries"] > 0 || counts["nodes"] == 0 || _quality_error("nonempty grid without result entries")
         total_entries = _quality_sum(total_entries, counts["entries"])
     end
-    if version==2
+    if version in (2,3)
         kinds=data["entry_kinds"]
         _experiment_keys(kinds,collect(_QUALITY_HISTORY_KINDS),"quality entry kinds")
         all(v->v isa Int && v>=0,values(kinds)) || _quality_error("invalid entry kind counts")
         all(kind->get(groups,kind,Dict("counts"=>Dict("entries"=>0)))["counts"]["entries"]==kinds[kind],("planar","stereo")) || _quality_error("quality kind/group counts disagree")
-        _quality_validate_history(data["measurement_history"],kinds,groups)
+        include_history && _quality_validate_history(data["measurement_history"],kinds,groups)
+        version==3 && _quality_validate_execution(data["execution_diagnostics"],kinds,groups)
         total_entries=_quality_sum(values(kinds)...)
-        !isempty(common) && provenance["source_selection"]=="whole_file" || _quality_error("history report requires a whole native result source")
+        !isempty(common) && provenance["source_selection"]=="whole_file" || _quality_error("companion report requires a whole native result source")
     end
     associated && total_entries != provenance["completed_pairs"] && _quality_error("associated result count mismatch")
     !isempty(common) && provenance["source_selection"] == "whole_file" && total_entries != provenance["source_index_entries"] && _quality_error("whole-file result count mismatch")
-    expected_unavailable = _quality_unavailable(version)
+    expected_unavailable = _quality_unavailable(version;include_history)
     data["unavailable"] isa AbstractDict && all(v -> v isa AbstractDict && get(v, "available", nothing) === false, values(data["unavailable"])) || _quality_error("invalid unavailable diagnostic availability")
     isequal(data["unavailable"], expected_unavailable) || _quality_error("unsupported or invented quality diagnostics")
     data
@@ -306,10 +472,17 @@ function _quality_wrap(data)
     snapshot = deepcopy(Dict{String,Any}(data))
     RunQualityReport(snapshot, Tuple(snapshot["protected_locators"]), _experiment_digest(snapshot))
 end
+function _quality_value_basis(history,execution)
+    execution ? (history ? "stored_arrays_recorded_execution_and_verified_final_sweep_history" : "stored_arrays_and_recorded_execution") :
+        (history ? "stored_arrays_and_verified_final_sweep_history" : "stored_arrays")
+end
 
 """
-    quality_report(results; include_measurement_history=false) -> RunQualityReport
-    quality_report(record::ExperimentRecord, run::ExperimentRun; include_measurement_history=false) -> RunQualityReport
+    quality_report(results; include_measurement_history=false,
+                   include_execution_diagnostics=false) -> RunQualityReport
+    quality_report(record::ExperimentRecord, run::ExperimentRun;
+                   include_measurement_history=false,
+                   include_execution_diagnostics=false) -> RunQualityReport
 
 Aggregate a finite planar/stereo result iterator, including lazy [`ResultFile`](@ref)
 and array views, without retaining results. Planar and stereo groups are separate;
@@ -345,6 +518,25 @@ recipe/input IDs and absolute pair index; absent or stale association is refused
 whereas a missing packet only reduces coverage. Generic files remain unassociated
 even when individual packets name recipe/input IDs.
 
+With `include_execution_diagnostics=true`, require the same direct whole-file
+native mapping and emit format version 3, optionally including the existing
+history section. Read each raw payload once. Recorded planar companions retain
+entry-key linkage only; stereo companions additionally verify raw measurement
+fields and independent geometry against the already loaded result. Associated
+planar packets must match recipe/input IDs and absolute pair index. Stereo
+packets have no supported experiment recipe association and are refused in that
+associated mode. Wrong-kind companions and invalid versions, including markers
+in empty files, are refused. Missing metadata is a coverage gap, never inferred
+from parameters. PTV/tracking entries have explicit unsupported counts.
+
+Execution counts are entry/pass observations, separately for planar, camera 1
+and camera 2: requested/executed sweeps, actual checks, stop reasons, each pass's
+last-check state/support and final-pass primary support before validation.
+Camera units remain dewarped pixels; no amplitudes are pooled across grids and
+no reconstructed 3C residual is inferred. Tolerance outcomes and empty checks
+do not establish measurement validity. Saved reports describe checks when
+generated, not fresh result/calibration/input verification when loaded.
+
 Generic sequences/files have no asserted experiment association. The record/run
 overload validates snapshot/input/run metadata, requires a completed run and
 matching result count, and verifies the recorded output SHA-256 before and after
@@ -358,13 +550,16 @@ known experiment locators retain O(inputs/runs) strings. Loading one native
 entry includes any saved correlation planes/camera fields. Anonymous iterators
 cannot reveal hidden file dependencies; protect those explicitly when saving.
 """
-quality_report(results;include_measurement_history::Bool=false)=_quality_report(results,include_measurement_history,nothing)
-function _quality_report(results,include_measurement_history,expected_association)
-    include_measurement_history && !(results isa ResultFile) && _quality_error("history-aware reports require a direct ResultFile or verified record/run; converted wrappers, array views and bare iterators have no checked entry mapping")
+quality_report(results;include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false)=
+    _quality_report(results,include_measurement_history,include_execution_diagnostics,nothing)
+function _quality_report(results,include_measurement_history,include_execution_diagnostics,expected_association)
+    companions=include_measurement_history || include_execution_diagnostics
+    companions && !(results isa ResultFile) && _quality_error("companion-aware reports require a direct ResultFile or verified record/run; converted wrappers, array views and bare iterators have no checked entry mapping")
     Base.IteratorSize(typeof(results)) isa Base.IsInfinite && _quality_error("quality reports require a finite sequence")
     groups = Dict{String,Dict{String,Int}}()
-    kinds=include_measurement_history ? Dict(k=>0 for k in _QUALITY_HISTORY_KINDS) : nothing
+    kinds=companions ? Dict(k=>0 for k in _QUALITY_HISTORY_KINDS) : nothing
     history_counts=include_measurement_history ? Dict(k=>0 for k in _quality_history_counter_names()) : nothing
+    execution_counts=include_execution_diagnostics ? Dict(role=>Dict(k=>0 for k in _quality_execution_counter_names()) for role in _QUALITY_EXECUTION_ROLES) : nothing
     source = _result_file_source(results)
     provenance = Dict{String,Any}("association" => "unassociated")
     locators = unique!(abspath.(_result_protected_paths(results)))
@@ -380,10 +575,13 @@ function _quality_report(results,include_measurement_history,expected_associatio
         jldopen(f->_check_measurement_history_format(f),source.path,"r")
         _check_result_file(source)
     end
+    include_execution_diagnostics && _quality_check_execution_format(source)
     for (i,result) in enumerate(results)
-        if include_measurement_history
+        if companions
             kind=result isa PIVResult ? "planar" : result isa StereoPIVResult ? "stereo" : result isa PTVResult ? "ptv" : "tracking"
             _quality_add!(kinds,kind)
+        end
+        if include_measurement_history
             history=load_measurement_history(results,i) # metadata only; raw payload already loaded once
             if history!==nothing && expected_association!==nothing
                 d=_history_checked_data(history)
@@ -396,11 +594,10 @@ function _quality_report(results,include_measurement_history,expected_associatio
                 history===nothing || _quality_error("measurement-history companion attached to unsupported $kind result")
                 _quality_add!(history_counts,"unsupported_$(kind)_entries")
             end
-            result isa Union{PIVResult,StereoPIVResult} && _quality_update!(groups,result)
             history=nothing
-        else
-            _quality_update!(groups, result)
         end
+        include_execution_diagnostics && _quality_execution_update!(execution_counts,results,i,result,expected_association)
+        (!companions || result isa Union{PIVResult,StereoPIVResult}) && _quality_update!(groups,result)
         result=nothing
     end
     if source !== nothing
@@ -408,24 +605,28 @@ function _quality_report(results,include_measurement_history,expected_associatio
         _experiment_file_digest(source.path) == provenance["source_sha256"] || _quality_error("result source changed while building quality report")
         _check_result_file(source)
     end
-    version=include_measurement_history ? QUALITY_HISTORY_REPORT_FORMAT_VERSION : QUALITY_REPORT_FORMAT_VERSION
+    version=include_execution_diagnostics ? QUALITY_EXECUTION_REPORT_FORMAT_VERSION :
+        include_measurement_history ? QUALITY_HISTORY_REPORT_FORMAT_VERSION : QUALITY_REPORT_FORMAT_VERSION
     data = Dict{String,Any}("quality_report_format_version" => version,
         "generated_at_unix_s" => time(),
         "generator" => Dict("julia_version" => string(VERSION), "hammerhead_version" => string(Base.pkgversion(Hammerhead)),
                             "core_source_sha256" => _experiment_software()["core_source_sha256"],
-                            "value_basis" => include_measurement_history ? "stored_arrays_and_verified_final_sweep_history" : "stored_arrays", "weighting" => "node_weighted"),
+                            "value_basis" => _quality_value_basis(include_measurement_history,include_execution_diagnostics),
+                            "weighting" => include_execution_diagnostics ? "field_nodes_and_execution_observations" : "node_weighted"),
         "provenance" => provenance, "protected_locators" => locators,
         "groups" => Dict(kind => Dict("counts" => counts, "fractions" => _quality_fractions(counts, kind)) for (kind, counts) in groups),
-        "unavailable" => _quality_unavailable(version))
+        "unavailable" => _quality_unavailable(version;include_history=include_measurement_history))
+    companions && (data["entry_kinds"]=kinds)
     if include_measurement_history
-        data["entry_kinds"]=kinds
         data["measurement_history"]=Dict("scope"=>"final_pass_final_executed_sweep","binding"=>"raw_measurement_digest_verified",
             "counts"=>history_counts,"fractions"=>_quality_make_fractions(history_counts,_quality_history_metric_specs()))
     end
+    include_execution_diagnostics && (data["execution_diagnostics"]=_quality_execution_section(execution_counts,kinds))
     _quality_wrap(data)
 end
 
-function quality_report(record::ExperimentRecord, run::ExperimentRun;include_measurement_history::Bool=false)
+function quality_report(record::ExperimentRecord, run::ExperimentRun;
+        include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false)
     _experiment_preflight(record)
     _experiment_validate_environment(record.creation_environment)
     validated = _experiment_run(_experiment_run_data(run), record)
@@ -433,7 +634,8 @@ function quality_report(record::ExperimentRecord, run::ExperimentRun;include_mea
     source = ResultFile(validated.output)
     length(source) == validated.completed_pairs || _quality_error("completed run/result entry counts disagree")
     _experiment_file_digest(source.path) == validated.output_sha256 || _quality_error("recorded result output changed")
-    report = _quality_report(source,include_measurement_history,include_measurement_history ? Dict("recipe_id"=>validated.recipe_id,"input_id"=>validated.input_id) : nothing)
+    report = _quality_report(source,include_measurement_history,include_execution_diagnostics,
+        include_measurement_history || include_execution_diagnostics ? Dict("recipe_id"=>validated.recipe_id,"input_id"=>validated.input_id) : nothing)
     data = quality_report_data(report)
     data["provenance"]["source_sha256"] == validated.output_sha256 || _quality_error("recorded result output changed while building report")
     merge!(data["provenance"], Dict("association" => "recorded_output_verified", "recipe_id" => validated.recipe_id,
@@ -490,7 +692,7 @@ end
 """
     load_quality_report(path) -> RunQualityReport
 
-Read and validate a version-1 or opt-in version-2 TOML quality report without opening any recorded
+Read and validate a version-1, opt-in version-2 or opt-in version-3 TOML quality report without opening any recorded
 source/input/script locators. Unknown versions, malformed identities/counters,
 invented unsupported diagnostics, and inconsistent fractions are rejected.
 Stored provenance records a past verification; loading does not reverify files.
@@ -529,7 +731,7 @@ function Base.show(io::IO, ::MIME"text/plain", report::RunQualityReport)
                 " finite negative, ", group["counts"]["uq_$(c)_nonfinite_unmasked"], " nonfinite (unmasked nodes)")
         end
     end
-    if data["quality_report_format_version"]==2
+    if haskey(data,"measurement_history")
         h=data["measurement_history"]["counts"]
         print(io,"\nRecorded history: final pass/final executed sweep only")
         print(io,"\n  Coverage: ",h["recorded_entries"]," / ",h["planar_entries"]," planar entries; ",h["missing_entries"]," missing")
@@ -543,6 +745,21 @@ function Base.show(io::IO, ::MIME"text/plain", report::RunQualityReport)
         print(io,"\n  Final origins: ",h["origin_primary"]," primary, ",h["origin_alternative"]," alternative, ",h["origin_fill"]," fill, ",h["origin_unavailable"]," unavailable, ",h["origin_custom_unclassified"]," custom unclassified")
         print(io,"\n  Unclassified first rejection labels: ",h["rejection_unclassified"])
         print(io,"\n  Missing history entries are coverage gaps, not zero-event measurements. Median assignments may be nonfinite or later restored.")
+    end
+    if haskey(data,"execution_diagnostics")
+        execution=data["execution_diagnostics"]
+        print(io,"\nRecorded execution: entry/pass observations, not node-weighted field quality")
+        for role in _QUALITY_EXECUTION_ROLES
+            group=execution["groups"][role];c=group["counts"]
+            print(io,"\n  ",role,": ",c["recorded_entries"]," / ",c["eligible_entries"]," entries; ",c["missing_entries"]," missing; ",group["binding"])
+            print(io,"\n    ",c["passes"]," passes; ",c["executed_sweeps"]," / ",c["requested_sweeps"]," sweeps; ",c["tolerance_checks"]," tolerance checks")
+            print(io,"\n    Stops: ",c["stop_single_sweep"]," single sweep, ",c["stop_iteration_budget"]," budget, ",c["stop_tolerance_condition_met"]," tolerance condition")
+            print(io,"\n    Last checks: ",c["last_checks_present"]," evaluated, ",c["last_checks_absent"]," absent, ",c["last_check_empty"]," empty support")
+            print(io,"\n    Final primary support: ",c["final_primary_finite"]," finite, ",c["final_primary_nonfinite"]," nonfinite, ",c["final_primary_masked"]," masked (",group["coordinate_basis"],")")
+        end
+        print(io,"\n  Unsupported execution kinds: ",execution["unsupported_entries"]["ptv"]," PTV, ",execution["unsupported_entries"]["tracking"]," tracking")
+        print(io,"\n  Stereo raw measurement-field binding was checked when generated; loading this report does not freshly verify results.")
+        print(io,"\n  Pixel residual amplitudes are not pooled. Tolerance conditions, including empty comparisons, do not establish measurement validity or accuracy.")
     end
     print(io, "\nStored uncertainty availability means finite and nonnegative; it does not establish measurement association or calibrated coverage.")
     for (name, reason) in sort!(collect(data["unavailable"]); by = first)

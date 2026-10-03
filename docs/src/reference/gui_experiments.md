@@ -13,6 +13,10 @@ saved recipes on an explicitly selected pair without changing either run history
 Ordinary replay has scalar written-pair progress and boundary cancellation;
 see [monitor and cancel replay](../howto/gui_experiment_replay.md) for the
 distinction between GUI cancellation, failed core history and checkpoint resume.
+Quality reports default to format 1; independent history/execution toggles opt
+into formats 2/3. Their verification is at generation time and their summaries
+identify the reported run. `report_path_picker` optionally supplies a destination
+function for embedded applications; the default remains the TOML save dialog.
 
 ```@index
 Pages = ["gui_experiments.md"]
