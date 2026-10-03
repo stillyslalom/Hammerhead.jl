@@ -59,8 +59,9 @@ fields; it does not verify calibration or acquisition sources.
 [Ensemble diagnostics](../howto/ensemble_execution_diagnostics.md) separately
 record one pooled sweep per pass, ignored iteration settings, numerical
 contributions and pre-addition residuals. Capture supports CPU/KA; vendor devices
-are explicitly refused. Ensemble report/GUI integration remains separate. Lazy native GUI
-inspection checks raw stereo binding before physical conversion. Opt-in quality
+are explicitly refused. Separate [ensemble quality reports](../howto/ensemble_quality_reports.md)
+use explicit format-4 opt-in and verify raw binding; lazy GUI inspection also
+checks ensemble and stereo raw binding before physical conversion. Opt-in quality
 report version 3 retains planar/per-camera execution coverage and support counts;
 it does not pool residual amplitudes or reverify files when a saved report loads.
 

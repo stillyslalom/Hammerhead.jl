@@ -142,9 +142,21 @@ Planar ensemble capture uses its own version-1
 group. One pooled sweep per pass and ignored iteration settings are distinct
 from planar/stereo iterative execution. The companion binds raw measurement
 fields and geometry, excluding parameter objects and correlation planes;
-metadata-only reads do not verify result fields. CPU/KA capture is explicit,
-and execution-aware quality reports refuse this separate schema. Native result
-layouts and diagnostics-off numerical processing remain unchanged.
+metadata-only reads do not verify result fields. CPU/KA capture is explicit.
+Existing execution-report formats retain their refusal of this separate schema;
+the additive `include_ensemble_execution_diagnostics=true` option selects
+format 4 for direct whole-file native reports. It separates recorded pooled
+execution from ordinary iteration records and entries with no execution metadata.
+It does not infer that an unrecorded PIV entry came from an ensemble. Native
+result layouts and diagnostics-off numerical processing remain unchanged.
+
+Format 4 verifies ensemble companions against raw measurements before counting
+their populations. Retained history and ordinary execution sections preserve
+their earlier definitions; pooled contributions do not establish independent
+sample size or uncertainty coverage. Saved planar/stereo experiment overloads
+refuse ensemble reporting because ensemble recipe/run association is unsupported.
+GUI inspection also verifies raw binding before physical conversion and keeps
+display integrity separate from the packet's processing-pixel basis.
 
 Associated stereo quality reports reuse default format 1 and optional execution
 format 3 after dedicated stereo run/raw-field verification. The GUI preserves

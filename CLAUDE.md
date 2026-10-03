@@ -352,13 +352,25 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   and numerical UQ availability is not coverage or measurement association.
   Record/run reports verify output content and identities; anonymous iterators
   make no association claim. Protect hidden source paths explicitly when saving.
+- `ensemble_run_quality.jl` adds explicit format-4 whole-native-file reports via
+  `include_ensemble_execution_diagnostics=true`. Preserve v1/v2/v3 contracts and
+  their existing ensemble refusal when this flag is false. Classify recorded
+  pools, recorded planar iterations and entries without execution metadata;
+  absence does not identify an ensemble. Verify packets against the already
+  loaded raw payload, reject conflicting companion families on one entry, and
+  separate all-pass window-pair observations from final-pass node/UQ populations.
+  Repeated observations are not independent samples; do not aggregate residual
+  amplitudes. Planar/stereo recipe-associated overloads refuse this option.
+  Validate the complete sorted native entry mapping and detach its key vector
+  before provenance/iteration. GUI whole-file reports use this guard for all
+  formats and capture it before observable notifications or save dialogs.
 - `stereo_run_quality.jl` extends associated reports to completed frozen-camera
   stereo records. Snapshot record/run, verify raw fields/geometry/ordered sources
   and native companions before/after the streaming report; optionally check input
   bytes. Default v1 and execution v3 schemas remain unchanged; stereo history is
   refused. Explicit result relocation preserves foreign historical locators.
-  Execution-aware reports refuse separate ensemble metadata until its pooled
-  observations have supported aggregation semantics.
+  Its execution-aware reports retain v3 semantics and refuse ensemble metadata;
+  format-4 ensemble reporting uses a separate unassociated whole-file index.
 - `pair_comparison.jl` — `compare_recipe_pair` reruns complete built-in planar
   recipes on explicitly selected content-matched inputs. Exact raw-coordinate
   intersections avoid resampling; native and paired quality populations remain
@@ -562,6 +574,15 @@ camera fields. Planar execution companions v1 bind entry keys, not numerical
 result content; stereo companions bind raw reconstructed and camera fields.
 Stereo residuals remain dewarped pixels and per-node history stays unavailable.
 Missing history is never inferred. Scaled magnitude fields are labelled speed.
+Ensemble companions bind raw fields/geometry before physical conversion and
+retain scalar pooled observations only; node selection cannot recover unrecorded
+contributor histories. Reject incompatible packet families on the same entry.
+`explorer_quality_report` and `save_explorer_quality_report` consume a lazy native
+explorer's whole raw index, independently of displayed frame and inspection mode.
+The separate `result_quality_report` view captures that index on opening and
+options before notifications or a picker. Failed/cancelled requests retain the
+previous report's own file/SHA identity. Scans are synchronous; eager/bare,
+timed and checkpoint explorers have no supported whole-native-file association.
 
 The separate recipe-comparison controller captures complete before/after records,
 selected pairs and value basis before notifications or asynchronous scheduling.

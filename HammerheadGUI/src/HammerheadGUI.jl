@@ -25,6 +25,7 @@ using ImageCore: Gray
 import SHA
 
 include("controllers/result_explorer.jl")
+include("controllers/result_quality_report.jl")
 include("controllers/derivative_inspection.jl")
 include("controllers/mask_editor.jl")
 include("controllers/preprocess_preview.jl")   # before batch_runner (set_preprocess! signature)
@@ -47,6 +48,7 @@ export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        current_field_values, set_tool!, clear_tool!, tool_summary,
        set_companion_inspection!, companion_summary, describe_companion_selection
 export set_derivative_stencil!, derivative_support_summary, describe_derivative_selection
+export explorer_quality_report, save_explorer_quality_report
 export MaskEditor, add_vertex!, undo_vertex!, close_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
@@ -86,6 +88,7 @@ export ResultExplorer, result_explorer, result_explorer!,
        set_tool!, clear_tool!, tool_summary,
        set_companion_inspection!, companion_summary, describe_companion_selection
 export set_derivative_stencil!, derivative_support_summary, describe_derivative_selection
+export explorer_quality_report, save_explorer_quality_report, result_quality_report
 export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
 export PreprocessPreview, preprocess_preview, preprocess_preview!,
@@ -116,6 +119,7 @@ export StereoExperimentController, select_experiment_run!, stereo_experiment_wor
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
+include("views/result_quality_report.jl")
 include("views/recipe_comparison.jl")
 include("views/experiment_workflow.jl")
 include("views/checkpoint_workflow.jl")

@@ -36,7 +36,7 @@ mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
     inspection::Bool
     companions::NamedTuple
 end
-_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,stereo_diagnostics=nothing,display_sha256=nothing)
+_empty_companions(state=:off)=(state=state,history=nothing,diagnostics=nothing,stereo_diagnostics=nothing,ensemble_diagnostics=nothing,display_sha256=nothing)
 _LazyDisplayResults(source,index,result)=_LazyDisplayResults(source,index,result,false,_empty_companions())
 Base.size(results::_LazyDisplayResults) = size(results.source)
 Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
@@ -56,21 +56,28 @@ function _prepare_lazy_frame(results,i,inspection)
         history=Hammerhead.load_measurement_history(results.source,i)
         diagnostics=Hammerhead.load_execution_diagnostics(results.source,i)
         stereo=Hammerhead.load_stereo_execution_diagnostics(results.source,i)
+        ensemble=Hammerhead.load_ensemble_execution_diagnostics(results.source,i)
         if raw isa PIVResult
             stereo===nothing || throw(ArgumentError("stereo companion attached to a planar result"))
-            history===nothing || Hammerhead.verify_measurement_history(history,raw)
-            state=history===nothing ? :history_missing : :verified
+            if ensemble!==nothing
+                history===nothing && diagnostics===nothing || throw(ArgumentError("ensemble and single-pair companions attached to the same result"))
+                Hammerhead.execution_diagnostics_data(ensemble;result=raw)
+                state=:ensemble_verified
+            else
+                history===nothing || Hammerhead.verify_measurement_history(history,raw)
+                state=history===nothing ? :history_missing : :verified
+            end
         elseif raw isa StereoPIVResult
-            history===nothing && diagnostics===nothing || throw(ArgumentError("planar companion attached to a stereo result"))
+            history===nothing && diagnostics===nothing && ensemble===nothing || throw(ArgumentError("planar companion attached to a stereo result"))
             stereo===nothing || Hammerhead.execution_diagnostics_data(stereo;result=raw)
             state=stereo===nothing ? :stereo_missing : :stereo_verified
         else
-            history===nothing && diagnostics===nothing && stereo===nothing || throw(ArgumentError("recorded companion attached to an unsupported result kind"))
+            history===nothing && diagnostics===nothing && stereo===nothing && ensemble===nothing || throw(ArgumentError("recorded companion attached to an unsupported result kind"))
             state=:unsupported
         end
         result=physical(raw)
         digest=result isa GridResult ? _display_measurement_digest(result) : nothing
-        companions=(state=state,history=history,diagnostics=diagnostics,stereo_diagnostics=stereo,display_sha256=digest)
+        companions=(state=state,history=history,diagnostics=diagnostics,stereo_diagnostics=stereo,ensemble_diagnostics=ensemble,display_sha256=digest)
     else
         result=physical(raw)
         companions=_empty_companions()
@@ -286,12 +293,15 @@ end
 """
     set_companion_inspection!(ex::ResultExplorer, enabled::Bool=true)
 
-Opt into recorded planar history/execution or stereo camera execution inspection for a lazy native
+Opt into recorded planar history/execution, ensemble pools or stereo camera execution inspection for a lazy native
 `ResultFile` explorer. Raw results and companions are read and history binding
 verified before physical display conversion/cache replacement. Stereo binding
 checks reconstructed and retained camera measurement fields against the raw
 result. The physical display has a separate mutation digest; it is not the raw
-binding. Failure preserves
+binding. Ensemble packets verify raw measurement fields and geometry before
+conversion; they contain scalar pooled observations, not per-node history or
+ordinary pair iteration/convergence counts. Same-entry conflicting companion
+families are refused; missing metadata never identifies an ensemble. Failure preserves
 the old mode, frame, selection and display/companion bundle, and sets `status`.
 Disabling releases the current packet. Bare/eager inputs and checkpoint indexes
 have no supported native-companion association. This retains one display result
@@ -310,6 +320,7 @@ function _checked_companions(ex)
             throw(ArgumentError("physical display fields changed after companion verification; disable and reenable inspection to reload"))
         c.history===nothing || Hammerhead._history_checked_data(c.history)
         c.stereo_diagnostics===nothing || Hammerhead.execution_diagnostics_data(c.stereo_diagnostics)
+        c.ensemble_diagnostics===nothing || Hammerhead.execution_diagnostics_data(c.ensemble_diagnostics)
     catch err
         ex.status[]=first(split(sprint(showerror,err),'\n'))
         rethrow()
@@ -326,7 +337,10 @@ planar diagnostics v1 bind an entry key, not numerical content or the independen
 history UUID. Stereo companions verify raw reconstructed/camera measurement
 fields on loading, without verifying calibration or source images. Their
 residuals remain dewarped pixels, not world 3C residuals. Stored uncertainty
-availability never certifies applicability.
+availability never certifies applicability. Ensemble summaries distinguish one
+pooled sweep, window/pair opportunities and numerical contributor categories;
+residuals remain processing pixels before predictor addition. No stationarity,
+independent sample size, convergence or per-node attribution is established.
 When enabled, integrity/display checks scan/hash the current arrays (O(nodes));
 no result reload or full packet copy occurs on inspection.
 """
@@ -343,6 +357,27 @@ function companion_summary(ex::ResultExplorer)
 end
 function _companion_summary(c)
     c.state===:unsupported && return "Recorded companions: unsupported for this result kind."
+    if c.state===:ensemble_verified
+        d=c.ensemble_diagnostics
+        lines=["Recorded planar ensemble: $(d.pair_count) input pairs; raw measurement binding verified at load.",
+            "Current physical display integrity is checked separately."]
+        for p in d.passes
+            push!(lines,"Pass $(p.pass_index): one pooled sweep; requested $(p.requested_iterations) iterations and tolerance ignored (no comparisons).")
+            c=p.contributions;g=p.contributor_nodes;s=p.source_support;r=p.residual;uq=p.uncertainty
+            push!(lines,"  Window/pair opportunities: $(c.window_opportunities); masked $(c.masked_window_pairs), source-gated $(c.source_gated_window_pairs), accumulated $(c.accumulated_window_pairs).",
+                "  Accumulated planes: $(c.finite_zero_planes) finite zero, $(c.finite_flat_nonzero_planes) finite flat nonzero, $(c.finite_nonflat_planes) finite nonflat, $(c.nonfinite_planes) nonfinite.",
+                "  Eligible nodes: $(g.eligible_count); finite nonzero contributions: zero $(g.zero_finite_nonzero_count), some $(g.some_finite_nonzero_count), all $(g.all_finite_nonzero_count); nodes with a nonfinite plane $(g.nodes_with_nonfinite_plane).",
+                "  Source-support pairs: no predictor $(s.no_predictor_pairs), evaluated $(s.evaluated_pairs), disabled for nonfinite source $(s.disabled_nonfinite_source_pairs).",
+                "  Primary pooled residual mean/RMS/max: $(r.mean_magnitude===nothing ? "unavailable" : _fmt(r.mean_magnitude))/$(r.rms_magnitude===nothing ? "unavailable" : _fmt(r.rms_magnitude))/$(r.maximum_magnitude===nothing ? "unavailable" : _fmt(r.maximum_magnitude)) processing px; $(r.finite_count) finite unmasked nodes.",
+                "  Pooled uncertainty: $(replace(uq.reason,'_'=>' ')); $(uq.admitted_window_pair_updates) admitted window/pair updates (before validation and availability cleanup).")
+            for component in (:u,:v)
+                values=getproperty(uq,component)
+                push!(lines,"    $component: $(values.finite_nonnegative_count) finite nonnegative, $(values.finite_negative_count) finite negative, $(values.nonfinite_count) nonfinite unmasked nodes; unit px.")
+            end
+        end
+        push!(lines,"Contribution counts do not establish independent sample size, stationarity, convergence, valid vectors or uncertainty applicability/coverage. Per-node ensemble history is unavailable.")
+        return join(lines,"\n")
+    end
     if c.state in (:stereo_missing,:stereo_verified)
         c.stereo_diagnostics===nothing && return "Stereo execution diagnostics: not recorded.\nStereo per-node measurement history: unavailable."
         d=c.stereo_diagnostics
@@ -388,6 +423,8 @@ events, final origin/flag and stored uncertainty numerical status. Use the
 ordinary selection panel for final displayed physical units. No history is
 inferred from current flags or reconstructed for missing entries. Integrity
 checks are O(nodes), but the returned text/scalar accessor retains no arrays.
+For ensemble and stereo packets this explicitly states that per-node history is
+unavailable instead of assigning aggregate observations to a selected node.
 """
 function describe_companion_selection(ex::ResultExplorer)
     ex.companion_enabled[] || return ""
@@ -396,6 +433,7 @@ function describe_companion_selection(ex::ResultExplorer)
     _companion_selection(ex,c)
 end
 function _companion_selection(ex,c)
+    c.state===:ensemble_verified && return "Ensemble observations summarize pooled passes, not this selected node.\nPer-node contributor counts, replacement history and uncertainty attribution are not recorded.\nUse the ordinary selection panel for displayed vector values and units."
     c.state in (:stereo_missing,:stereo_verified) && return "Stereo per-node measurement history and world 3C residuals are not recorded.\nUse the ordinary selection panel for displayed vector values."
     c.history===nothing && return ""
     sel=ex.selection[]

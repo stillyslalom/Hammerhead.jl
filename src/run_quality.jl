@@ -20,7 +20,12 @@ function _quality_unavailable(version;include_history=version==2)
         unavailable["earlier_pass_and_sweep_history"]="not_recorded"
         unavailable["uncertainty_measurement_association"]="applicability_not_established"
     end
-    version==3 && (unavailable["pooled_execution_residual_amplitudes"]="not_aggregated")
+    version in (3,4) && (unavailable["pooled_execution_residual_amplitudes"]="not_aggregated")
+    if version==4
+        unavailable["ensemble_independent_sample_size"]="not_established"
+        unavailable["ensemble_common_displacement_assumption"]="not_checked"
+        unavailable["ensemble_per_node_measurement_history"]="not_recorded"
+    end
     Dict(k=>Dict("available"=>false,"reason_code"=>v) for (k,v) in unavailable)
 end
 
@@ -101,9 +106,9 @@ function _quality_execution_passes!(counts,data)
     _quality_add!(counts,"final_primary_masked",masked)
     nothing
 end
-function _quality_execution_update!(counters,index,i,result,expected_association)
-    planar=load_execution_diagnostics(index,i)
-    stereo=load_stereo_execution_diagnostics(index,i)
+function _quality_execution_update!(counters,index,i,result,expected_association; loaded=nothing)
+    planar=loaded===nothing ? load_execution_diagnostics(index,i) : loaded.planar
+    stereo=loaded===nothing ? load_stereo_execution_diagnostics(index,i) : loaded.stereo
     if result isa PIVResult
         stereo===nothing || _quality_error("stereo diagnostics attached to planar result")
         if planar!==nothing
@@ -384,17 +389,19 @@ end
 function _quality_validate(data)
     data isa AbstractDict || _quality_error("malformed quality report")
     version=get(data,"quality_report_format_version",nothing)
-    version isa Int && version in (1,2,3) || _quality_error("unsupported quality report format version")
-    include_history=version==2 || version==3 && haskey(data,"measurement_history")
+    version isa Int && version in (1,2,3,4) || _quality_error("unsupported quality report format version")
+    include_history=version==2 || version in (3,4) && haskey(data,"measurement_history")
+    include_execution=version==3 || version==4 && haskey(data,"execution_diagnostics")
     extra=version==1 ? String[] : ["entry_kinds";include_history ? ["measurement_history"] : String[];
-        version==3 ? ["execution_diagnostics"] : String[]]
+        include_execution ? ["execution_diagnostics"] : String[];
+        version==4 ? ["ensemble_execution_diagnostics"] : String[]]
     _experiment_keys(data, ["quality_report_format_version", "generated_at_unix_s", "generator",
         "provenance", "protected_locators", "groups", "unavailable",extra...], "quality report")
     data["generated_at_unix_s"] isa Real && !(data["generated_at_unix_s"] isa Bool) &&
         isfinite(data["generated_at_unix_s"]) && data["generated_at_unix_s"] >= 0 || _quality_error("invalid report timestamp")
     _experiment_keys(data["generator"], ["julia_version", "hammerhead_version", "core_source_sha256", "value_basis", "weighting"], "quality generator")
-    all(v -> v isa String, values(data["generator"])) && data["generator"]["value_basis"] == _quality_value_basis(include_history,version==3) &&
-        data["generator"]["weighting"] == (version==3 ? "field_nodes_and_execution_observations" : "node_weighted") &&
+    all(v -> v isa String, values(data["generator"])) && data["generator"]["value_basis"] == _quality_value_basis(include_history,include_execution,version==4) &&
+        data["generator"]["weighting"] == (version in (3,4) ? "field_nodes_and_execution_observations" : "node_weighted") &&
         _experiment_hash(data["generator"]["core_source_sha256"]) || _quality_error("unsupported quality metric basis")
     locators = data["protected_locators"]
     locators isa AbstractVector && all(p -> p isa String && isabspath(p), locators) || _quality_error("invalid protected report locators")
@@ -403,6 +410,7 @@ function _quality_validate(data)
     association = provenance["association"]
     common = haskey(provenance, "source_path") ? ["source_path", "source_sha256", "source_index_entries", "source_selection"] : String[]
     associated = association == "recorded_output_verified"
+    version==4 && associated && _quality_error("ensemble reports have no supported experiment recipe association")
     association in ("unassociated", "recorded_output_verified") || _quality_error("unsupported quality association")
     extra = associated ? ["recipe_id", "input_id", "run_id", "run_environment_id", "completed_pairs"] : String[]
     _experiment_keys(provenance, ["association"; common; extra], "quality provenance")
@@ -453,13 +461,21 @@ function _quality_validate(data)
         counts["entries"] > 0 || counts["nodes"] == 0 || _quality_error("nonempty grid without result entries")
         total_entries = _quality_sum(total_entries, counts["entries"])
     end
-    if version in (2,3)
+    if version in (2,3,4)
         kinds=data["entry_kinds"]
         _experiment_keys(kinds,collect(_QUALITY_HISTORY_KINDS),"quality entry kinds")
         all(v->v isa Int && v>=0,values(kinds)) || _quality_error("invalid entry kind counts")
         all(kind->get(groups,kind,Dict("counts"=>Dict("entries"=>0)))["counts"]["entries"]==kinds[kind],("planar","stereo")) || _quality_error("quality kind/group counts disagree")
         include_history && _quality_validate_history(data["measurement_history"],kinds,groups)
-        version==3 && _quality_validate_execution(data["execution_diagnostics"],kinds,groups)
+        include_execution && _quality_validate_execution(data["execution_diagnostics"],kinds,groups)
+        version==4 && _quality_validate_ensemble(data["ensemble_execution_diagnostics"],kinds,groups)
+        if version==4
+            classification=data["ensemble_execution_diagnostics"]["classification"]
+            include_execution && data["execution_diagnostics"]["groups"]["planar"]["counts"]["recorded_entries"] != classification["recorded_planar_iteration_entries"] &&
+                _quality_error("ordinary and ensemble execution classifications disagree")
+            include_history && data["measurement_history"]["counts"]["recorded_entries"] > kinds["planar"]-classification["recorded_ensemble_entries"] &&
+                _quality_error("history and ensemble packets cannot cover the same entries")
+        end
         total_entries=_quality_sum(values(kinds)...)
         !isempty(common) && provenance["source_selection"]=="whole_file" || _quality_error("companion report requires a whole native result source")
     end
@@ -475,14 +491,16 @@ function _quality_wrap(data)
     snapshot = deepcopy(Dict{String,Any}(data))
     RunQualityReport(snapshot, Tuple(snapshot["protected_locators"]), _experiment_digest(snapshot))
 end
-function _quality_value_basis(history,execution)
+function _quality_value_basis(history,execution,ensemble=false)
+    ensemble && return _quality_value_basis(history,execution)*"_and_verified_recorded_ensemble_execution"
     execution ? (history ? "stored_arrays_recorded_execution_and_verified_final_sweep_history" : "stored_arrays_and_recorded_execution") :
         (history ? "stored_arrays_and_verified_final_sweep_history" : "stored_arrays")
 end
 
 """
     quality_report(results; include_measurement_history=false,
-                   include_execution_diagnostics=false) -> RunQualityReport
+                   include_execution_diagnostics=false,
+                   include_ensemble_execution_diagnostics=false) -> RunQualityReport
     quality_report(record::ExperimentRecord, run::ExperimentRun;
                    include_measurement_history=false,
                    include_execution_diagnostics=false) -> RunQualityReport
@@ -541,6 +559,33 @@ no reconstructed 3C residual is inferred. Tolerance outcomes and empty checks
 do not establish measurement validity. Saved reports describe checks when
 generated, not fresh result/calibration/input verification when loaded.
 
+With `include_ensemble_execution_diagnostics=true`, require a direct whole-file
+`ResultFile` and emit format version 4. This opt-in can combine with the two
+existing flags; their coverage denominators remain unchanged. The original index
+must exactly match the independently sorted native result keys; a detached key
+snapshot is used before provenance or populations are recorded. Edited index
+vectors (including omissions, duplicates and reordered keys) are refused.
+Recorded ensemble
+packets verify raw measurement fields and geometry against each already loaded
+payload. Planar entries are classified as recorded ensemble, recorded ordinary
+iteration, or without execution metadata. Absence does not identify an expected
+ensemble workflow. An ensemble packet cannot coexist with ordinary iteration,
+stereo, or measurement-history metadata on the same entry. Different entries
+may carry different supported companions. Invalid root markers are refused
+even in empty files. Experiment association is unsupported for this opt-in.
+
+Ensemble observations separately count all-pass window-pair/source-support
+populations and final-pass contributor/primary/UQ support. Each recorded pass
+executed exactly one pooled sweep; requested iteration/tolerance settings were
+ignored, with no convergence checks. Pair observations may reuse inputs across
+pools/passes and are not unique or independent samples. Finite nonzero planes
+include flat planes and do not certify a valid measurement. UQ component counts
+cover only numerically evaluated final pools before validation/cleanup;
+unevaluated pools do not count as evaluated missing estimates. Residual/UQ units
+remain processing pixels regardless of result scale. No residual amplitudes,
+effective sample size, stationarity, uncertainty applicability or coverage are
+aggregated or inferred. Loaded v4 reports describe checks at generation only.
+
 Generic sequences/files have no asserted experiment association. The record/run
 overload validates snapshot/input/run metadata, requires a completed run and
 matching result count, and verifies the recorded output SHA-256 before and after
@@ -554,16 +599,22 @@ known experiment locators retain O(inputs/runs) strings. Loading one native
 entry includes any saved correlation planes/camera fields. Anonymous iterators
 cannot reveal hidden file dependencies; protect those explicitly when saving.
 """
-quality_report(results;include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false)=
-    _quality_report(results,include_measurement_history,include_execution_diagnostics,nothing)
-function _quality_report(results,include_measurement_history,include_execution_diagnostics,expected_association)
-    companions=include_measurement_history || include_execution_diagnostics
+quality_report(results;include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false,
+        include_ensemble_execution_diagnostics::Bool=false)=
+    _quality_report(results,include_measurement_history,include_execution_diagnostics,nothing,include_ensemble_execution_diagnostics)
+function _quality_report(results,include_measurement_history,include_execution_diagnostics,expected_association,include_ensemble_execution_diagnostics=false)
+    companions=include_measurement_history || include_execution_diagnostics || include_ensemble_execution_diagnostics
+    include_ensemble_execution_diagnostics && expected_association!==nothing &&
+        _quality_error("ensemble reports have no supported experiment recipe association")
     companions && !(results isa ResultFile) && _quality_error("companion-aware reports require a direct ResultFile or verified record/run; converted wrappers, array views and bare iterators have no checked entry mapping")
+    include_ensemble_execution_diagnostics && (results=_quality_whole_file_index(results))
     Base.IteratorSize(typeof(results)) isa Base.IsInfinite && _quality_error("quality reports require a finite sequence")
     groups = Dict{String,Dict{String,Int}}()
     kinds=companions ? Dict(k=>0 for k in _QUALITY_HISTORY_KINDS) : nothing
     history_counts=include_measurement_history ? Dict(k=>0 for k in _quality_history_counter_names()) : nothing
     execution_counts=include_execution_diagnostics ? Dict(role=>Dict(k=>0 for k in _quality_execution_counter_names()) for role in _QUALITY_EXECUTION_ROLES) : nothing
+    ensemble_counts=include_ensemble_execution_diagnostics ? Dict(k=>0 for k in _quality_ensemble_counter_names()) : nothing
+    ensemble_classification=include_ensemble_execution_diagnostics ? Dict(k=>0 for k in _QUALITY_ENSEMBLE_CLASSIFICATION) : nothing
     source = _result_file_source(results)
     provenance = Dict{String,Any}("association" => "unassociated")
     locators = unique!(abspath.(_result_protected_paths(results)))
@@ -579,14 +630,19 @@ function _quality_report(results,include_measurement_history,include_execution_d
         jldopen(f->_check_measurement_history_format(f),source.path,"r")
         _check_result_file(source)
     end
-    include_execution_diagnostics && _quality_check_execution_format(source)
+    if include_ensemble_execution_diagnostics
+        _quality_check_ensemble_format(source)
+    elseif include_execution_diagnostics
+        _quality_check_execution_format(source)
+    end
     for (i,result) in enumerate(results)
         if companions
             kind=result isa PIVResult ? "planar" : result isa StereoPIVResult ? "stereo" : result isa PTVResult ? "ptv" : "tracking"
             _quality_add!(kinds,kind)
         end
+        loaded=include_ensemble_execution_diagnostics ? _quality_ensemble_observe!(ensemble_classification,ensemble_counts,results,i,result) : nothing
         if include_measurement_history
-            history=load_measurement_history(results,i) # metadata only; raw payload already loaded once
+            history=loaded===nothing ? load_measurement_history(results,i) : loaded.history # raw payload already loaded once
             if history!==nothing && expected_association!==nothing
                 d=_history_checked_data(history)
                 d["association"]==expected_association && d["pair_index"]===i || _quality_error("recorded measurement-history recipe/input or pair association disagrees with the selected run")
@@ -600,23 +656,25 @@ function _quality_report(results,include_measurement_history,include_execution_d
             end
             history=nothing
         end
-        include_execution_diagnostics && _quality_execution_update!(execution_counts,results,i,result,expected_association)
+        include_execution_diagnostics && _quality_execution_update!(execution_counts,results,i,result,expected_association;loaded)
         (!companions || result isa Union{PIVResult,StereoPIVResult}) && _quality_update!(groups,result)
         result=nothing
+        loaded=nothing
     end
     if source !== nothing
         _check_result_file(source)
         _experiment_file_digest(source.path) == provenance["source_sha256"] || _quality_error("result source changed while building quality report")
         _check_result_file(source)
     end
-    version=include_execution_diagnostics ? QUALITY_EXECUTION_REPORT_FORMAT_VERSION :
+    version=include_ensemble_execution_diagnostics ? QUALITY_ENSEMBLE_REPORT_FORMAT_VERSION :
+        include_execution_diagnostics ? QUALITY_EXECUTION_REPORT_FORMAT_VERSION :
         include_measurement_history ? QUALITY_HISTORY_REPORT_FORMAT_VERSION : QUALITY_REPORT_FORMAT_VERSION
     data = Dict{String,Any}("quality_report_format_version" => version,
         "generated_at_unix_s" => time(),
         "generator" => Dict("julia_version" => string(VERSION), "hammerhead_version" => string(Base.pkgversion(Hammerhead)),
                             "core_source_sha256" => _experiment_software()["core_source_sha256"],
-                            "value_basis" => _quality_value_basis(include_measurement_history,include_execution_diagnostics),
-                            "weighting" => include_execution_diagnostics ? "field_nodes_and_execution_observations" : "node_weighted"),
+                            "value_basis" => _quality_value_basis(include_measurement_history,include_execution_diagnostics,include_ensemble_execution_diagnostics),
+                            "weighting" => include_execution_diagnostics || include_ensemble_execution_diagnostics ? "field_nodes_and_execution_observations" : "node_weighted"),
         "provenance" => provenance, "protected_locators" => locators,
         "groups" => Dict(kind => Dict("counts" => counts, "fractions" => _quality_fractions(counts, kind)) for (kind, counts) in groups),
         "unavailable" => _quality_unavailable(version;include_history=include_measurement_history))
@@ -626,11 +684,14 @@ function _quality_report(results,include_measurement_history,include_execution_d
             "counts"=>history_counts,"fractions"=>_quality_make_fractions(history_counts,_quality_history_metric_specs()))
     end
     include_execution_diagnostics && (data["execution_diagnostics"]=_quality_execution_section(execution_counts,kinds))
+    include_ensemble_execution_diagnostics && (data["ensemble_execution_diagnostics"]=_quality_ensemble_section(ensemble_classification,ensemble_counts,kinds))
     _quality_wrap(data)
 end
 
 function quality_report(record::ExperimentRecord, run::ExperimentRun;
-        include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false)
+        include_measurement_history::Bool=false,include_execution_diagnostics::Bool=false,
+        include_ensemble_execution_diagnostics::Bool=false)
+    include_ensemble_execution_diagnostics && _quality_error("ensemble reports have no supported experiment recipe association; use a direct whole-file ResultFile")
     _experiment_preflight(record)
     _experiment_validate_environment(record.creation_environment)
     validated = _experiment_run(_experiment_run_data(run), record)
@@ -696,7 +757,7 @@ end
 """
     load_quality_report(path) -> RunQualityReport
 
-Read and validate a version-1, opt-in version-2 or opt-in version-3 TOML quality report without opening any recorded
+Read and validate a version-1 or opt-in version-2/3/4 TOML quality report without opening any recorded
 source/input/script locators. Unknown versions, malformed identities/counters,
 invented unsupported diagnostics, and inconsistent fractions are rejected.
 Stored provenance records a past verification; loading does not reverify files.
@@ -765,6 +826,7 @@ function Base.show(io::IO, ::MIME"text/plain", report::RunQualityReport)
         print(io,"\n  Stereo raw measurement-field binding was checked when generated; loading this report does not freshly verify results.")
         print(io,"\n  Pixel residual amplitudes are not pooled. Tolerance conditions, including empty comparisons, do not establish measurement validity or accuracy.")
     end
+    haskey(data,"ensemble_execution_diagnostics") && _quality_show_ensemble(io,data["ensemble_execution_diagnostics"])
     print(io, "\nStored uncertainty availability means finite and nonnegative; it does not establish measurement association or calibrated coverage.")
     for (name, reason) in sort!(collect(data["unavailable"]); by = first)
         label = name == "uncertainty_measurement_association" ? "Uncertainty measurement association" : uppercasefirst(replace(name, '_' => ' '))

@@ -231,4 +231,70 @@ end
         _,large=ensemble_diag_observe(fill((A,B),20),ensemble_diag_params())
         @test Base.summarysize(large)<=Base.summarysize(small)+256
     end
+
+    @testset "Joint contributor capacity and attained extrema" begin
+        @test Hammerhead._ensemble_mul(typemax(Int),1)==typemax(Int)
+        @test Hammerhead._ensemble_mul(typemax(Int),0)==0
+        @test_throws ArgumentError Hammerhead._ensemble_mul(typemax(Int),2)
+        @test_throws ArgumentError Hammerhead._ensemble_add(typemax(Int),1)
+
+        mktempdir() do dir
+            a=A[1:32,1:32];b=circshift(a,(1,2));p=ensemble_diag_params()
+            # Each fixture has 9 nodes. Resealing ensures rejection comes from
+            # semantic count invariants, not merely a metadata digest mismatch.
+            for n in (2,4)
+                path=joinpath(dir,"source-$n.jld2")
+                _,d=ensemble_diag_observe(fill((a,b),n),p;output=path,record_diagnostics=true)
+                @test only(d.passes).contributor_nodes.eligible_count==9
+                saved=read(path)
+                function contributions!(entry,finite,nonfinite)
+                    q=entry["diagnostics"]["passes"][1]
+                    c=q["contributions"];g=q["contributor_nodes"]
+                    # Derive summaries from independently specified per-node
+                    # populations, retaining zero/flat/nonflat partitions.
+                    c["finite_nonflat_planes"]=sum(finite)
+                    c["finite_flat_nonzero_planes"]=0
+                    c["nonfinite_planes"]=sum(nonfinite)
+                    c["finite_zero_planes"]=9n-sum(finite)-sum(nonfinite)
+                    g["zero_finite_nonzero_count"]=count(==(0),finite)
+                    g["some_finite_nonzero_count"]=count(f->0<f<n,finite)
+                    g["all_finite_nonzero_count"]=count(==(n),finite)
+                    g["minimum_finite_nonzero_contributions"],g["maximum_finite_nonzero_contributions"]=extrema(finite)
+                    g["nodes_with_nonfinite_plane"]=count(>(0),nonfinite)
+                end
+                valid=n==2 ? [(ones(Int,9),[1;zeros(Int,8)]),
+                               (fill(2,9),zeros(Int,9)),(zeros(Int,9),fill(2,9))] :
+                              [([3;ones(Int,8)],zeros(Int,9)),([1;fill(3,8)],zeros(Int,9))]
+                for (k,(finite,nonfinite)) in enumerate(valid)
+                    fixture=joinpath(dir,"valid-$n-$k.jld2");write(fixture,saved)
+                    ensemble_diag_rewrite(fixture,e->contributions!(e,finite,nonfinite))
+                    @test load_ensemble_execution_diagnostics(fixture;verify_result=true)!==nothing
+                end
+                invalid=n==2 ? [e->contributions!(e,ones(Int,9),[2;zeros(Int,8)])] :
+                    [e->begin
+                        contributions!(e,ones(Int,9),zeros(Int,9))
+                        e["diagnostics"]["passes"][1]["contributor_nodes"]["maximum_finite_nonzero_contributions"]=3
+                     end,
+                     e->begin
+                        contributions!(e,fill(3,9),zeros(Int,9))
+                        e["diagnostics"]["passes"][1]["contributor_nodes"]["minimum_finite_nonzero_contributions"]=1
+                     end]
+                for (k,change) in enumerate(invalid)
+                    fixture=joinpath(dir,"invalid-$n-$k.jld2");write(fixture,saved)
+                    ensemble_diag_rewrite(fixture,change)
+                    @test_throws ArgumentError load_ensemble_execution_diagnostics(fixture;verify_result=true)
+                end
+                fixture=joinpath(dir,"overflow-$n.jld2");write(fixture,saved)
+                ensemble_diag_rewrite(fixture,e->begin
+                    e["diagnostics"]["pair_count"]=typemax(Int)
+                    q=e["diagnostics"]["passes"][1]
+                    q["pair_count"]=typemax(Int)
+                    q["source_support"]["no_predictor_pairs"]=typemax(Int)
+                end)
+                error=try load_ensemble_execution_diagnostics(fixture);nothing catch exception;exception end
+                @test error isa ArgumentError
+                @test occursin("overflow",sprint(showerror,error))
+            end
+        end
+    end
 end

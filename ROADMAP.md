@@ -33,9 +33,10 @@ The [backend feature matrix](docs/src/reference/feature_matrix.md) describes
 current execution support. The [archived roadmap](reference/archive/ROADMAP.md)
 records the original phases, not current status or release promises.
 
-The saved-stereo GUI, ensemble execution diagnostics, and VSJ301 validation
-batch passes 11,673 core checks and 1,518 GUI checks; the documentation build
-executes all seven tutorials. These local checks do not close hardware or
+The ensemble-report batch passes 1,687 full GUI checks and 770 final-source
+core report/packet checks. A full core run passed 11,867 checks before the final
+index-capture guard; that guard has separate focused coverage. The documentation
+build executes all seven tutorials. These local checks do not close hardware or
 cross-platform acceptance gates.
 
 ## Delivery order
@@ -202,6 +203,14 @@ provenance, supported claims, failure cases, and comparable timing conditions.
 - [ ] Extend experiment records to stereo calibration/dewarping/self-calibration,
   PTV/tracking, and supported GPU devices. Define migrations when extending the
   format; keep toolkit dependencies in the GUI package.
+- [ ] Save, reopen and replay complete planar ensemble experiments, then connect
+  them to GUI creation, progress/cancellation, verified inspection and associated
+  quality reports. Preserve ordered input pairs, explicit passes, preprocessing,
+  mask, scale, backend and precision. Distinguish input-pair contributions from
+  the single pooled output; cancellation must not publish a completed pool.
+  Preserve existing sequence run-count and report contracts. Validate direct/replay
+  parity and exact imported settings; checkpoint resume and estimator applicability
+  remain separate requirements.
 - [x] Add separate replayable stereo sequence records with exact frozen fitted
   builtin camera coefficients, signed dewarp geometry, complete two-camera
   processing and explicit timing/scaling provenance. Verify ordered files,
@@ -393,13 +402,25 @@ and GPU memory in the documented ownership modes.
   records one sweep per pass, ignored iteration requests, actual source/plane
   contribution populations and pooled primary residuals before predictor addition.
   Separate native companions bind raw result fields without changing arithmetic.
-  [187 focused checks](test/test_ensemble_execution_diagnostics.jl) cover CPU/KA
+  [205 focused checks](test/test_ensemble_execution_diagnostics.jl) cover CPU/KA
   Float32/64 parity, absent predictors, masks/UQ, tiled tails, callback/path guards,
-  exact request snapshots and malformed companions. Vendor capture remains refused.
-- [ ] Integrate ensemble execution companions into GUI inspection and quality
-  reports with explicit pooled-sweep populations and verification scope. Preserve
-  planar/stereo report semantics; contribution counts do not establish effective
-  independent sample size, stationarity or uncertainty coverage.
+  exact request snapshots and malformed companions, including unattainable
+  contributor extrema and nonfinite-plane capacity. Vendor capture remains refused.
+- [x] Integrate ensemble execution companions into GUI inspection and quality
+  reports with explicit pooled-sweep populations and verification scope.
+  [Format-4 reports](docs/src/howto/ensemble_quality_reports.md) verify raw
+  companions, preserve prior planar/stereo report schemas and keep pooled
+  contribution counts separate from stored-field and final-node populations.
+  [GUI inspection and reports](docs/src/howto/gui_ensemble_companions.md) retain
+  transactional navigation, physical-display integrity and prior report identity
+  after failed requests. Whole-file requests validate and detach the complete
+  native entry mapping before scanning or invoking GUI callbacks.
+  [192 core report checks](test/test_ensemble_run_quality.jl) and
+  [169 GUI checks](HammerheadGUI/test/test_ensemble_companions.jl) cover mixed
+  and missing companions, malformed counts/indexes, captured options, protected
+  destinations and bounded retention. Inspector/report captures were reviewed at
+  three sizes. Contribution counts do not establish effective independent sample
+  size, stationarity or uncertainty coverage; saved ensemble recipes remain open.
 - [x] Add bounded per-camera stereo execution companions with dewarped-pixel
   residuals, explicit common-grid geometry, measurement-field binding and a
   separate native reader. Keep ensemble, GUI and report integration separate.

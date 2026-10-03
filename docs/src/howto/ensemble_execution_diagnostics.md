@@ -109,7 +109,10 @@ unchanged sources to relate it to loaded code.
 
 Native result layout/version and planar/stereo companion schemas remain
 unchanged. `save_results` on a bare result cannot recreate execution observations.
-Stereo ensemble, experiment/checkpoint integration, timing/history companions,
-GUI inspection and execution-aware quality aggregation remain unsupported in
-this slice. Requested execution-aware reports explicitly refuse the ensemble
-marker; ordinary default result reports remain available.
+Stereo ensemble, experiment/checkpoint integration and timing/history companions
+remain unsupported. [Ensemble quality reports](ensemble_quality_reports.md)
+use explicit `include_ensemble_execution_diagnostics=true` opt-in and a separate
+format-4 section for pooled populations. Earlier execution-report formats still
+refuse the ensemble marker; ordinary default result reports remain available.
+Lazy native GUI inspection verifies ensemble raw fields before physical display
+and shows pooled counts without inventing per-node measurement history.

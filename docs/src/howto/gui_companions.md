@@ -29,6 +29,12 @@ and tracking entries say unsupported. Eager/in-memory inputs
 have no checked native association merely because their title names a file.
 Checkpoint companion inspection is not supported.
 
+Recorded ensemble packets show one pooled sweep per pass, ignored iteration
+requests and contribution populations. They are verified against the raw result
+before physical conversion. Selecting a vector still shows its displayed values,
+but there is no per-node ensemble history. See the
+[ensemble inspection and native-file report reference](../reference/gui_ensemble_companions.md).
+
 Before changing the visible frame, the controller loads the raw result and its
 recorded data, verifies history against that raw result, then converts the result
 for physical display. Selection uses the same grid `[row, column]` index through
@@ -93,7 +99,17 @@ report = save_experiment_quality_report("quality-execution.toml", controller;
     include_execution_diagnostics=true, include_measurement_history=true)
 ```
 
-The saved experiment workflow currently records/replays planar recipes. It can
-report their recorded planar execution entries; a generic native stereo file's
-format-3 report is generated through the core `quality_report(ResultFile(path);
-include_execution_diagnostics=true)` API. No stereo experiment replay is implied.
+The planar experiment workflow reports its recorded planar execution entries.
+The separate [saved-stereo workflow](gui_stereo_experiments.md) replays frozen
+fitted-camera recipes and reports their verified camera execution observations.
+Generic native files can also use the core `quality_report(ResultFile(path);
+include_execution_diagnostics=true)` API without claiming experiment association.
+
+The lazy native explorer's **quality report** action opens a separate whole-file
+report window. History, ordinary execution and ensemble observations are explicit
+options, initially unchecked. Ensemble observations select format 4; the report
+keeps recorded pools, recorded ordinary iterations and entries without execution
+metadata distinct. It captures the source and options before scanning or opening
+a save dialog. Failed requests retain the previous report with its own file
+identity. This synchronous scan may pause rendering and does not infer a saved
+recipe/run association or restrict the report to the selected frame.

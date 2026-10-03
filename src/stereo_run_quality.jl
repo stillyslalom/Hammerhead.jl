@@ -1,6 +1,7 @@
 """
     quality_report(record::StereoExperimentRecord, run::ExperimentRun;
         include_measurement_history=false, include_execution_diagnostics=false,
+        include_ensemble_execution_diagnostics=false,
         verify_inputs=false, output=run.output) -> RunQualityReport
 
 Summarize a completed saved stereo run with verified experiment association.
@@ -15,7 +16,9 @@ The default preserves report format 1. `include_execution_diagnostics=true`
 uses existing format 3 with separate camera pass/support counts and raw camera
 binding; it does not infer reconstructed 3C residuals or pool their amplitudes.
 Stereo measurement history is unsupported: `include_measurement_history=true`
-is refused. Failed or partially published runs are also refused.
+is refused. `include_ensemble_execution_diagnostics=true` is also refused:
+ensemble observations have no supported stereo recipe/run association.
+Failed or partially published runs are also refused.
 
 Saved provenance describes verification at report generation, not continuing
 file validity, calibration accuracy, source authenticity or uncertainty coverage.
@@ -28,7 +31,10 @@ fields and any saved correlation planes) is loaded at a time.
 function quality_report(record::StereoExperimentRecord, run::ExperimentRun;
         include_measurement_history::Bool=false,
         include_execution_diagnostics::Bool=false,
+        include_ensemble_execution_diagnostics::Bool=false,
         verify_inputs::Bool=false, output::AbstractString=run.output)
+    include_ensemble_execution_diagnostics &&
+        _quality_error("ensemble execution reports do not support stereo experiment association")
     include_measurement_history &&
         _quality_error("stereo experiment measurement-history reports are unsupported")
     snapshot = deepcopy(record)

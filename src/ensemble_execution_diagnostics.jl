@@ -222,6 +222,14 @@ function _ensemble_validate(data)
             lower=_ensemble_add(_ensemble_mul(g["all_finite_nonzero_count"],n),g["some_finite_nonzero_count"])
             upper=_ensemble_add(_ensemble_mul(g["all_finite_nonzero_count"],n),_ensemble_mul(g["some_finite_nonzero_count"],n-1))
             lower<=nonzero<=upper || _execution_error("contributor populations disagree")
+            # Recorded extrema must be attained, not merely enclose the mean.
+            attained_lower=_ensemble_add(maximum,_ensemble_mul(eligible-1,minimum))
+            attained_upper=_ensemble_add(minimum,_ensemble_mul(eligible-1,maximum))
+            attained_lower<=nonzero<=attained_upper || _execution_error("contributor extrema are not attainable")
+            # Every node already has at least `minimum` finite-nonzero planes.
+            # This necessary capacity bound does not reconstruct their histogram.
+            c["nonfinite_planes"]<=_ensemble_mul(g["nodes_with_nonfinite_plane"],n-minimum) ||
+                _execution_error("nonfinite planes exceed remaining contributor capacity")
         end
         g["nodes_with_nonfinite_plane"]<=c["nonfinite_planes"]<=_ensemble_mul(g["nodes_with_nonfinite_plane"],n) || _execution_error("nonfinite contributor populations disagree")
         c["source_gated_window_pairs"]<=_ensemble_mul(support["evaluated_pairs"],eligible) || _execution_error("source gate skips lack evaluated support")

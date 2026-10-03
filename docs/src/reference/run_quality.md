@@ -4,6 +4,11 @@ CurrentModule = Hammerhead
 
 # Run-quality reports
 
+The additive [ensemble report format 4](ensemble_quality_reports.md) is selected
+only by `include_ensemble_execution_diagnostics=true` on a direct whole-file
+native index. The existing formats below retain their default and validation
+contracts; ordinary execution opt-in alone still refuses ensemble companions.
+
 Format version 1 is language-neutral TOML containing primitive mappings,
 arrays, strings, integers, booleans and finite floating-point values. It reports
 stored planar/stereo PIV arrays by default. PTV/tracking results are rejected
@@ -33,9 +38,9 @@ raw measurement fields and requested companions before and after the summary.
 It accepts `output` for an explicitly relocated file and `verify_inputs=true`
 for current input-byte checks. Known local locators are protected; foreign
 historical locators are not converted into local paths. Stereo history requests
-are refused. Execution-aware reporting refuses distinct ensemble metadata,
-including orphan groups and markers in empty files, until pooled observations
-have a supported report schema.
+are refused. Its format-3 execution report refuses distinct ensemble metadata,
+including orphan groups and markers in empty files. Pooled observations use the
+separate, unassociated format-4 report described above.
 
 Each present `groups.planar` or `groups.stereo` contains `counts` and
 `fractions`. Empty input has no groups. Nodes are counted across all entries;

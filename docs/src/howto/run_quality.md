@@ -54,6 +54,14 @@ not expose their hidden source files. Supply their known dependencies as
 overwrite protection, but a generic report over that index still has
 `unassociated` experiment provenance.
 
+For recorded ensemble pools, explicitly request
+`quality_report(ResultFile(path); include_ensemble_execution_diagnostics=true)`.
+This selects [report format 4](ensemble_quality_reports.md), verifies raw result
+binding and keeps pooled contributions separate from ordinary iterations.
+Missing metadata does not identify an unrecorded ensemble. The option requires
+a direct whole-file native index and is refused by saved planar/stereo experiment
+overloads, which have no supported ensemble recipe/run association.
+
 The following executable example constructs a small stored field, writes a
 native result file, summarizes it lazily and round-trips the TOML report:
 

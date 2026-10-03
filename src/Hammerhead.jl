@@ -112,6 +112,7 @@ include("calibrated_table.jl")
 include("experiment_checkpoint.jl")
 include("experiment_comparison.jl")
 include("run_quality.jl")
+include("ensemble_run_quality.jl")
 include("stereo_run_quality.jl")
 include("pair_comparison.jl")
 

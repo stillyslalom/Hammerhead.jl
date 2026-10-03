@@ -84,6 +84,8 @@ end
             end
             @test_throws ArgumentError quality_report(record,run;include_measurement_history=true)
             @test_throws ArgumentError quality_report(record,run;
+                include_ensemble_execution_diagnostics=true)
+            @test_throws ArgumentError quality_report(record,run;
                 include_measurement_history=true,include_execution_diagnostics=true)
             report_path=joinpath(dir,"quality.toml")
             save_quality_report(report_path,execution)

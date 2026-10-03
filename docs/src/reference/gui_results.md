@@ -20,13 +20,20 @@ frame's derived fields are retained; lazy navigation errors set `status` and
 preserve the prior frame. The key index has O(number of entries) metadata and
 does not follow live writes. Each complete selected result must fit memory.
 
-Recorded processing details support planar history/execution and stereo camera
-execution companions. Stereo raw measurement binding is verified before
+Recorded processing details support planar history/execution, stereo camera
+execution and ensemble pooled-execution companions. Stereo and ensemble raw
+measurement binding is verified before
 physical conversion; the physical display has a separate mutation digest.
 Camera residuals stay in dewarped pixels, with no per-node stereo history or
 reconstructed world 3C residual. Inspection retains only the current display
 and packets. Scaled magnitude fields are labelled speed in length/time units;
 unscaled magnitude retains the displacement label.
+
+Ensemble inspection keeps pooled pass/contribution counts separate from ordinary
+iteration checks and from final output fields. Selecting a node does not recover
+per-node ensemble history. The [native-file report workflow](gui_ensemble_companions.md)
+captures a whole-file index and explicit report options; report provenance refers
+to that file rather than a saved experiment recipe or the currently selected frame.
 
 The planar [`:derivative_support` tool](../howto/gui_derivative_support.md)
 displays categorical eligibility, x/y

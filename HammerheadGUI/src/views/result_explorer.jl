@@ -37,6 +37,13 @@ returns its vertical space when disabled. It makes no uncertainty applicability
 or accuracy claim and does not infer absent history from current flags.
 While details are open, profile lines remain overlaid but their separate graph
 is hidden; closing details reveals a profile placed on the current display.
+Recorded ensembles show pooled pass/support observations in processing pixels,
+not pair convergence or per-node histories. Native lazy explorers also offer a
+separate whole-file quality report window; its unchecked options explicitly opt
+into recorded history/ordinary execution/ensemble format 4. The report scans raw
+data independently of the plotted frame and has no saved-experiment association.
+`report_view_launcher` optionally handles the generated report figure (useful
+for embedding or hidden tests); the default opens a separate GLMakie window.
 
 The planar "derivative support" tool uses that drawer for scalar support counts
 and selected immediate contributors. Its four discrete maps keep excluded and
@@ -51,9 +58,10 @@ result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwa
 result_explorer(path::AbstractString; lazy::Bool = false,format::Symbol=:native, kwargs...) =
     result_explorer(ResultExplorer(path; lazy,format); kwargs...)
 
-function result_explorer(ex::ResultExplorer; size = (1000, 700))
+function result_explorer(ex::ResultExplorer; size = (1000, 700),
+        report_view_launcher::Function=figure->display(GLMakie.Screen(),figure))
     fig = Figure(; size)
-    result_explorer!(fig[1, 1], ex)
+    result_explorer!(fig[1, 1], ex;report_view_launcher)
     return fig
 end
 
@@ -80,8 +88,11 @@ end
 
 Build the result-explorer view into `target` (a `GridPosition`, e.g.
 `fig[1, 2]`), for embedding in a larger layout.
+An optional `report_view_launcher` receives the whole-file report figure when
+the native report action is activated.
 """
-function result_explorer!(target, ex::ResultExplorer)
+function result_explorer!(target, ex::ResultExplorer;
+        report_view_launcher::Function=figure->display(GLMakie.Screen(),figure))
     gl = GridLayout(target)
     n = nframes(ex)
     timed_selection=current_result(ex) isa TimedTrackingResult
@@ -112,7 +123,8 @@ function result_explorer!(target, ex::ResultExplorer)
 
     controls = GridLayout(gl[1:4, 3]; tellheight = false, valign = :top)
     rowgap!(controls,4)
-    Label(controls[1, 1], "field"; halign = :left, font = :bold)
+    field_header=GridLayout(controls[1,1])
+    Label(field_header[1, 1], "field"; halign = :left, font = :bold)
     menu = Menu(controls[2, 1]; options = [("|displacement|", :magnitude)])
     toggles = GridLayout(controls[3, 1]; halign = :left)
     vec_toggle = Toggle(toggles[1, 1]; active = ex.show_vectors[])
@@ -148,6 +160,17 @@ function result_explorer!(target, ex::ResultExplorer)
     colgap!(companion_mode,6)
     companion_toggle=Toggle(companion_mode[1,1];active=ex.companion_enabled[],halign=:left)
     Label(companion_mode[1,2],"recorded processing details";halign=:left,word_wrap=true,width=170,fontsize=13,tellwidth=false)
+    if ex.results isa Controllers._LazyDisplayResults && ex.results.source isa Hammerhead.ResultFile
+        report_button=Button(field_header[1,2];label="whole-file quality report",fontsize=11,tellwidth=false)
+        on(report_button.clicks) do _
+            try
+                report_figure=result_quality_report(ex)
+                report_view_launcher(report_figure)
+            catch err
+                ex.status[]=Controllers._errmsg(err)
+            end
+        end
+    end
     companion_panel=GridLayout(gl[4,1:2])
     # Reserve profile space only while a profile is displayed. An empty Auto
     # row would otherwise share the plot's height when details add a fourth row.

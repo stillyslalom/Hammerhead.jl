@@ -8,6 +8,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added explicit format-4 ensemble quality reports for whole native files, with
+  raw measurement verification and separate pooled contribution populations.
+  Existing report defaults retain their formats; absent metadata does not identify
+  an ensemble. Tightened ensemble packet validation for feasible contributor
+  extrema and nonfinite-plane capacity without changing numerical processing.
 - Corrected the controlled PTV/tracking scorecard's recorded PIV threading
   default to follow the process thread count. One-/four-thread regressions and
   a regenerated eight-clip study verify the metadata; scientific outputs are
@@ -21,8 +26,9 @@ validation and the core-first, GUI-second release sequence.
   Existing stored-field and execution-report schemas remain unchanged.
 - Added separate CPU/KA ensemble execution diagnostics for pooled passes,
   numerical contributions, source support and pre-addition residuals. Iteration
-  settings remain ignored by ensemble processing; vendor-device capture and
-  ensemble execution-report aggregation are explicitly unsupported.
+  settings remain ignored by ensemble processing; vendor-device capture is
+  explicitly unsupported. Pooled report aggregation uses the separate format-4
+  opt-in described above.
 - Added a bench-only annotated-particle scorer for detection, correspondence,
   identity changes, fragmentation and gap recovery. It separates localization
   from identity ambiguity and preserves full versus detected-only populations.
@@ -190,6 +196,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added lazy ensemble execution inspection and a whole-file quality report view.
+  Inspection verifies raw fields before physical display; report requests capture
+  source/options and retain the prior report's identity after failure. Pooled
+  observations remain separate from per-node history and experiment association.
 - Added an opt-in separate GLMakie window to the isolated Qt prototype, with
   serialized event servicing, explicit screen ownership and saved-planar replay.
   Hidden demo/experiment lifecycle checks pass alongside the static preview;
