@@ -2,10 +2,11 @@
 module Prototype
 using Hammerhead, HammerheadGUI, HammerheadGUI.Controllers, Observables
 using Hammerhead.SyntheticData: generate_synthetic_piv_pair, linear_flow
+include("experiment_adapter.jl")
 
 mutable struct State
     batch::BatchRunner
-    explorer::ResultExplorer
+    explorer::Union{Nothing,ResultExplorer}
     mask::MaskEditor
     image::Matrix{Float64}
     schedule_error::Observable{String}
@@ -19,6 +20,12 @@ mutable struct State
     visualizations::Int
     shutdown::Bool
     drawing::Bool
+    experiment::ExperimentLane
+    dataset::Observable{Symbol}
+    displayed::Observable{String}
+    subscriptions::Vector{Any}
+    render_available::Observable{Bool}
+    invalidate::Function
 end
 
 function dense_result(n = 128)
@@ -37,12 +44,15 @@ function State()
     state = State(batch, ResultExplorer(dense_result()), MaskEditor(a), a,
                   Observable(""), Observable(""), Observable("Ready: dense demo (16,384 vectors)"),
                   Observable(1), Observable(1), Observable("No selection"),
-                  () -> nothing, 0, 0, false, false)
-    on(batch.status) do status
+                  () -> nothing, 0, 0, false, false,ExperimentLane(),
+                  Observable(:demo),Observable("Displayed: synthetic demo"),Any[],Observable(true),()->nothing)
+    push!(state.subscriptions,on(batch.status) do status
         state.status[] = status
-    end
-    on(batch.completed) do completed
+    end)
+    push!(state.subscriptions,on(batch.completed) do completed
         isempty(completed) && return
+        state.dataset[]=:demo
+        state.displayed[]="Displayed: synthetic demo (not a saved run)"
         if length(completed) == 1
             state.explorer = ResultExplorer(completed[1])
         else
@@ -50,14 +60,14 @@ function State()
         end
         state.count[] = nframes(state.explorer)
         navigate(state, nframes(state.explorer))
-    end
+    end)
     state
 end
 
 message(err) = first(split(sprint(showerror, err), '\n'))
-function supported(result)
+function supported(result;allow_physical=false)
     result isa PIVResult || throw(ArgumentError("this prototype viewport supports planar PIV entries only"))
-    result.scale === nothing || throw(ArgumentError("this prototype viewport requires unscaled pixel results"))
+    allow_physical || result.scale === nothing || throw(ArgumentError("this prototype viewport requires unscaled pixel results"))
     (isempty(result.x) || isempty(result.y)) && throw(ArgumentError("empty vector grid"))
     result
 end
@@ -77,16 +87,20 @@ end
 
 function navigate(state, i)
     try
-        index = clamp(Int(i), 1, nframes(state.explorer))
-        results = state.explorer.results
-        # Reject unsupported entries before replacing the display cache/state.
-        source = results isa HammerheadGUI.Controllers._LazyDisplayResults ? results.source : results
-        supported(source[index])
-        set_frame!(state.explorer, Int(i))
-        state.frame[] = state.explorer.frame[]
-        state.count[] = nframes(state.explorer)
-        state.selection[] = describe_selection(state.explorer)
-        state.refresh()
+        display_transaction(state) do
+            index = clamp(Int(i), 1, nframes(state.explorer))
+            results = state.explorer.results
+            if state.dataset[]!==:experiment
+                source = results isa HammerheadGUI.Controllers._LazyDisplayResults ? results.source : results
+                supported(source[index])
+            end
+            set_frame!(state.explorer, Int(i))
+            state.frame[] = state.explorer.frame[]
+            state.count[] = nframes(state.explorer)
+            state.selection[] = describe_selection(state.explorer)
+            state.render_available[]=true
+            state.refresh()
+        end
         state.open_error[] = ""
         return true
     catch err
@@ -96,20 +110,22 @@ function navigate(state, i)
 end
 
 function open_results(state, path)
-    previous = (state.explorer, state.frame[], state.count[], state.selection[], state.status[])
     try
         candidate = ResultExplorer(String(path); lazy = true)
         supported(current_result(candidate))
-        state.explorer = candidate
+        display_transaction(state) do
+            state.explorer = candidate
+            state.dataset[]=:native
+            state.displayed[]="Displayed completed native file: $(abspath(String(path))) (no saved-run association)"
+            state.frame[]=1; state.count[]=nframes(candidate)
+            state.selection[]=describe_selection(candidate)
+            state.render_available[]=true
+            state.refresh()
+        end
         state.open_error[] = ""
         state.status[] = "Indexed $(nframes(candidate)) completed results; one display payload"
-        navigate(state, 1) || error(state.open_error[])
+        return true
     catch err
-        state.explorer, frame, count, selection, status = previous
-        state.frame[] = frame
-        state.count[] = count
-        state.selection[] = selection
-        state.status[] = status
         state.open_error[] = message(err)
         return false
     end
@@ -117,7 +133,7 @@ end
 
 function pick(state, x, y; drawing = false)
     if drawing
-        state.explorer.path === nothing || return nothing # mask belongs to demo frames
+        state.dataset[]===:demo && state.explorer.path === nothing || return nothing
         click!(state.mask, x, y)
         state.selection[] = status_text(state.mask)
     else
@@ -128,6 +144,7 @@ function pick(state, x, y; drawing = false)
     nothing
 end
 function close_mask(state)
+    state.dataset[]===:demo || return nothing
     close_active!(state.mask)
     state.batch.mask[] = polygon_mask(state.mask)
     state.selection[] = status_text(state.mask)
@@ -135,6 +152,8 @@ function close_mask(state)
     nothing
 end
 function run_batch(state)
+    state.shutdown && return false
+    state.experiment.controller.running[] && return false
     isempty(state.schedule_error[]) || return false
     start!(state.batch)
     state.batch.running[]

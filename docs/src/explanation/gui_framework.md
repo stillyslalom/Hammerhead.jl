@@ -3,9 +3,9 @@
 HammerheadGUI currently uses GLMakie views over framework-free controllers.
 The next desktop shell needs stronger forms, file navigation, focus handling,
 and window management while preserving the existing analysis and result
-contracts. The first implementation scope is raw planar PIV. Stereo, PTV,
-tracking, and physical-unit displays remain supported by the production GUI;
-the isolated candidate does not yet reproduce those views.
+contracts. The first implementation scope is planar PIV, including physical-unit
+inspection of saved experiment output. Stereo, PTV and tracking remain supported
+by the production GUI; the isolated candidate does not reproduce those views.
 
 ## Interaction requirements
 
@@ -20,6 +20,7 @@ the isolated candidate does not yet reproduce those views.
 | Dense vectors | Render 16,384 vectors over an image, inspect one vector, avoid frame-history caches | Hidden standalone and real embedded framebuffer captures inspected; native bridge reports render exceptions during reopen |
 | Masks and ROI | Draw/close a polygon on the demo image; edits reach the batch controller; retain production ROI semantics | Prototype mask adapter tested; native mask gesture/ROI editor parity pending |
 | Live results and cancellation | Completed pairs update the explorer; cancellation preserves the completed prefix and leaves shell responsive | Existing cooperative BatchRunner reused; cancellation adapter regression tested; CPU/GPU responsiveness audit pending |
+| Saved recipe replay | Preserve the full saved recipe; explicit output/history paths and environment policy; progress/cancel; verify completed run before lazy inspection | Dedicated ExperimentController lane and software-only evaluation; no automatic script execution or checkpoint resume |
 | HiDPI and accessibility | Test 100/150/200% scaling, focus indicators, screen-reader labels, menus and shortcuts | Pending real desktop checks |
 | Resource lifetime | Close/reopen views repeatedly; exit without stale GL contexts or leaked payloads | Software shell completes and exits cleanly; native shutdown exposes GL context cleanup errors and has faulted during exception unwind |
 | Distribution and compatibility | Record startup/memory and build/install on supported Julia versions and each target OS | Isolated Windows Julia 1.11.4 resolution tested; Linux/macOS, lower Julia versions and packaging pending |
@@ -28,7 +29,7 @@ the isolated candidate does not yet reproduce those views.
 
 The opt-in source lives in `HammerheadGUI/prototypes/qml/`, outside the
 production dependency graph. It combines Qt Quick Controls with existing
-`BatchRunner`, `ResultExplorer`, and `MaskEditor` controllers. QML functions
+`BatchRunner`, `ExperimentController`, `ResultExplorer`, and `MaskEditor` controllers. QML functions
 and property maps are registered at runtime. This follows the upstream
 [QML.jl callback/property-map contract](https://juliagraphics.github.io/QML.jl/dev/).
 The native plotting component follows
@@ -95,8 +96,9 @@ Current ownership checks pass 60 application-state assertions, including a
 retained released lease, and 30 scientific viewport assertions across three
 explicitly invisible GLFW render/pick/dispose cycles. Each cycle returns the
 screen registry to its baseline and old figure weak references clear after GC.
-The hidden-process harness passes 18 checks for environment normalization,
+The hidden-process harness passes 24 checks for environment normalization,
 invalid PNG refusal, complete logs, nonzero exits and owned timeout termination.
+It also rejects retained shell subscriptions or running replay at disposal.
 These checks establish application ownership bounds; they do not test Qt GL
 resource release or native pointer/keyboard behavior.
 
@@ -156,11 +158,55 @@ flags. Hidden programmatic pan/zoom, vector picking, mask overlays, reversed
 image coordinates, and file-coordinate limits have separate viewport tests;
 they do not certify native mouse/keyboard input.
 
-Completed-file browsing in this prototype accepts unscaled planar PIV
+Generic completed-file browsing in this prototype accepts unscaled planar PIV
 entries. Unsupported scaled or mixed non-planar entries report an error
 before changing the selected frame. File views use result coordinates and
 do not show the unrelated demo image. The index is a snapshot of a completed
 file; concurrent writes and resumable processing are outside this contract.
+
+The saved-experiment lane preserves full recipes separately from demo forms,
+including ROI, embedded masks/backgrounds, ordered preprocessing and every pass
+setting. It uses explicit result/run-record destinations and environment policy,
+with written-pair progress and boundary cancellation from the production
+controller. Referenced scripts can be inspected but are never automatically
+loaded or executed. Recipe/input identity and the retained displayed run/output
+identity appear separately. Failed open/replay/inspection cannot relabel old
+vectors as a new run; a failed view restoration hides the plot and marks it
+unavailable. Completed inspection verifies the recorded output and retains one
+lazy display payload. Physical planar positions/values use the explorer's single
+conversion, unit-aware axis labels and spacing-derived limits; arrow lengths are
+normalized for display. Demo images and mask overlays are absent on experiment
+data. Fallback picks map through image letterboxing and the plotted axis bounds.
+
+Replay belongs to the shell, while a viewport lease owns its figure and picking
+subscription. Closing/reopening a view does not cancel processing. Shell shutdown
+requests cancellation and waits through loading/output/history cleanup before
+disposing subscriptions and views. Cooperative preflight/computation/I/O may
+pause rendering; hidden software tests do not establish responsive interaction.
+The saved-experiment child also rejects changes to core/GUI source maps during
+its trial. These checks do not certify Qt native GL cleanup or cross-platform
+availability.
+
+Final focused prototype checks pass 248 assertions, including 63 saved-recipe
+adapter checks, 26 rendering transactions, 13 physical-geometry checks and
+11 queued-action checks alongside the existing adapter/view/lifetime tests.
+Both software children exit zero after five viewport generations and inspected
+readable captures. The saved child records one-pair cancellation, a completed
+three-pair rerun, view closure while replaying, lazy navigation/picking and
+retained display on failure. After opening saved history, the controller is
+ready with zero new-run progress; the historical run is separately reported as
+completed with three pairs. Disposal requires zero remaining shell subscriptions
+and no running replay. Tiny-unit and singleton fixtures check that arrow lengths
+and limits derive from local coordinate spacing/extent, without an arbitrary
+distance in world units.
+
+Exploratory saved-replay children faulted during Qt JS-stack collection while
+GLFW polled events. Their logs remain failure evidence. The final software path
+copies callback arguments before queueing heavy work outside Qt JS callbacks,
+then renders an explicitly owned hidden GLFW screen without a background render
+loop. Final children verify unchanged source maps and clean OS exit. This
+software event-loop boundary is not evidence of native bridge cleanup or desktop
+responsiveness.
 
 ## Reproduction and decision
 
@@ -168,13 +214,17 @@ From the repository root:
 
 ```powershell
 julia HammerheadGUI/prototypes/qml/setup.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/shell_actions_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_adapter_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_transaction_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-experiment-software --timeout=240
 ```
 
 The lifecycle runner writes its summary before returning nonzero for failed or

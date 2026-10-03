@@ -2,6 +2,20 @@
 using GLMakie, Hammerhead
 using HammerheadGUI.Controllers
 
+function axis_padding(values,other)
+    span=maximum(values)-minimum(values)
+    differences=filter(>(0),abs.(diff(values)))
+    spacing=isempty(differences) ? 0. : minimum(differences)
+    local_extent=max(maximum(abs,values),maximum(abs,other))
+    fallback=local_extent>0 ? .05local_extent : eps(Float64)
+    max(.03span,.35spacing,span>0 || spacing>0 ? 0. : fallback)
+end
+
+function arrow_spacing(xs,ys)
+    spacings=filter(>(0),vcat(abs.(diff(xs)),abs.(diff(ys))))
+    isempty(spacings) ? min(axis_padding(xs,ys),axis_padding(ys,xs)) : minimum(spacings)
+end
+
 function viewport(state; managed = false)
     fig = Figure(size = (900, 650))
     ax = Axis(fig[1, 1]; title = "Dense planar PIV: 16,384 vectors",
@@ -17,15 +31,31 @@ function viewport(state; managed = false)
     selection = Observable(Point2f[])
     outline = Observable(Point2f[])
     last_geometry = Ref{Any}(nothing)
-    linesegments!(ax, segments; color = :cyan, linewidth = 0.7)
+    vector_color=Observable(RGBAf(0,1,1,1))
+    linesegments!(ax, segments; color = vector_color, linewidth = 0.7)
     scatter!(ax, selection; color = :orange, markersize = 16, strokewidth = 2)
     lines!(ax, outline; color = :red, linewidth = 3)
+    invalidate=()->begin
+        segments[]=Point2f[];selection[]=Point2f[];outline[]=Point2f[]
+        background.visible[]=false
+        ax.title[]="Plot unavailable after rendering failure"
+        nothing
+    end
+    state.invalidate=invalidate
     refresh = () -> begin
+        state.render_available[] || return invalidate()
+        vector_color[]=state.dataset[]===:demo ? RGBAf(0,1,1,1) : RGBAf(.04,.25,.35,1)
         r = current_result(state.explorer)
         r isa Hammerhead.PIVResult || error("viewport supports planar PIV entries only")
-        background.visible[] = state.explorer.path === nothing
+        background.visible[] = state.dataset[]===:demo && state.explorer.path === nothing
+        ax.xlabel[],ax.ylabel[]=Hammerhead.plot_axis_labels(r.scale)
         data = vector_data(r)
-        scale = length(r.x) > 32 ? 0.10f0 : 1.0f0
+        # Display lengths are normalized; dimensional velocities are not added
+        # directly to dimensional positions, and physical values stay intact.
+        spacing=arrow_spacing(r.x,r.y)
+        magnitudes=[hypot(u,v) for (u,v) in zip(data.u,data.v) if isfinite(u) && isfinite(v)]
+        largest=isempty(magnitudes) ? 0. : maximum(magnitudes)
+        scale=largest>0 ? .65spacing/largest : 0.
         points = Point2f[]
         for (x, y, u, v) in zip(data.x, data.y, data.u, data.v)
             a = Point2f(x, y)
@@ -39,15 +69,15 @@ function viewport(state; managed = false)
         point = selection_point(r, state.explorer.selection[])
         selection[] = point === nothing ? Point2f[] : [Point2f(point...)]
         poly = isempty(state.mask.polygons[]) ? state.mask.active[] : state.mask.polygons[][end]
-        outline[] = isempty(poly) ? Point2f[] : Point2f[Point2f(p...) for p in [poly; [first(poly)]]]
-        ax.title[] = "Planar PIV: $(length(data.x)) vectors | frame $(state.frame[]) / $(state.count[])"
-        geometry = (extrema(r.x), extrema(r.y), state.explorer.path === nothing)
-        if geometry != last_geometry[] && state.explorer.path === nothing
+        outline[] = state.dataset[]!==:demo || isempty(poly) ? Point2f[] : Point2f[Point2f(p...) for p in [poly; [first(poly)]]]
+        ax.title[] = "Planar PIV: $(length(data.x)) vectors | frame $(state.frame[]) / $(state.count[])\nArrows normalized to grid spacing; $(field_label(r,:u)), $(field_label(r,:v))"
+        geometry = (extrema(r.x), extrema(r.y), background.visible[])
+        if geometry != last_geometry[] && background.visible[]
             limits!(ax, 0, 96, 0, 96)
         elseif geometry != last_geometry[]
             xmin, xmax = extrema(r.x); ymin, ymax = extrema(r.y)
-            padx = max((xmax - xmin) * 0.03, 1.0)
-            pady = max((ymax - ymin) * 0.03, 1.0)
+            padx = axis_padding(r.x,r.y)
+            pady = axis_padding(r.y,r.x)
             limits!(ax, xmin - padx, xmax + padx, ymin - pady, ymax + pady)
         end
         last_geometry[] = geometry
@@ -67,6 +97,7 @@ function viewport(state; managed = false)
     if managed
         detach = () -> begin
             state.refresh === refresh && (state.refresh = () -> nothing)
+            state.invalidate === invalidate && (state.invalidate = () -> nothing)
             nothing
         end
         return fig, ax, refresh, [subscription], detach

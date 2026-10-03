@@ -44,8 +44,12 @@ still need fresh hardware validation after this change.
 [Execution diagnostics](../howto/execution_diagnostics.md) observe planar passes
 and can accompany planar sequence/replay results. CPU/KA tests establish the
 software behavior; new vendor-device execution evidence remains separate.
-Stereo needs distinct per-camera diagnostics, and ensemble iteration semantics
-require a separate model; neither currently accepts this planar diagnostics API.
+[Stereo execution diagnostics](../howto/stereo_execution_diagnostics.md) use a
+separate two-camera companion, explicit dewarped-pixel residual basis and common
+world-grid geometry. Native inspection can verify reconstructed/camera measurement
+fields; it does not verify calibration or acquisition sources. Ensemble iteration
+semantics require a separate model and remain unsupported. GUI companion panels
+and quality reports do not yet consume the stereo companion.
 
 [Measurement history](../howto/measurement_history.md) observes the final
 planar pass's final sweep and can accompany sequence/replay results. It records

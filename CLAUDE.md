@@ -244,8 +244,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   Residuals describe primary correlation corrections before predictor addition,
   alternatives or filling. Planar sequence/replay may persist version-1 native
   companions without changing result structs. Callback delivery precedes result
-  delivery/persistence; it is not a commit notification. Stereo/ensemble reject
-  this planar API. Default calls do not collect diagnostics or hash source files.
+  delivery/persistence; it is not a commit notification. Stereo has a separate
+  companion below; ensemble diagnostics remain unsupported. Default calls do
+  not collect diagnostics or hash source files.
 - `measurement_history.jl` — opt-in final-pass/final-sweep planar history,
   separate from execution diagnostics and result structs. Record actual first
   rejection, alternative acceptance, fill assignment and restoration events;
@@ -254,6 +255,14 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   callbacks. Validate binding before persistence; metadata-only loads do not
   verify payload content unless `verify_result=true`. UQ still describes the
   final deformed windows and is not re-estimated for alternatives or fills.
+- `stereo_execution_diagnostics.jl` — immutable two-camera execution companions,
+  with distinct camera IDs, explicit parent/pair association, dewarped-pixel
+  residuals and signed common-grid geometry. Measurement-field binding covers
+  reconstructed and camera fields, excluding parameters and retained planes.
+  Validate structure and binding after callbacks and before output publication.
+  A separate native sibling group/reader leaves planar diagnostics unchanged;
+  runtime verification status distinguishes metadata-only inspection from field
+  checks and is never persisted as a verification claim.
 - `pair_timing.jl` — opt-in planar sequence timing companions. Freeze selected
   frame references and O(pairs) scalar metadata before loading/output; exact
   rational encodings preserve integer epochs and timestamp midpoint halves.
@@ -432,6 +441,17 @@ without changing production GUI dependencies. Its README and
 evidence from native teardown/input/platform gaps. A successful framebuffer
 capture is not a clean application-lifecycle result. Keep generated manifests
 and artifacts ignored; retain portable relative source paths in its Project.
+The saved-experiment lane delegates to `ExperimentController`; it never projects
+complete recipes into the synthetic demo form. Preserve the displayed run's own
+identity after failed actions, verify completed output before lazy inspection,
+and use the existing physical-display helpers. Shell ownership of replay survives
+viewport close/reopen; shutdown waits for cancellation cleanup before disposing
+subscriptions. Software-shell checks do not satisfy the native rendering gate.
+Queue loading, replay inspection and viewport transitions outside Qt callbacks;
+copy callback arguments to Julia values before enqueueing. Shutdown discards
+pending actions and waits for active replay cleanup. Software previews render an
+explicit hidden GLMakie screen without its background event loop; calling the
+figure-level save path can restart that loop through cached-screen configuration.
 The lifecycle runner owns hidden child processes and records their final exit,
 logs, relevant Qt environment, stages and source identities. Set Qt platform/
 backend selectors in the parent process environment before launching a child;
@@ -798,6 +818,10 @@ as contrast evidence; preserve any genuine processing-precision difference.
 - `test_execution_diagnostics.jl` checks opt-in numerical parity, actual sweep
   and tolerance semantics, primary residuals, native companions, callback
   failures, unsupported-driver refusal before output, and replay association.
+  `test_stereo_execution_diagnostics.jl` checks two-camera parity and association,
+  signed common-grid geometry, separate native persistence, measurement-field
+  verification, mutation guards and non-collecting lifetime. These companions
+  do not verify calibration or certify reconstructed uncertainty.
   `test_pair_comparison.jl` checks exact grid/population moments, arithmetic
   overflow, selected-input identities, units and detached TOML snapshots.
   GUI `test_checkpoints.jl` checks captured execution state, cancellation,
@@ -841,6 +865,12 @@ as contrast evidence; preserve any genuine processing-precision difference.
   and disjoint-realization difference populations. The pre-specified Bartlett
   covariance comparator is bench-only; its nonnegative block identity does not
   establish calibrated coverage or justify a production estimator change.
+- `bench/rendering_uncertainty.jl` compares fixed particle placements under
+  production point sampling, wider point support and pixel-area integration.
+  Preserve the original control exactly and compare common primary populations.
+  Its separate known-translation deformation lane never supplies predictors or
+  images to the PIV accuracy runs. Quadrature agreement and interior crops are
+  numerical checks, not total-error bounds or uncertainty calibration.
 - `test_ptv.jl` ground-truths against `SyntheticData`: knife-edge scenes
   (detection accuracy/dedupe, scattered UOD flagging) use `StableRNGs` and
   fixed geometry; statistical scenes (hybrid-match fraction, tracking recall)

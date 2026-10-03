@@ -87,10 +87,10 @@ loaded modules after editing source in that process. Native files must remain
 unchanged during indexed reads; these observations do not add concurrent-writer
 or atomic-publication guarantees.
 
-This first slice covers planar single runs, sequences and replay. Stereo and
+This planar companion covers single runs, sequences and replay. Stereo single
+runs and sequences use a separate [per-camera companion](stereo_execution_diagnostics.md).
 PTV requests are rejected before frame loading/output opening; ensemble
 diagnostics are unsupported. Ensemble still ignores `max_iterations`, and no
-diagnostics fabricate an iteration outcome for it. Checkpoint capture/export,
-camera-specific stereo summaries and pooled ensemble summaries remain separate
-work. With diagnostics disabled, no new observations, residual summaries or
-diagnostics source hashes are computed.
+diagnostics fabricate an iteration outcome for it. Checkpoint capture/export and
+pooled ensemble summaries remain separate work. With diagnostics disabled, no
+new observations, residual summaries or diagnostics source hashes are computed.

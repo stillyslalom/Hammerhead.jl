@@ -107,6 +107,7 @@ The development checkout also includes [saved planar experiments](docs/src/howto
 [GUI controls](docs/src/howto/gui_checkpoints.md),
 [shared script/GUI quality reports](docs/src/howto/run_quality.md),
 [actual pass diagnostics](docs/src/howto/execution_diagnostics.md),
+[per-camera stereo diagnostics](docs/src/howto/stereo_execution_diagnostics.md),
 [final-vector measurement history](docs/src/howto/measurement_history.md) with
 [GUI inspection](docs/src/howto/gui_companions.md),
 [exact pair-timing metadata](docs/src/howto/pair_timing.md),
@@ -121,5 +122,7 @@ The [uncertainty diagnostic](docs/src/howto/diagnostic_uncertainty.md) traces
 stored estimates without changing estimator defaults.
 The [conditional noise study](docs/src/howto/conditional_uncertainty.md) varies
 image noise on fixed scenes and reports conditional and full-error populations separately.
+The [rendering study](docs/src/howto/rendering_uncertainty.md) compares particle
+support, pixel-area sampling and known-shift interpolation on fixed clean scenes.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.

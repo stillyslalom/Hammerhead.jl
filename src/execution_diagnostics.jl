@@ -1,8 +1,10 @@
 const EXECUTION_DIAGNOSTICS_FORMAT_VERSION = 1
 
-function _reject_execution_diagnostics(kwargs, workflow = "stereo")
-    any(k -> haskey(kwargs, k), (:on_diagnostics, :record_diagnostics, :_diagnostics_association)) &&
-        throw(ArgumentError("execution diagnostics currently support planar PIV only; $workflow diagnostics are not implemented"))
+function _reject_execution_diagnostics(kwargs, workflow = "stereo"; stereo_supported=false)
+    keys=stereo_supported ? (:_diagnostics_association,:_camera_diagnostics) :
+        (:on_diagnostics,:record_diagnostics,:_diagnostics_association,:_camera_diagnostics)
+    any(k -> haskey(kwargs, k), keys) &&
+        throw(ArgumentError("$workflow execution diagnostics or experiment association are not supported by this driver"))
     _reject_measurement_history(kwargs,workflow)
     _reject_pair_timing(kwargs,workflow)
     nothing

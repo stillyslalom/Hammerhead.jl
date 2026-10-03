@@ -95,6 +95,14 @@ changing recorded locator strings, result layouts or scientific binding rules.
 It does not relocate or verify unavailable source images, and does not extend
 foreign-locator support to experiment, comparison or quality-report formats.
 
+Stereo execution observations use a separate version-1 sibling group alongside
+unchanged native stereo results. Existing planar diagnostics and result-only
+readers retain their contracts. The stereo reader distinguishes metadata-only
+inspection from optional measurement-field verification, including both retained
+cameras. This binding excludes parameter objects and correlation planes, and
+does not verify calibration, source images or synchronization. Its verification
+status describes the current read/capture and is not stored as an attestation.
+
 GUI timed-trajectory inspection explicitly selects the dedicated artifact
 format and retains its wrapper through physical display. Ordinary eager and
 lazy native result vectors retain their element types and persistence behavior.

@@ -17,6 +17,14 @@ Reported Julia allocation totals are **not peak memory**. See the
 [scorecard guide](../docs/src/howto/validation_scorecard.md) for input identities,
 reference conventions, timing scope, and unsupported claims.
 
+The uncertainty investigations use separate, bounded commands rather than timing
+samples: [coverage](../docs/src/howto/validation_uncertainty.md),
+[retained-window diagnostics](../docs/src/howto/diagnostic_uncertainty.md),
+[conditional noise](../docs/src/howto/conditional_uncertainty.md), and
+[rendering/interpolation](../docs/src/howto/rendering_uncertainty.md). Their guides
+state the populations and limits of each comparison; none changes production
+estimator defaults.
+
 For the performance-only suite:
 
 ```bash

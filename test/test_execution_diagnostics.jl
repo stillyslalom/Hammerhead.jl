@@ -112,14 +112,14 @@ end
     end
 
     mktempdir() do directory
-        @testset "Unsupported stereo requests fail before I/O" begin
+        @testset "Unsupported stereo associations/history fail before I/O" begin
             camera = PinholeCamera([1. 0. 0. 0.; 0. 1. 0. 0.; 0. 0. 1. 1.])
             dewarper = ImageDewarper(camera, DewarpGrid(x = 1.:8., y = 1.:8.), (8, 8))
             p = PIVParameters(window_size = 4, overlap = 2)
             pairs = [("missing-A.png", "missing-B.png")]
             acquisitions = [("missing-A.png", "missing-B.png", "missing-C.png", "missing-D.png")]
             protected = joinpath(directory, "stereo-preserved.jld2"); write(protected, "preserved")
-            for keywords in ((; on_diagnostics = identity), (; record_diagnostics = true))
+            for keywords in ((; _diagnostics_association = :unsupported), (; on_measurement_history = identity))
                 for call in (
                     () -> run_piv_stereo(A, B, A, B, dewarper, dewarper, p; keywords...),
                     () -> run_piv_stereo(A, B, A, B, dewarper, dewarper; effort = :low, keywords...),
@@ -132,6 +132,10 @@ end
                     @test_throws ArgumentError call()
                     @test read(protected, String) == "preserved"
                 end
+            end
+            for keywords in ((;on_diagnostics=identity),(;record_diagnostics=true))
+                @test_throws ArgumentError run_piv_stereo_ensemble(pairs,pairs,dewarper,dewarper,p;keywords...)
+                @test read(protected,String)=="preserved"
             end
         end
         @testset "Sequence ordering, persistence, lifetime and failures" begin

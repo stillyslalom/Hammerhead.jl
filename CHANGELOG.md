@@ -8,6 +8,14 @@ validation and the core-first, GUI-second release sequence.
 
 ### Core
 
+- Added opt-in stereo execution companions that retain each camera's planar
+  pass observations, common dewarp-grid geometry and measurement-field binding.
+  A separate reader distinguishes metadata inspection from verified result fields;
+  residuals remain in dewarped pixels.
+- Added a bounded rendering/interpolation diagnostic for clean synthetic scenes,
+  separating particle-support and pixel-area sampling contrasts from known-shift
+  image-warp comparisons. Original full-error controls and production uncertainty
+  defaults are retained.
 - Added explicit sample-time validation for temporal spectra, checking interval
   regularity and accumulated timing drift with exact arithmetic and optional
   tolerances. Result spectra reject incompatible grids, shapes and scales;
@@ -140,6 +148,10 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Extended the isolated Qt software prototype with saved planar experiments,
+  complete recipe/history inspection, replay controls and verified lazy result
+  inspection with physical units. The native rendering/lifecycle gate remains
+  separate from software-shell validation.
 - Ordinary saved-experiment replay now reports completed-pair progress and
   supports cooperative cancellation. Requests capture their settings before
   observer notifications; cancellation waits for pair persistence and loader

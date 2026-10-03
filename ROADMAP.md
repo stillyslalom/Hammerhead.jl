@@ -102,6 +102,16 @@ existing implementation is preferable; they are not commitments to add an API.
   [128 regression checks](test/test_conditional_uncertainty.jl) and a 26-call
   evidence run. Improved paired-noise coverage does not establish calibrated
   total-error coverage; the broader investigation remains open.
+- [x] Compare deterministic rendering and deformation-interpolation sensitivity
+  on fixed clean scenes. Separate point-support and pixel-area sampling changes,
+  preserve original full-error controls, and keep known-translation image-warp
+  diagnostics separate from PIV inputs. Do not infer random-uncertainty calibration
+  from a clean-image contrast.
+  The [rendering study](docs/src/howto/rendering_uncertainty.md) includes
+  [219 focused checks](test/test_rendering_uncertainty.jl) and a 12-call evidence
+  run with unchanged baseline scientific rows. Wider point support has a small
+  effect in these scenes; pixel-area sampling changes the results more, without
+  consistently improving uncertainty coverage. The broader investigation remains open.
 - [ ] Cover bias/RMS error, valid-vector yield, spatial-resolution sensitivity,
   uncertainty coverage and normalized errors, runtime, and peak host/device
   memory across particle density, diameter, noise, shear, and dropout conditions.
@@ -300,9 +310,15 @@ and GPU memory in the documented ownership modes.
   remain explicit; primary residuals are not attributed to substituted/filled
   vectors. [Tests](test/test_execution_diagnostics.jl) cover CPU/KA equivalence,
   actual loop semantics, persistence, strict replay association and failures.
-- [ ] Extend execution diagnostics to stereo camera passes and ensemble pooled
-  sweeps, with their distinct units and iteration semantics; expose recorded
-  diagnostics in shared run-quality reports. Planar GUI inspection is available.
+- [ ] Extend execution diagnostics to ensemble pooled sweeps with their distinct
+  iteration semantics, and expose recorded diagnostics in shared run-quality
+  reports. Planar GUI inspection is available; stereo GUI inspection remains open.
+- [x] Add bounded per-camera stereo execution companions with dewarped-pixel
+  residuals, explicit common-grid geometry, measurement-field binding and a
+  separate native reader. Keep ensemble, GUI and report integration separate.
+  The [stereo companion guide](docs/src/howto/stereo_execution_diagnostics.md)
+  describes verification limits; [157 focused checks](test/test_stereo_execution_diagnostics.jl)
+  cover CPU/KA parity, signed geometry, callback failures, persistence and cleanup.
 - [x] Generate a [saved run-quality report](docs/src/howto/run_quality.md) shared
   by scripts and the GUI for stored planar/stereo fields. Version-1 TOML reports
   preserve explicit node-weighted counts/denominators, numerical uncertainty
@@ -397,6 +413,16 @@ evidence.
   fresh viewport generations/releases with readable controls. The native gate
   remains blocked by this machine's offscreen context-creation failure, so no
   clean native lifecycle or cross-platform support is claimed.
+- [x] Connect the isolated Qt software shell to real saved planar experiments:
+  intact recipe/history inspection, captured replay and cancellation, verified
+  lazy results with physical units, and explicit displayed-run identity after
+  failed actions. Validate application ownership and shutdown without relaxing
+  the native rendering/lifecycle gate.
+  The [prototype](HammerheadGUI/prototypes/qml/README.md) passes 248 focused
+  checks and 24 harness checks. Demo and saved-experiment software children exit
+  cleanly after five viewport generations each, with inspected physical-unit
+  captures, no remaining shell subscriptions and no running replay at disposal.
+  Native input, accelerated Qt rendering and other-platform support remain open.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.
@@ -416,6 +442,12 @@ evidence.
   provenance checks and metric definitions used by scripts.
   Its separate checkpoint view adds resumable built-in processing with committed
   progress and cancellation. Stereo calibration and broader integration remain open.
+- [ ] Make scalar-field labels distinguish raw displacement magnitude from scaled
+  speed. Keep the existing physical-unit conversion and neutral component labels;
+  a quantity labeled displacement must not carry length/time units.
+- [ ] Keep result picking available when the Qt shell switches from demo mask
+  drawing to a saved/native result; the disabled demo-only mode must not intercept
+  inspection clicks.
 - [x] Add completed-pair progress and cooperative cancellation to ordinary saved
   GUI replay. Capture the full request before notifications, retain original
   errors, wait for loader cleanup, and distinguish native prefixes from resumable

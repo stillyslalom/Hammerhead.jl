@@ -47,6 +47,20 @@ function validate_lifecycle_evidence(directory, expected)
             end
             nonempty_png(joinpath(directory, "framebuffer.png")) || push!(errors, "software shell PNG missing or invalid")
             length(select("child_complete")) == 1 || push!(errors, "software child did not complete")
+            disposed=select("shell_subscriptions_disposed")
+            if length(disposed)!=1 || typeof(only(disposed)["remaining"])!==Int || only(disposed)["remaining"]!=0 ||
+               only(disposed)["replay_running"]!==false || typeof(only(disposed)["disposed"])!==Int || only(disposed)["disposed"]<1
+                push!(errors,"shell observers/replay were not released before disposal")
+            end
+            if get(expected,"experiment",false)
+                report=TOML.parsefile(joinpath(directory,"shell_report.toml"))
+                report["experiment_smoke"]===true && report["saved_cancellation_seen"]===true &&
+                    report["retained_display_seen"]===true && report["completed_replay_seen"]===true &&
+                    report["saved_state"]=="ready" && report["saved_written"]==[0,3] &&
+                    report["last_run_status"]=="completed" && report["last_run_completed_pairs"]==3 &&
+                    report["viewport_releases_while_replaying"]>0 ||
+                    push!(errors,"saved replay/inspection evidence incomplete")
+            end
             return errors
         end
         if expected["scenario"] == "baseline"
@@ -178,6 +192,21 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
 end
 
 function harness_tests(root)
+    @testset "Software shell disposal evidence rejects live ownership" begin
+        for (remaining,running,count,valid) in ((0,false,10,true),(1,false,10,false),(0,true,10,false),(0,false,0,false),
+                                               (false,false,10,false),(0,false,true,false))
+            directory=mktempdir(root)
+            journal=LifecycleEvidence.Journal(joinpath(directory,"stages"))
+            LifecycleEvidence.write_fresh(joinpath(directory,"provenance.toml"),Dict(
+                "pid"=>getpid(),"qt_environment"=>Dict("QT_QPA_PLATFORM"=>"offscreen","QSG_RENDER_LOOP"=>"basic")))
+            write(joinpath(directory,"framebuffer.png"),[UInt8[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];zeros(UInt8,1024)])
+            LifecycleEvidence.stage!(journal,"software_shell_completed";figure_generations=5,application_releases=5,native_release_verified=false)
+            LifecycleEvidence.stage!(journal,"shell_subscriptions_disposed";remaining,replay_running=running,disposed=count)
+            LifecycleEvidence.stage!(journal,"child_complete")
+            errors=validate_lifecycle_evidence(directory,Dict("scenario"=>"shell","cycles"=>1))
+            @test isempty(errors)==valid
+        end
+    end
     @testset "Hidden process evidence and timeout ownership" begin
         environment, overrides = child_environment(Dict("qt_quick_backend" => "software",
             "QT_QUICK_BACKEND" => "software", "qmlscene_DEVICE" => "software",
@@ -230,7 +259,7 @@ function main(args = ARGS)
     results = Dict{String,Any}()
     minimal_native_passed = false
     for name in cases
-        occursin(r"^(shell-software|baseline|construction|(single|reopen|separate|resize|failure|reuse)-(observe|context))$", name) ||
+        occursin(r"^(shell-(experiment-)?software|baseline|construction|(single|reopen|separate|resize|failure|reuse)-(observe|context))$", name) ||
             throw(ArgumentError("unknown lifecycle case: $name"))
         scenario = first(split(name, '-'))
         if scenario in ("reopen", "separate", "resize", "failure", "reuse") && !minimal_native_passed
@@ -241,10 +270,11 @@ function main(args = ARGS)
         end
         directory = joinpath(root, name)
         script = joinpath(@__DIR__, name == "baseline" ? "lifecycle_baseline.jl" :
-            name == "shell-software" ? "lifecycle_shell.jl" : "lifecycle_probe.jl")
+            startswith(name,"shell-") ? "lifecycle_shell.jl" : "lifecycle_probe.jl")
         command = `$(Base.julia_cmd()) --startup-file=no --threads=1 --project=$(@__DIR__) $script --case=$name --cycles=$cycles --evidence=$directory`
         expected = Dict("scenario" => scenario, "release_mode" => last(split(name, '-')),
             "cycles" => scenario in ("reopen", "separate", "reuse") ? cycles : 1)
+        expected["experiment"]=name=="shell-experiment-software"
         report = run_lifecycle_child(command, directory; timeout, expected)
         results[name] = report
         name == "single-context" && (minimal_native_passed = report["passed"])

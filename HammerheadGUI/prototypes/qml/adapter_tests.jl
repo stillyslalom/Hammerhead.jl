@@ -41,6 +41,7 @@ using .Prototype
         @test state.explorer === previous
     end
     state.explorer = old
+    state.dataset[]=:demo
     Prototype.navigate(state, 1)
     foreach(p -> Prototype.pick(state, p...; drawing = true), [(10, 10), (20, 10), (20, 20)])
     Prototype.close_mask(state)

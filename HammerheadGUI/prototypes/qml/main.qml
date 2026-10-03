@@ -23,6 +23,7 @@ ApplicationWindow {
     property bool actualSeparate: false
     property bool transitionPending: false
     property bool transitionsReady: false
+    property int acknowledgedTransition: 0
     property var uiModel: model
     property bool drawing: false
     property int lifecycleStep: 0
@@ -30,6 +31,11 @@ ApplicationWindow {
     function transitionViewport() {
         if (!root.transitionsReady || root.transitionPending) return;
         root.transitionPending = true;
+        if (!bridgeEnabled) {
+            root.viewportLoaded = false;
+            Julia.queue_transition(root.viewportOpen,root.separate);
+            return;
+        }
         // Dispose Julia callbacks before destroying the QML item. Acknowledge
         // application release only; this makes no Qt GL-context cleanup claim.
         Julia.release_viewport(); root.viewportLoaded = false;
@@ -42,6 +48,15 @@ ApplicationWindow {
     }
     onViewportOpenChanged: transitionViewport()
     onSeparateChanged: transitionViewport()
+    Timer { interval: 40; running: !bridgeEnabled; repeat: true
+        onTriggered: {
+            if (!root.transitionPending || root.uiModel.transitionAck === root.acknowledgedTransition) return;
+            root.acknowledgedTransition = root.uiModel.transitionAck;
+            root.actualSeparate = root.uiModel.transitionSeparate;
+            root.viewportLoaded = root.uiModel.transitionOpen;
+            root.transitionPending = false;
+        }
+    }
     Component.onCompleted: root.transitionsReady = true
     FontLoader {
         id: shellFont; source: fontSource
@@ -62,8 +77,8 @@ ApplicationWindow {
     }
     Shortcut { sequence: "Right"; onActivated: Julia.navigate_frame(root.uiModel.frame + 1) }
     Shortcut { sequence: "Left"; onActivated: Julia.navigate_frame(root.uiModel.frame - 1) }
-    Shortcut { sequence: "Escape"; onActivated: Julia.cancel_batch() }
-    Shortcut { sequence: "Ctrl+Return"; onActivated: Julia.run_batch() }
+    Shortcut { sequence: "Escape"; onActivated: analysisLane.currentIndex === 1 ? Julia.cancel_saved() : Julia.cancel_batch() }
+    Shortcut { sequence: "Ctrl+Return"; onActivated: analysisLane.currentIndex === 1 ? Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) : Julia.run_batch() }
 
     SplitView {
         id: shell
@@ -74,7 +89,11 @@ ApplicationWindow {
             background: Rectangle { color: "white" }
             ColumnLayout {
                 width: 304; spacing: 12
-                Label { text: "Planar analysis settings"; font.pixelSize: 23 }
+                ComboBox { id: analysisLane; model: ["Synthetic demo", "Saved experiment"]
+                    currentIndex: experimentSmoke ? 1 : 0; Layout.fillWidth: true }
+                ColumnLayout {
+                visible: analysisLane.currentIndex === 0; Layout.fillWidth: true
+                Label { text: "Planar demo settings"; font.pixelSize: 23 }
                 Label { text: "Synthetic paired frames: 96 x 96 px\nRaw planar PIV first; no resume" }
                 Label { text: "Window schedule" }
                 TextField {
@@ -98,6 +117,43 @@ ApplicationWindow {
                     onAccepted: Julia.open_results(text)
                 }
                 Button { text: "Open completed file"; onClicked: Julia.open_results(pathInput.text) }
+                }
+                ColumnLayout {
+                    visible: analysisLane.currentIndex === 1; Layout.fillWidth: true; spacing: 6
+                    Label { text: "Saved planar experiment"; font.pixelSize: 22 }
+                    TextField { id: experimentInput; Layout.fillWidth: true
+                        text: root.uiModel.fixtureRecord; placeholderText: "Saved experiment .jld2"
+                        Accessible.name: "Saved experiment path" }
+                    Button { text: "Open saved experiment"; enabled: !root.uiModel.experimentRunning
+                        onClicked: Julia.open_saved(experimentInput.text) }
+                    TextField { id: outputInput; Layout.fillWidth: true; text: root.uiModel.experimentOutput
+                        placeholderText: "Result output .jld2"; Accessible.name: "Replay result output" }
+                    TextField { id: historyInput; Layout.fillWidth: true; text: root.uiModel.experimentHistory
+                        placeholderText: "Run record .jld2 (optional)"; Accessible.name: "Replay run record" }
+                    CheckBox { id: allowOverride; text: "Allow environment change (recorded)"
+                        checked: root.uiModel.experimentAllow; enabled: !root.uiModel.experimentRunning }
+                    RowLayout {
+                        Button { text: "Replay saved recipe"; enabled: !root.uiModel.experimentRunning
+                            onClicked: Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) }
+                        Button { text: "Cancel"; enabled: root.uiModel.experimentRunning; onClicked: Julia.cancel_saved() }
+                    }
+                    Label { text: root.uiModel.experimentWritten; font.bold: true }
+                    Label { text: root.uiModel.experimentStatus; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                    Label { text: root.uiModel.experimentError; color: "#b91c1c"; wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true; visible: text.length > 0 }
+                    Button { text: "Inspect completed run"; enabled: !root.uiModel.experimentRunning
+                        onClicked: Julia.inspect_saved() }
+                    ComboBox { model: ["Complete recipe", "Run history"]; Layout.fillWidth: true
+                        onActivated: Julia.saved_section(currentIndex === 1) }
+                    RowLayout {
+                        Button { text: "Previous"; onClicked: Julia.saved_page(-1) }
+                        Label { text: root.uiModel.experimentPages }
+                        Button { text: "Next"; onClicked: Julia.saved_page(1) }
+                    }
+                    ScrollView { Layout.fillWidth: true; Layout.preferredHeight: 140
+                        TextArea { text: root.uiModel.experimentText; readOnly: true; selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere; font.pixelSize: 12 } }
+                }
                 Label {
                     text: root.uiModel.openError; color: "#b91c1c"; wrapMode: Text.Wrap
                     Layout.fillWidth: true; visible: text.length > 0
@@ -109,9 +165,10 @@ ApplicationWindow {
                     Accessible.name: "Result frame"
                     onMoved: Julia.navigate_frame(Math.round(value))
                 }
-                CheckBox { text: "Draw exclusion mask"; checked: root.drawing
+                CheckBox { text: "Draw demo exclusion mask"; checked: root.drawing
+                    enabled: root.uiModel.demoDisplayed
                     onToggled: { root.drawing = checked; Julia.set_mask_mode(checked) } }
-                Button { text: "Close mask polygon"; onClicked: Julia.close_mask() }
+                Button { text: "Close demo mask polygon"; enabled: root.uiModel.demoDisplayed; onClicked: Julia.close_mask() }
                 Label { text: root.uiModel.selection; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Label {
                     text: "Wheel: zoom; drag: pan\nArrows: frames; Esc: cancel\nCtrl+W: close / reopen viewport"
@@ -142,18 +199,25 @@ ApplicationWindow {
     Component {
         id: viewportComponent
         Item {
+            id: viewportItem
+            Rectangle { anchors.fill: parent; color: "white" }
             // One stable figure value per QML item; no shared scene is reused
             // across native screens and no context-property history accumulates.
             property var ownedPlot: bridgeEnabled ? Julia.viewport_scene() : null
             Component.onCompleted: Julia.viewport_created()
-            Loader { anchors.fill: parent
+            ColumnLayout { anchors.fill: parent
+            Label { text: root.uiModel.activeIdentity + "\n" + root.uiModel.displayedIdentity
+                wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; font.pixelSize: 12; padding: 8
+                color: "#17212b"; background: Rectangle { color: "#f8fafc" } }
+            Loader { Layout.fillWidth: true; Layout.fillHeight: true
                 sourceComponent: bridgeEnabled ? nativeViewport : fallbackViewport
-                property var currentPlot: parent.ownedPlot }
+                property var currentPlot: viewportItem.ownedPlot }
+            }
         }
     }
     Component {
         id: nativeViewport
-        MakieArea { anchors.fill: parent; scene: parent.currentPlot; focus: true }
+        MakieArea { anchors.fill: parent; scene: parent.currentPlot; focus: true; visible: root.uiModel.renderAvailable }
     }
     Component {
         id: fallbackViewport
@@ -163,13 +227,14 @@ ApplicationWindow {
                 id: preview; x: (parent.width - width) / 2; y: (parent.height - height) / 2
                 width: parent.width; height: parent.height
                 source: root.uiModel.preview; fillMode: Image.PreserveAspectFit; cache: false
+                visible: root.uiModel.renderAvailable
                 WheelHandler { target: preview; property: "scale" }
                 DragHandler { target: preview }
                 TapHandler {
                     onTapped: function(eventPoint) {
                         // Pick maps through the saved Makie axis rectangle, not figure margins.
-                        Julia.pick_preview(eventPoint.position.x / preview.width,
-                                           eventPoint.position.y / preview.height, root.drawing)
+                        Julia.pick_preview((eventPoint.position.x - (preview.width - preview.paintedWidth) / 2) / preview.paintedWidth,
+                                           (eventPoint.position.y - (preview.height - preview.paintedHeight) / 2) / preview.paintedHeight, root.drawing)
                     }
                 }
             }
@@ -177,7 +242,7 @@ ApplicationWindow {
     }
     // Deterministic lifecycle smoke, also exercises QML -> Julia form callbacks.
     Timer {
-        interval: 120; running: smokeMode; repeat: true
+        interval: 120; running: smokeMode && !experimentSmoke; repeat: true
         onTriggered: {
             if (root.transitionPending) return;
             root.lifecycleStep += 1
@@ -195,10 +260,23 @@ ApplicationWindow {
             if (root.lifecycleStep === 12) Julia.lifecycle_complete()
         }
     }
+    Timer { interval: 120; running: smokeMode && experimentSmoke; repeat: true
+        onTriggered: {
+            if (root.transitionPending) return;
+            var step = Julia.experiment_smoke_step();
+            if (step === 1) root.viewportOpen = false;
+            if (step === 2) root.viewportOpen = true;
+            if (step === 3) root.separate = true;
+            if (step === 4) root.separate = false;
+            if (step === 5) root.viewportOpen = false;
+            if (step === 6) root.viewportOpen = true;
+            if (step === 7) { root.lifecycleStep = 12; Julia.lifecycle_complete(); stop(); }
+        }
+    }
     Timer {
         interval: 350; running: smokeMode; repeat: true
         onTriggered: {
-            if (root.lifecycleStep < 12 || root.transitionPending || root.uiModel.running || shellFont.status !== FontLoader.Ready) return;
+            if (root.lifecycleStep < 12 || root.transitionPending || root.uiModel.running || root.uiModel.experimentRunning || shellFont.status !== FontLoader.Ready) return;
             stop();
             shell.grabToImage(function(result) {
                 Julia.record_capture(result.saveToFile(capturePath))

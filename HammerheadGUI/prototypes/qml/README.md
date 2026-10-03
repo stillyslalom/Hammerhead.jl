@@ -9,9 +9,19 @@ The shell supports synthetic raw planar batches, a 16,384-vector demo over a
 1024-square image, completed-file lazy browsing, picking, mask commands, inline
 errors, cancellation, and integrated/separate views. Browsing accepts unscaled
 planar PIV entries only; unsupported entries fail before replacing the display.
-The production explorer supports all four result types and physical units.
-Masks belong to the synthetic 96-square demo. There is no experiment tree, ROI
-form, preprocessing form, resumability or concurrent-writer support.
+The separate saved-experiment lane preserves the complete planar recipe with
+`ExperimentController`: explicit record/result/history paths, environment policy,
+paged recipe/history, written-pair progress, replay/cancel, and verified completed
+run inspection. Saved planar output displays physical units through the existing
+explorer conversion. Generic completed-file browsing retains its unscaled-only
+restriction. Active recipe/input identity and displayed run/output identity are
+shown separately; failure retains a labelled previous display. Referenced scripts
+are inspectable but never loaded/executed by this shell. The production explorer
+supports all four result types and dedicated actual-time tracking artifacts.
+Masks belong to the synthetic 96-square demo and are hidden/refused on experiment
+output. Saved ROI/mask/preprocessing settings are preserved, not projected into
+the demo's form. There is no experiment tree, ROI/preprocessing editor, resumability
+or concurrent-writer support.
 
 ## Reproduction
 
@@ -19,12 +29,16 @@ Run from the repository root:
 
 ```powershell
 julia HammerheadGUI/prototypes/qml/setup.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/shell_actions_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_adapter_tests.jl
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_transaction_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/test_lifecycle_contract.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/viewport_ownership_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --self-test
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-software --timeout=180
+julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=shell-experiment-software --timeout=240
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/lifecycle_runner.jl --cases=construction,baseline,single-context --timeout=90
 ```
 
@@ -44,6 +58,27 @@ no generated image, downloaded binary or machine-specific manifest belongs in
 a commit.
 
 ## Lifecycle evidence contract
+
+The saved-experiment smoke writes actual temporary PNG inputs and a saved recipe
+with ordered passes, preprocessing, ROI, mask and physical scale. It closes a view
+while replay is owned by the shell, cancels after the first native pair write,
+reruns to completion (a last-pair cancel completes), inspects/navigates/picks
+physical output, and exercises retained display after an open error. Shutdown
+requests cancellation and pumps until both controllers finish cleanup before
+shell subscriptions and the viewport are disposed. Cooperative tasks can pause
+the Qt event loop during preflight, pair work or cleanup; this is not a
+responsiveness benchmark or checkpoint workflow.
+
+Preview arrows normalize their display length to grid spacing; position axes
+and selected component values retain their true units. Physical padding derives
+from coordinate spacing/span, without a fixed distance in arbitrary units.
+Arrow normalization uses available axis spacings; a fully singleton grid uses
+the same local extent policy as padding. Demo
+images/polygons are absent on file/experiment plots. Fallback picking accounts for
+image letterboxing. A failed plot refresh restores the previous model and view;
+if restoration fails, the plot is hidden and labelled unavailable until a
+successful open/inspection. Plot leases own figures/pick subscriptions; shell
+subscriptions and replay lifetime survive view closure.
 
 The runner preserves invocation, whitelisted Qt environment variants, prototype
 source hashes before/after each child, numbered flushed stage files, complete
@@ -78,10 +113,13 @@ production dependency is modified.
 
 ## Current blocker and ownership repair
 
-Current checks pass 60 ownership-contract assertions, 18 process/environment
-harness assertions and 30 scientific ownership assertions over three explicitly
-invisible GLFW cycles. Released leases retain neither subscriptions nor their
-old figures; the screen registry returns to baseline.
+Current checks pass 248 focused assertions: 11 queued-action, 30 demo-adapter,
+63 saved-experiment adapter, 26 display-transaction, 13 physical-geometry,
+15 viewport, 30 scientific ownership and 60 ownership-contract checks.
+The process/environment harness passes 24 assertions, including refusal of
+leftover subscriptions or replay work. Released leases retain neither
+subscriptions nor their old figures; invisible GLFW cycles return the screen
+registry to baseline.
 
 The final software child exits zero with five fresh viewport generations, five
 application releases including shutdown, cancellation after one of three pairs,
@@ -91,6 +129,24 @@ TeX Gyre Heros asset; its path, SHA-256 and loaded family are recorded. The dire
 shell accepts `--font=<path>` for an existing alternative font; no font is copied
 or installed. These are software/application ownership results, not native Qt
 GPU, gesture or performance evidence.
+
+The saved-experiment software child also exits zero after five generations.
+It records cancellation after one written pair, a completed three-pair rerun,
+view release while replaying, and retained display after an open error. Loading
+the completed history leaves the controller ready with zero current-run progress;
+the separately recorded historical run remains completed with three pairs.
+Final captures show readable recipe/ROI controls, displayed identity, physical
+component units and vector picking. Both software cases require no remaining
+shell subscriptions and no running replay after disposal. Their reports verify
+unchanged prototype, core and GUI source maps before/after execution.
+
+Exploratory saved-replay children faulted in Qt's JS-stack collection while a
+GLFW render loop polled events. Those logs are preserved. The software path now
+copies Qt callback arguments into Julia primitives and queues heavy actions
+outside JS callbacks. It renders an explicitly owned hidden screen directly,
+without starting a background GLFW loop. The final children have no recorded
+render/model/teardown errors and exit zero; this does not resolve the native
+bridge gate below.
 
 Explicit startup RHI/OpenGL reaches a platform failure on Windows:
 `This plugin does not support createPlatformOpenGLContext!`,

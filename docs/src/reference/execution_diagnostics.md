@@ -88,12 +88,13 @@ sweep traces are retained: observations use O(passes) memory per execution;
 native indexes still retain O(entries) keys. This is a completed-file API and
 adds no atomic write, concurrent-writer or checkpoint guarantees.
 
-Stereo, PTV and ensemble diagnostics are outside this version. Stereo would
-require separately labeled camera observations in dewarped pixels; ensemble
-would require pooled observations with ignored `max_iterations`, rather than
+Stereo single runs and sequences have a separate
+[per-camera companion](stereo_execution_diagnostics.md), with residuals labeled
+in dewarped pixels. PTV and ensemble diagnostics are outside this version.
+Ensemble would require pooled observations with ignored `max_iterations`, rather than
 invented repeated sweeps or individual-pair residuals.
 
 ```@autodocs
 Modules = [Hammerhead]
-Pages = ["execution_diagnostics.jl"]
+Pages = ["src/execution_diagnostics.jl"]
 ```
