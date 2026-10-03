@@ -7,9 +7,9 @@ import jlqml
 ApplicationWindow {
     id: root
     objectName: "prototypeShell"
-    visible: offscreenDisplay
+    visible: applicationMode ? applicationVisible : offscreenDisplay
     width: glfwPlotMode ? 650 : 1250; height: glfwPlotMode ? 900 : 820
-    title: "Hammerhead: isolated Qt6 shell evaluation"
+    title: applicationMode ? "Hammerhead — Experimental Qt GUI" : "Hammerhead: isolated Qt6 shell evaluation"
     color: "#f3f4f6"
     font.family: shellFont.status === FontLoader.Ready ? shellFont.name : ""
     font.pixelSize: 14
@@ -120,7 +120,7 @@ ApplicationWindow {
             ColumnLayout {
             anchors.fill: parent; anchors.margins: 16; spacing: 8
             ComboBox { id: analysisLane; model: ["Synthetic demo", "Saved experiment"]
-                currentIndex: experimentSmoke ? 1 : 0; Layout.fillWidth: true }
+                currentIndex: initialSavedLane || experimentSmoke ? 1 : 0; Layout.fillWidth: true }
             ComboBox { id: savedControlsSection; objectName: "savedControlsSection"
                 model: ["Files", "Replay", "Inspection"]; Layout.fillWidth: true
                 visible: analysisLane.currentIndex === 1 }
@@ -157,6 +157,7 @@ ApplicationWindow {
                 Label { text: "Completed result file (lazy index)" }
                 FilePathPicker {
                     id: pathInput; placeholderText: "C:/data/results.jld2"; Layout.fillWidth: true
+                    text: root.uiModel.initialResult
                     purpose: "result"; fieldName: "nativeResultPathField"; dialogTitle: "Completed result file"
                     forceNonNative: forceNonNativeDialogs
                     dialogsEnabled: !root.uiModel.running && !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen
@@ -359,7 +360,7 @@ ApplicationWindow {
                 }
                 Item { Layout.fillHeight: true }
                 Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#555"
-                    text: "Hidden prototype capture; desktop input remains unverified."
+                    text: applicationMode ? "Use View to close or reopen the scientific plot." : "Hidden prototype capture; desktop input remains unverified."
                 }
             }
         }
@@ -494,6 +495,15 @@ ApplicationWindow {
             shell.grabToImage(function(result) {
                 Julia.record_capture(result.saveToFile(capturePath))
             });
+        }
+    }
+    Timer {
+        interval: 350; running: applicationMode && root.uiModel.applicationCaptureRequested; repeat: false
+        onTriggered: {
+            if (!shell.grabToImage(function(result) {
+                if (!result.saveToFile(capturePath)) Julia.smoke_failed("Application control capture could not be saved");
+                else Julia.record_capture(true);
+            })) Julia.smoke_failed("Application control capture could not be started");
         }
     }
     Timer { interval: workerSmoke ? 350000 : 220000; running: smokeMode; repeat: false

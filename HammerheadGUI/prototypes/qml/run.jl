@@ -1,8 +1,18 @@
 # Defaults to an offscreen, finite smoke run. --desktop is an explicit opt-in.
-const desktop = "--desktop" in ARGS
+include("application_request.jl")
+const launch_options = filter(arg -> startswith(arg, "--launch-request="), ARGS)
+length(launch_options) <= 1 || error("duplicate launch request")
+const launch_request = isempty(launch_options) ? nothing : ApplicationRequest.read_request(
+    String(split(only(launch_options), '='; limit=2)[2]))
+const application_mode = launch_request !== nothing
+const desktop = application_mode ? launch_request["visible"] : "--desktop" in ARGS
+const artifact_root = application_mode ? launch_request["session_dir"] : joinpath(@__DIR__, "artifacts")
 const plot_options = filter(arg -> startswith(arg, "--plot="), ARGS)
 length(plot_options) <= 1 || error("duplicate --plot option")
-const plot_mode = isempty(plot_options) ? ("--software" in ARGS ? "preview" : "embedded") :
+application_mode && (!isempty(plot_options) || any(arg -> arg in
+    ("--desktop", "--software", "--experiment-smoke", "--worker-smoke", "--sidebar-probe", "--file-dialog-smoke"), ARGS)) &&
+    error("launch request cannot be combined with evaluation mode options")
+const plot_mode = application_mode ? launch_request["plot_mode"] : isempty(plot_options) ? ("--software" in ARGS ? "preview" : "embedded") :
     String(split(only(plot_options), '='; limit=2)[2])
 plot_mode in ("preview", "embedded", "glfw") || error("--plot must be preview, embedded or glfw")
 "--software" in ARGS && plot_mode == "embedded" && error("--software conflicts with --plot=embedded")
@@ -13,15 +23,21 @@ const worker_smoke = "--worker-smoke" in ARGS
 worker_smoke && !glfw_window && error("--worker-smoke requires --plot=glfw")
 const sidebar_probe_mode = "--sidebar-probe" in ARGS
 const file_dialog_smoke = "--file-dialog-smoke" in ARGS
-if !desktop
+application_mode && !desktop && get(ENV,"QT_QPA_PLATFORM","") != "offscreen" &&
+    error("hidden application requires the offscreen Qt platform")
+if !application_mode && !desktop
     ENV["QT_QPA_PLATFORM"] = "offscreen"
 end
-ENV["QSG_RENDER_LOOP"] = "basic"
-ENV["QSG_RHI_BACKEND"] = "opengl"
-ENV["QT_QUICK_CONTROLS_STYLE"] = "Basic"
-software && (ENV["QT_QUICK_BACKEND"] = "software")
+if !application_mode
+    ENV["QSG_RENDER_LOOP"] = "basic"
+    ENV["QSG_RHI_BACKEND"] = "opengl"
+    ENV["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+    software && (ENV["QT_QUICK_BACKEND"] = "software")
+end
 const started = time_ns()
-using QML, QMLMakie, GLMakie, Observables, TOML, Pkg, SHA, Hammerhead, HammerheadGUI
+using Hammerhead, HammerheadGUI
+application_mode && ApplicationRequest.verify_packages(launch_request, Hammerhead, HammerheadGUI)
+using QML, QMLMakie, GLMakie, Observables, TOML, Pkg, SHA
 software && GLMakie.activate!()
 include("adapter.jl")
 include("viewport.jl")
@@ -32,9 +48,10 @@ include("shell_actions.jl")
 include("shell_cleanup.jl")
 include("file_paths.jl")
 const import_seconds = (time_ns() - started) / 1e9
-const state = Prototype.State()
-const fixture = experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
-const fixture_path=Observable(fixture===nothing ? "" : fixture.path)
+const state = Prototype.State(;artifact_root)
+const fixture = experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke ? experiment_fixture(mktempdir(artifact_root;prefix="experiment-data-",cleanup=false)) : nothing
+const fixture_path=Observable(application_mode ? launch_request["experiment"] : fixture===nothing ? "" : fixture.path)
+const initial_result_path=Observable(application_mode ? launch_request["result"] : "")
 const smoke_step=Ref(0)
 const cancellation_seen=Ref(false)
 const completed_replay_seen=Ref(false)
@@ -86,7 +103,7 @@ const transition_separate=Observable(false)
 const smoke_response=Ref(0)
 const sidebar_probe_data=Dict{String,Any}()
 const sidebar_probe_captures=Set{String}()
-const sidebar_capture_prefix=joinpath(@__DIR__,"artifacts",worker_smoke ? "worker_sidebar" : "sidebar_compact")
+const sidebar_capture_prefix=joinpath(artifact_root,worker_smoke ? "worker_sidebar" : "sidebar_compact")
 if sidebar_probe_mode
     Prototype.open_saved_experiment(state,fixture.path) || error(state.experiment.error[])
     Prototype.configure_saved_experiment(state,fixture.output,fixture.history,false) || error(state.experiment.error[])
@@ -107,6 +124,9 @@ const application_releases = Ref(0)
 const disposed_subscriptions = Ref(0)
 const lifecycle_done = Ref(false)
 const captured = Ref(false)
+const application_capture_requested=Observable(false)
+const application_capture_started=Ref(false)
+const application_capture_recorded=Ref(false)
 const smoke_error = Ref("")
 const qt_font_family = Ref("")
 const font_option = filter(arg -> startswith(arg, "--font="), ARGS)
@@ -116,15 +136,15 @@ const font_path = isempty(font_option) ? GLMakie.Makie.assetpath("fonts", "TeXGy
 isfile(font_path) || error("Qt prototype font file does not exist: $font_path")
 const font_sha256 = open(io -> bytes2hex(sha256(io)), font_path, "r")
 const artifact_stem = glfw_window ? "glfw_shell" : software ? "software_shell" : "native_shell"
-const capture_path = joinpath(@__DIR__, "artifacts", artifact_stem * ".png")
-const scientific_path = joinpath(@__DIR__, "artifacts", "glfw_scientific.png")
-const preview_path = joinpath(@__DIR__, "artifacts", "scientific_preview.png")
+const capture_path = joinpath(artifact_root, artifact_stem * ".png")
+const scientific_path = joinpath(artifact_root, "glfw_scientific.png")
+const preview_path = joinpath(artifact_root, "scientific_preview.png")
 const preview_url = Observable("")
 const preview_generation = Ref(0)
 const invalid_schedule_seen = Ref(false)
 const open_error_seen = Ref(false)
 const axis_rectangle = Ref((0., 0., 1., 1.))
-mkpath(joinpath(@__DIR__, "artifacts"))
+mkpath(artifact_root)
 
 function refresh_preview()
     fig, ax = viewports.active.payload
@@ -147,7 +167,7 @@ function refresh_preview()
     axis_rectangle[] = (rect.origin[1] / width, 1 - (rect.origin[2] + rect.widths[2]) / height,
                         rect.widths[1] / width, rect.widths[2] / height)
     preview_generation[] += 1
-    preview_url[] = "file:///" * replace(preview_path, '\\' => '/') * "?v=$(preview_generation[])"
+    preview_url[] = String(QML.toString(QML.QUrlFromLocalFile(preview_path))) * "?v=$(preview_generation[])"
     nothing
 end
 function prepare_viewport()
@@ -166,7 +186,7 @@ function prepare_viewport()
             release_viewport(); detach_viewport()
             rethrow()
         end
-        desktop || push!(weak_glfw_figures, WeakRef(lease.payload[1]))
+        (desktop || application_mode) || push!(weak_glfw_figures, WeakRef(lease.payload[1]))
         if glfw_closed_generation[]>0 && glfw_reopened_generation[]==0
             glfw_reopened_generation[]=glfw_owner.generations
         end
@@ -345,7 +365,7 @@ worker_capture_ack(success)=worker_smoke ? worker_active_capture(Bool(success)) 
 function smoke_failed(message)
     smoke_error[] = String(message)
     Prototype.request_shutdown(state)
-    open(joinpath(@__DIR__, "artifacts", "software_smoke_failure.toml"), "w") do io
+    open(joinpath(artifact_root, "software_smoke_failure.toml"), "w") do io
         TOML.print(io, Dict("stage" => "smoke_timeout", "error" => smoke_error[],
             "figure_generations" => viewports.generation,
             "application_releases" => application_releases[]))
@@ -401,6 +421,8 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "fileDialogSmokeUrl"=>file_dialog_smoke ? file_dialog_smoke_url : Observable(""),
                          "fileDialogSmokePath"=>file_dialog_smoke ? file_dialog_smoke_path : Observable(""),
                          "fixtureRecord"=>fixture_path,
+                         "initialResult"=>initial_result_path,
+                         "applicationCaptureRequested"=>application_capture_requested,
                          "experimentRunning"=>lift((busy,pending)->busy||pending,state.experiment.controller.running,pending_work),
                          "experimentOutput"=>state.experiment.controller.output_path,
                          "experimentHistory"=>state.experiment.controller.run_record_path,
@@ -418,15 +440,74 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
 const load_started = time_ns()
 const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props,
                          bridgeEnabled = !software, glfwPlotMode = glfw_window, offscreenDisplay = true,
-                         smokeMode = !desktop && !sidebar_probe_mode && !file_dialog_smoke,experimentSmoke=experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke,capturePath = capture_path,
+                         smokeMode = !application_mode && !desktop && !sidebar_probe_mode && !file_dialog_smoke,experimentSmoke=experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke,capturePath = capture_path,
                          fileDialogSmokeMode=file_dialog_smoke,forceNonNativeDialogs=!desktop,
-                         fileDialogCapturePrefix=joinpath(@__DIR__,"artifacts","file_dialog"),
+                         fileDialogCapturePrefix=joinpath(artifact_root,"file_dialog"),
                          workerSmoke=worker_smoke,
                          sidebarProbeMode=sidebar_probe_mode,sidebarCapturePrefix=sidebar_capture_prefix,
-                         fontSource = "file:///" * replace(font_path, '\\' => '/'))
+                         applicationMode=application_mode, applicationVisible=desktop || application_mode, initialSavedLane=application_mode && !isempty(launch_request["experiment"]),
+                         fontSource = String(QML.toString(QML.QUrlFromLocalFile(font_path))))
 const load_seconds = (time_ns() - load_started) / 1e9
 shell_subscription_count=0
 report=Dict{String,Any}()
+const cleanup_confirmed=Ref(false)
+const session_error=Ref("")
+function application_identity(status)
+    ec=state.experiment.controller
+    record=ec.record[]
+    Dict{String,Any}("schema_version"=>1,"status"=>status,"pid"=>getpid(),
+        "session_dir"=>artifact_root,"project_file"=>Base.active_project(),
+        "core_package"=>pkgdir(Hammerhead),"gui_package"=>pkgdir(HammerheadGUI),
+        "plot_mode"=>plot_mode,"visible"=>desktop,
+        "nthreads_default"=>Threads.nthreads(:default),"nthreads_interactive"=>Threads.nthreads(:interactive),
+        "experiment"=>launch_request["experiment"],"result"=>launch_request["result"],
+        "selected_lane"=>!isempty(launch_request["experiment"]) ? "experiment" : !isempty(launch_request["result"]) ? "result" : "demo",
+        "recipe_id"=>record===nothing ? "" : recipe_identity(record.recipe),
+        "input_id"=>record===nothing ? "" : record.input_id,
+        "frame"=>state.frame[],"displayed_identity"=>state.displayed[],
+        "selection"=>state.selection[],"replay_running"=>ec.running[])
+end
+function initialize_application()
+    initial_experiment=launch_request["experiment"]
+    initial_result=launch_request["result"]
+    if !isempty(initial_experiment)
+        open_saved_now(initial_experiment) || error(state.experiment.error[])
+    elseif !isempty(initial_result)
+        open_results_now(initial_result) || error(state.open_error[])
+    end
+    # Complete initial Qt property delivery on the owner before publishing readiness.
+    QML.process_eventloop_updates()
+    QML.process_events()
+    drain_actions()
+    glfw_window && OwnedGLFW.pump!(glfw_owner)
+    isempty(smoke_error[]) || error(smoke_error[])
+    data=application_identity("ready")
+    data["viewport_initialized"]=viewports.active !== nothing
+    data["smoke_automation"]=false
+    ApplicationRequest.write_report(joinpath(artifact_root,"ready.toml"),data)
+end
+function service_application_capture()
+    if !application_capture_started[] && isfile(joinpath(artifact_root,"capture.request"))
+        if glfw_window && viewports.active !== nothing
+            Hammerhead.FileIO.save(scientific_path,OwnedGLFW.capture(glfw_owner))
+            scientific_captured[]=true
+        end
+        application_capture_started[]=true
+        application_capture_requested[]=true
+    end
+    if captured[] && !application_capture_recorded[]
+        isfile(capture_path) || error("application control capture is missing")
+        data=application_identity("captured")
+        data["controls_file"]=capture_path
+        data["controls_sha256"]=open(io->bytes2hex(sha256(io)),capture_path,"r")
+        data["scientific_file"]=glfw_window ? scientific_path : preview_path
+        isfile(data["scientific_file"]) || error("application scientific capture is missing")
+        data["scientific_sha256"]=open(io->bytes2hex(sha256(io)),data["scientific_file"],"r")
+        ApplicationRequest.write_report(joinpath(artifact_root,"capture.toml"),data)
+        application_capture_recorded[]=true
+    end
+    nothing
+end
 function cleanup_shell()
     shutdown_prototype()
     cleanup_deadline=time()+60
@@ -455,18 +536,24 @@ function cleanup_shell()
     QML.cleanup()
     QML.process_events()
     @assert isempty(state.subscriptions) && isempty(state.experiment.subscriptions)
+    cleanup_confirmed[]=true
 end
+try
 ShellCleanup.with_cleanup(cleanup_shell) do
+application_mode && initialize_application()
 deadline = time() + (worker_smoke ? 360 : 240)
 while (!state.shutdown || Prototype.busy(state)) &&
-      (desktop || !(lifecycle_done[] && captured[] && !Prototype.busy(state)))
-    !desktop && time() > deadline && error("QML shell smoke timed out")
+      (application_mode || desktop || !(lifecycle_done[] && captured[] && !Prototype.busy(state)))
+    application_mode && isfile(joinpath(artifact_root,"close.request")) && !state.shutdown && shutdown_prototype()
+    !application_mode && !desktop && time() > deadline && error("QML shell smoke timed out")
     Prototype.service_saved_replay!(state)
     worker_smoke && worker_note_ack()
     # exec_async starts a Julia REPL; scripts explicitly pump Qt between yields.
     QML.process_eventloop_updates()
     QML.process_events()
     drain_actions()
+    application_mode && !isempty(smoke_error[]) && error(smoke_error[])
+    application_mode && service_application_capture()
     if glfw_window && OwnedGLFW.pump!(glfw_owner) === :closed
         # A native window close is observed after polling returns. Destruction
         # and Qt notifications happen here, outside both event callbacks.
@@ -523,11 +610,11 @@ if glfw_window
     report["simulated_close_generation"]=glfw_closed_generation[]
     report["single_reopen_generation"]=glfw_reopened_generation[]
 end
-open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
+open(joinpath(artifact_root, artifact_stem * ".toml"), "w") do io
     TOML.print(io, report)
 end
 println(report)
-if !desktop && !sidebar_probe_mode && !file_dialog_smoke
+if !application_mode && !desktop && !sidebar_probe_mode && !file_dialog_smoke
     isempty(smoke_error[]) || error(smoke_error[])
     isempty(qt_font_family[]) && error("Qt controls never acknowledged their loaded font family")
     @assert captured[] && lifecycle_done[]
@@ -544,11 +631,34 @@ end
 if glfw_window
     GC.gc()
     report["glfw_after_disposal"] = Dict(String(k)=>v for (k,v) in pairs(OwnedGLFW.data(glfw_owner)))
-    report["figures_still_reachable"] = count(ref -> ref.value !== nothing, weak_glfw_figures)
-    @assert report["figures_still_reachable"] == 0
+    if !application_mode
+        report["figures_still_reachable"] = count(ref -> ref.value !== nothing, weak_glfw_figures)
+        @assert report["figures_still_reachable"] == 0
+    end
     @assert glfw_owner.generations == glfw_owner.releases
     @assert length(GLMakie.ALL_SCREENS) == glfw_owner.baseline_screens
-    open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
+    open(joinpath(artifact_root, artifact_stem * ".toml"), "w") do io
         TOML.print(io, report)
+    end
+end
+catch error
+    session_error[]=sprint(showerror,error)
+    rethrow()
+finally
+    if application_mode
+        data=application_identity(isempty(session_error[]) ? "closed" : "failed")
+        data["error"]=session_error[]
+        data["cleanup_confirmed"]=cleanup_confirmed[]
+        data["remaining_subscriptions"]=length(state.subscriptions)+length(state.experiment.subscriptions)
+        data["file_dialog_closed"]=file_dialog_state.closed && !file_dialog_state.active
+        data["figure_generations"]=viewports.generation
+        data["application_release_acknowledgements"]=application_releases[]
+        glfw_window && (data["glfw_after_disposal"]=Dict(String(k)=>v for (k,v) in pairs(OwnedGLFW.data(glfw_owner))))
+        try
+            ApplicationRequest.write_report(joinpath(artifact_root,"session.toml"),data)
+        catch publication_error
+            ShellCleanup.report_failure(CapturedException(publication_error,catch_backtrace()))
+            isempty(session_error[]) && rethrow()
+        end
     end
 end

@@ -36,6 +36,42 @@ running the whole recording. Set the physical pixel size and paired-exposure
 delay when you need velocity units; a visually plausible vector field alone
 does not establish measurement quality.
 
+## Try the experimental Qt interface
+
+The experimental interface puts Qt controls beside an interactive GLMakie
+scientific window. Install its optional packages in the same environment:
+
+```julia
+pkg> add QML QMLMakie
+```
+
+Then launch it from Julia:
+
+```julia
+using HammerheadGUI
+session = experimental_qml_gui()
+```
+
+Open a saved planar recipe with `experimental_qml_gui(experiment="recipe.jld2")`,
+or browse an unscaled planar result with
+`experimental_qml_gui(result="vectors.jld2")`. The saved-recipe controls let you
+choose output and history paths, replay, cancel, and inspect the verified result
+in physical units when its recipe carries a scale.
+
+Close the settings window to finish the session, then use `wait(session)` to
+check its exit. From Julia, `close(session)` requests shutdown and waits for it.
+`isopen(session)` reports whether its child process is still running.
+`session.directory` holds diagnostic files and `session.log_path` identifies the
+log. Supply `session_dir="qml-session"` to create a new session directory in an
+existing parent directory.
+
+Saved replay has verified process ownership on 64-bit Windows and on supported
+x86_64 Linux kernels; the [Linux requirements](prototypes/qml/linux_worker.md)
+describe the runtime checks. Desktop input and Qt rendering on each platform
+are part of the ongoing evaluation. See the [experimental interface guide](../docs/src/howto/gui.md)
+for the workflow and the [development guide](prototypes/qml/README.md)
+for rendering modes and validation evidence.
+
 ## Tools
 
 - **Result explorer:** Browse planar PIV, stereo PIV, PTV, and particle tracks,

@@ -38,14 +38,14 @@ function dense_result(n = 128)
               PIVParameters(window_size = 16, overlap = (8, 8)))
 end
 
-function State()
+function State(; artifact_root=joinpath(@__DIR__, "artifacts"))
     a, b, _, _ = generate_synthetic_piv_pair(linear_flow(2, 1, 0, 0, 0, 0, 0),
                                               (96, 96), 1.0; z_range = (-1., 1.))
     batch = BatchRunner(files = [a, b, a, b, a, b], window_schedule = [32])
     state = State(batch, ResultExplorer(dense_result()), MaskEditor(a), a,
                   Observable(""), Observable(""), Observable("Ready: dense demo (16,384 vectors)"),
                   Observable(1), Observable(1), Observable("No selection"),
-                  () -> nothing, 0, 0, false, false,ExperimentLane(),
+                  () -> nothing, 0, 0, false, false,ExperimentLane(;artifact_root),
                   Observable(:demo),Observable("Displayed: synthetic demo"),Any[],Observable(true),()->nothing)
     push!(state.subscriptions,on(batch.status) do status
         state.status[] = status

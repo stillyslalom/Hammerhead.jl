@@ -539,8 +539,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
-The opt-in `HammerheadGUI/prototypes/qml/` environment evaluates Qt6/QML
-without changing production GUI dependencies. Its README and
+`experimental_qml_gui` launches the experimental Qt controls in a fresh process
+using optional QML/QMLMakie dependencies from the caller's project. Its session
+handle owns cooperative shutdown; launch requests capture absolute inputs and
+package paths, verified before Qt initialization. Keep every generated artifact
+under the writable session directory. The packaged runtime lives in
+`HammerheadGUI/prototypes/qml/`, alongside its development harnesses. Its README and
 `docs/src/explanation/gui_framework.md` distinguish controller/rendering
 evidence from native teardown/input/platform gaps. A successful framebuffer
 capture is not a clean application-lifecycle result. Keep generated manifests

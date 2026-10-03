@@ -145,8 +145,9 @@ preserving raw verification and separate report identity.
 [Saved ensemble experiments](docs/src/howto/ensemble_experiments.md) retain the
 ordered inputs and complete processing recipe for replay, with contribution
 progress, cancellation and reports associated with the single pooled output.
-The isolated [Qt desktop prototype](docs/src/explanation/gui_framework.md)
-evaluates richer controls with a separate interactive scientific plot window;
-production HammerheadGUI continues to use GLMakie.
+HammerheadGUI's optional [experimental Qt interface](HammerheadGUI/README.md#try-the-experimental-qt-interface)
+opens richer controls beside an interactive scientific plot. Install `QML` and
+`QMLMakie` in your Hammerhead environment, then call `experimental_qml_gui()`
+to explore a demo or open a saved planar experiment.
 See [release notes](CHANGELOG.md) for API and format changes, and
 [RELEASING.md](RELEASING.md) for package release validation.
