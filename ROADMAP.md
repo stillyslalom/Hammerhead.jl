@@ -603,6 +603,19 @@ evidence.
   failure artifacts and the separate native rendering prerequisite. Local
   process-owner checks pass; the workflow has not been dispatched, so platform
   results and the full supported Julia-version range remain unverified.
+- [x] Add Qt file pickers for saved experiments, native results and replay
+  destinations. Accepted selections update draft paths; Open and Replay remain
+  explicit actions. Preserve drafts and the current display on cancellation or
+  stale dialog events, use Qt local-file URL conversion, and retain protected
+  output checks. Verify actual hidden dialog acceptance/cancellation and compact
+  layouts; native OS dialogs, accessibility and network shares need separate
+  evidence. This does not complete the broader experiment/file browser.
+  The Windows offscreen dialog child passed all 30 stages, including four actual
+  choices, modal shortcuts, stale callbacks and shutdown. The 129 focused checks
+  and saved-planar software regression pass; both children used identical source
+  maps. Modal and compact-layout captures were visually inspected. The
+  [prototype evidence](HammerheadGUI/prototypes/qml/README.md) records scope and
+  retained artifacts; native desktop and broader platform gates remain open.
 - [ ] Resolve the candidate environment against supported Julia/Makie versions;
   validate Windows, macOS, and Linux, startup latency, memory, input/HiDPI behavior,
   and responsiveness during CPU/GPU work. Check accessible labels and focus order.

@@ -346,10 +346,47 @@ pass. Hard runner loss can prevent artifact upload even with an always-run step.
 
 ## Reproduction and decision
 
+The Qt prototype now provides Browse beside the saved-record, native-result,
+replay-output and run-history drafts. Acceptance stages the native path; it does
+not open a recording, change the controller destinations or write a file. Save
+selection therefore disables overwrite confirmation. Replay retains its own
+alias and publication guards. Qt converts local URLs, including Unicode and
+literal reserved filename characters, before the owner queues other work.
+
+Each opening creates a separate chooser with a captured token and purpose.
+Rejected, stale or closing chooser callbacks cannot clear a newer request.
+Modal root shortcuts are disabled while choosing a path. The automated lane
+forces offscreen software Qt, `DontUseNativeDialog` and `Popup.Item`; these checks
+do not validate native desktop dialogs, accessibility or every host path format.
+
+The source-stable Windows child in ignored `artifacts/file-dialog-Cw5sYt`
+exited zero in 40.09 seconds. Its 30 stages preserve the existing recipe,
+controller destinations, lazy explorer frame 2 and vector selection through
+actual OpenFile/SaveFile choices, rejection, Escape, separate modal keys,
+old-instance callbacks after same-picker reopening, an injected opening failure,
+busy refusal and shutdown. Selecting an existing history destination preserved
+its bytes; selecting fresh output did not create it. Processing was never
+started. Actual fallback list clicks and filename-control edits are automation
+for the installed Qt version, with native OS selection still an open gate.
+
+Independent source/capture checks matched 54 prototype, 47 core and 31 GUI
+hashes and all three PNG digests. The modal chooser and compact labelled rows
+were visually inspected at 900 × 600 and 1100 × 800 window sizes; captures omit
+the 40 px menu bar. Explanatory text scrolls while the cancel/progress/status
+footer remains visible. Focused path/state checks passed 76 assertions, the
+dialog evidence validator 15, and the existing process-owner self-tests 38.
+The existing saved-planar software regression in ignored
+`artifacts/lifecycle-dNcVIZ` then exited zero in 99.80 seconds without timeout.
+Its prototype/core/GUI source maps match the dialog child exactly, preserving
+the previously tested replay, cancellation and subscription-cleanup workflow.
+
 From the repository root:
 
 ```powershell
 julia HammerheadGUI/prototypes/qml/setup.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_path_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_dialog_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_dialog_runner.jl --timeout=240
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/shell_actions_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/adapter_tests.jl
 julia --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/experiment_adapter_tests.jl

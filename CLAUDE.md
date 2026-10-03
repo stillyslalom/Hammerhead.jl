@@ -537,10 +537,23 @@ and use the existing physical-display helpers. Shell ownership of replay survive
 viewport close/reopen; shutdown waits for cancellation cleanup before disposing
 subscriptions. Software-shell checks do not satisfy the native rendering gate.
 Queue loading, replay inspection and viewport transitions outside Qt callbacks;
-copy callback arguments to Julia values before enqueueing. Shutdown discards
+copy callback arguments to Julia values before enqueueing. Keep diagnostic
+hashing and assertions in the owner loop too: Julia exceptions must not unwind
+through a QML callback. Shutdown discards
 pending actions and waits for active replay cleanup. Software previews render an
 explicit hidden GLMakie screen without its background event loop; calling the
 figure-level save path can restart that loop through cached-screen configuration.
+File pickers stage draft paths only; existing Open and Replay actions retain
+controller mutation and protected-output checks. Convert accepted QUrl values
+with Qt's local-file APIs on the owner thread before retaining plain Julia
+strings. Cancellation, stale dialog tokens and shutdown must not change the
+current display or destinations. Each dialog instance owns its request token;
+callbacks must not read a newer opening's mutable token. Dispose the instance on
+acceptance, rejection or shutdown. Guard shell shortcuts while a picker is open.
+Save-file pickers use "Use path" without an overwrite prompt: they do not write
+the destination, and explicit replay retains its own output checks.
+Hidden picker checks use Qt's non-native dialogs and do not establish native OS
+dialog behavior, accessibility or network-share access.
 The lifecycle runner owns hidden child processes and records their final exit,
 logs, relevant Qt environment, stages and source identities. Set Qt platform/
 backend selectors in the parent process environment before launching a child;

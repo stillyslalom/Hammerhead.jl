@@ -201,6 +201,9 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added Browse dialogs to the isolated Qt prototype for experiment files,
+  completed results and replay destinations. Selections stage draft paths;
+  opening files and starting replay remain explicit actions.
 - Saved planar replay in the isolated Qt prototype uses an owned core-only Julia
   process on 64-bit Windows, with captured requests, acknowledged progress and
   cancellation at written-pair boundaries. Files, Replay and Inspection sections

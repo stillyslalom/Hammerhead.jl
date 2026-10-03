@@ -179,6 +179,17 @@ jobs:
           julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" software-shells 540 "$env:QML_PROJECT/lifecycle_runner.jl" --cases=shell-software,shell-experiment-software --timeout=240
           exit $LASTEXITCODE
 
+      - name: Qt file paths and actual hidden file dialogs
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          foreach ($file in @('file_path_tests', 'file_dialog_tests')) {
+            julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" $file 120 "$env:QML_PROJECT/$file.jl"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          julia --startup-file=no "$env:QML_PROJECT/artifacts/ci/ci_runner.jl" file-dialogs 300 "$env:QML_PROJECT/file_dialog_runner.jl" --timeout=240
+          exit $LASTEXITCODE
+
       - name: Hidden owned-GLFW demo and saved-experiment lifecycle
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         timeout-minutes: 10

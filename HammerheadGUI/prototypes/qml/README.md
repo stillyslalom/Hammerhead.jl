@@ -31,6 +31,48 @@ or concurrent-writer support.
 
 ## Reproduction
 
+The path fields also offer Browse. An accepted choice changes only the draft;
+opening a record/result or replaying remains a separate explicit action. Save
+choices do not create files or prompt about overwriting, because no write happens
+until replay. Each chooser captures its own request token and purpose, so an old
+chooser cannot accept into or dismiss a newer request. While a chooser is open,
+root navigation, viewport close, replay and cancellation shortcuts are suspended.
+
+The isolated dialog checks use actual Quick FileDialogs with
+`DontUseNativeDialog` and `Popup.Item`, under offscreen/software Qt. They exercise
+Qt URL conversion rather than manually decoding paths. Native OS dialogs,
+desktop keyboard integration and other platform behavior remain unvalidated.
+
+The local Windows dialog evidence in ignored `artifacts/file-dialog-Cw5sYt`
+passed with Julia 1.11.4, Qt 6.10.2 and QML 0.13.2. The owned child exited zero
+in 40.09 seconds without timeout. Thirty stages cover four actual choices,
+Escape/rejection, each modal navigation/close/run key separately, same-picker
+reopening followed by old-instance callbacks, busy/opening-failure refusal and
+shutdown. OpenFile automation clicks the actual fallback list delegate; SaveFile
+automation edits its actual filename control. These implementation object names
+are a pinned Quick-fallback harness detail, not a portable native-dialog API.
+All assertions and input hashing run in the owner loop after primitive callback
+capture. Four original files remained byte-identical, three fresh destinations
+remained absent, and the displayed frame 2 and selected vector were retained.
+
+Independent checks verified all 54 prototype, 47 core and 31 GUI source hashes
+against the final files, plus the three PNG digests. `dialog.png` shows a settled
+real modal chooser; `small.png` and `large.png` show labelled paths and persistent
+controls at 900 × 600 and 1100 × 800 window sizes. The image surfaces exclude the
+40 px menu bar. The small sidebar intentionally scrolls explanatory text.
+The focused checks passed 76 path/state, 15 evidence-refusal and 38 existing
+process-owner assertions; the latter retain their original defaults.
+The existing saved-planar software child also passed on these exact source maps
+in ignored `artifacts/lifecycle-dNcVIZ`: exit zero, 99.80 seconds, no timeout,
+with verified replay/cancellation and observer cleanup. Native dialog behavior
+and the embedded Qt/OpenGL gate remain open.
+
+```powershell
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_path_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_dialog_tests.jl
+julia --startup-file=no --threads=1 --project=HammerheadGUI/prototypes/qml HammerheadGUI/prototypes/qml/file_dialog_runner.jl --timeout=240
+```
+
 Run from the repository root:
 
 ```powershell

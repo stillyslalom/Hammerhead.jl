@@ -137,7 +137,7 @@ function validate_lifecycle_evidence(directory, expected)
     errors
 end
 
-function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected = nothing)
+function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected = nothing, backend = nothing)
     timeout > 0 || throw(ArgumentError("timeout must be positive"))
     mkdir(directory)
     stdout_path, stderr_path = joinpath(directory, "stdout.log"), joinpath(directory, "stderr.log")
@@ -150,7 +150,9 @@ function run_lifecycle_child(command::Cmd, directory; timeout = 180.0, expected 
     # Cmd's Windows hide flag prevents a console window; Qt remains offscreen.
     hidden = Sys.iswindows() ? Cmd(command; windows_hide = true) : command
     software_child = expected !== nothing && expected["scenario"] == "shell"
-    process_environment, qt_environment = child_environment(; backend = software_child ? "software" : "rhi")
+    selected_backend = backend === nothing ? (software_child ? "software" : "rhi") : String(backend)
+    selected_backend in ("software", "rhi") || throw(ArgumentError("backend must be software or rhi"))
+    process_environment, qt_environment = child_environment(; backend = selected_backend)
     # QMLSCENE_DEVICE is a legacy adaptation selector; no inherited variant may
     # override this explicit RHI/OpenGL native trial. Do not print other env data.
     command = setenv(hidden, process_environment)

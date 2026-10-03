@@ -40,6 +40,7 @@ Each job requests these checks in order, subject to the conservative owner gate:
 | Focused contracts | Queued actions, demo and experiment adapters, display transactions, viewport geometry, ownership contracts, invisible-screen ownership and owned GLFW |
 | Harness contracts | Hidden-process exit/timeout ownership and rejection of incomplete evidence |
 | Software Qt | Demo and saved-experiment lifecycle children |
+| File selection | Qt local-path conversion, evidence refusal, and actual hidden non-native dialogs; accepted-only drafts, stale callbacks, modal shortcuts, compact layouts and pending-dialog shutdown |
 | Owned GLFW | Demo and saved-experiment lifecycle children with invisible directly rendered scientific screens |
 | Active worker | Compact sidebar reachability and Qt/GLFW acknowledgements during explicitly injected work, followed by real saved-planar replay |
 | Native Qt prerequisite | Construction, native baseline frame, single render/release/exit |
@@ -58,6 +59,11 @@ workflow does not substitute the cooperative lane or mark that failure expected.
 The matrix definition is not cross-platform worker validation. Local protocol
 and ownership outcomes, plus controlled injected-work acknowledgements, do not
 establish desktop input or portable responsiveness.
+
+The file-selection lane forces non-native Qt dialogs in the offscreen software
+shell. Synthetic QtTest keys exercise shortcut isolation; they do not verify
+native OS dialogs, desktop focus, accessibility or network-share access. Choosing
+a destination stages its path and must not write a file or start processing.
 
 After successful setup, every failed check still makes its job fail. An
 unsuccessful child command publishes an incomplete-owner marker and prevents

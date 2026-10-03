@@ -32,7 +32,22 @@ ApplicationWindow {
     property bool sidebarSmallCaptured: false
     property string workerIssuedCommand: ""
     property int workerCommandStep: 0
-    onClosing: Julia.shutdown_prototype()
+    property alias nativeResultPicker: pathInput
+    property alias savedRecordPicker: experimentInput
+    property alias replayOutputPicker: outputInput
+    property alias runHistoryPicker: historyInput
+    property alias analysisLaneControl: analysisLane
+    property alias savedSectionControl: savedControlsSection
+    property alias captureSurface: shell
+    onClosing: {
+        pathInput.dismiss(); experimentInput.dismiss(); outputInput.dismiss(); historyInput.dismiss();
+        Julia.shutdown_prototype();
+    }
+    Loader {
+        active: fileDialogSmokeMode
+        source: active ? "file_dialog_shell_smoke.qml" : ""
+        onLoaded: item.shell = root
+    }
     function transitionViewport() {
         if (!root.transitionsReady || root.transitionPending) return;
         root.transitionPending = true;
@@ -82,16 +97,17 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: "&View"
-            Action { text: glfwPlotMode ? "Separate interactive scientific plot" : "Separate visualization window"; checkable: true; enabled: !glfwPlotMode
+            Action { text: glfwPlotMode ? "Separate interactive scientific plot" : "Separate visualization window"; checkable: true; enabled: !glfwPlotMode && !root.uiModel.fileDialogOpen
                 checked: glfwPlotMode || root.separate; onTriggered: { if (!glfwPlotMode) root.separate = checked; } }
             Action { text: "Close / reopen visualization"; shortcut: "Ctrl+W"
+                enabled: !root.uiModel.fileDialogOpen
                 onTriggered: root.viewportOpen = !root.viewportOpen }
         }
     }
-    Shortcut { sequence: "Right"; onActivated: Julia.navigate_frame(root.uiModel.frame + 1) }
-    Shortcut { sequence: "Left"; onActivated: Julia.navigate_frame(root.uiModel.frame - 1) }
-    Shortcut { sequence: "Escape"; onActivated: analysisLane.currentIndex === 1 ? Julia.cancel_saved() : Julia.cancel_batch() }
-    Shortcut { sequence: "Ctrl+Return"; onActivated: analysisLane.currentIndex === 1 ? Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) : Julia.run_batch() }
+    Shortcut { sequence: "Right"; enabled: !root.uiModel.fileDialogOpen; onActivated: Julia.navigate_frame(root.uiModel.frame + 1) }
+    Shortcut { sequence: "Left"; enabled: !root.uiModel.fileDialogOpen; onActivated: Julia.navigate_frame(root.uiModel.frame - 1) }
+    Shortcut { sequence: "Escape"; enabled: !root.uiModel.fileDialogOpen; onActivated: analysisLane.currentIndex === 1 ? Julia.cancel_saved() : Julia.cancel_batch() }
+    Shortcut { sequence: "Ctrl+Return"; enabled: !root.uiModel.fileDialogOpen; onActivated: analysisLane.currentIndex === 1 ? Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) : Julia.run_batch() }
 
     SplitView {
         id: shell
@@ -134,45 +150,58 @@ ApplicationWindow {
                     Layout.fillWidth: true; visible: text.length > 0
                 }
                 RowLayout {
-                    Button { text: "Run demo"; enabled: !root.uiModel.running; onClicked: Julia.run_batch() }
+                    Button { text: "Run demo"; enabled: !root.uiModel.running && !root.uiModel.fileDialogOpen; onClicked: Julia.run_batch() }
                     Button { text: "Cancel"; enabled: root.uiModel.running; onClicked: Julia.cancel_batch() }
                 }
                 Label { text: root.uiModel.status; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Label { text: "Completed result file (lazy index)" }
-                TextField {
+                FilePathPicker {
                     id: pathInput; placeholderText: "C:/data/results.jld2"; Layout.fillWidth: true
-                    Accessible.name: "Completed result file path"
-                    onAccepted: Julia.open_results(text)
+                    purpose: "result"; fieldName: "nativeResultPathField"; dialogTitle: "Completed result file"
+                    forceNonNative: forceNonNativeDialogs
+                    dialogsEnabled: !root.uiModel.running && !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen
+                    onSubmitted: Julia.open_results(path)
                 }
-                Button { text: "Open completed file"; onClicked: Julia.open_results(pathInput.text) }
+                Button { text: "Open completed file"; enabled: !root.uiModel.fileDialogOpen; onClicked: Julia.open_results(pathInput.text) }
                 }
                 ColumnLayout {
                     visible: analysisLane.currentIndex === 1; Layout.fillWidth: true; spacing: 6
                     Label { text: "Saved planar experiment"; font.pixelSize: 20; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     ColumnLayout {
                     visible: savedControlsSection.currentIndex === 0; Layout.fillWidth: true; spacing: 6
-                    TextField { id: experimentInput; Layout.fillWidth: true
+                    Label { text: "Saved recipe"; font.pixelSize: 12; color: "#555"; Layout.fillWidth: true }
+                    FilePathPicker { id: experimentInput; Layout.fillWidth: true
                         text: root.uiModel.fixtureRecord; placeholderText: "Saved experiment .jld2"
-                        Accessible.name: "Saved experiment path" }
-                    Button { text: "Open saved experiment"; enabled: !root.uiModel.experimentRunning
+                        purpose: "record"; fieldName: "savedRecordPathField"; dialogTitle: "Saved experiment"
+                        forceNonNative: forceNonNativeDialogs
+                        dialogsEnabled: !root.uiModel.running && !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen }
+                    Button { text: "Open saved experiment"; enabled: !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen
                         onClicked: Julia.open_saved(experimentInput.text) }
-                    TextField { id: outputInput; Layout.fillWidth: true; text: root.uiModel.experimentOutput
-                        placeholderText: "Result output .jld2"; Accessible.name: "Replay result output" }
-                    TextField { id: historyInput; Layout.fillWidth: true; text: root.uiModel.experimentHistory
-                        placeholderText: "Run record .jld2 (optional)"; Accessible.name: "Replay run record" }
+                    Label { text: "Result output"; font.pixelSize: 12; color: "#555"; Layout.fillWidth: true }
+                    FilePathPicker { id: outputInput; Layout.fillWidth: true; text: root.uiModel.experimentOutput
+                        placeholderText: "Result output .jld2"; purpose: "output"; saveMode: true
+                        fieldName: "replayOutputPathField"; dialogTitle: "Replay result output"
+                        forceNonNative: forceNonNativeDialogs
+                        dialogsEnabled: !root.uiModel.running && !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen }
+                    Label { text: "Run history (optional)"; font.pixelSize: 12; color: "#555"; Layout.fillWidth: true }
+                    FilePathPicker { id: historyInput; Layout.fillWidth: true; text: root.uiModel.experimentHistory
+                        placeholderText: "Run record .jld2 (optional)"; purpose: "history"; saveMode: true
+                        fieldName: "runHistoryPathField"; dialogTitle: "Replay run record"
+                        forceNonNative: forceNonNativeDialogs
+                        dialogsEnabled: !root.uiModel.running && !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen }
                     Label { text: "Complete saved settings stay read-only. Paths and options describe the next replay."; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
                     ColumnLayout {
                     visible: savedControlsSection.currentIndex === 1; Layout.fillWidth: true; spacing: 6
                     CheckBox { id: allowOverride; text: "Allow environment change (recorded)"
                         checked: root.uiModel.experimentAllow; enabled: !root.uiModel.experimentRunning }
-                        Button { id: replayButton; objectName: "replaySavedButton"; text: "Replay saved recipe"; enabled: !root.uiModel.experimentRunning
+                        Button { id: replayButton; objectName: "replaySavedButton"; text: "Replay saved recipe"; enabled: !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen
                             onClicked: Julia.replay_saved(outputInput.text, historyInput.text, allowOverride.checked) }
                     Label { text: "Replay uses the saved settings. Cancel takes effect after the current pair finishes and cleanup completes; no resume."; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
                     ColumnLayout {
                     visible: savedControlsSection.currentIndex === 2; Layout.fillWidth: true; spacing: 6
-                    Button { text: "Inspect completed run"; enabled: !root.uiModel.experimentRunning
+                    Button { text: "Inspect completed run"; enabled: !root.uiModel.experimentRunning && !root.uiModel.fileDialogOpen
                         onClicked: Julia.inspect_saved() }
                     ComboBox { model: ["Complete recipe", "Run history"]; Layout.fillWidth: true
                         onActivated: Julia.saved_section(currentIndex === 1) }
@@ -190,6 +219,8 @@ ApplicationWindow {
                     text: root.uiModel.openError; color: "#b91c1c"; wrapMode: Text.Wrap
                     Layout.fillWidth: true; visible: text.length > 0
                 }
+                Label { text: root.uiModel.fileDialogError; visible: text.length > 0
+                    color: "#b91c1c"; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
                 ColumnLayout {
                 visible: analysisLane.currentIndex === 0 || savedControlsSection.currentIndex === 2
                 Layout.fillWidth: true; spacing: 6

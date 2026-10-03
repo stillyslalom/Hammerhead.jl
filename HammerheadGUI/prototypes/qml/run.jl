@@ -12,6 +12,7 @@ const experiment_smoke = "--experiment-smoke" in ARGS
 const worker_smoke = "--worker-smoke" in ARGS
 worker_smoke && !glfw_window && error("--worker-smoke requires --plot=glfw")
 const sidebar_probe_mode = "--sidebar-probe" in ARGS
+const file_dialog_smoke = "--file-dialog-smoke" in ARGS
 if !desktop
     ENV["QT_QPA_PLATFORM"] = "offscreen"
 end
@@ -29,9 +30,10 @@ include("owned_glfw.jl")
 include("experiment_fixture.jl")
 include("shell_actions.jl")
 include("shell_cleanup.jl")
+include("file_paths.jl")
 const import_seconds = (time_ns() - started) / 1e9
 const state = Prototype.State()
-const fixture = experiment_smoke || worker_smoke || sidebar_probe_mode ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
+const fixture = experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke ? experiment_fixture(mktempdir(joinpath(@__DIR__,"artifacts");prefix="experiment-data-",cleanup=false)) : nothing
 const fixture_path=Observable(fixture===nothing ? "" : fixture.path)
 const smoke_step=Ref(0)
 const cancellation_seen=Ref(false)
@@ -40,6 +42,44 @@ const retained_display_seen=Ref(false)
 const viewport_releases_while_replaying=Ref(0)
 const action_queue=ShellActions.ActionQueue(()->state.shutdown)
 const pending_work=action_queue.pending
+const file_dialog_state=FilePaths.DialogState()
+const file_dialog_open=Observable(false)
+const file_dialog_error=Observable("")
+file_actions_allowed() = !state.shutdown && !Prototype.busy(state) && !pending_work[]
+function begin_file_dialog(purpose)
+    token=FilePaths.begin!(file_dialog_state,String(purpose);allowed=file_actions_allowed())
+    if token!=0
+        try
+            file_dialog_open[]=true
+        catch
+            FilePaths.reject!(file_dialog_state,token)
+            try file_dialog_open[]=false catch end
+            rethrow()
+        end
+    end
+    token
+end
+function reject_file_dialog(token)
+    FilePaths.reject!(file_dialog_state,Int(token)) && (file_dialog_open[]=false)
+    nothing
+end
+function accept_file_dialog(token,purpose,url)
+    # Consume the CxxWrap URL while the Qt callback still owns it. Nothing
+    # queued below may retain a QUrl/QString or alter controller destinations.
+    captured_token=Int(token);captured_purpose=String(purpose)
+    try
+        path=FilePaths.accept!(file_dialog_state,captured_token,captured_purpose,url;allowed=file_actions_allowed())
+        path===nothing && return ""
+        file_dialog_error[]=""
+        path
+    catch err
+        file_dialog_error[]=sprint(showerror,err)
+        ""
+    finally
+        file_dialog_open[]=file_dialog_state.active
+    end
+end
+file_dialog_folder(draft)=String(QML.toString(FilePaths.initial_folder(String(draft))))
 const transition_ack=Observable(0)
 const transition_open=Observable(true)
 const transition_separate=Observable(false)
@@ -181,9 +221,9 @@ function open_results_now(path)
     success
 end
 navigate_frame_now(i) = Prototype.navigate(state, i)
-open_results(path)=begin captured=String(path);enqueue(()->open_results_now(captured)) end
-navigate_frame(i)=begin captured=Int(i);enqueue(()->navigate_frame_now(captured)) end
-run_batch() = Prototype.run_batch(state)
+open_results(path)=begin captured=String(path);file_dialog_state.active ? false : enqueue(()->open_results_now(captured)) end
+navigate_frame(i)=begin captured=Int(i);file_dialog_state.active ? false : enqueue(()->navigate_frame_now(captured)) end
+run_batch() = file_dialog_state.active ? false : Prototype.run_batch(state)
 cancel_batch() = Prototype.cancel_batch(state)
 close_mask() = enqueue(()->Prototype.close_mask(state))
 set_mask_mode(drawing) = (state.drawing = Bool(drawing); nothing)
@@ -220,20 +260,23 @@ function simulate_glfw_close()
 end
 lifecycle_complete() = (lifecycle_done[] = true; nothing)
 record_capture(success) = (captured[] = Bool(success); nothing)
-shutdown_prototype() = Prototype.request_shutdown(state)
+shutdown_prototype() = begin
+    FilePaths.close!(file_dialog_state);file_dialog_open[]=false
+    Prototype.request_shutdown(state)
+end
 open_saved_now(path)=Prototype.open_saved_experiment(state,path)
-open_saved(path)=begin captured=String(path);pending_work[] ? false : enqueue(()->open_saved_now(captured)) end
+open_saved(path)=begin captured=String(path);pending_work[] || file_dialog_state.active ? false : enqueue(()->open_saved_now(captured)) end
 function replay_saved_now(output,history,allow)
     Prototype.configure_saved_experiment(state,output,history,allow) || return false
     Prototype.run_saved_experiment(state)
 end
 replay_saved(output,history,allow)=begin
     captured=(String(output),String(history),Bool(allow))
-    pending_work[] ? false : enqueue(()->replay_saved_now(captured...))
+    pending_work[] || file_dialog_state.active ? false : enqueue(()->replay_saved_now(captured...))
 end
 cancel_saved()=Prototype.cancel_saved_experiment(state)
 inspect_saved_now()=Prototype.inspect_saved_experiment(state)
-inspect_saved()=pending_work[] ? false : enqueue(inspect_saved_now)
+inspect_saved()=pending_work[] || file_dialog_state.active ? false : enqueue(inspect_saved_now)
 saved_page(delta)=Prototype.experiment_page(state,delta)
 saved_section(history)=Prototype.experiment_section(state,history)
 function advance_experiment_smoke()
@@ -341,12 +384,22 @@ end
 @qmlfunction record_sidebar_probe record_sidebar_capture
 @qmlfunction worker_control_ack
 @qmlfunction worker_capture_ack
+@qmlfunction begin_file_dialog accept_file_dialog reject_file_dialog file_dialog_folder
+
+if file_dialog_smoke
+    include("file_dialog_shell_smoke.jl")
+    @qmlfunction file_dialog_probe
+end
 
 props = JuliaPropertyMap("scheduleError" => state.schedule_error,
                          "openError" => state.open_error, "status" => state.status,
                          "running" => state.batch.running, "frame" => state.frame,
                          "count" => state.count, "selection" => state.selection,
                          "preview" => preview_url,
+                         "fileDialogOpen"=>file_dialog_open,"fileDialogError"=>file_dialog_error,
+                         "fileDialogSmokeCommand"=>file_dialog_smoke ? file_dialog_smoke_command : Observable(""),
+                         "fileDialogSmokeUrl"=>file_dialog_smoke ? file_dialog_smoke_url : Observable(""),
+                         "fileDialogSmokePath"=>file_dialog_smoke ? file_dialog_smoke_path : Observable(""),
                          "fixtureRecord"=>fixture_path,
                          "experimentRunning"=>lift((busy,pending)->busy||pending,state.experiment.controller.running,pending_work),
                          "experimentOutput"=>state.experiment.controller.output_path,
@@ -365,7 +418,9 @@ props = JuliaPropertyMap("scheduleError" => state.schedule_error,
 const load_started = time_ns()
 const qmlengine = loadqml(joinpath(@__DIR__, "main.qml"); model = props,
                          bridgeEnabled = !software, glfwPlotMode = glfw_window, offscreenDisplay = true,
-                         smokeMode = !desktop && !sidebar_probe_mode,experimentSmoke=experiment_smoke || worker_smoke || sidebar_probe_mode,capturePath = capture_path,
+                         smokeMode = !desktop && !sidebar_probe_mode && !file_dialog_smoke,experimentSmoke=experiment_smoke || worker_smoke || sidebar_probe_mode || file_dialog_smoke,capturePath = capture_path,
+                         fileDialogSmokeMode=file_dialog_smoke,forceNonNativeDialogs=!desktop,
+                         fileDialogCapturePrefix=joinpath(@__DIR__,"artifacts","file_dialog"),
                          workerSmoke=worker_smoke,
                          sidebarProbeMode=sidebar_probe_mode,sidebarCapturePrefix=sidebar_capture_prefix,
                          fontSource = "file:///" * replace(font_path, '\\' => '/'))
@@ -373,7 +428,7 @@ const load_seconds = (time_ns() - load_started) / 1e9
 shell_subscription_count=0
 report=Dict{String,Any}()
 function cleanup_shell()
-    Prototype.request_shutdown(state)
+    shutdown_prototype()
     cleanup_deadline=time()+60
     while Prototype.busy(state) && time()<cleanup_deadline
         Prototype.service_saved_replay!(state)
@@ -421,6 +476,7 @@ while (!state.shutdown || Prototype.busy(state)) &&
     end
     experiment_smoke && advance_experiment_smoke()
     worker_smoke && worker_tick()
+    file_dialog_smoke && file_dialog_smoke_tick()
     state.ticks += 1
     sleep(0.01)
 end
@@ -471,7 +527,7 @@ open(joinpath(@__DIR__, "artifacts", artifact_stem * ".toml"), "w") do io
     TOML.print(io, report)
 end
 println(report)
-if !desktop && !sidebar_probe_mode
+if !desktop && !sidebar_probe_mode && !file_dialog_smoke
     isempty(smoke_error[]) || error(smoke_error[])
     isempty(qt_font_family[]) && error("Qt controls never acknowledged their loaded font family")
     @assert captured[] && lifecycle_done[]
