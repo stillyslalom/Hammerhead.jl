@@ -10,6 +10,12 @@ changes the ordered pass schedule while retaining every other recipe option
 and each pass's validation tuple. It does not modify the source record or add
 a new lineage, checkpoint or replay schema.
 
+The same controller also holds ordered preprocessing drafts for the
+[preprocessing editor](../howto/gui_preprocessing_revision.md). Validation and
+saving compose both draft sequences; every field outside those edits is retained.
+Explicit image-pair conditioning uses a separate preview controller and does not
+turn a metadata difference into a numerical assessment.
+
 `revision_recipe` and `revision_diff` inspect the current draft without input
 image verification. Creating/saving a revised record verifies the original
 ordered inputs, preserves `input_id`, captures the current environment, and

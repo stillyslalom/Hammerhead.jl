@@ -649,7 +649,13 @@ and the last report's identities remain distinct after failure. No cancellation
 or uninterrupted CPU responsiveness is promised for a single-pair comparison.
 
 `RecipeRevisionController` / `recipe_revision[!]` edit ordered planar passes in
-a separate draft. Preserve all unedited pass fields, ordered validator tuples
+a separate draft. `preprocessing_revision[!]` uses the same controller for ordered
+built-in steps, duplicates and exact embedded backgrounds. `RecipeImagePreviewController`
+captures an explicit original pair, verifies bytes around decoding/conditioning,
+and uses exact replay preprocessing in recipe precision on full images before ROI.
+Its detached bundle keeps its own recipe/pair identity; mask/ROI are overlays and
+raw/processed views share an explicit intensity range. Scripts remain references.
+Preserve all unedited pass fields, ordered validator tuples
 and the complete imported recipe options. Raw text remains separate from the
 last validated candidate; invalid visible edits must never fall back to stale
 parsed values. Metadata previews can work without source files. Creating or
@@ -1043,6 +1049,11 @@ as contrast evidence; preserve any genuine processing-precision difference.
   inspection, invalid drafts and captured alias-protected saves. Revision view
   checks exercise compact layouts, live raw text, rejected busy selections and
   separate workflow launch; hidden controls do not establish desktop acceptance.
+- GUI preprocessing revision tests cover exact step order/options/background
+  precision, capture and protected saves. Independent parity tests compose public
+  core operations in both image precisions, including full-frame-before-ROI and
+  changed-input checks. View tests exercise actual controls, shared image ranges,
+  original-coordinate overlays and retained preview identities at compact sizes.
 - `test_tracking_speed_summary.jl` checks bulk actual-time secants, mean semantics,
   unavailable populations and metadata detachment. Calibrated scattered export
   tests check affine bases, units, exact intervals and paired-artifact verification.

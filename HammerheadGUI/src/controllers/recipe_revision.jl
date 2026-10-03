@@ -1,4 +1,53 @@
-# Lossless pass editing; no native widgets, pixel/result cache or script execution.
+# Lossless recipe editing; no native widgets, pixel/result cache or script execution.
+
+"""
+    preprocessing_fields(operation)
+
+Return a detached ordered text-option schema (`key`, `label`, `kind`) for one
+of the seven core built-ins. Embedded backgrounds use explicit array/file actions,
+not text. Operation order and repetitions are scientific recipe content.
+"""
+function preprocessing_fields(operation::Symbol)
+    definitions = operation===:subtract_background ? [] :
+        operation===:intensity_cap ? [(:n_sigma,"Sigma limit",:real)] :
+        operation===:highpass_filter ? [(:sigma,"Filter sigma",:real)] :
+        operation===:clahe ? [(:tiles,"Tiles",:tuple),(:clip_limit,"Clip limit",:real),(:nbins,"Histogram bins",:int)] :
+        operation===:percentile_stretch ? [(:low,"Lower percentile",:real),(:high,"Upper percentile",:real)] :
+        operation===:invert_image ? [] :
+        operation===:local_variance_normalize ? [(:sigma,"Filter sigma",:real),(:epsilon,"Normalization epsilon",:real)] :
+        throw(ArgumentError("unsupported preprocessing operation $operation"))
+    [(key=k,label=l,kind=t) for (k,l,t) in definitions]
+end
+function _revision_preprocess_draft(step::PreprocessStep)
+    options=Dict{Symbol,String}(f.key=>_revision_text(step.options[String(f.key)]) for f in preprocessing_fields(step.operation))
+    # CLAHE's canonical tiles are a vector, unlike pass tuple fields.
+    haskey(options,:tiles) && (options[:tiles]=join(step.options["tiles"],", "))
+    (operation=step.operation,options=options,
+     background=step.operation===:subtract_background ? copy(step.options["background"]) : nothing)
+end
+function _revision_preprocess_steps(rows)
+    steps=PreprocessStep[]
+    for row in rows
+        keys(row)==(:operation,:options,:background) || throw(ArgumentError("invalid preprocessing draft fields"))
+        fields=preprocessing_fields(row.operation)
+        Set(keys(row.options))==Set(f.key for f in fields) || throw(ArgumentError("preprocessing option schema changed"))
+        options=Dict{Symbol,Any}(f.key=>_revision_parse(row.options[f.key],f.kind,f.key) for f in fields)
+        if row.operation===:subtract_background
+            row.background===nothing && throw(ArgumentError("subtract_background needs an explicitly supplied background"))
+            options[:background]=row.background
+        else
+            row.background===nothing || throw(ArgumentError("only subtract_background accepts an embedded background"))
+        end
+        push!(steps,PreprocessStep(row.operation;options...))
+    end
+    steps
+end
+_revision_background_equal(a,b)=typeof(a)===typeof(b) &&
+    (a===nothing || (size(a)==size(b) && isequal(a,b)))
+function _revision_preprocessing_equal(a,b)
+    length(a)==length(b) && all(x.operation===y.operation && x.options==y.options &&
+        _revision_background_equal(x.background,y.background) for (x,y) in zip(a,b))
+end
 
 """
     revision_fields()
@@ -34,8 +83,10 @@ _revision_draft(pass) = Dict(f.key=>_revision_text(getfield(pass,f.key)) for f i
 """
     RecipeRevisionController(record_or_path; protected_paths=[])
 
-Keep a detached complete planar experiment and ordered raw pass text drafts.
-All non-pass recipe fields and each pass's ordered validation tuple are retained.
+Keep a detached complete planar experiment, ordered raw pass text drafts and
+ordered built-in preprocessing drafts. All other recipe fields and each pass's
+ordered validation tuple are retained. Untouched embedded backgrounds retain
+their exact type/content; repetitions and an empty preprocessing chain are valid.
 `candidate`, `diff` and `preview_text` describe the last successful preview;
 `dirty` marks subsequent edits, including invalid text. `saved_record` and
 `saved_path` retain the last successfully written revision independently of drafts.
@@ -44,7 +95,8 @@ Extra known output/history/report destinations must be supplied in
 `protected_paths`: arbitrary external history paths cannot be recovered from a
 record. Original record/input/script/run output paths are protected automatically.
 All revision destinations successfully saved by this controller are also protected
-for its lifetime; subsequent saves require another destination.
+for its lifetime; subsequent saves require another destination. Consumed background
+file paths are also lifetime-protected, independently of the public path list.
 Construction validates metadata and hashes embedded recipe arrays; launch outside
 native callbacks. Preview/save asynchronous scheduling can still pause rendering;
 processing cancellation is unavailable. No parent-recipe lineage is persisted.
@@ -54,6 +106,8 @@ struct RecipeRevisionController
     drafts::Observable{Vector{Dict{Symbol,String}}}
     templates::Observable{Vector{PIVParameters}}
     selected::Observable{Int}
+    preprocessing_drafts::Observable{Vector{NamedTuple}}
+    preprocessing_selected::Observable{Int}
     candidate::Observable{Union{Nothing,PIVRecipe}}
     diff::Observable{Union{Nothing,RecipeDiff}}
     preview_text::Observable{String}
@@ -76,6 +130,8 @@ function RecipeRevisionController(value;protected_paths=String[])
     paths=String[Hammerhead._artifact_local_path(p) for p in protected_paths]
     RecipeRevisionController(original,Observable(_revision_draft.(original.recipe.passes)),
         Observable(deepcopy(original.recipe.passes)),Observable(1),
+        Observable{Vector{NamedTuple}}(NamedTuple[_revision_preprocess_draft(s) for s in original.recipe.preprocessing]),
+        Observable(isempty(original.recipe.preprocessing) ? 0 : 1),
         Observable{Union{Nothing,PIVRecipe}}(nothing),Observable{Union{Nothing,RecipeDiff}}(nothing),
         Observable("No preview yet."),Observable(true),Observable(false),Observable(:ready),
         Observable("Edit passes, preview, then save a distinct experiment record."),Observable{Any}(nothing),
@@ -87,6 +143,153 @@ function _revision_index(rc,index;insertion=false)
     index isa Integer && !(index isa Bool) && 1<=index<=length(rc.drafts[])+(insertion ? 1 : 0) ||
         throw(ArgumentError("pass index is outside the draft sequence"))
     Int(index)
+end
+function _revision_preprocess_index(rc,index;insertion=false)
+    index isa Integer && !(index isa Bool) && 1<=index<=length(rc.preprocessing_drafts[])+(insertion ? 1 : 0) ||
+        throw(ArgumentError("preprocessing index is outside the draft sequence"))
+    Int(index)
+end
+function _revision_preprocess_edit!(rc,rows,selected)
+    rc.preprocessing_drafts.val=rows;rc.preprocessing_selected.val=selected;rc.dirty.val=true
+    for obs in (rc.preprocessing_drafts,rc.preprocessing_selected,rc.dirty);notify(obs);end
+    rc
+end
+
+"""
+    set_revision_preprocess!(controller, index, options)
+
+Merge raw option strings into an ordered step. Invalid text remains visible and
+is parsed afresh for preview/save; a previous valid candidate is never substituted.
+Unknown options and textual background replacement are refused.
+"""
+function set_revision_preprocess!(rc::RecipeRevisionController,index,options::AbstractDict)
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index);rows=deepcopy(rc.preprocessing_drafts[])
+    allowed=Set(f.key for f in preprocessing_fields(rows[i].operation))
+    all(k->k isa Symbol && k in allowed,keys(options)) || throw(ArgumentError("unknown preprocessing option"))
+    all(v->v isa AbstractString,values(options)) || throw(ArgumentError("preprocessing option drafts must contain text"))
+    merge!(rows[i].options,Dict(k=>String(v) for (k,v) in options))
+    _revision_preprocessing_equal(rows,rc.preprocessing_drafts[]) && return rc
+    _revision_preprocess_edit!(rc,rows,rc.preprocessing_selected[])
+end
+
+"""
+    insert_revision_preprocess!(controller, index, operation; background=nothing)
+    insert_revision_preprocess!(controller, index; source=controller.preprocessing_selected[])
+
+Insert a built-in with explicit core defaults, or duplicate a complete raw draft
+(including invalid text and exact background precision). Repetitions are allowed.
+A new subtraction may have no background yet; preview/save then refuses it.
+"""
+function insert_revision_preprocess!(rc::RecipeRevisionController,index,operation::Symbol;background=nothing)
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index;insertion=true)
+    preprocessing_fields(operation)
+    row=operation===:subtract_background && background===nothing ?
+        (operation=operation,options=Dict{Symbol,String}(),background=nothing) :
+        _revision_preprocess_draft(operation===:subtract_background ? PreprocessStep(operation;background) : PreprocessStep(operation))
+    operation===:subtract_background || background===nothing || throw(ArgumentError("only subtraction accepts a background"))
+    rows=deepcopy(rc.preprocessing_drafts[]);insert!(rows,i,row)
+    _revision_preprocess_edit!(rc,rows,i)
+end
+function insert_revision_preprocess!(rc::RecipeRevisionController,index;source=rc.preprocessing_selected[])
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index;insertion=true);s=_revision_preprocess_index(rc,source)
+    rows=deepcopy(rc.preprocessing_drafts[]);insert!(rows,i,deepcopy(rows[s]))
+    _revision_preprocess_edit!(rc,rows,i)
+end
+
+"""
+    move_revision_preprocess!(controller, from, to)
+
+Move a whole raw step/background, keeping selection attached to its step.
+"""
+function move_revision_preprocess!(rc::RecipeRevisionController,from,to)
+    _revision_idle(rc);a=_revision_preprocess_index(rc,from);b=_revision_preprocess_index(rc,to)
+    a==b && return rc
+    rows=deepcopy(rc.preprocessing_drafts[]);insert!(rows,b,popat!(rows,a))
+    s=rc.preprocessing_selected[];s=s==a ? b : a<s<=b ? s-1 : b<=s<a ? s+1 : s
+    _revision_preprocess_edit!(rc,rows,s)
+end
+
+"""
+    delete_revision_preprocess!(controller, index)
+
+Delete a complete step. An empty chain is valid and selects index zero.
+"""
+function delete_revision_preprocess!(rc::RecipeRevisionController,index)
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index)
+    rows=deepcopy(rc.preprocessing_drafts[]);deleteat!(rows,i)
+    s=rc.preprocessing_selected[];s=s>i ? s-1 : min(s,length(rows))
+    _revision_preprocess_edit!(rc,rows,s)
+end
+
+"""
+    set_revision_background!(controller, index, background)
+
+Explicitly replace a subtraction background with a detached finite real matrix,
+using core `PreprocessStep` conversion semantics. Untouched imported arrays retain
+their exact precision/content. Geometry is validated when composing the recipe.
+"""
+function set_revision_background!(rc::RecipeRevisionController,index,background::AbstractMatrix{<:Real})
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index)
+    rows=deepcopy(rc.preprocessing_drafts[])
+    rows[i].operation===:subtract_background || throw(ArgumentError("select a subtraction step to replace its background"))
+    bg=PreprocessStep(:subtract_background;background).options["background"]
+    rows[i]=merge(rows[i],(background=bg,))
+    _revision_preprocessing_equal(rows,rc.preprocessing_drafts[]) && return rc
+    _revision_preprocess_edit!(rc,rows,rc.preprocessing_selected[])
+end
+
+function _revision_background_run!(rc,request,index,path_or_picker)
+    try
+        chosen=path_or_picker isa Function ? path_or_picker() : path_or_picker
+        if chosen===nothing || (chosen isa AbstractString && isempty(chosen))
+            rc.state[]=:cancelled;rc.status[]="Background choice cancelled; draft and displayed identities retained.";return
+        end
+        chosen isa AbstractString || throw(ArgumentError("background picker must return a path or nothing"))
+        path=Hammerhead._artifact_local_path(chosen)
+        digest=Hammerhead._experiment_file_digest(path)
+        image=load_image(request.original.recipe.image_type,path)
+        Hammerhead._experiment_file_digest(path)==digest || throw(ArgumentError("background file changed during loading"))
+        bg=PreprocessStep(:subtract_background;background=image).options["background"]
+        all(f->collect(size(bg))==f["image_size"],request.original.input_files) ||
+            throw(ArgumentError("background must match every original full-image size"))
+        _revision_preprocessing_equal(rc.preprocessing_drafts[],request.preprocessing) || throw(ArgumentError("preprocessing drafts changed while loading background"))
+        rows=deepcopy(request.preprocessing);rows[index]=merge(rows[index],(background=bg,))
+        # Protection is session provenance; the saved recipe embeds the snapshot,
+        # not a continuing dependency on this source file.
+        rc.protected_paths.val=unique(String[rc.protected_paths[];path])
+        path in rc.saved_protected[] || push!(rc.saved_protected[],path)
+        _revision_preprocess_edit!(rc,rows,index);notify(rc.protected_paths)
+        rc.state[]=:completed;rc.status[]="Background snapshot loaded in recipe precision; preview is pending."
+    catch err
+        _revision_failure!(rc,err)
+    finally
+        rc.task[]=nothing;_revision_safe_set!(rc.running,false)
+    end
+end
+
+"""
+    load_revision_background!(controller, index, path_or_picker; async=true)
+
+Capture the target step/drafts before notifications or a zero-argument picker.
+Decode an explicitly chosen file in recipe precision, verify bytes across decoding,
+and protect the consumed local path against later revision saves. No background is
+estimated from the pair. Cancellation retains drafts; queued work can pause rendering.
+"""
+function load_revision_background!(rc::RecipeRevisionController,index,path_or_picker::Union{AbstractString,Function};async::Bool=true)
+    _revision_idle(rc);i=_revision_preprocess_index(rc,index);request=_revision_capture(rc)
+    request.preprocessing[i].operation===:subtract_background || throw(ArgumentError("select a subtraction step"))
+    destination=path_or_picker isa AbstractString ? (isempty(strip(path_or_picker)) ? String(path_or_picker) : Hammerhead._artifact_local_path(path_or_picker)) : path_or_picker
+    try
+        rc.running[]=true;rc.error[]=nothing;rc.state[]=:busy;rc.status[]="Loading captured background; cancellation is unavailable."
+    catch err
+        _revision_failure!(rc,err);_revision_safe_set!(rc.running,false);return rc
+    end
+    if async
+        rc.task[]=errormonitor(@async begin yield();_revision_background_run!(rc,request,i,destination);end)
+    else
+        _revision_background_run!(rc,request,i,destination)
+    end
+    rc
 end
 function _revision_edit!(rc,drafts,templates,selected)
     # Coherent state before listeners; draft/template changes never parse text.
@@ -182,6 +385,7 @@ function _revision_capture(rc)
         append!(protected,saved.record_paths);append!(protected,[run.output for run in saved.runs])
     end
     (original=deepcopy(rc.original),drafts=deepcopy(rc.drafts[]),templates=deepcopy(rc.templates[]),
+     preprocessing=deepcopy(rc.preprocessing_drafts[]),
      protected=protected)
 end
 function _revision_recipe(request)
@@ -197,6 +401,7 @@ function _revision_recipe(request)
     end
     source=original.recipe
     options=Dict(k=>getfield(source,k) for k in fieldnames(PIVRecipe) if k ∉ (:passes,:recipe_id))
+    options[:preprocessing]=_revision_preprocess_steps(request.preprocessing)
     recipe=PIVRecipe(passes;options...)
     # Metadata-only geometry validation; do not claim a fresh record/environment.
     scratch=ExperimentRecord(recipe,deepcopy(original.input_files),deepcopy(original.pairs),
@@ -209,7 +414,7 @@ end
     revision_recipe(controller) -> PIVRecipe
 
 Synchronously validate all raw drafts and original metadata, returning a detached
-candidate preserving every non-pass field. Hashes embedded arrays; does not read
+candidate preserving every field outside pass/preprocessing edits. Hashes embedded arrays; does not read
 input pixels or evaluate referenced scripts. Invalid text never uses a prior preview.
 Floating point text is parsed as Float64, matching the stored parameter precision.
 """
@@ -272,7 +477,7 @@ function _revision_failure!(rc,err;saved=false)
 end
 function _revision_publish_preview!(rc,recipe,difference,request)
     rc.candidate.val=recipe;rc.diff.val=difference;rc.preview_text.val=sprint(show,MIME"text/plain"(),difference)
-    rc.dirty.val=rc.drafts[]!=request.drafts || rc.templates[]!=request.templates
+    rc.dirty.val=rc.drafts[]!=request.drafts || rc.templates[]!=request.templates || !_revision_preprocessing_equal(rc.preprocessing_drafts[],request.preprocessing)
     for obs in (rc.candidate,rc.diff,rc.preview_text,rc.dirty);notify(obs);end
 end
 function _revision_run!(rc,request,destination)
@@ -309,7 +514,7 @@ function _revision_start!(rc,destination;async)
     request=_revision_capture(rc)
     try
         rc.running[]=true;rc.error[]=nothing;rc.state[]=:busy
-        rc.status[]="Validating captured pass drafts; cancellation is unavailable."
+        rc.status[]="Validating captured recipe drafts; cancellation is unavailable."
     catch err
         _revision_failure!(rc,err);rc.task[]=nothing;_revision_safe_set!(rc.running,false);return rc
     end

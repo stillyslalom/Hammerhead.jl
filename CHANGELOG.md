@@ -208,6 +208,11 @@ validation and the core-first, GUI-second release sequence.
 
 ### HammerheadGUI
 
+- Added ordered preprocessing revision with duplicate steps, every built-in
+  option and exact imported background precision. Explicit image-pair previews
+  verify original inputs and use replay preprocessing on full frames before ROI,
+  with shared display ranges and read-only mask/ROI overlays. Distinct saves
+  reuse the existing identity and path protections; scripts remain unexecuted.
 - Added a separate saved-planar recipe revision editor for ordered pass settings.
   Other imported settings and validator tuples remain intact. Metadata previews
   show changed settings; saving verifies unchanged inputs and creates a distinct

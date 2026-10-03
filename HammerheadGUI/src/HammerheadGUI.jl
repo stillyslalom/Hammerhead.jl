@@ -34,6 +34,7 @@ include("controllers/batch_runner.jl")
 include("controllers/experiment_controller.jl")
 include("controllers/recipe_comparison.jl")
 include("controllers/recipe_revision.jl")
+include("controllers/recipe_image_preview.jl")
 include("controllers/checkpoint_controller.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
@@ -74,6 +75,9 @@ export RecipeComparisonController, open_comparison_record!, set_comparison_pairs
 export RecipeRevisionController, revision_fields, set_revision_pass!, insert_revision_pass!,
        move_revision_pass!, delete_revision_pass!, revision_recipe, revision_diff,
        revision_record, apply_recipe_revision!, save_recipe_revision!
+export preprocessing_fields, set_revision_preprocess!, insert_revision_preprocess!,
+       move_revision_preprocess!, delete_revision_preprocess!, set_revision_background!,
+       load_revision_background!, RecipeImagePreviewController, preview_recipe_images!
 export ScaleTool, clear_points!, set_separation!, pixel_distance,
        pixel_size, physical_scale, apply_scale!, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
@@ -118,6 +122,10 @@ export RecipeComparisonController, open_comparison_record!, set_comparison_pairs
 export RecipeRevisionController, revision_fields, set_revision_pass!, insert_revision_pass!,
        move_revision_pass!, delete_revision_pass!, revision_recipe, revision_diff,
        revision_record, apply_recipe_revision!, save_recipe_revision!, recipe_revision, recipe_revision!
+export preprocessing_fields, set_revision_preprocess!, insert_revision_preprocess!,
+       move_revision_preprocess!, delete_revision_preprocess!, set_revision_background!,
+       load_revision_background!, RecipeImagePreviewController, preview_recipe_images!
+export preprocessing_revision, preprocessing_revision!
 export ScaleTool, scale_tool, clear_points!, set_separation!,
        pixel_size, physical_scale, apply_scale!
 export CalibrationReview, calibration_review, calibration_review!,
@@ -133,6 +141,7 @@ include("views/result_explorer.jl")
 include("views/result_quality_report.jl")
 include("views/recipe_comparison.jl")
 include("views/recipe_revision.jl")
+include("views/preprocessing_revision.jl")
 include("views/experiment_workflow.jl")
 include("views/checkpoint_workflow.jl")
 include("views/mask_editor.jl")

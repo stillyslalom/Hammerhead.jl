@@ -131,3 +131,9 @@ planar passes while retaining imported preprocessing, masks, ROI, scale and
 execution options. A metadata difference describes changed settings; it does
 not rerun images or measure their effect. Saving a new record verifies unchanged
 inputs and captures the current environment without copying prior run history.
+
+The [preprocessing revision view](../howto/gui_preprocessing_revision.md) retains
+ordered duplicate steps, every built-in option and embedded background precision.
+Explicit verified-pair previews apply the saved core operations to full images
+before ROI and show masks as overlays. Shared display ranges support comparison;
+these images do not establish improved PIV accuracy or uncertainty coverage.

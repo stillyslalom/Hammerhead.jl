@@ -30,13 +30,17 @@ source recipe/history and known result/history/report paths. Construction is
 queued after capturing the record and absolute local protection paths;
 `revision_launcher` optionally receives the new `RecipeRevisionController`
 instead of opening the default editor window. Queued I/O may pause rendering.
+"Revise preprocessing" opens the ordered preprocessing editor with the same
+captured record and path protections. `preprocessing_revision_launcher` can
+receive its controller instead of opening the default window.
 """
 function experiment_workflow(ec::ExperimentController=ExperimentController();
                              batch::Union{Nothing,BatchRunner}=nothing,size=(1100,800),
                              report_path_picker::Function=()->save_file(;filterlist="toml"),
-                             revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)))
+                             revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)),
+                             preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)))
     fig=Figure(;size)
-    experiment_workflow!(fig[1,1],ec;batch,report_path_picker,revision_launcher)
+    experiment_workflow!(fig[1,1],ec;batch,report_path_picker,revision_launcher,preprocessing_revision_launcher)
     fig
 end
 
@@ -85,7 +89,8 @@ task after the launch callback returns; it does not replace this workflow.
 function experiment_workflow!(target,ec::ExperimentController;
                               batch::Union{Nothing,BatchRunner}=nothing,
                               report_path_picker::Function=()->save_file(;filterlist="toml"),
-                              revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)))
+                              revision_launcher::Function=controller->display(GLMakie.Screen(),recipe_revision(controller)),
+                              preprocessing_revision_launcher::Function=controller->display(GLMakie.Screen(),preprocessing_revision(controller)))
     gl=GridLayout(target)
     controls=GridLayout(gl[1,1];valign=:top,tellheight=false)
     rowgap!(controls,3)
@@ -154,6 +159,7 @@ function experiment_workflow!(target,ec::ExperimentController;
     checkpoint_btn=Button(content[1,3];label="checkpoint / resume…",tellwidth=false)
     comparison_btn=Button(content[4,1:3];label="compare a representative pair…",tellwidth=false)
     revision_btn=Button(content[5,1:3];label="revise pass schedule...",height=28,fontsize=14,tellwidth=false)
+    preprocessing_revision_btn=Button(content[6,1:3];label="revise preprocessing...",height=28,fontsize=14,tellwidth=false)
     previous=Button(content[2,1];label="previous",tellwidth=false)
     next=Button(content[2,3];label="next",tellwidth=false)
     fulltext=lift(ec.record,section,ec.output_path,ec.run_record_path,ec.status,report_text) do _,which,output,history,status,report
@@ -275,21 +281,24 @@ function experiment_workflow!(target,ec::ExperimentController;
         end
     end
     revision_launch_pending=Ref(false)
-    on(revision_btn.clicks) do _
-        revision_launch_pending[] && return
-        guarded() do
-            record=deepcopy(ec.record[])
-            record===nothing && throw(ArgumentError("open or snapshot an experiment first"))
-            protected=Hammerhead._artifact_local_path.(filter(!isempty,[ec.output_path[],ec.run_record_path[],report_destinations...]))
-            revision_launch_pending[]=true
-            @async begin
-                yield() # metadata hashing/controller construction is outside the callback
-                try
-                    revision_launcher(RecipeRevisionController(record;protected_paths=protected))
-                catch error
-                    ec.status[]="revision editor failed: $(Controllers._errmsg(error))"
-                finally
-                    revision_launch_pending[]=false
+    for (button,launcher) in ((revision_btn,revision_launcher),
+                              (preprocessing_revision_btn,preprocessing_revision_launcher))
+        on(button.clicks) do _
+            revision_launch_pending[] && return
+            guarded() do
+                record=deepcopy(ec.record[])
+                record===nothing && throw(ArgumentError("open or snapshot an experiment first"))
+                protected=Hammerhead._artifact_local_path.(filter(!isempty,[ec.output_path[],ec.run_record_path[],report_destinations...]))
+                revision_launch_pending[]=true
+                @async begin
+                    yield() # metadata hashing/controller construction is outside the callback
+                    try
+                        launcher(RecipeRevisionController(record;protected_paths=protected))
+                    catch error
+                        ec.status[]="revision editor failed: $(Controllers._errmsg(error))"
+                    finally
+                        revision_launch_pending[]=false
+                    end
                 end
             end
         end
