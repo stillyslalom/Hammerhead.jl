@@ -1,13 +1,14 @@
 # Scale-tool controller: derive a PhysicalScale from a calibration line —
-# two clicked points on an image plus the known physical separation — and
-# hand it to a BatchRunner. This is the practical planar-calibration path
-# for single-camera setups (a full PlanarTransform tool is out of scope).
+# two clicked points on an image plus the known physical separation. This is
+# the practical planar-calibration path for single-camera setups (a full
+# PlanarTransform tool is out of scope).
 
 """
-    ScaleTool(image)
-    ScaleTool(path::AbstractString)
+    ScaleTool(size::Dims{2})
+    ScaleTool(image::AbstractMatrix)
 
-Derive a planar pixel scale from two points on an image (matrix or path).
+Derive a planar pixel scale from two points on images of `size`
+`(rows, cols)` (or the size of `image`; the tool keeps only the size).
 `points` holds at most two clicked endpoints. `separation` is their known
 physical distance; `dt` is the interval between the two PIV images.
 `length_unit` and `time_unit` label those measurements. These values are
@@ -15,11 +16,10 @@ physical distance; `dt` is the interval between the two PIV images.
 
 Click two points along a feature of known size ([`click!`](@ref); a third
 click starts a new line), enter the separation and units, and read the
-derived [`pixel_size`](@ref) and [`physical_scale`](@ref). Use
-[`apply_scale!`](@ref) to copy the scale to a batch.
+derived [`pixel_size`](@ref) and [`physical_scale`](@ref).
 """
 struct ScaleTool
-    image::Matrix{Float64}
+    size::Dims{2}
     points::Observable{Vector{NTuple{2,Float64}}}
     separation::Observable{Float64}
     length_unit::Observable{String}
@@ -27,14 +27,13 @@ struct ScaleTool
     time_unit::Observable{String}
 end
 
-ScaleTool(image::AbstractMatrix{<:Real}) =
-    ScaleTool(Matrix{Float64}(image), Observable(NTuple{2,Float64}[]),
-              Observable(1.0), Observable("mm"),
+ScaleTool(sz::Dims{2}) =
+    ScaleTool(sz, Observable(NTuple{2,Float64}[]), Observable(1.0), Observable("mm"),
               Observable(1.0), Observable("frame"))
-ScaleTool(path::AbstractString) = ScaleTool(load_image(path))
+ScaleTool(image::AbstractMatrix) = ScaleTool(size(image))
 
 function Base.show(io::IO, st::ScaleTool)
-    print(io, "ScaleTool($(size(st.image)) image, $(length(st.points[])) point",
+    print(io, "ScaleTool($(st.size) image, $(length(st.points[])) point",
           length(st.points[]) == 1 ? "" : "s", ")")
 end
 
@@ -58,6 +57,14 @@ end
 Drop the calibration-line endpoints.
 """
 clear_points!(st::ScaleTool) = (empty!(st.points[]); notify(st.points); st)
+
+"""
+    undo_point!(st::ScaleTool) -> Bool
+
+Drop the last endpoint (`false` when there is none).
+"""
+undo_point!(st::ScaleTool) =
+    isempty(st.points[]) ? false : (pop!(st.points[]); notify(st.points); true)
 
 """
     set_separation!(st::ScaleTool, value)
@@ -109,22 +116,6 @@ function physical_scale(st::ScaleTool)
     ps = pixel_size(st)
     ps === nothing && return nothing
     return PhysicalScale(ps, st.dt[], st.length_unit[], st.time_unit[])
-end
-
-"""
-    apply_scale!(bc::BatchRunner, st::ScaleTool)
-
-Copy the tool's derived scale into a [`BatchRunner`](@ref)'s scale form
-(see [`set_scale!`](@ref)), so the batch outputs carry it. Throws when the
-calibration line is not defined yet.
-"""
-function apply_scale!(bc::BatchRunner, st::ScaleTool)
-    ps = pixel_size(st)
-    ps === nothing &&
-        throw(ArgumentError("place two calibration points first"))
-    set_scale!(bc; pixel_size = ps, dt = st.dt[],
-               length_unit = st.length_unit[], time_unit = st.time_unit[])
-    return bc
 end
 
 """

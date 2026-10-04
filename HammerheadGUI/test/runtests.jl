@@ -646,23 +646,26 @@ const r_track = TrackingResult(
     end
 
     @testset "MaskEditor controller (no GL)" begin
-        me = MaskEditor(imgA)
+        C = HammerheadGUI.Controllers
+        me = MaskEditor(size(imgA))
+        @test me.size == (128, 128) && MaskEditor(imgA).size == me.size
+        @test !has_mask(me)
 
         # drawing gestures: empty-background click starts a polygon,
         # subsequent clicks add vertices, alt-click commits
-        HammerheadGUI.Controllers.click!(me, 20.0, 10.0)
-        HammerheadGUI.Controllers.click!(me, 60.0, 10.0)
+        C.click!(me, 20.0, 10.0)
+        C.click!(me, 60.0, 10.0)
         @test length(me.active[]) == 2
-        HammerheadGUI.Controllers.alt_click!(me)          # < 3 vertices: cancel
+        C.alt_click!(me)                                  # < 3 vertices: cancel
         @test isempty(me.active[]) && isempty(me.polygons[])
         for (x, y) in ((20.0, 10.0), (60.0, 10.0), (60.0, 50.0), (20.0, 50.0))
-            HammerheadGUI.Controllers.click!(me, x, y)
+            C.click!(me, x, y)
         end
         undo_vertex!(me)                                  # drop and re-add a corner
         @test length(me.active[]) == 3
         add_vertex!(me, 20.0, 50.0)
         @test close_active!(me)
-        @test length(me.polygons[]) == 1 && isempty(me.active[])
+        @test length(me.polygons[]) == 1 && isempty(me.active[]) && has_mask(me)
 
         # the committed rectangle matches polygon_mask directly
         m = polygon_mask(me)
@@ -670,27 +673,34 @@ const r_track = TrackingResult(
         @test m[30, 40] && !m[80, 40]
 
         # selection: click inside selects, alt-click deselects, delete removes
-        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)
+        C.click!(me, 40.0, 30.0)
         @test me.selected[] == 1
         @test isempty(me.active[])                        # selecting ≠ drawing
-        HammerheadGUI.Controllers.alt_click!(me)
+        C.alt_click!(me)
         @test me.selected[] === nothing
-        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)
+        C.click!(me, 40.0, 30.0)
         delete_selected!(me)
         @test isempty(me.polygons[]) && me.selected[] === nothing
         @test !any(polygon_mask(me))
 
+        # cancelling drops the polygon being drawn (and a pending hole)
+        @test !cancel_active!(me)
+        C.click!(me, 5.0, 5.0); C.click!(me, 9.0, 5.0)
+        @test cancel_active!(me) && isempty(me.active[])
+        begin_hole!(me)
+        @test cancel_active!(me) && !me.hole_mode[]
+
         # seeded polygons, union masks, clear
-        seeded = MaskEditor(imgA; polygons = [[(5, 5), (15, 5), (15, 15), (5, 15)],
-                                              [(30, 30), (40, 30), (40, 40), (30, 40)]])
-        @test HammerheadGUI.Controllers.polygon_at(seeded, 10.0, 10.0) == 1
-        @test HammerheadGUI.Controllers.polygon_at(seeded, 100.0, 100.0) === nothing
+        seeded = MaskEditor(size(imgA); polygons = [[(5, 5), (15, 5), (15, 15), (5, 15)],
+                                                    [(30, 30), (40, 30), (40, 40), (30, 40)]])
+        @test C.polygon_at(seeded, 10.0, 10.0) == 1
+        @test C.polygon_at(seeded, 100.0, 100.0) === nothing
         ms = polygon_mask(seeded)
         @test ms[10, 10] && ms[35, 35] && !ms[25, 25]
 
         # Holes subtract from earlier exclusion polygons, and morphology can
         # then add or remove a pixel safety margin.
-        holed = MaskEditor(imgA;
+        holed = MaskEditor(size(imgA);
             polygons = [[(5, 5), (30, 5), (30, 30), (5, 30)],
                         [(12, 12), (22, 12), (22, 22), (12, 22)]],
             holes = [false, true])
@@ -698,11 +708,11 @@ const r_track = TrackingResult(
         @test mh[8, 8] && !mh[16, 16]
         n0 = count(mh)
         grow_mask!(holed, 1)
-        @test count(polygon_mask(holed)) > n0
+        @test count(polygon_mask(holed)) > n0 && isempty(holed.polygons[]) && has_mask(holed)
         shrink_mask!(holed, 1)
         @test count(polygon_mask(holed)) < count(Hammerhead.grow_mask(mh, 1))
 
-        drawn_hole = MaskEditor(imgA; polygons = [[(5, 5), (30, 5), (30, 30), (5, 30)]])
+        drawn_hole = MaskEditor(size(imgA); polygons = [[(5, 5), (30, 5), (30, 30), (5, 30)]])
         begin_hole!(drawn_hole)
         for p in ((12, 12), (22, 12), (22, 22), (12, 22))
             add_vertex!(drawn_hole, p...)
@@ -710,144 +720,37 @@ const r_track = TrackingResult(
         close_active!(drawn_hole)
         @test !polygon_mask(drawn_hole)[16, 16]
         clear_polygons!(seeded)
-        @test isempty(seeded.polygons[])
-        @test_throws ArgumentError MaskEditor(imgA; polygons = [[(0, 0), (1, 1)]])
+        @test isempty(seeded.polygons[]) && !has_mask(seeded)
+        @test_throws ArgumentError MaskEditor(size(imgA); polygons = [[(0, 0), (1, 1)]])
+        @test_throws ArgumentError MaskEditor((0, 10))
+
+        # a raster (a loaded mask) is the base that polygons are drawn on
+        raster = falses(size(imgA)); raster[100:110, 100:110] .= true
+        set_raster!(me, raster)
+        @test polygon_mask(me) == raster && has_mask(me)
+        for (x, y) in ((5, 5), (20, 5), (20, 20)); add_vertex!(me, x, y); end
+        close_active!(me)
+        @test polygon_mask(me)[105, 105] && polygon_mask(me)[8, 15]
+        @test_throws DimensionMismatch set_raster!(me, falses(4, 4))
+        set_raster!(me, nothing)
+        @test !has_mask(me) && isempty(me.polygons[])
 
         # save_mask round-trips through load_mask
-        me2 = MaskEditor(imgA; polygons = [[(20, 10), (60, 10), (60, 50), (20, 50)]])
+        me2 = MaskEditor(size(imgA); polygons = [[(20, 10), (60, 10), (60, 50), (20, 50)]])
         path = joinpath(mktempdir(), "mask.png")
         save_mask(me2, path)
         @test load_mask(path) == polygon_mask(me2)
     end
 
-    @testset "mask_editor view (offscreen)" begin
-        me = MaskEditor(imgA; polygons = [[(20, 10), (60, 10), (60, 50), (20, 50)]])
-        fig = mask_editor(me; size = (900, 650))
-        img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (650, 900)
-
-        # drive editing through the controller and re-render
-        HammerheadGUI.Controllers.click!(me, 40.0, 30.0)  # select
-        me.show_mask[] = true
-        for (x, y) in ((80.0, 80.0), (110.0, 80.0), (110.0, 110.0))
-            add_vertex!(me, x, y)
-        end
-        img2 = colorbuffer(fig; px_per_unit = 1)
-        @test size(img2) == size(img1)
-        @test img2 != img1
-    end
-
-    include("test_planar_workflow.jl")
-    include("test_planar_window.jl")
-
-    @testset "BatchRunner controller (no GL)" begin
+    @testset "ROIEditor controller (no GL)" begin
         C = HammerheadGUI.Controllers
-
-        @test C.parse_schedule("64, 32 32") == [64, 32, 32]
-        @test_throws ArgumentError C.parse_schedule("64, nope")
-        @test_throws ArgumentError C.parse_schedule(" ")
-        @test_throws ArgumentError C.parse_schedule("0, 32")
-
-        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                         window_schedule = [32, 32])
-        @test C.validate(bc) === nothing
-        @test length(C.frame_pairs(bc)) == 2
-        bc.pair_mode[] = :chained
-        @test length(C.frame_pairs(bc)) == 3
-        bc.pair_mode[] = :paired
-
-        ps = C.build_parameters(bc)
-        @test length(ps) == 2
-        @test ps[end].window_size == (32, 32) && ps[end].overlap == (16, 16)
-        @test ps[end].padding && ps[end].apodization == :gauss
-        set_schedule!(bc, "48 24")
-        @test bc.window_schedule[] == [48, 24]
-
-        @test C.validate(BatchRunner()) == "add frames first"
-        odd = BatchRunner(files = Any[imgA, imgB, imgA])
-        @test occursin("even number", C.validate(odd))
-
-        # synchronous run: progress trace, results, incremental output
-        out = joinpath(mktempdir(), "batch.jld2")
-        bc2 = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                          window_schedule = [32], output_path = out,
-                          padding = false, apodization = :none)
-        seen = Tuple{Int,Int}[]
-        on(p -> push!(seen, p), bc2.progress)
-        start!(bc2; async = false)
-        @test !bc2.running[]
-        @test bc2.results[] !== nothing && length(bc2.results[]) == 2
-        @test seen[end] == (2, 2)
-        @test occursin("done", bc2.status[])
-        @test length(load_results(out)) == 2
-
-        # cancellation after the first pair keeps it in the output
-        out2 = joinpath(mktempdir(), "cancelled.jld2")
-        bc3 = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                          window_schedule = [32], output_path = out2,
-                          padding = false, apodization = :none)
-        on(p -> p[1] == 1 && cancel!(bc3), bc3.progress)
-        start!(bc3; async = false)
-        @test occursin("cancelled", bc3.status[])
-        @test bc3.results[] === nothing
-        @test length(load_results(out2)) == 1
-
-        # the mask forwards into run_piv
-        m = falses(size(imgA)); m[1:48, 1:48] .= true
-        bc4 = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
-                          mask = m, padding = false, apodization = :none)
-        start!(bc4; async = false)
-        @test any(bc4.results[][1].mask)
-
-        # effort presets bypass the manual schedule
-        @test_throws ArgumentError set_effort!(BatchRunner(), :turbo)
-        bce = BatchRunner(files = Any[imgA, imgB], effort = :low)
-        @test C.validate(bce) === nothing
-        start!(bce; async = false)
-        @test bce.results[] !== nothing && length(bce.results[]) == 1
-        @test occursin("done", bce.status[])
-
-        # completed accumulates live during the run, in order
-        bcl = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                          window_schedule = [32],
-                          padding = false, apodization = :none)
-        live_counts = Int[]
-        on(v -> push!(live_counts, length(v)), bcl.completed)
-        start!(bcl; async = false)
-        @test live_counts == [0, 1, 2]   # reset, then one per finished pair
-        @test length(bcl.completed[]) == 2
-        @test bcl.completed[] == bcl.results[]
-
-        # cancellation keeps the completed prefix
-        bcc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                          window_schedule = [32],
-                          padding = false, apodization = :none)
-        on(p -> p[1] == 1 && cancel!(bcc), bcc.progress)
-        start!(bcc; async = false)
-        @test length(bcc.completed[]) == 1
-
-        # physical scale plumbs into the outputs; default is no scale
-        @test C.build_scale(BatchRunner(files = Any[imgA, imgB])) === nothing
-        @test_throws ArgumentError C.set_pixel_size!(BatchRunner(), "-1")
-        @test_throws ArgumentError C.set_pixel_size!(BatchRunner(), "abc")
-        bcs = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
-                          padding = false, apodization = :none,
-                          pixel_size = 20.0, dt = 0.5,
-                          length_unit = "mm", time_unit = "s")
-        @test C.build_scale(bcs) isa PhysicalScale
-        start!(bcs; async = false)
-        sc = bcs.results[][1].scale
-        @test sc !== nothing && sc.length_unit == "mm" && sc.time_unit == "s"
-        @test sc.pixel_size == 20.0 && sc.dt == 0.5
-    end
-
-    @testset "ROI editor and batch controller (no GL)" begin
-        C = HammerheadGUI.Controllers
-        ed = ROIEditor(imgA)
+        ed = ROIEditor(size(imgA))
+        @test ed.size == (128, 128) && ROIEditor(imgA).size == ed.size
         @test ed.roi[] === nothing
         @test occursin("full image", C.roi_summary(ed))
         C.click!(ed, 111.6, 119.6)
         @test ed.anchor[] == (112, 120)
+        @test occursin("opposite corner", C.roi_summary(ed))
         C.click!(ed, 17.1, 24.8)   # opposite ordering, columns = x
         @test ed.roi[].rows == 25:120
         @test ed.roi[].cols == 17:112
@@ -855,7 +758,7 @@ const r_track = TrackingResult(
         C.click!(ed, -100, 500)
         @test ed.anchor[] == (1, 128)
         @test ed.roi[].rows == 25:120   # selection retained while drawing
-        @test_throws ArgumentError apply_roi!(BatchRunner(), ed)
+        @test cancel_corner!(ed) && ed.anchor[] === nothing && !cancel_corner!(ed)
         @test_throws ArgumentError C.click!(ed, NaN, 1)
         clear_roi!(ed)
         @test ed.roi[] === nothing && ed.anchor[] === nothing
@@ -864,294 +767,99 @@ const r_track = TrackingResult(
         @test_throws ArgumentError set_roi!(ed, "25.5", "120", "17", "112")
         @test_throws ArgumentError set_roi!(ed, 120, 25, 17, 112)
         @test_throws ArgumentError set_roi!(ed, 0, 100, 1, 100)
-        @test_throws BoundsError set_roi!(ed, 1, 129, 1, 128)
+        @test_throws ArgumentError set_roi!(ed, 1, 129, 1, 128)
         @test ed.roi[] === previous
-        @test_throws ArgumentError ROIEditor(zeros(0, 2))
-        # File-backed editing and preflight use the same bounds as matrices.
-        frame_path = joinpath(mktempdir(), "roi-frame.png")
-        C.FileIO.save(frame_path, C.Gray.(zeros(20, 30)))
-        file_editor = ROIEditor(frame_path; roi = ROI(2:20, 3:30))
-        @test size(file_editor.image) == (20, 30)
-        file_batch = BatchRunner(files = Any[frame_path, frame_path], window_schedule = [8])
-        apply_roi!(file_batch, file_editor)
-        @test C.validate(file_batch) === nothing
-        @test_throws BoundsError set_roi!(file_batch, ROI(1:21, 1:30))
-
-        rr = ROI(25:120, 17:112)
-        mask = falses(size(imgA)); mask[25:64, 17:56] .= true
-        out = joinpath(mktempdir(), "roi-batch.jld2")
-        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                         window_schedule = [32], mask = mask, output_path = out,
-                         padding = false, apodization = :none,
-                         pixel_size = 0.02, dt = 0.001,
-                         length_unit = "mm", time_unit = "s")
-        apply_roi!(bc, ed)
-        @test C.validate(bc) === nothing
-        @test_throws BoundsError set_roi!(bc, ROI(1:129, 1:128))
-        @test bc.roi[] === previous
-        before_a, before_b = copy(imgA), copy(imgB)
-        seen_sizes = Tuple{Int,Int}[]
-        set_preprocess!(bc, frame -> (push!(seen_sizes, size(frame)); 0.5 .* frame))
-        # A mid-run form change affects only the next run, even with two pairs.
-        on(bc.completed) do completed
-            isempty(completed) || clear_roi!(bc)
-        end
-        start!(bc; async = false)
-        @test occursin("done", bc.status[])
-        @test length(bc.results[]) == 2
-        @test seen_sizes == fill(size(imgA), 4) # preprocess full frames, then crop
-        @test imgA == before_a && imgB == before_b
-        expected = run_piv(0.5 .* imgA, 0.5 .* imgB, C.build_parameters(bc);
-                           roi = rr, mask, scale = C.build_scale(bc))
-        local_result = run_piv(0.5 .* imgA[rr.rows, rr.cols],
-                               0.5 .* imgB[rr.rows, rr.cols], C.build_parameters(bc);
-                               mask = mask[rr.rows, rr.cols])
-        for result in bc.results[]
-            @test result.x == expected.x == local_result.x .+ 16
-            @test result.y == expected.y == local_result.y .+ 24
-            @test isequal(result.u, expected.u)
-            @test isequal(result.v, expected.v)
-            @test result.mask == expected.mask && any(result.mask)
-            @test result.scale.pixel_size == 0.02 && result.scale.dt == 0.001
-            @test physical(result).x ≈ result.x .* 0.02
-        end
-        @test load_results(out)[1].x == expected.x
-        @test load_results(out)[1].mask == expected.mask
-        @test load_results(out)[1].scale.length_unit == "mm"
-
-        # Core also accepts an already cropped mask; presets forward ROI too.
-        bp = BatchRunner(files = Any[imgA, imgB], effort = :low,
-                         roi = (rr.rows, rr.cols), mask = mask[rr.rows, rr.cols])
-        @test C.validate(bp) === nothing
-        start!(bp; async = false)
-        preset = run_piv(imgA, imgB; effort = :low, roi = rr,
-                         mask = mask[rr.rows, rr.cols])
-        @test isequal(bp.results[][1].u, preset.u)
-        @test bp.results[][1].x == preset.x
-        bp.mask[] = falses(10, 10)
-        @test occursin("mask must match", C.validate(bp))
-        bp.mask[] = nothing
-        bp.roi[] = ROI(1:129, 1:128) # direct observable edits still validate
-        @test C.validate(bp) !== nothing
-        start!(bp; async = false)
-        @test !bp.running[] && !occursin("done", bp.status[])
-        clear_roi!(bp)
-        @test C.validate(bp) === nothing
-
-        small = ROI(25:72, 17:64)
-        rejected_path = joinpath(mktempdir(), "invalid-roi.jld2")
-        small_batch = BatchRunner(files = Any[imgA, imgB], roi = small,
-                                  window_schedule = [64, 32], output_path = rejected_path)
-        @test occursin("smaller than search area", C.validate(small_batch))
-        start!(small_batch; async = false)
-        @test !small_batch.running[] && small_batch.results[] === nothing
-        @test !isfile(rejected_path)  # reject before opening incremental output
-        # Presets adapt their largest windows to the selected ROI dimensions.
-        for effort in (:medium, :high)
-            adapted = BatchRunner(files = Any[imgA, imgB], roi = small, effort = effort)
-            @test C.validate(adapted) === nothing
-            start!(adapted; async = false)
-            @test occursin("done", adapted.status[])
-            local_expected = run_piv(imgA[small.rows, small.cols],
-                                      imgB[small.rows, small.cols]; effort)
-            result = adapted.results[][1]
-            @test result.x == local_expected.x .+ 16
-            @test result.y == local_expected.y .+ 24
-            @test isequal(result.u, local_expected.u)
-            @test isequal(result.v, local_expected.v)
-            @test result.parameters.window_size == local_expected.parameters.window_size
-        end
-        # ROI capture precedes even synchronous running-state observers.
-        for async in (false, true)
-            frozen = BatchRunner(files = Any[imgA, imgB], roi = rr,
-                                 window_schedule = [32], padding = false,
-                                 apodization = :none)
-            on(running -> running && clear_roi!(frozen), frozen.running)
-            start!(frozen; async)
-            if async
-                @test timedwait(() -> !frozen.running[], 30) == :ok
-            end
-            @test occursin("done", frozen.status[])
-            @test frozen.roi[] === nothing
-            @test first(frozen.results[][1].x) == first(expected.x)
-            @test first(frozen.results[][1].y) == first(expected.y)
-        end
-    end
-
-    @testset "Saved batch settings (no GL)" begin
-        C = HammerheadGUI.Controllers
-        dir = mktempdir()
-        pp = PreprocessPreview(imgA; enabled = [:highpass_filter, :clahe])
-        set_step_param!(pp, :highpass_filter, :sigma, 4.0)
-        m = falses(size(imgA)); m[1:16, 1:16] .= true
-        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB], window_schedule = [48, 32],
-                         mask = m, roi = ROI(9:120, 5:124), pixel_size = 0.02, dt = 1e-3,
-                         length_unit = "mm", time_unit = "s")
-        set_preprocess!(bc, pp)
-
-        # The saved steps reproduce the preview's own pipeline.
-        recipe = batch_recipe(bc)
-        @test recipe_preprocess(recipe)(imgA) ≈ build_preprocess(pp)(imgA)
-        @test recipe.passes == C.build_parameters(bc)
-        @test recipe.mask == m && recipe.roi == bc.roi[] && recipe.scale == C.build_scale(bc)
-
-        # A run writes the settings next to its results.
-        bc.output_path[] = joinpath(dir, "results.jld2")
-        start!(bc; async = false)
-        @test occursin("done", bc.status[])
-        @test load_recipe(bc.output_path[]) == recipe
-
-        # Opening those settings in a fresh form reproduces the run exactly.
-        bc2 = BatchRunner(files = Any[imgA, imgB, imgA, imgB])
-        load_settings!(bc2, bc.output_path[])
-        @test bc2.effort[] === :saved && bc2.saved_passes[] == recipe.passes
-        @test bc2.mask[] == m && bc2.roi[] == bc.roi[] && C.build_scale(bc2) == C.build_scale(bc)
-        @test batch_recipe(bc2) == recipe
-        start!(bc2; async = false)
-        @test all(isequal(a.u, b.u) for (a, b) in zip(bc.results[], bc2.results[]))
-
-        # Settings files round-trip, including effort presets expanded for the ROI.
-        set_effort!(bc2, :low)
-        path = save_settings(bc2, joinpath(dir, "settings.jld2"))
-        @test load_recipe(path).passes ==
-              Hammerhead.effort_schedule(:low; image_size = (112, 120))
-
-        # A bare preprocessing function still runs but cannot be saved.
-        set_preprocess!(bc2, img -> img .- minimum(img))
-        @test_throws ArgumentError batch_recipe(bc2)
-        start!(bc2; async = false)
-        @test occursin("done", bc2.status[])
-        @test C.validate(BatchRunner(files = Any[imgA, imgB], effort = :saved)) == "no saved settings loaded"
-    end
-
-    @testset "roi_editor view (offscreen)" begin
-        C = HammerheadGUI.Controllers
-        ed = ROIEditor(imgA)
-        bc = BatchRunner(files = Any[imgA, imgB])
-        fig = roi_editor(ed; batch = bc)
-        img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (560, 900)
-        C.click!(ed, 20, 30)
-        C.click!(ed, 110, 120)
-        @test colorbuffer(fig; px_per_unit = 1) != img1
-        boxes = filter(b -> b isa Textbox, fig.content)
-        @test [box.displayed_string[] for box in boxes] == ["30", "120", "20", "110"]
-        buttons = filter(b -> b isa Button, fig.content)
-        button(label) = only(filter(b -> b.label[] == label, buttons))
-        for (box, value) in zip(boxes, ("25", "90", "15", "100"))
-            box.displayed_string[] = value
-        end
-        button("set bounds").clicks[] += 1
-        @test ed.roi[].rows == 25:90 && ed.roi[].cols == 15:100
-        button("apply to batch").clicks[] += 1
-        @test bc.roi[].rows == 25:90 && bc.roi[].cols == 15:100
-        boxes[1].displayed_string[] = "invalid"
-        button("set bounds").clicks[] += 1
-        @test ed.roi[].rows == 25:90
-        @test any(b -> b isa Label && occursin("must be integers", b.text[]), fig.content)
-        button("full image").clicks[] += 1
-        button("apply to batch").clicks[] += 1
-        @test ed.roi[] === nothing && bc.roi[] === nothing
-        @test [box.displayed_string[] for box in boxes] == ["1", "128", "1", "128"]
-        # Embedded view constructs and renders in a composite layout.
-        embedded = Figure(size = (1100, 600))
-        roi_editor!(embedded[1, 1], ROIEditor(imgA; roi = ROI(5:80, 7:90)))
-        Label(embedded[1, 2], "comparison")
-        @test !isempty(colorbuffer(embedded; px_per_unit = 1))
-    end
-
-    @testset "batch_runner view (offscreen)" begin
-        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB],
-                         window_schedule = [32],
-                         padding = false, apodization = :none)
-        fig = batch_runner(bc)
-        img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (720, 960)
-        set_roi!(bc, ROI(17:112, 25:120))
-        @test colorbuffer(fig; px_per_unit = 1) != img1
-        roi_reset = only(filter(b -> b isa Button && b.label[] == "full image", fig.content))
-        roi_reset.clicks[] += 1
-        @test bc.roi[] === nothing
-
-        set_schedule!(bc, "64 32")   # form summary label updates
-        bc.uncertainty[] = true      # toggle syncs back into the widget
-        set_effort!(bc, :medium)     # effort menu + inactive-schedule summary
-        set_scale!(bc; pixel_size = 5.0, length_unit = "mm")  # scale summary line
-        start!(bc; async = false)    # status + progress labels update
-        @test occursin("done", bc.status[])
-        img2 = colorbuffer(fig; px_per_unit = 1)
-        @test size(img2) == size(img1)
-        @test img2 != img1
+        @test_throws ArgumentError ROIEditor((0, 2))
+        @test ROIEditor((20, 30); roi = ROI(2:20, 3:30)).roi[] == ROI(2:20, 3:30)
+        @test_throws ArgumentError ROIEditor((20, 30); roi = ROI(1:21, 1:30))
     end
 
     @testset "PreprocessPreview controller (no GL)" begin
         C = HammerheadGUI.Controllers
+        A32, B32 = Float32.(imgA), Float32.(imgB)
 
         pp = PreprocessPreview(imgA)
-        @test all(s -> !s.enabled, pp.steps[])
+        @test isempty(pp.steps[])
         @test C.pipeline_summary(pp) == "no preprocessing"
         @test build_preprocess(pp) === nothing
-        @test pp.processed[] == imgA              # identity pipeline
+        @test pp.processed[] == A32                  # identity pipeline
 
-        # composition matches the direct core calls, in order
-        enable_step!(pp, :intensity_cap)
-        set_step_param!(pp, :intensity_cap, :n_sigma, "1.5")
-        enable_step!(pp, :highpass_filter)
-        direct = highpass_filter!(intensity_cap!(copy(imgA); n_sigma = 1.5); sigma = 3.0)
-        @test pp.processed[] == direct
-        @test apply_pipeline(pp, imgA) == direct
+        # the preview is exactly the recipe's preprocessing, in order
+        add_step!(pp, :intensity_cap)
+        set_step_option!(pp, 1, "n_sigma", "1.5")
+        add_step!(pp, :highpass_filter)
+        @test pp.steps[] == [PreprocessStep(:intensity_cap; n_sigma = 1.5),
+                             PreprocessStep(:highpass_filter)]
+        direct = highpass_filter(intensity_cap(A32; n_sigma = 1.5); sigma = 3.0)
+        @test pp.processed[] == direct == recipe_preprocess(pp.steps[])(A32)
+        @test apply_pipeline(pp, A32) == direct
         f = build_preprocess(pp)
-        @test f(imgA) == direct
-        @test pp.processed[] == direct            # inputs never mutated
-        keep = copy(imgA); f(keep); @test keep == imgA
+        keep = copy(A32); f(keep); @test keep == A32     # inputs never mutated
+        @test C.pipeline_summary(pp) == "intensity cap → highpass filter"
 
         # snapshot semantics: editing after build does not change the closure
-        set_step_param!(pp, :intensity_cap, :n_sigma, 3.0)
-        @test f(imgA) == direct
-
-        # toggling off restores the shorter pipeline
-        enable_step!(pp, :intensity_cap, false)
-        @test pp.processed[] == highpass_filter(imgA)
+        set_step_option!(pp, 1, :n_sigma, 3.0)
+        @test f(A32) == direct
+        remove_step!(pp, 1)
+        @test pp.processed[] == highpass_filter(A32)
 
         # reordering matters and is clamped at the ends
-        pp2 = PreprocessPreview(imgA; enabled = [:invert_image, :percentile_stretch])
+        pp2 = PreprocessPreview(imgA; steps = [PreprocessStep(:percentile_stretch),
+                                               PreprocessStep(:invert_image)])
         before = copy(pp2.processed[])
-        move_step!(pp2, :invert_image, -5)        # invert now runs first
+        move_step!(pp2, 2, -5)                       # invert now runs first
         @test pp2.processed[] != before
-        @test first(filter(s -> s.enabled, pp2.steps[])).name == :invert_image
-        move_step!(pp2, :invert_image, -1)        # already first: no-op
-        @test first(pp2.steps[]).name == :invert_image
+        @test first(pp2.steps[]).operation === :invert_image
+        move_step!(pp2, 1, -1)                       # already first: no-op
+        @test first(pp2.steps[]).operation === :invert_image
 
-        # invalid parameters revert instead of wedging the pipeline
-        @test_throws ArgumentError set_step_param!(pp2, :percentile_stretch, :low, 120.0)
-        @test pp2.processed[] == apply_pipeline(pp2, imgA)   # still consistent
-        @test_throws ArgumentError set_step_param!(pp2, :percentile_stretch, :low, "junk")
-        @test_throws ArgumentError set_step_param!(pp2, :clahe, :nope, 1.0)
-        @test_throws ArgumentError enable_step!(pp2, :nope)
+        # invalid edits throw and leave the steps unchanged
+        steps = copy(pp2.steps[])
+        @test_throws ArgumentError set_step_option!(pp2, 2, "low", 120.0)
+        @test_throws ArgumentError set_step_option!(pp2, 2, "low", "junk")
+        @test_throws ArgumentError set_step_option!(pp2, 2, "nope", 1.0)
+        @test_throws ArgumentError set_step_option!(pp2, 1, "sigma", 1.0)   # invert has none
+        @test_throws ArgumentError set_step_option!(pp2, 5, "low", 1.0)
+        @test_throws ArgumentError add_step!(pp2, :nope)
+        @test_throws ArgumentError add_step!(pp2, :highpass_filter; sigma = -1)
+        @test pp2.steps[] == steps
+        @test pp2.processed[] == recipe_preprocess(steps)(A32)
 
-        # background subtraction needs a computed background
-        @test_throws ArgumentError enable_step!(pp2, :subtract_background)
+        # every CLAHE option is editable (tiles as text), as in the recipe
+        add_step!(pp2, :clahe)
+        set_step_option!(pp2, 3, "tiles", "4x6")
+        set_step_option!(pp2, 3, "nbins", "128")
+        set_step_option!(pp2, 3, "clip_limit", 3)
+        @test pp2.steps[][3] == PreprocessStep(:clahe; tiles = (4, 6), nbins = 128, clip_limit = 3.0)
+        @test C.step_options(pp2.steps[][3]) == ["tiles" => "4, 6", "clip_limit" => "3.0", "nbins" => "128"]
+        set_step_option!(pp2, 3, "tiles", "5")
+        @test pp2.steps[][3].options["tiles"] == [5, 5]
+        @test_throws ArgumentError set_step_option!(pp2, 3, "tiles", "4, x")
+        @test_throws ArgumentError set_step_option!(pp2, 3, "tiles", "0")
+        @test pp2.processed[] == recipe_preprocess(pp2.steps[])(A32)
+
+        # background subtraction: computed with compute_background, inserted first
+        @test_throws ArgumentError add_step!(pp2, :subtract_background)
         set_background!(pp2, [imgA, imgB])
-        enable_step!(pp2, :subtract_background)
-        @test pp2.background[] == min.(imgA, imgB)
-        set_background!(pp2, nothing)             # clears and disables
-        @test !C._step(pp2, :subtract_background).enabled
+        @test first(pp2.steps[]).operation === :subtract_background
+        @test first(pp2.steps[]).options["background"] == min.(imgA, imgB)
+        set_background!(pp2, imgA)                    # replaces, stays first
+        @test count(s -> s.operation === :subtract_background, pp2.steps[]) == 1
+        @test first(pp2.steps[]).options["background"] == imgA
+        set_background!(pp2, nothing)
+        @test all(s -> s.operation !== :subtract_background, pp2.steps[])
+        @test estimate_background([imgA, imgB]; method = :mean) ≈ (imgA .+ imgB) ./ 2
 
-        # batch integration: the pipeline forwards into run_piv_sequence
-        pp3 = PreprocessPreview(imgA; enabled = [:intensity_cap])
-        bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
-                         padding = false, apodization = :none)
-        set_preprocess!(bc, pp3)
-        @test bc.preprocess[] isa Function
-        start!(bc; async = false)
-        g = build_preprocess(pp3)
-        direct_pp = run_piv(g(imgA), g(imgB),
-                            multipass_parameters([32]; padding = false,
-                                                 apodization = :none))
-        @test bc.results[][1].u == direct_pp.u
-        @test imgA == pp3.image[]                 # batch never mutated the frames
-        set_preprocess!(bc, nothing)
-        @test bc.preprocess[] === nothing
+        # a failing pipeline reports in `status` instead of throwing
+        set_steps!(pp2, [PreprocessStep(:subtract_background; background = zeros(4, 4))])
+        @test pp2.processed[] === nothing && occursin("preview failed", pp2.status[])
+        set_steps!(pp2, PreprocessStep[])
+        @test pp2.processed[] == A32 && isempty(pp2.status[])
+
+        # frame B: set together with A, sizes must match
+        set_frames!(pp2, imgB, imgA)
+        @test pp2.processed[] == B32 && pp2.processed2[] == A32
+        @test_throws ArgumentError set_pair!(pp2, rand(16, 16))
     end
 
     @testset "PreprocessPreview correlation probe (no GL)" begin
@@ -1161,7 +869,7 @@ const r_track = TrackingResult(
         pp0 = PreprocessPreview(imgA)
         C.click!(pp0, 64.0, 64.0)
         @test pp0.probe_result[] === nothing
-        @test occursin("pair frame", probe_summary(pp0))
+        @test occursin("pair", probe_summary(pp0))
 
         pp = PreprocessPreview(imgA; pair = imgB)
         @test pp.probe_result[] === nothing
@@ -1176,13 +884,14 @@ const r_track = TrackingResult(
         @test res.peak_ratio > 1.0
         s = probe_summary(pp)
         @test occursin("du = ", s) && occursin("peak ratio", s)
+        @test res == probe_correlation(Float32.(imgA), Float32.(imgB), (64.0, 64.0), 64)
 
         # the numbers follow the pipeline live
-        enable_step!(pp, :highpass_filter)
+        add_step!(pp, :highpass_filter)
         res2 = pp.probe_result[]
         @test res2 !== nothing && res2 != res            # recomputed
         @test res2.du ≈ 3.0 atol = 0.3                   # still the true shift
-        enable_step!(pp, :highpass_filter, false)
+        remove_step!(pp, 1)
         @test pp.probe_result[].peak_ratio ≈ res.peak_ratio
 
         # border clicks clamp the window instead of throwing
@@ -1192,6 +901,7 @@ const r_track = TrackingResult(
         @test resb.x0 == 1 && resb.y0 == 1
         @test isfinite(resb.du)
         @test occursin("clamped", probe_summary(pp))
+        @test probe_rect((2.0, 2.0), 64, (128, 128)) == (; x0 = 1, y0 = 1, window = 64, clamped = true)
 
         # window-size handling: parse, validation, too-big windows
         set_probe_window!(pp, "32")
@@ -1209,33 +919,29 @@ const r_track = TrackingResult(
         clear_probe!(pp)
         @test pp.probe_result[] === nothing
         set_pair!(pp, nothing)
-        @test occursin("pair frame", probe_summary(pp))
-        @test_throws ArgumentError set_pair!(pp, rand(16, 16))
+        @test occursin("pair", probe_summary(pp))
     end
 
-    @testset "preprocess_preview view (offscreen)" begin
-        pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
-        fig = preprocess_preview(pp)
-        img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (640, 1200)
-
-        # drive through the controller: preview and summary refresh
-        enable_step!(pp, :invert_image)
-        move_step!(pp, :invert_image, -10)
-        img2 = colorbuffer(fig; px_per_unit = 1)
-        @test size(img2) == size(img1)
-        @test img2 != img1
-
-        # probe rectangle + numbers render and follow the probe
-        ppp = PreprocessPreview(imgA; pair = imgB)
-        figp = preprocess_preview(ppp)
-        imgp1 = copy(colorbuffer(figp; px_per_unit = 1))
-        HammerheadGUI.Controllers.click!(ppp, 64.0, 64.0)
-        imgp2 = colorbuffer(figp; px_per_unit = 1)
-        @test imgp2 != imgp1
+    @testset "PreprocessPreview off-thread runner (no GL)" begin
+        # A runner that defers jobs: results apply only when drained, and a
+        # newer request makes older results stale.
+        jobs = Any[]
+        runner = (job, apply) -> push!(jobs, () -> apply(HammerheadGUI.Controllers._try_job(job)))
+        pp = PreprocessPreview(imgA; pair = imgB, runner)
+        @test pp.processed[] == Float32.(imgA) && isempty(jobs)   # no steps: no job
+        add_step!(pp, :highpass_filter)
+        add_step!(pp, :invert_image)
+        @test length(jobs) == 2 && pp.processed[] == Float32.(imgA)
+        foreach(j -> j(), splice!(jobs, 1:2))                     # first result is stale
+        @test pp.processed[] == recipe_preprocess(pp.steps[])(Float32.(imgA))
+        @test isempty(jobs)                                       # no probe placed yet
+        HammerheadGUI.Controllers.click!(pp, 64.0, 64.0)
+        @test length(jobs) == 1 && pp.probe_result[] === nothing
+        foreach(j -> j(), splice!(jobs, 1:1))
+        @test pp.probe_result[] !== nothing
     end
 
-    @testset "live results during a batch (offscreen)" begin
+    @testset "ResultExplorer live appends (offscreen)" begin
         # push_result! grows the sequence (through physical) and notifies count
         scale = PhysicalScale(2.0, 1.0, "mm", "frame")
         exg = ResultExplorer(r_plain)
@@ -1248,38 +954,12 @@ const r_track = TrackingResult(
         @test current_result(exg).scale !== nothing      # converted on append
         @test current_result(exg).x[1] == 2.0 * r_plain.x[1]
 
-        # open an explorer mid-run from the live `completed` accumulator and
-        # follow the rest of the batch as it appends
-        bc = BatchRunner(files = Any[imgA, imgB, imgA, imgB, imgA, imgB],
-                         window_schedule = [32],
-                         padding = false, apodization = :none)
-        live = Ref{Any}(nothing)
-        opened_at = Ref(0)
-        on(bc.completed) do v
-            if live[] === nothing && !isempty(v)
-                live[] = ResultExplorer(copy(v))        # opened mid-run
-                opened_at[] = length(v)
-            elseif live[] !== nothing
-                while nframes(live[]) < length(v)       # live append
-                    push_result!(live[], v[nframes(live[]) + 1])
-                end
-            end
-        end
-        start!(bc; async = true)
-        t0 = time()
-        while bc.running[] && time() - t0 < 60
-            sleep(0.02)
-        end
-        @test !bc.running[]
-        @test opened_at[] == 1                           # opened after pair 1
-        @test nframes(live[]) == 3                       # followed to the end
-
         # the view's frame slider grows with the appends
-        fig = result_explorer(live[])
+        fig = result_explorer(exg)
         img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        push_result!(live[], r_plain)
-        set_frame!(live[], nframes(live[]))
-        @test live[].frame[] == 4
+        push_result!(exg, r_plain)
+        set_frame!(exg, nframes(exg))
+        @test exg.frame[] == 3
         img2 = colorbuffer(fig; px_per_unit = 1)
         @test size(img2) == size(img1)
     end
@@ -1287,7 +967,8 @@ const r_track = TrackingResult(
     @testset "ScaleTool controller (no GL)" begin
         C = HammerheadGUI.Controllers
 
-        st = ScaleTool(imgA)
+        st = ScaleTool(size(imgA))
+        @test st.size == (128, 128) && ScaleTool(imgA).size == st.size
         @test C.pixel_distance(st) === nothing
         @test pixel_size(st) === nothing
         @test physical_scale(st) === nothing
@@ -1307,10 +988,12 @@ const r_track = TrackingResult(
         @test sc.pixel_size ≈ 0.5 && sc.dt == 0.002
         @test sc.length_unit == "mm" && sc.time_unit == "s"
         @test occursin("mm/px", C.scale_summary(st))
+        @test undo_point!(st) && length(st.points[]) == 1
+        C.click!(st, 10.0, 70.0)
         C.click!(st, 1.0, 1.0)                    # restart
         @test length(st.points[]) == 1
-        C.clear_points!(st)
-        @test isempty(st.points[])
+        clear_points!(st)
+        @test isempty(st.points[]) && !undo_point!(st)
 
         # validation
         @test_throws ArgumentError set_separation!(st, -1.0)
@@ -1319,34 +1002,11 @@ const r_track = TrackingResult(
         # coincident points define no scale
         C.click!(st, 5.0, 5.0); C.click!(st, 5.0, 5.0)
         @test pixel_size(st) === nothing
-
-        # hand-off into the batch form
-        st2 = ScaleTool(imgA)
-        C.click!(st2, 0.0, 0.0); C.click!(st2, 30.0, 40.0)   # 50 px diagonal
-        set_separation!(st2, 5.0)                            # 0.1 mm/px
-        st2.dt[] = 0.01
-        st2.time_unit[] = "s"
-        bc = BatchRunner()
-        @test_throws ArgumentError apply_scale!(bc, ScaleTool(imgA))
-        apply_scale!(bc, st2)
-        @test bc.pixel_size[] ≈ 0.1
-        @test bc.dt[] == 0.01
-        @test bc.length_unit[] == "mm" && bc.time_unit[] == "s"
-        @test C.build_scale(bc) isa PhysicalScale
     end
 
-    @testset "scale_tool view (offscreen)" begin
-        st = ScaleTool(imgA)
-        bc = BatchRunner()
-        fig = scale_tool(st; batch = bc)
-        img1 = copy(colorbuffer(fig; px_per_unit = 1))
-        @test size(img1) == (560, 900)
-        HammerheadGUI.Controllers.click!(st, 20.0, 20.0)
-        HammerheadGUI.Controllers.click!(st, 100.0, 20.0)
-        set_separation!(st, 8.0)
-        img2 = colorbuffer(fig; px_per_unit = 1)
-        @test img2 != img1
-    end
+    include("test_planar_workflow.jl")
+    include("test_prepare.jl")
+    include("test_planar_window.jl")
 
     @testset "CalibrationReview controller (no GL)" begin
         C = HammerheadGUI.Controllers

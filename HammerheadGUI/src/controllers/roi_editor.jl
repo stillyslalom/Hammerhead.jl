@@ -1,37 +1,41 @@
 # Framework-free rectangular image selection; the processing contract is core ROI.
 
 """
-    ROIEditor(image_or_path; roi = nothing)
+    ROIEditor(size::Dims{2}; roi = nothing)
+    ROIEditor(image::AbstractMatrix; roi = nothing)
 
-Edit an inclusive rectangular [`ROI`](@ref) in original image pixels.
-`roi` and the pending first corner (`anchor`) are observables. Two calls to
-[`click!`](@ref) select opposite corners; numeric bounds can be supplied with
-[`set_roi!`](@ref). Clearing selects the full image (`roi = nothing`).
-The image is copied for display; selections never crop or mutate it.
+Edit an inclusive rectangular [`ROI`](@ref) in original image pixels, for
+images of `size` `(rows, cols)` (or the size of `image`; the editor keeps
+only the size). `roi` and the pending first corner (`anchor`) are
+observables. Two calls to [`click!`](@ref) select opposite corners; numeric
+bounds can be supplied with [`set_roi!`](@ref). Clearing selects the full
+image (`roi = nothing`).
 """
 struct ROIEditor
-    image::Matrix{Float64}
+    size::Dims{2}
     roi::Observable{Union{Nothing,ROI}}
     anchor::Observable{Union{Nothing,NTuple{2,Int}}}
 end
 
-function ROIEditor(image::AbstractMatrix{<:Real}; roi = nothing)
-    isempty(image) && throw(ArgumentError("ROI editor needs a nonempty image"))
-    ed = ROIEditor(Matrix{Float64}(image),
-                   Observable{Union{Nothing,ROI}}(nothing),
+function ROIEditor(sz::Dims{2}; roi = nothing)
+    all(>(0), sz) || throw(ArgumentError("ROI editor needs a nonempty image size, got $sz"))
+    ed = ROIEditor(sz, Observable{Union{Nothing,ROI}}(nothing),
                    Observable{Union{Nothing,NTuple{2,Int}}}(nothing))
     set_roi!(ed, roi)
     return ed
 end
-ROIEditor(path::AbstractString; kwargs...) = ROIEditor(load_image(path); kwargs...)
+ROIEditor(image::AbstractMatrix; kwargs...) = ROIEditor(size(image); kwargs...)
 
 _as_roi(::Nothing) = nothing
 _as_roi(roi::ROI) = roi
 _as_roi(roi::Tuple) = ROI(roi)
 
-function _check_roi(image, roi::ROI)
-    # Keep bounds and full-image/cropped-mask behavior defined by the core.
-    Hammerhead.roi_views(image, image, nothing, roi)
+# The core ROI constructor rejects empty and nonpositive ranges.
+function _check_roi(sz::Dims{2}, roi::ROI)
+    last(roi.rows) <= sz[1] ||
+        throw(ArgumentError("ROI rows end at $(last(roi.rows)), beyond the image's $(sz[1]) rows"))
+    last(roi.cols) <= sz[2] ||
+        throw(ArgumentError("ROI columns end at $(last(roi.cols)), beyond the image's $(sz[2]) columns"))
     return roi
 end
 
@@ -41,11 +45,11 @@ end
 
 Set inclusive integer bounds, a core `ROI`, or a `(rows, cols)` range tuple.
 Numeric bounds also accept integer strings. Invalid, reversed, or out-of-image
-bounds throw without changing the selection. Pass `nothing` to reset.
+bounds throw `ArgumentError` without changing the selection. Pass `nothing` to reset.
 """
 function set_roi!(ed::ROIEditor, roi)
     rr = _as_roi(roi)
-    rr === nothing || _check_roi(ed.image, rr)
+    rr === nothing || _check_roi(ed.size, rr)
     ed.anchor[] = nothing
     ed.roi[] = rr
     return ed
@@ -70,7 +74,7 @@ the second corner is placed. Nonfinite coordinates throw.
 """
 function click!(ed::ROIEditor, x::Real, y::Real)
     isfinite(x) && isfinite(y) || throw(ArgumentError("ROI coordinates must be finite"))
-    nr, nc = size(ed.image)
+    nr, nc = ed.size
     col = round(Int, clamp(x, 1, nc))
     row = round(Int, clamp(y, 1, nr))
     first_corner = ed.anchor[]
@@ -89,6 +93,14 @@ end
 Reset to the full image and discard a pending first corner.
 """
 clear_roi!(ed::ROIEditor) = set_roi!(ed, nothing)
+
+"""
+    cancel_corner!(editor::ROIEditor) -> Bool
+
+Discard a pending first corner (`false` when there is none).
+"""
+cancel_corner!(ed::ROIEditor) =
+    ed.anchor[] === nothing ? false : (ed.anchor[] = nothing; true)
 
 """
     roi_summary(editor::ROIEditor) -> String

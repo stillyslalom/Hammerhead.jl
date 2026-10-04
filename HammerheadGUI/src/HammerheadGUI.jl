@@ -1,10 +1,11 @@
 """
     HammerheadGUI
 
-GLMakie views and controllers for inspecting and running Hammerhead analyses.
-Use the views for interactive work, or use `Controllers` to configure and
-inspect an analysis without opening a window. Controller state is exposed
-through `Observables`.
+Windows and controllers for setting up, running, and inspecting Hammerhead
+analyses: the planar workflow window (`planar_window`), plus GLMakie views
+for results, calibration, and stereo batches. Use `Controllers` to configure
+and inspect an analysis without opening a window. Controller state is
+exposed through `Observables`.
 """
 module HammerheadGUI
 
@@ -27,18 +28,20 @@ using LinearAlgebra: LinearAlgebra
 using FileIO: FileIO
 using ImageCore: Gray
 
+include("controllers/shared.jl")
 include("controllers/result_explorer.jl")
 include("controllers/mask_editor.jl")
-include("controllers/preprocess_preview.jl")   # before batch_runner (set_preprocess! signature)
+include("controllers/preprocess_preview.jl")
 include("controllers/roi_editor.jl")
-include("controllers/batch_runner.jl")
-include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
+include("controllers/scale_tool.jl")
 include("controllers/calibration_review.jl")
 include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
-include("controllers/frame_set.jl")            # workflow window controllers (after batch_runner: _errmsg, BatchCancelled)
+include("controllers/frame_set.jl")            # workflow window controllers
 include("controllers/passes_editor.jl")
 include("controllers/workflow_jobs.jl")
+include("controllers/prepare.jl")              # before planar_workflow (field type)
 include("controllers/planar_workflow.jl")
+include("controllers/prepare_workflow.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -47,30 +50,33 @@ export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        trajectory_points, trajectory_gap_count,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits,
        current_field_values, set_tool!, clear_tool!, tool_summary
-export MaskEditor, add_vertex!, undo_vertex!, close_active!,
+export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
-       begin_hole!, grow_mask!, shrink_mask!, save_mask, status_text
-export PreprocessPreview, PreprocStep, set_image!, set_background!,
-       enable_step!, set_step_param!, move_step!, apply_pipeline,
-       build_preprocess, pipeline_summary,
-       set_pair!, set_probe_window!, clear_probe!, probe_summary
-export BatchRunner, BatchCancelled, add_files!, clear_files!, frame_pairs,
-       parse_schedule, set_schedule!, set_effort!, set_pixel_size!, set_dt!,
-       set_scale!, set_preprocess!, build_parameters, build_scale, validate,
-       start!, cancel!, batch_recipe, save_settings, load_settings!, preprocess_steps
-export ROIEditor, set_roi!, clear_roi!, apply_roi!, roi_summary
-export ScaleTool, clear_points!, set_separation!, pixel_distance,
-       pixel_size, physical_scale, apply_scale!, scale_summary
+       begin_hole!, grow_mask!, shrink_mask!, set_raster!, has_mask, save_mask, status_text
+export PreprocessPreview, PREPROCESS_OPERATIONS, preprocess_label, add_step!, remove_step!,
+       move_step!, set_step_option!, set_steps!, step_options, set_background!,
+       estimate_background, set_image!, set_pair!, set_frames!, preview_frames,
+       apply_pipeline, build_preprocess, pipeline_summary,
+       set_probe_window!, clear_probe!, probe_rect, probe_correlation, probe_summary
+export BatchCancelled, parse_schedule, add_files!, clear_files!, frame_pairs,
+       set_schedule!, set_effort!, build_parameters, build_scale, validate,
+       start!, cancel!, save_settings, load_settings!
+export ROIEditor, set_roi!, clear_roi!, cancel_corner!, roi_summary
+export ScaleTool, clear_points!, undo_point!, set_separation!, pixel_distance,
+       pixel_size, physical_scale, scale_summary
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
 export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair,
-       pair_images, shown_image, frames_problem, frames_summary, frame_size
+       pair_images, shown_image, frames_problem, frames_summary, frame_size, pair_loading
 export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type!,
        load_passes!, set_pass!, set_option!, add_pass!, remove_pass!, pass_rows,
        option_value, passes_summary
 export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
        cancel_run!, run_eta
+export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
+       canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
+       set_scale_field!, clear_scale!, load_mask_file!, save_mask_file
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status
 
@@ -84,32 +90,25 @@ export ResultExplorer, result_explorer, result_explorer!,
        select_nearest!, clear_selection!, describe_selection,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits,
        set_tool!, clear_tool!, tool_summary
-export MaskEditor, mask_editor, add_vertex!, undo_vertex!, close_active!,
-       begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!, save_mask
-export PreprocessPreview, preprocess_preview, preprocess_preview!,
-       set_image!, set_background!, enable_step!, set_step_param!,
-       move_step!, apply_pipeline, build_preprocess,
-       set_pair!, set_probe_window!, clear_probe!, probe_summary
-export BatchRunner, batch_runner, add_files!, clear_files!, set_schedule!,
-       set_effort!, set_scale!, set_pixel_size!, set_dt!, set_preprocess!,
-       start!, cancel!, batch_recipe, save_settings, load_settings!
-export ROIEditor, roi_editor, roi_editor!, set_roi!, clear_roi!, apply_roi!
-export ScaleTool, scale_tool, clear_points!, set_separation!,
-       pixel_size, physical_scale, apply_scale!
+export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
+       begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!,
+       set_raster!, save_mask
+export PreprocessPreview, add_step!, remove_step!, move_step!, set_step_option!,
+       set_steps!, set_background!, set_image!, set_pair!, apply_pipeline,
+       build_preprocess, set_probe_window!, clear_probe!, probe_summary
+export add_files!, clear_files!, set_schedule!, set_effort!, start!, cancel!,
+       save_settings, load_settings!
+export ROIEditor, set_roi!, clear_roi!
+export ScaleTool, clear_points!, set_separation!, pixel_size, physical_scale
 export CalibrationReview, calibration_review, calibration_review!,
        selfcal_review, nplanes, set_plane!
 export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
 export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
-       open_results!, set_step!
+       open_results!, set_step!, set_prepare_page!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
-include("views/mask_editor.jl")
-include("views/preprocess_preview.jl")
-include("views/roi_editor.jl")
-include("views/batch_runner.jl")
-include("views/scale_tool.jl")
 include("views/calibration_review.jl")
 include("views/stereo_batch.jl")
 include("canvas/planar_canvas.jl")
@@ -169,29 +168,35 @@ include_dependency(joinpath(@__DIR__, "qt", "precompile_statements.jl"))
                             3, PTVParameters())
         result_explorer(ResultExplorer(tr))
 
-        me = MaskEditor(imgA)
-        mask_editor(me)
-        Controllers.click!(me, 5.0, 5.0)
-        Controllers.click!(me, 20.0, 5.0)
-        Controllers.click!(me, 20.0, 20.0)
-        close_active!(me)
-        polygon_mask(me)
-
-        pp = PreprocessPreview(imgA; enabled = [:percentile_stretch])
-        preprocess_preview(pp)
-        enable_step!(pp, :invert_image)
-        build_preprocess(pp)
-
-        bc = BatchRunner(files = Any[imgA, imgB], window_schedule = [32],
-                         padding = false, apodization = :none)
-        batch_runner(bc)
-        start!(bc; async = false)
-
         # Workflow window: controllers and canvases (the Qt window itself
         # needs a display and is not part of the workload).
         wf = PlanarWorkflow(files = Any[imgA, imgB, imgA, imgB])
         fill_preset!(wf.passes, :low)
         pc = planar_canvas(wf)
+        set_step!(wf, :prepare)
+        pp = wf.prepare.preview
+        add_step!(pp, :percentile_stretch)
+        edit_step_option!(wf, 1, "low", "2")
+        add_step!(pp, :clahe)
+        edit_step_option!(wf, 2, "tiles", "4, 4")
+        canvas_click!(wf, 32.0, 32.0)                       # probe
+        wf.prepare.show_processed[] = true
+        set_prepare_page!(wf, :mask)
+        for (x, y) in ((5.0, 5.0), (20.0, 5.0), (20.0, 20.0))
+            canvas_click!(wf, x, y)
+        end
+        canvas_alt_click!(wf)
+        canvas_click!(wf, 10.0, 8.0)                        # select
+        canvas_key!(wf, :delete)
+        set_prepare_page!(wf, :roi)
+        canvas_click!(wf, 4.0, 4.0); canvas_click!(wf, 60.0, 60.0)
+        edit_roi!(wf, "2", "63", "2", "63")
+        set_prepare_page!(wf, :scale)
+        canvas_click!(wf, 4.0, 4.0); canvas_click!(wf, 40.0, 4.0)
+        edit_scale!(wf, :separation, "2")
+        edit_scale!(wf, :dt, "0.001")
+        clear_scale!(wf)
+        wf.roi[] = nothing
         set_step!(wf, :passes)
         test_pair!(wf; spawn = false)
         set_step!(wf, :test)

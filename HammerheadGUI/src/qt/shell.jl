@@ -143,6 +143,16 @@ mutable struct PassRow
     iterations::Int
 end
 
+# One preprocessing step; options travel as "|"-joined keys, labels, values.
+mutable struct PrepStepRow
+    number::Int
+    label::String
+    optionKeys::String
+    optionLabels::String
+    optionValues::String
+    error::String
+end
+
 """
 State shared between a `PlanarWorkflow` and its QML window.
 """
@@ -156,25 +166,32 @@ mutable struct PlanarShell
     step_model::JuliaItemModel
     pass_rows::Vector{PassRow}
     pass_model::JuliaItemModel
+    prep_rows::Vector{PrepStepRow}
+    prep_model::JuliaItemModel
     queue::Channel{Any}
     dirty::Base.RefValue{Bool}
     shown::Dict{String,Any}
 end
 
-function PlanarShell(wf::PlanarWorkflow)
+function PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf))
     canvas = planar_canvas(wf)
     app = JuliaPropertyMap()
     host = CanvasHost(app, canvas.fig)
     step_rows = [StepRow(String(s), Controllers.STEP_LABELS[s], "todo", "") for s in WORKFLOW_STEPS]
     pass_rows = PassRow[]
+    prep_rows = PrepStepRow[]
     results = results_canvas()
     sh = PlanarShell(wf, canvas, host, results, app, step_rows, JuliaItemModel(step_rows),
-                     pass_rows, JuliaItemModel(pass_rows), Channel{Any}(Inf), Ref(true),
-                     Dict{String,Any}())
+                     pass_rows, JuliaItemModel(pass_rows), prep_rows, JuliaItemModel(prep_rows),
+                     queue, Ref(true), Dict{String,Any}())
     mark = (_...) -> (sh.dirty[] = true)
-    fs, pe, t, r = wf.frames, wf.passes, wf.test, wf.run
+    fs, ps, pe, t, r = wf.frames, wf.prepare, wf.passes, wf.test, wf.run
+    pp = ps.preview
     for obs in (wf.step, wf.preprocessing, wf.mask, wf.roi, wf.scale, wf.saved, wf.settings_path,
                 wf.explorer, wf.results_path, wf.status, fs.files, fs.pair_mode, fs.pair, fs.shown,
+                fs.loading, fs.loaded, fs.load_error,
+                ps.revision, ps.status, ps.background_running, ps.roi_error, ps.scale_error,
+                pp.error_step, pp.status, pp.processed2,
                 pe.passes, pe.preset, pe.mode, pe.image_type, pe.error,
                 t.result, t.running, t.status, r.output_path, r.running, r.progress, r.status,
                 r.completed)
@@ -183,6 +200,7 @@ function PlanarShell(wf::PlanarWorkflow)
     on(pe.passes) do _
         _sync_pass_rows!(sh)
     end
+    onany((_...) -> _sync_prep_rows!(sh), pp.steps, pp.error, pp.error_step)
     on(wf.explorer) do ex
         set_explorer!(results, ex)
         ex === nothing && return
@@ -198,6 +216,7 @@ function PlanarShell(wf::PlanarWorkflow)
         _set!(sh, k, v)
     end
     _sync_pass_rows!(sh)
+    _sync_prep_rows!(sh)
     _refresh!(sh)
     return sh
 end
@@ -229,6 +248,83 @@ function _sync_pass_rows!(sh::PlanarShell)
     return
 end
 
+function _prep_row(pp, i::Int, step::PreprocessStep)
+    opts = step_options(step)
+    return PrepStepRow(i, preprocess_label(step.operation), join(first.(opts), "|"),
+                       join((Controllers.OPTION_LABELS[k] for k in first.(opts)), "|"),
+                       join(last.(opts), "|"), pp.error_step[] == i ? pp.error[] : "")
+end
+
+function _sync_prep_rows!(sh::PlanarShell)
+    pp = sh.wf.prepare.preview
+    rows = [_prep_row(pp, i, s) for (i, s) in enumerate(pp.steps[])]
+    if length(rows) == length(sh.prep_rows)
+        for (i, new) in enumerate(rows)
+            old = sh.prep_rows[i]
+            (old.label, old.optionKeys, old.optionValues, old.error) ==
+                (new.label, new.optionKeys, new.optionValues, new.error) && continue
+            sh.prep_model[i] = new
+        end
+    else
+        empty!(sh.prep_rows)
+        append!(sh.prep_rows, rows)
+        QML.force_model_update(sh.prep_model)
+    end
+    return
+end
+
+_num(x::Real) = isinteger(x) ? string(Int(x)) : string(x)
+
+# Prepare step fields of the property map.
+function _refresh_prepare!(sh::PlanarShell)
+    wf = sh.wf
+    ps = wf.prepare
+    pp = ps.preview
+    _set!(sh, "preparePage", String(ps.page[]))
+    _set!(sh, "hasFrameSize", ps.mask[] !== nothing)
+    _set!(sh, "prepareStatus", ps.status[])
+    _set!(sh, "backgroundRunning", ps.background_running[])
+    _set!(sh, "pipelineSummary", pipeline_summary(pp))
+    _set!(sh, "previewStatus", pp.status[])
+    _set!(sh, "showProcessed", ps.show_processed[])
+    _set!(sh, "probeWindow", pp.probe_window[])
+    _set!(sh, "probeSummary", probe_summary(pp))
+
+    me = ps.mask[]
+    _set!(sh, "maskStatus", me === nothing ? "add frames to draw a mask" :
+                            Controllers.status_text(me) * (me.raster[] === nothing ? "" : " · raster mask"))
+    _set!(sh, "maskDrawing", me !== nothing && !isempty(me.active[]))
+    _set!(sh, "maskSelected", me !== nothing && me.selected[] !== nothing)
+    _set!(sh, "hasMask", wf.mask[] !== nothing)
+
+    ed = ps.roi[]
+    roi = wf.roi[]
+    sz = ed === nothing ? nothing : ed.size
+    rows = roi !== nothing ? roi.rows : sz === nothing ? (1:0) : 1:sz[1]
+    cols = roi !== nothing ? roi.cols : sz === nothing ? (1:0) : 1:sz[2]
+    _set!(sh, "roiRowFirst", isempty(rows) ? "" : string(first(rows)))
+    _set!(sh, "roiRowLast", isempty(rows) ? "" : string(last(rows)))
+    _set!(sh, "roiColFirst", isempty(cols) ? "" : string(first(cols)))
+    _set!(sh, "roiColLast", isempty(cols) ? "" : string(last(cols)))
+    _set!(sh, "roiSummary", ed === nothing ? "add frames to select a region" : Controllers.roi_summary(ed))
+    _set!(sh, "roiError", ps.roi_error[])
+    _set!(sh, "hasRoi", roi !== nothing)
+
+    sc = wf.scale[]
+    st = ps.scale[]
+    _set!(sh, "hasScale", sc !== nothing)
+    _set!(sh, "scalePixelSize", sc === nothing ? "" : _num(sc.pixel_size))
+    _set!(sh, "scaleLengthUnit", sc === nothing ? "" : sc.length_unit)
+    _set!(sh, "scaleDt", sc === nothing ? "" : _num(sc.dt))
+    _set!(sh, "scaleTimeUnit", sc === nothing ? "" : sc.time_unit)
+    _set!(sh, "scaleSummary", sc === nothing ? "no scale: results in pixels and frames" : string(sc))
+    _set!(sh, "scaleSeparation", st === nothing ? "" : _num(st.separation[]))
+    _set!(sh, "scaleMeasureUnit", st === nothing ? "" : st.length_unit[])
+    _set!(sh, "scaleMeasure", st === nothing ? "" : Controllers.scale_summary(st))
+    _set!(sh, "scaleError", ps.scale_error[])
+    return
+end
+
 function _refresh!(sh::PlanarShell)
     wf = sh.wf
     fs, pe, t, r = wf.frames, wf.passes, wf.test, wf.run
@@ -251,6 +347,7 @@ function _refresh!(sh::PlanarShell)
     _set!(sh, "shown", String(fs.shown[]))
 
     _set!(sh, "prepareSummary", step_status(wf, :prepare)[2])
+    _refresh_prepare!(sh)
     _set!(sh, "preset", pe.preset[] === nothing ? "custom" : String(pe.preset[]))
     _set!(sh, "passesError", pe.error[])
     _set!(sh, "passesSummary", passes_summary(pe))
@@ -414,6 +511,58 @@ hh_use_result_settings() = _with_shell(sh -> begin
 end)
 hh_toggle_popout() = _with_shell(sh -> toggle_popout!(sh.host))
 
+# Prepare step
+hh_set_prepare_page(page) = _with_shell(sh -> set_prepare_page!(sh.wf, Symbol(String(page))))
+hh_add_step(op) = _with_shell(sh -> add_step!(sh.wf.prepare.preview, Symbol(String(op))))
+hh_remove_step(i) = _with_shell(sh -> remove_step!(sh.wf.prepare.preview, round(Int, i)))
+hh_move_step(i, offset) =
+    _with_shell(sh -> move_step!(sh.wf.prepare.preview, round(Int, i), round(Int, offset)))
+function hh_set_step_option(i, key, value)
+    _with_shell() do sh
+        k = round(Int, i)
+        # a rejected value leaves the step unchanged: re-send the row so the
+        # field shows the kept value with the error beneath it
+        edit_step_option!(sh.wf, k, String(key), string(value))
+        _sync_prep_rows!(sh)
+    end
+end
+hh_estimate_background(n) = _with_shell(sh -> estimate_background!(sh.wf; frames = round(Int, n)))
+hh_show_processed(on) = _with_shell(sh -> (sh.wf.prepare.show_processed[] = Bool(on)))
+hh_set_probe_window(ws) = _with_shell(sh -> set_probe_window!(sh.wf.prepare.preview, string(ws)))
+hh_clear_probe() = _with_shell(sh -> clear_probe!(sh.wf.prepare.preview))
+
+const _MASK_ACTIONS = Dict("hole" => begin_hole!, "undo" => undo_vertex!, "close" => close_active!,
+                           "cancel" => cancel_active!, "delete" => delete_selected!,
+                           "clear" => clear_polygons!)
+function hh_mask_action(name)
+    _with_shell() do sh
+        me = sh.wf.prepare.mask[]
+        me === nothing || _MASK_ACTIONS[String(name)](me)
+    end
+end
+function hh_mask_morph(op, radius)
+    _with_shell() do sh
+        me = sh.wf.prepare.mask[]
+        me === nothing && return
+        n = round(Int, radius)
+        String(op) == "grow" ? grow_mask!(me, n) : shrink_mask!(me, n)
+    end
+end
+hh_load_mask(url) = _with_shell(sh -> load_mask_file!(sh.wf, _url_to_path(String(url))))
+hh_save_mask(url) = _with_shell(sh -> save_mask_file(sh.wf, _url_to_path(String(url))))
+hh_set_roi(r1, r2, c1, c2) = _with_shell(sh -> edit_roi!(sh.wf, string(r1), string(r2), string(c1), string(c2)))
+hh_clear_roi() = _with_shell(sh -> begin
+    ed = sh.wf.prepare.roi[]
+    ed === nothing ? (sh.wf.roi[] = nothing) : clear_roi!(ed)
+    sh.wf.prepare.roi_error[] = ""
+end)
+hh_set_scale(field, value) = _with_shell(sh -> edit_scale!(sh.wf, Symbol(String(field)), string(value)))
+hh_clear_scale() = _with_shell(sh -> clear_scale!(sh.wf))
+hh_clear_scale_points() = _with_shell(sh -> begin
+    st = sh.wf.prepare.scale[]
+    st === nothing || clear_points!(st)
+end)
+
 function _with_explorer(f)
     _with_shell() do sh
         ex = sh.wf.explorer[]
@@ -432,6 +581,10 @@ function _register_qml_functions()
     @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_use_result_settings
     @qmlfunction hh_toggle_popout hh_result_frame hh_result_field hh_result_color_mode
     @qmlfunction hh_result_vectors
+    @qmlfunction hh_set_prepare_page hh_add_step hh_remove_step hh_move_step hh_set_step_option
+    @qmlfunction hh_estimate_background hh_show_processed hh_set_probe_window hh_clear_probe
+    @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi
+    @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points
     return
 end
 
@@ -455,23 +608,30 @@ in progress after its current pair; finished pairs are kept.
 """
 function planar_window(wf::PlanarWorkflow = PlanarWorkflow(); files = nothing, settings = nothing)
     _SHELL[] === nothing || throw(ArgumentError("a HammerheadGUI window is already open"))
-    files === nothing || add_files!(wf.frames, files isa AbstractString ? [files] : files)
-    settings === nothing || load_settings!(wf, settings)
-    _qt_init!()
-    sh = PlanarShell(wf)
-    previous_deliver = wf.deliver[]
-    wf.deliver[] = f -> put!(sh.queue, f)
-    _SHELL[] = sh
-    _CLOSE_REQUESTED[] = false
+    # From here on background work goes to the window's queue and nothing
+    # reads image files on this (the GUI) thread: the pair loads on a worker.
+    queue = Channel{Any}(Inf)
+    previous_deliver, previous_spawn = wf.deliver[], wf.spawn[]
+    wf.deliver[] = f -> put!(queue, f)
+    wf.spawn[] = true
     try
+        files === nothing || add_files!(wf.frames, files isa AbstractString ? [files] : files)
+        settings === nothing || load_settings!(wf, settings)
+        _qt_init!()
+        sh = PlanarShell(wf; queue)
+        _SHELL[] = sh
+        _CLOSE_REQUESTED[] = false
         _register_qml_functions()
         loadqml(joinpath(QML_DIR, "PlanarWindow.qml"); app = sh.app,
-                stepModel = sh.step_model, passModel = sh.pass_model)
+                stepModel = sh.step_model, passModel = sh.pass_model,
+                prepModel = sh.prep_model)
         exec()
     finally
         cancel_run!(wf)
         _SHELL[] = nothing
         wf.deliver[] = previous_deliver
+        wf.spawn[] = previous_spawn
+        Controllers._abandon_jobs!(wf)
         _release_qml_screens!()
     end
     return wf

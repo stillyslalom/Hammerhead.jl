@@ -13,18 +13,25 @@ const STEP_LABELS = Dict(:images => "Images", :prepare => "Prepare", :passes => 
     PlanarWorkflow(; files = Any[], pair_mode = :paired, deliver = f -> f())
 
 State of the planar PIV workflow window. Step controllers:
-`frames` (`FrameSet`), `passes` (`PassesEditor`), `test`
-(`PairTest`) and `run` (`RunState`); `explorer` holds a
-`ResultExplorer` for the Results step. Preprocessing, mask, ROI, and
-physical scale are kept in `preprocessing`, `mask`, `roi`, and `scale`.
+`frames` (`FrameSet`), `prepare` (`PrepareState`), `passes`
+(`PassesEditor`), `test` (`PairTest`) and `run` (`RunState`); `explorer`
+holds a `ResultExplorer` for the Results step. Preprocessing, mask, ROI,
+and physical scale are kept in `preprocessing`, `mask`, `roi`, and `scale`;
+the Prepare step's editors read and write them.
 
 `workflow_recipe` assembles the current settings as a core
 `PIVRecipe`. `save_settings` and `load_settings!` store and
 open it; a results file written by a run also carries it. `deliver` receives
 the observable updates of background jobs (see `start_test!`).
+
+`spawn[]` (`false` by default; a window sets it) moves the remaining work
+off the caller's thread too: loading the representative pair, the
+preprocessing preview and probe, and the background estimate run on worker
+tasks and hand their results to `deliver`. Without it they run inline.
 """
 struct PlanarWorkflow
     frames::FrameSet
+    prepare::PrepareState
     passes::PassesEditor
     test::PairTest
     run::RunState
@@ -41,11 +48,24 @@ struct PlanarWorkflow
     results_path::Observable{Union{Nothing,String}}
     status::Observable{String}
     deliver::Base.RefValue{Any}
+    spawn::Base.RefValue{Bool}
+end
+
+# Where the Prepare step computes: inline, or (with `spawn[]`) on a worker
+# whose result is applied through `deliver[]` on the GUI thread.
+function _workflow_runner(spawn::Base.RefValue{Bool}, deliver::Base.RefValue{Any})
+    return function (job, apply)
+        d = deliver[]
+        _run_job(() -> (out = _try_job(job); d(() -> apply(out))), spawn[])
+        return nothing
+    end
 end
 
 function PlanarWorkflow(; files = Any[], pair_mode::Symbol = :paired, deliver = f -> f())
-    frames = FrameSet(; files, pair_mode)
-    wf = PlanarWorkflow(frames, PassesEditor(), PairTest(), RunState(), Observable(:images),
+    spawn, deliver_ref = Ref(false), Ref{Any}(deliver)
+    frames = FrameSet(; files, pair_mode, spawn, deliver = deliver_ref)
+    prepare = PrepareState(; runner = _workflow_runner(spawn, deliver_ref))
+    wf = PlanarWorkflow(frames, prepare, PassesEditor(), PairTest(), RunState(), Observable(:images),
                         Observable(PreprocessStep[]),
                         Observable{Union{Nothing,BitMatrix}}(nothing),
                         Observable{Union{Nothing,ROI}}(nothing),
@@ -54,9 +74,10 @@ function PlanarWorkflow(; files = Any[], pair_mode::Symbol = :paired, deliver = 
                         Observable{Union{Nothing,PIVRecipe}}(nothing), Observable(""),
                         Observable{Union{Nothing,ResultExplorer}}(nothing),
                         Observable{Union{Nothing,String}}(nothing), Observable(""),
-                        Ref{Any}(deliver))
-    onany((_...) -> _sync_analysis_size!(wf), frames.files, frames.pair_mode, wf.roi)
+                        deliver_ref, spawn)
+    onany((_...) -> _sync_analysis_size!(wf), frames.files, frames.pair_mode, frames.loaded, wf.roi)
     _sync_analysis_size!(wf)
+    _connect_prepare!(wf)
     # A finished batch becomes the Results step's data.
     on(wf.run.running) do running
         running && return
@@ -243,11 +264,19 @@ for the step rail.
 """
 function step_status(wf::PlanarWorkflow, step::Symbol)
     if step === :images
+        pair_loading(wf.frames) && return (:busy, "loading pair $(wf.frames.pair[])…")
         msg = frames_problem(wf.frames)
         return msg === nothing ? (:ok, frames_summary(wf.frames)) : (:todo, msg)
     elseif step === :prepare
+        sz = frame_size(wf.frames)
+        m = wf.mask[]
+        m === nothing || sz === nothing || size(m) == sz ||
+            return (:attention, "the mask is $(size(m, 2))×$(size(m, 1)) px but the frames are $(sz[2])×$(sz[1]) px")
+        status = wf.prepare.preview.status[]
+        isempty(status) || return (:attention, status)
         parts = String[]
-        isempty(wf.preprocessing[]) || push!(parts, "$(length(wf.preprocessing[])) preprocessing steps")
+        n = length(wf.preprocessing[])
+        n == 0 || push!(parts, "$n preprocessing step" * (n == 1 ? "" : "s"))
         wf.mask[] === nothing || push!(parts, "mask")
         wf.roi[] === nothing || push!(parts, "ROI")
         wf.scale[] === nothing || push!(parts, "scaled")

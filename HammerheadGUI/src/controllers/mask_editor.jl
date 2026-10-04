@@ -1,17 +1,20 @@
-# Mask-editor controller: polygon drawing/editing state over a reference
-# image, exporting the package mask convention (image-sized Bool,
-# `true` = excluded). Framework-free — the view forwards clicks and key
-# presses into the gesture API below.
+# Mask-editor controller: polygon drawing/editing state for an image size,
+# exporting the package mask convention (image-sized Bool, `true` =
+# excluded). Framework-free — a canvas forwards clicks and key presses into
+# the gesture API below.
 
 """
-    MaskEditor(image; polygons = [])
-    MaskEditor(path::AbstractString)
+    MaskEditor(size::Dims{2}; polygons = [], holes = falses(length(polygons)), raster = nothing)
+    MaskEditor(image::AbstractMatrix; kwargs...)
 
-Edit an exclusion mask over a reference image (matrix or image path). Editing
-state is held in `Observables`: `polygons` (committed polygons,
-each a vector of `(x, y)` vertices in pixel coordinates), `active` (the
-in-progress polygon), `selected` (index of the selected polygon or
-`nothing`), and `show_mask` (overlay toggle).
+Edit an exclusion mask for images of `size` `(rows, cols)` (or the size of
+`image`; the editor keeps only the size). Editing state is held in
+`Observables`: `polygons` (committed polygons, each a vector of `(x, y)`
+vertices in pixel coordinates), `holes` (per polygon: `true` restores an
+area instead of excluding it), `active` (the in-progress polygon),
+`selected` (index of the selected polygon or `nothing`), `show_mask`
+(overlay toggle), and `raster` (a mask the polygons are drawn on top of —
+a loaded mask, or the result of [`grow_mask!`](@ref)/[`shrink_mask!`](@ref)).
 
 Gestures ([`click!`](@ref), [`alt_click!`](@ref)) implement the editing
 model: click to add vertices (a click on empty background starts a new
@@ -22,7 +25,7 @@ draw a region that is restored inside an exclusion polygon. Seed `polygons`
 to resume editing an existing set.
 """
 struct MaskEditor
-    image::Matrix{Float64}
+    size::Dims{2}
     polygons::Observable{Vector{Vector{Tuple{Float64,Float64}}}}
     holes::Observable{Vector{Bool}}
     active::Observable{Vector{Tuple{Float64,Float64}}}
@@ -32,23 +35,26 @@ struct MaskEditor
     raster::Observable{Union{Nothing,BitMatrix}}
 end
 
-function MaskEditor(image::AbstractMatrix{<:Real}; polygons = Vector{Tuple{Float64,Float64}}[],
-                    holes = falses(length(polygons)))
+function MaskEditor(sz::Dims{2}; polygons = Vector{Tuple{Float64,Float64}}[],
+                    holes = falses(length(polygons)), raster = nothing)
+    all(>(0), sz) || throw(ArgumentError("mask editor needs a nonempty image size, got $sz"))
     polys = [[(Float64(v[1]), Float64(v[2])) for v in p] for p in polygons]
     all(p -> length(p) >= 3, polys) ||
         throw(ArgumentError("every seeded polygon needs at least 3 vertices"))
     length(holes) == length(polys) ||
         throw(ArgumentError("holes must have one entry per seeded polygon"))
-    return MaskEditor(Matrix{Float64}(image), Observable(polys), Observable(Bool.(holes)),
+    raster === nothing || size(raster) == sz ||
+        throw(DimensionMismatch("raster mask size $(size(raster)) does not match the editor size $sz"))
+    return MaskEditor(sz, Observable(polys), Observable(Bool.(holes)),
                       Observable(Tuple{Float64,Float64}[]), Observable(false),
                       Observable{Union{Nothing,Int}}(nothing), Observable(false),
-                      Observable{Union{Nothing,BitMatrix}}(nothing))
+                      Observable{Union{Nothing,BitMatrix}}(raster === nothing ? nothing : BitMatrix(raster)))
 end
 
-MaskEditor(path::AbstractString; kwargs...) = MaskEditor(load_image(path); kwargs...)
+MaskEditor(image::AbstractMatrix; kwargs...) = MaskEditor(size(image); kwargs...)
 
 function Base.show(io::IO, me::MaskEditor)
-    nr, nc = size(me.image)
+    nr, nc = me.size
     print(io, "MaskEditor($(nc)×$(nr) image, $(length(me.polygons[])) polygon",
           length(me.polygons[]) == 1 ? "" : "s",
           isempty(me.active[]) ? ")" : ", drawing)")
@@ -98,6 +104,20 @@ function close_active!(me::MaskEditor)
     me.hole_mode[] = false
     notify(me.active)
     return committed
+end
+
+"""
+    cancel_active!(me::MaskEditor) -> Bool
+
+Discard the active polygon (and a pending hole); `false` when not drawing.
+"""
+function cancel_active!(me::MaskEditor)
+    drawing = !isempty(me.active[]) || me.hole_mode[]
+    drawing || return false
+    empty!(me.active[])
+    me.hole_mode[] = false
+    notify(me.active)
+    return true
 end
 
 """Begin drawing a polygon that removes an area from the exclusion mask."""
@@ -211,14 +231,38 @@ holes and any rasterized edits. Pass it as `mask` to `run_piv`. If no edits
 are present, all values are `false`.
 """
 function Hammerhead.polygon_mask(me::MaskEditor)
-    mask = me.raster[] === nothing ? falses(size(me.image)) : copy(me.raster[])
+    mask = me.raster[] === nothing ? falses(me.size) : copy(me.raster[])
     for (p, hole) in zip(me.polygons[], me.holes[])
-        pm = polygon_mask(size(me.image), p)
+        pm = polygon_mask(me.size, p)
         hole ? (mask .&= .!pm) : (mask .|= pm)
     end
     return mask
 end
 
+
+"""
+    set_raster!(me::MaskEditor, mask)
+
+Replace the editor's content with a raster `mask` (`nothing` clears it):
+polygons are dropped, and new polygons are drawn on top of the raster.
+"""
+function set_raster!(me::MaskEditor, mask::Union{Nothing,AbstractMatrix{Bool}})
+    mask === nothing || size(mask) == me.size ||
+        throw(DimensionMismatch("mask size $(size(mask)) does not match the editor size $(me.size)"))
+    empty!(me.polygons[]); empty!(me.holes[]); empty!(me.active[])
+    me.hole_mode[] = false
+    me.selected[] = nothing
+    me.raster[] = mask === nothing ? nothing : BitMatrix(mask)
+    notify(me.polygons); notify(me.holes); notify(me.active)
+    return me
+end
+
+"""
+    has_mask(me::MaskEditor) -> Bool
+
+Whether the editor holds any committed polygon or raster.
+"""
+has_mask(me::MaskEditor) = me.raster[] !== nothing || !isempty(me.polygons[])
 
 """Rasterize the mask, expand excluded pixels by `radius`, and return `me`.
 Existing polygons become a raster mask and can no longer be edited as polygons.

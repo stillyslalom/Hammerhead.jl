@@ -41,6 +41,80 @@
     @test finite(rc.shafts[1][]) == 0
 end
 
+@testset "Prepare overlays and gestures (offscreen)" begin
+    wf = PlanarWorkflow(files = Any[imgA, imgB, imgA, imgB])
+    c = HammerheadGUI.planar_canvas(wf)
+    finite(pts) = count(p -> all(isfinite, p), pts)
+    ps = wf.prepare
+    nplots = length(c.ax.scene.plots)
+    @test !isempty(colorbuffer(c.fig; px_per_unit = 1))
+
+    # Overlays only change their inputs: the plot count never changes.
+    set_step!(wf, :prepare)
+    add_step!(ps.preview, :invert_image)
+    ps.show_processed[] = true                       # processed frame shown
+    @test c.frame[3][] ≈ permutedims(ps.preview.processed[])
+    canvas_click!(wf, 64.0, 64.0)
+    @test finite(c.probe_box[1][]) == 5
+    set_prepare_page!(wf, :mask)
+    @test finite(c.probe_box[1][]) == 0              # editing overlays: own page only
+    @test c.frame[3][] ≈ permutedims(Float32.(imgA)) # raw frame off the Preprocess page
+    for (x, y) in ((20.0, 10.0), (60.0, 10.0), (60.0, 50.0))
+        canvas_click!(wf, x, y)
+    end
+    @test finite(c.active_points[1][]) == 3 && finite(c.active_line[1][]) == 3
+    canvas_alt_click!(wf)
+    @test finite(c.polygons[1][]) == 4 && finite(c.active_points[1][]) == 0
+    @test count(isfinite, c.mask[3][]) == count(wf.mask[])
+    canvas_click!(wf, 50.0, 20.0)                    # select: highlighted
+    @test all(==(RGBAf(HammerheadGUI.SELECTED_COLOR)), c.polygons.color[][1:4])
+    set_prepare_page!(wf, :roi)
+    @test finite(c.polygons[1][]) == 0
+    canvas_click!(wf, 10.0, 20.0)
+    @test c.roi_corner[1][] == [Point2f(10, 20)]
+    canvas_click!(wf, 100.0, 110.0)
+    @test finite(c.roi[1][]) == 5 && finite(c.roi_corner[1][]) == 0
+    set_prepare_page!(wf, :scale)
+    canvas_click!(wf, 10.0, 20.0); canvas_click!(wf, 10.0, 70.0)
+    @test finite(c.scale_line[1][]) == 2 && c.scale_label.text[] == ["50.0 px"]
+    set_step!(wf, :passes)                           # mask and ROI stay; tools hide
+    @test finite(c.scale_line[1][]) == 0 && finite(c.roi[1][]) == 5
+    @test length(c.ax.scene.plots) == nplots
+    @test !isempty(colorbuffer(c.fig; px_per_unit = 1))
+
+    # Real Makie mouse and key events on the figure reach the controller
+    # through the canvas's interaction (fast clicks arrive as double clicks).
+    set_step!(wf, :prepare)
+    set_prepare_page!(wf, :mask)
+    clear_polygons!(ps.mask[])
+    colorbuffer(c.fig; px_per_unit = 1)              # lay out the axis
+    scene, ev = c.ax.scene, events(c.fig)
+    function mouse_click(x, y, button = Mouse.left)
+        p = Makie.project(scene, Point2f(x, y)) .+ scene.viewport[].origin
+        ev.mouseposition[] = (Float64(p[1]), Float64(p[2]))
+        ev.mousebutton[] = Makie.MouseButtonEvent(button, Mouse.press)
+        ev.mousebutton[] = Makie.MouseButtonEvent(button, Mouse.release)
+    end
+    key(k) = (ev.keyboardbutton[] = Makie.KeyEvent(k, Keyboard.press))
+    for (x, y) in ((80.0, 80.0), (110.0, 80.0), (110.0, 110.0), (80.0, 110.0))
+        mouse_click(x, y)
+    end
+    verts = ps.mask[].active[]
+    @test length(verts) == 4 && all(isapprox.(verts[2], (110.0, 80.0); atol = 0.5))
+    key(Keyboard.backspace)
+    @test length(ps.mask[].active[]) == 3
+    mouse_click(90.0, 90.0, Mouse.right)
+    @test length(ps.mask[].polygons[]) == 1 && wf.mask[][90, 100]
+    mouse_click(100.0, 90.0)
+    @test ps.mask[].selected[] == 1
+    key(Keyboard.delete)
+    @test wf.mask[] === nothing
+    limits = c.ax.finallimits[]
+    mouse_click(64.0, 64.0, Mouse.right)              # nothing to use: the Axis keeps it
+    @test isempty(ps.mask[].active[]) && c.ax.finallimits[] == limits
+    @test length(c.ax.scene.plots) == nplots
+end
+
 # Opens a real Qt window: needs a display and an OpenGL 3.3 context. It runs in
 # a separate Julia process: on some drivers (seen with AMD on Windows) a Qt GL
 # context crashes once GLFW/GLMakie has created a context in the same process,

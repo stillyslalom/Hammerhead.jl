@@ -180,9 +180,65 @@ grid, and self-calibration) and has no ROI.
    Results, async image loading.
 2. Prepare sub-pages; retire the GLMakie tool windows and views they replace;
    rewrite `docs/src/howto/gui.md` around the window.
+   Design (proposed 2026-10-04; implemented overnight, unreviewed): see
+   "Slice 2 design" below.
 3. Stereo window.
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.
+
+## Slice 2 design: canvas gestures and the Prepare step
+
+**Gestures without creating plots.** QMLMakie forwards Qt mouse buttons
+(left/right/middle), positions, scroll, and keys into the figure's Makie
+`events`, so the canvas uses ordinary Makie interactions; what changes is
+only what a gesture may do to the scene.
+
+- One `register_interaction!(ax, :workflow_gesture)` on the image canvas
+  (and the existing one on the results canvas) turns a `leftclick` into
+  `canvas_click!(wf, x, y)` and a `rightclick` into `canvas_alt_click!(wf)`,
+  in axis data coordinates (x = column, y = row). Drags are left to the
+  Axis (left-drag zoom box, right-drag pan, scroll zoom), so a click edits
+  and a drag navigates. Keys (focus on the canvas): Backspace undoes the last
+  vertex, Escape cancels the polygon or pending corner, Delete removes the
+  selected polygon. Every action also has a button on the step page.
+- `canvas_click!`/`canvas_alt_click!` are controller functions
+  (framework-free, tested without GL). They dispatch on the step and the
+  Prepare sub-page — Preprocess: place the correlation probe; Mask:
+  `click!`/`alt_click!` on the `MaskEditor`; ROI: `click!` on the
+  `ROIEditor`; Scale: `click!` on the `ScaleTool`; other steps: not consumed
+  (the Axis keeps the event). Results: `click!`/`alt_click!` on the
+  `ResultExplorer`, which dispatches on its tool (inspect/profile/circulation).
+- The gesture only changes controller observables. The canvas listens to
+  them and `update!`s overlay plots that exist from the start, each fed a
+  NaN placeholder while empty: committed mask polygons (one NaN-separated
+  `lines`, per-vertex colours for holes and the selected polygon), the
+  polygon being drawn (`lines` + vertex `scatter`), the ROI box and its
+  pending first corner, the scale line with endpoints and its length label,
+  and the probe window outline. The mask raster heatmap shows the resulting
+  mask. Results: the profile line or circulation contour (`lines` +
+  `scatter`), and a profile `Axis` created with the figure in a second
+  layout row that is collapsed (row size 0, hidden) outside the profile tool.
+  Editing overlays show only on their sub-page; the mask and ROI show on
+  every image step, as in slice 1.
+
+**Prepare state.** `PlanarWorkflow` keeps `preprocessing`, `mask`, `roi`,
+and `scale` as the single source for `workflow_recipe`. A `PrepareState`
+(`wf.prepare`) holds the sub-page and the four editors, built for the
+current frame size (editors keep a size, not an image copy). Editor changes
+write the workflow fields; workflow changes from outside (opening settings)
+reseed the editors — a loaded mask becomes the editor's raster, with new
+polygons drawn on top; equality guards stop loops. `PreprocessPreview`
+holds an ordered `Vector{PreprocessStep}` (the core type, every option
+including CLAHE `tiles`/`nbins` and `epsilon`) and previews with
+`recipe_preprocess(steps)`, so the preview is exactly the batch.
+
+**Off the GUI thread.** In a window (`wf.spawn[] = true`), loading the
+representative pair, the processed preview, the probe correlation, and the
+background estimate run on worker tasks. A request captures its inputs on
+the GUI thread, computes from them alone, and `deliver`s the result; a
+generation counter drops stale results (latest edit wins). Until a pair
+lands, the canvas keeps the previous frame and the rail says "loading…".
+Without a window everything runs inline, as the tests expect.
 
 ## Tests (proportionate)
 

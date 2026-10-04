@@ -1,0 +1,67 @@
+# State of the workflow's Prepare step: which sub-page is open and the four
+# editors behind them. The workflow's `preprocessing`, `mask`, `roi`, and
+# `scale` stay the single source for the recipe; prepare_workflow.jl keeps
+# the editors and those fields in sync and routes canvas gestures.
+
+"""
+Sub-pages of the Prepare step, in order.
+"""
+const PREPARE_PAGES = (:preprocess, :mask, :roi, :scale)
+
+"""
+    PrepareState(; runner = _inline_runner)
+
+The Prepare step of a `PlanarWorkflow` (`wf.prepare`). `page` is the open
+sub-page (one of `PREPARE_PAGES`). `preview` is a `PreprocessPreview` of
+the representative pair; `mask`, `roi`, and `scale` hold a `MaskEditor`,
+`ROIEditor`, and `ScaleTool` built for the current frame size (`nothing`
+before a frame size is known). `show_processed` selects the processed
+frame in the viewer on the Preprocess page.
+
+`revision` changes whenever any editor changes (canvases redraw on it).
+`status` reports the background estimate (`background_running` while it
+runs); `roi_error`/`scale_error` hold the last rejected ROI or scale edit.
+"""
+struct PrepareState
+    page::Observable{Symbol}
+    preview::PreprocessPreview
+    mask::Observable{Union{Nothing,MaskEditor}}
+    roi::Observable{Union{Nothing,ROIEditor}}
+    scale::Observable{Union{Nothing,ScaleTool}}
+    show_processed::Observable{Bool}
+    revision::Observable{Int}
+    status::Observable{String}
+    background_running::Observable{Bool}
+    roi_error::Observable{String}
+    scale_error::Observable{String}
+    background_generation::Base.RefValue{Int}
+    syncing::Base.RefValue{Bool}           # set while one side writes the other
+end
+
+PrepareState(; runner = _inline_runner) =
+    PrepareState(Observable(:preprocess), PreprocessPreview(; runner),
+                 Observable{Union{Nothing,MaskEditor}}(nothing),
+                 Observable{Union{Nothing,ROIEditor}}(nothing),
+                 Observable{Union{Nothing,ScaleTool}}(nothing),
+                 Observable(false), Observable(0), Observable(""), Observable(false),
+                 Observable(""), Observable(""), Ref(0), Ref(false))
+
+function Base.show(io::IO, ps::PrepareState)
+    me = ps.mask[]
+    print(io, "PrepareState(:", ps.page[], ", ", pipeline_summary(ps.preview),
+          me === nothing ? ", no frame size)" : ", $(me.size[1])×$(me.size[2]) px)")
+end
+
+_bump!(ps::PrepareState) = (ps.revision[] += 1; ps)
+
+# Run `f` with the sync guard set, so observers of the written side do not
+# write back.
+function _syncing(f, ps::PrepareState)
+    ps.syncing[] && return nothing
+    ps.syncing[] = true
+    try
+        return f()
+    finally
+        ps.syncing[] = false
+    end
+end
