@@ -66,8 +66,8 @@ velocity = physical(result, scale)
 velocity.u[accepted]  # accepted horizontal velocities in mm/s
 ```
 
-`result` remains in pixels. In `velocity`, positions are in millimetres,
-and displacements and their uncertainty estimates are in millimetres per
+`result` remains in pixels. In `velocity`, positions are in millimeters,
+and displacements and their uncertainty estimates are in millimeters per
 second. The interval between *successive image pairs* is a separate value
 used for time-series analysis.
 

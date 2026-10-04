@@ -123,7 +123,7 @@ using JLD2
             @test only(load_results(out)) isa TrackingResult
             @test_throws ArgumentError apply_recipe(tr, frames; output = i -> "$i.jld2", progress = false)
         end
-        # no predictor: a pure nearest-neighbour search
+        # no predictor: a pure nearest-neighbor search
         nopred = PIVRecipe(passes; mode = :ptv, ptv = PTVParameters(search_radius = 3), ptv_predictor = :none)
         @test isequal(only(apply_recipe(nopred, pairs[1:1]; progress = false)).u,
                       run_ptv(pairs[1]..., nopred.ptv; predictor = nothing).u)

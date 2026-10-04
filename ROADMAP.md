@@ -100,6 +100,38 @@ window to open next and carry settings between them by hand.
 - [ ] Exercise the redesigned workflow with a lab user and record concrete
   friction before adding further features.
 
+### Test-drive feedback (2026-10-04)
+
+From the user's first session with the windows. Decisions: recipes gain a
+TOML form with sidecar images; interpolation choices become CPU-only core
+options (GPU backends keep cubic/bilinear); per-frame mask images are input
+data like frames, not recipe settings.
+
+- [ ] Images: add frames by directory + glob pattern; infer the pattern from
+  a selected frame pair (nice to have). Move "Use these settings" from
+  Results to Images as **Reuse settings…** with a file selector.
+- [ ] Viewer: contrast toggle; arrow keys step pairs, a/b (and
+  shift+arrows) switch frames; ctrl-click zoom reset also in probe mode; a
+  toolbar (zoom, pan, reset, screenshot) with shortcut tooltips.
+- [ ] Prepare: per-frame mask images (core: dynamic masks as an
+  `apply_recipe` input); a separate ruler image for **Measure the pixel
+  size**.
+- [ ] Passes: validation and replacement settings; padding and Gaussian
+  weighting as separate toggles; correlation probe; interpolation choices.
+- [ ] Run: save in-memory results to a file after the run; **Clear** for the
+  output path.
+- [ ] Results: fix the field selector (wrong field chosen); use the main pair
+  bar instead of a second slider, with the Results frame independent of the
+  Images/Prepare pair; absolute/percentile color limits with user values;
+  diverging symmetric colormap for vorticity; profile of the selected field;
+  draggable profile/circulation points and deleting circulation points;
+  physical-units toggle; particle image as a display option (frames A/B);
+  re-validation/replacement settings on the shown results.
+- [ ] U.S. English in the GUI and docs ("color", "center", "millimeters",
+  "neighbor").
+- [ ] Core: TOML recipes with sidecar images (results files embed the same
+  TOML); CPU interpolation options for image deformation and the predictor.
+
 ### Framework choice
 
 **Decided 2026-10-03: Qt Quick via QML.jl + QMLMakie**, with the Makie
@@ -111,8 +143,8 @@ like GNOME on Windows. The earlier Codex QML prototype ran Qt offscreen, which
 has no GL context on Windows, so its embedding failure was an artifact. The
 real Qt issues and their workarounds (a teardown crash after a pop-out, a
 render-thread `sleep` in QMLMakie, a missing style DLL, callbacks that must not
-block) are in [GUI_REDESIGN.md](GUI_REDESIGN.md). That file is the
-implementation plan.
+block) are in the archived
+[GUI redesign plan](reference/archive/GUI_REDESIGN.md).
 
 - [ ] Report the teardown crash to QML.jl, and the `disconnect_screen` sleep
   to QMLMakie, with the captured backtrace.

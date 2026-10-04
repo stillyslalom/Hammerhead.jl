@@ -7,6 +7,14 @@
     c = HammerheadGUI.planar_canvas(wf)
     finite(pts) = count(p -> all(isfinite, p), pts)
     @test c.frame_size[] == (128, 128)
+    # auto contrast: a display range from the 0.5–99.5 % band
+    full = c.frame.colorrange[]
+    @test full[1] ≈ minimum(imgA) && full[2] ≈ maximum(imgA)
+    HammerheadGUI.set_contrast!(c, wf, true)
+    lo, hi = c.frame.colorrange[]
+    @test full[1] <= lo < hi < full[2]
+    HammerheadGUI.set_contrast!(c, wf, false)
+    @test c.frame.colorrange[] == full
     @test finite(c.boxes[1][]) == 0              # boxes only on the Passes step
     set_step!(wf, :passes)
     @test finite(c.boxes[1][]) == 5              # one 32 px outline (closed polygon)

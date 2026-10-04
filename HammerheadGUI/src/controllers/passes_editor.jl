@@ -3,8 +3,8 @@
 # analysis size or mode changes) until a pass is edited.
 
 const PASS_FIELDS = (:window, :search, :overlap, :iterations)
-const SHARED_OPTIONS = (:correlation, :subpixel, :accuracy, :uod_threshold,
-                        :min_peak_ratio, :replace_outliers)
+const SHARED_OPTIONS = (:correlation, :subpixel, :accuracy, :padding, :apodization, :uod_enable,
+                        :uod_threshold, :uod_neighborhood, :min_peak_ratio, :replace_outliers)
 
 """
     PassesEditor(; image_size = nothing, mode = :sequence, image_type = Float64)
@@ -171,10 +171,13 @@ end
     set_option!(pe::PassesEditor, option, value) -> Bool
 
 Set an option on every pass: `:correlation` (`:cross`/`:phase`),
-`:subpixel` (`:gauss3`/`:gauss9`/`:gauss2d`), `:accuracy` (`true` = padding
-with Gaussian apodization), `:uod_threshold`, `:min_peak_ratio`, or
-`:replace_outliers`. `:uncertainty` applies to the final pass only.
-Invalid values return `false` and set `error`.
+`:subpixel` (`:gauss3`/`:gauss9`/`:gauss2d`), `:padding` (zero padding,
+`Bool`), `:apodization` (`true`/`:gauss` for Gaussian weighting,
+`false`/`:none`), `:accuracy` (both of these together), the normalized
+median test `:uod_enable` (`Bool`), `:uod_threshold`, and
+`:uod_neighborhood` (half-width: 1 = 3×3, 2 = 5×5, 3 = 7×7),
+`:min_peak_ratio`, or `:replace_outliers`. `:uncertainty` applies to the
+final pass only. Invalid values return `false` and set `error`.
 """
 function set_option!(pe::PassesEditor, option::Symbol, value)
     option === :uncertainty && return _try_edit!(pe, function (ps)
@@ -183,13 +186,30 @@ function set_option!(pe::PassesEditor, option::Symbol, value)
     end)
     option in SHARED_OPTIONS ||
         throw(ArgumentError("option must be :uncertainty or one of $(join(SHARED_OPTIONS, ", ")), got :$option"))
-    kw = option === :correlation ? (; correlation_method = Symbol(value)) :
-         option === :subpixel ? (; subpixel_method = Symbol(value)) :
-         option === :accuracy ? (; padding = Bool(value), apodization = Bool(value) ? :gauss : :none) :
-         option === :uod_threshold ? (; uod_threshold = Float64(value)) :
-         option === :min_peak_ratio ? (; min_peak_ratio = Float64(value)) :
-         (; replace_outliers = Bool(value))
+    kw = try
+        option === :correlation ? (; correlation_method = Symbol(value)) :
+        option === :subpixel ? (; subpixel_method = Symbol(value)) :
+        option === :accuracy ? (; padding = Bool(value), apodization = Bool(value) ? :gauss : :none) :
+        option === :padding ? (; padding = Bool(value)) :
+        option === :apodization ? (; apodization = value isa Bool ? (value ? :gauss : :none) : Symbol(value)) :
+        option === :uod_enable ? (; uod_enable = Bool(value)) :
+        option === :uod_threshold ? (; uod_threshold = _option_number(value, "the outlier threshold")) :
+        option === :uod_neighborhood ? (; uod_neighborhood = Int(_option_number(value, "the neighborhood"))) :
+        option === :min_peak_ratio ? (; min_peak_ratio = _option_number(value, "the minimum peak ratio")) :
+        (; replace_outliers = Bool(value))
+    catch err
+        err isa Union{ArgumentError,InexactError} || rethrow()
+        pe.error[] = _errmsg(err)
+        return false
+    end
     return _try_edit!(pe, ps -> [_with(p; kw...) for p in ps])
+end
+
+function _option_number(value, what::AbstractString)
+    v = value isa Real ? Float64(value) :
+        value isa Union{AbstractString,Symbol} ? tryparse(Float64, strip(String(value))) : nothing
+    (v === nothing || !isfinite(v)) && throw(ArgumentError("$what must be a number, got \"$value\""))
+    return v
 end
 
 """
@@ -231,6 +251,10 @@ function option_value(pe::PassesEditor, option::Symbol)
     option === :correlation && return p.correlation_method
     option === :subpixel && return p.subpixel_method
     option === :accuracy && return p.padding && p.apodization === :gauss
+    option === :padding && return p.padding
+    option === :apodization && return p.apodization === :gauss
+    option === :uod_enable && return p.uod_enable
+    option === :uod_neighborhood && return p.uod_neighborhood
     option === :uod_threshold && return p.uod_threshold
     option === :min_peak_ratio && return p.min_peak_ratio
     option === :replace_outliers && return p.replace_outliers

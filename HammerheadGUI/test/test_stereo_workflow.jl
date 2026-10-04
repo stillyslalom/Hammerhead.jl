@@ -246,7 +246,7 @@
             sw.run.output_path[] = joinpath(dir, "cancel.jld2")
             on(c -> length(c) == 1 && cancel_run!(sw), sw.run.completed)
             start_run!(sw; spawn = false)
-            @test occursin("cancelled after", sw.run.status[]) && length(sw.run.completed[]) < 3
+            @test occursin("canceled after", sw.run.status[]) && length(sw.run.completed[]) < 3
             @test nframes(sw.explorer[]) == length(sw.run.completed[])
             @test length(load_results(joinpath(dir, "cancel.jld2"))) == length(sw.run.completed[])
 
@@ -275,7 +275,7 @@
             on(p -> p[1] == 2 && cancel_run!(sw), sw.run.progress)
             sw.run.output_path[] = joinpath(dir, "ensemble_cancel.jld2")
             start_run!(sw; spawn = false)
-            @test sw.run.status[] == "cancelled; an ensemble keeps no partial result"
+            @test sw.run.status[] == "canceled; an ensemble keeps no partial result"
             @test isempty(sw.run.completed[]) && !isfile(joinpath(dir, "ensemble_cancel.jld2"))
         end
     end

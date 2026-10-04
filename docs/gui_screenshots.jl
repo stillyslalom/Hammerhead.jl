@@ -133,7 +133,7 @@ function planar_shots()
         sh -> grab!("test_pair"))
     st!(w, sh -> grabbed(w, "test_pair"), sh -> (set_step!(wf, :run); start_run!(wf)))
     st!(w, sh -> !wf.run.running[] && wf.explorer[] !== nothing && waited(w, 1), sh -> begin
-        # Results › Profile across the vortex centre
+        # Results › Profile across the vortex center
         set_step!(wf, :results)
         ex = wf.explorer[]
         set_tool!(ex, :profile)

@@ -13,7 +13,7 @@ StepPage {
     title: "Calibration"
     guidance: "Fit each camera from its calibration plate images, build the common dewarp " +
               "grid, then self-calibrate onto the light sheet. Click a plate to show it: dots " +
-              "are coloured by reprojection error, and the residual arrows are magnified by " +
+              "are colored by reprojection error, and the residual arrows are magnified by " +
               "the factor in the viewer's title. A saved calibration opens instead of fitting."
 
     RowLayout {

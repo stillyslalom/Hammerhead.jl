@@ -15,11 +15,13 @@ ToolBar {
         spacing: 8
         enabled: app.pairCount > 0 || stereo  // the camera switch also serves Calibration
 
-        Label { text: "Pair" }
+        Label { text: app.step === "results" && app.hasResults ? "Result" : "Pair" }
         ToolButton {
             text: "‹"
             enabled: app.pairIndex > 1
             onClicked: Julia.hh_select_pair(app.pairIndex - 1)
+            ToolTip.visible: hovered
+            ToolTip.text: "Previous (←)"
         }
         Slider {
             Layout.preferredWidth: 240
@@ -35,6 +37,8 @@ ToolBar {
             text: "›"
             enabled: app.pairIndex < app.pairCount
             onClicked: Julia.hh_select_pair(app.pairIndex + 1)
+            ToolTip.visible: hovered
+            ToolTip.text: "Next (→)"
         }
         Label {
             text: app.pairCount > 0 ? app.pairIndex + " of " + app.pairCount : "no pairs"
@@ -49,6 +53,8 @@ ToolBar {
             checked: app.shown === "a"
             ButtonGroup.group: frameGroup
             onClicked: Julia.hh_show_frame("a")
+            ToolTip.visible: hovered
+            ToolTip.text: "A or shift+←"
         }
         Button {
             text: "Frame B"
@@ -57,6 +63,19 @@ ToolBar {
             checked: app.shown === "b"
             ButtonGroup.group: frameGroup
             onClicked: Julia.hh_show_frame("b")
+            ToolTip.visible: hovered
+            ToolTip.text: "B or shift+→"
+        }
+        ToolSeparator {}
+        Button {
+            text: "Auto contrast"
+            flat: true
+            checkable: true
+            checked: app.autoContrast
+            onClicked: Julia.hh_set_contrast(checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Stretch the displayed intensities to the 0.5–99.5 % range " +
+                          "(display only; the analysis uses the frames' values)"
         }
         ToolSeparator { visible: stereo }
         ButtonGroup { id: cameraGroup }

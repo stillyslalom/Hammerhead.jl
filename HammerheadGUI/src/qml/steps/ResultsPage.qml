@@ -6,8 +6,9 @@ import jlqml
 
 StepPage {
     title: "Results"
-    guidance: "Browse the finished run: step through pairs, choose a field, and inspect " +
-              "vectors, profiles, and circulation with the tools below."
+    guidance: "Browse the finished run: step through the results with the pair bar below " +
+              "the viewer (or the arrow keys), choose a field, and inspect vectors, " +
+              "profiles, and circulation with the tools below."
 
     Label {
         text: app.resultsLabel
@@ -33,34 +34,18 @@ StepPage {
         rowSpacing: 8
         Layout.topMargin: 12
 
-        Label { text: "Pair" }
-        RowLayout {
-            Slider {
-                id: frameSlider
-                Layout.preferredWidth: 220
-                from: 1
-                to: Math.max(2, app.hasResults ? app.resultFrames : 2)
-                stepSize: 1
-                snapMode: Slider.SnapAlways
-                enabled: app.hasResults && app.resultFrames > 1
-                value: app.hasResults ? app.resultFrame : 1
-                onMoved: Julia.hh_result_frame(Math.round(value))
-            }
-            Label { text: app.hasResults ? app.resultFrame + " of " + app.resultFrames : "" }
-        }
-
         Label { text: "Field" }
         ComboBox {
             id: fieldBox
             Layout.preferredWidth: 300
-            readonly property var keys: app.hasResults ? app.resultFieldKeys.split("|") : []
-            model: app.hasResults ? app.resultFieldLabels.split("|") : []
+            readonly property var keys: app.hasResults ? app.resultFieldKeys.split("\n") : []
+            model: app.hasResults ? app.resultFieldLabels.split("\n") : []
             currentIndex: Math.max(0, keys.indexOf(app.hasResults ? app.resultField : ""))
             displayText: app.hasResults ? app.resultFieldLabel : ""
             onActivated: (i) => Julia.hh_result_field(keys[i])
         }
 
-        Label { text: "Colour range" }
+        Label { text: "Color range" }
         ComboBox {
             Layout.preferredWidth: 300
             textRole: "text"; valueRole: "value"

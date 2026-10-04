@@ -121,6 +121,8 @@ function Base.show(io::IO, wf::StereoWorkflow)
 end
 
 workflow_steps(::StereoWorkflow) = STEREO_WORKFLOW_STEPS
+_representative_pair(wf::StereoWorkflow) = wf.frames1.pair[]
+_pair_target(wf::StereoWorkflow) = wf
 prepare_pages(::StereoWorkflow) = STEREO_PREPARE_PAGES
 
 # ---------------------------------------------------------------- frames

@@ -1,9 +1,9 @@
-# # Your first PIV session in the GUI
+# # A PIV session in the GUI
 #
-# Turn a short recording into a vector field in the planar PIV window: exclude
-# a reflection, attach millimetres and seconds, test one pair, run the batch,
-# and measure a profile and a circulation in the result. The recording is a
-# synthetic vortex, so you can follow along without downloading data.
+# This tutorial processes a short recording in the planar PIV window: it
+# excludes a reflection, attaches millimeters and seconds, tests one pair,
+# runs the batch, and measures a profile and a circulation in the result. The
+# recording is a synthetic vortex generated in the first code block.
 #
 # Install **HammerheadGUI** with `pkg> add HammerheadGUI`, then start Julia
 # with several threads (`julia -t auto`) and open the window:
@@ -27,7 +27,7 @@ using HammerheadGUI.Controllers: click!, alt_click!
 
 # ## 1. Add the frames
 #
-# Particles circulate around the centre of these images. The bright square in
+# Particles circulate around the center of these images. The bright square in
 # the upper-left corner stays put: it stands for a reflection, which would
 # give misleading displacements. Two exposure pairs make a short recording:
 
@@ -100,7 +100,7 @@ count(wf.mask[])                                     # excluded pixels
 # regions; whether the remaining vectors are accurate is the job of the test
 # below.
 
-# ## 4. Attach millimetres and seconds
+# ## 4. Attach millimeters and seconds
 #
 # On the **Scale** page, type the pixel size and the time between the paired
 # exposures. Here that is 0.02 mm per pixel and 0.001 s; on your recording, use
@@ -156,11 +156,11 @@ wf.run.status[]
 #
 # **Results** opens the output file. Choose a field and step through the
 # pairs; with the **Inspect** tool, a click on a vector reads its components and
-# status. Axes and colours use millimetres and seconds now.
+# status. Axes and colors use millimeters and seconds now.
 #
 # Choose the **Profile** tool and click two points across the vortex. The
 # panel under the field plots u, v and |V| along the line: v changes sign
-# through the centre and grows linearly, as in solid-body rotation.
+# through the center and grows linearly, as in solid-body rotation.
 
 ex = wf.explorer[]
 r = current_result(ex)
@@ -172,7 +172,7 @@ tool_summary(ex)
 
 # ![Results with the Profile tool: the line across the vortex and the velocity along it.](../assets/gui_window/results_profile.png)
 #
-# Choose **Circulation**, click the corners of a contour around the centre,
+# Choose **Circulation**, click the corners of a contour around the center,
 # and right-click to close it. The summary gives Γ from the line integral of
 # the velocity and from the vorticity enclosed:
 
@@ -208,8 +208,6 @@ next_wf.status[]
 # To browse a results file without the workflow, open the standalone explorer
 # with `result_explorer("gui-example/vectors.jld2"; lazy = true)`.
 #
-# You have made a masked vector field in physical units, tested it before the
-# run, measured a profile and a circulation, and kept the settings for the
-# next recording. [Analyze an image pair in the GUI](../howto/gui.md) covers
-# the rest of the window, and [Save settings and reuse them](../howto/recipes.md)
-# runs the same settings from a script.
+# [Analyze an image pair in the GUI](../howto/gui.md) covers the rest of the
+# window, and [Save settings and reuse them](../howto/recipes.md) runs the
+# same settings from a script.

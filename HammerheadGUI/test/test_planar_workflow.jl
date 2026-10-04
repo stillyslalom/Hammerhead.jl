@@ -63,6 +63,20 @@
         @test all(q -> q.correlation_method === :phase, pe.passes[])
         @test set_option!(pe, :accuracy, false)
         @test option_value(pe, :accuracy) == false && all(q -> q.apodization === :none, pe.passes[])
+        # padding and Gaussian weighting are separate options
+        @test set_option!(pe, :padding, true) && option_value(pe, :padding)
+        @test !option_value(pe, :apodization) && !option_value(pe, :accuracy)
+        @test set_option!(pe, :apodization, true) && option_value(pe, :accuracy)
+        @test set_option!(pe, :apodization, false) && all(q -> q.apodization === :none && q.padding, pe.passes[])
+        # validation and replacement
+        @test set_option!(pe, :uod_enable, false) && all(q -> !q.uod_enable, pe.passes[])
+        @test set_option!(pe, :uod_threshold, Symbol("2.5")) && option_value(pe, :uod_threshold) == 2.5
+        @test set_option!(pe, :uod_neighborhood, 1) && option_value(pe, :uod_neighborhood) == 1
+        @test set_option!(pe, :min_peak_ratio, Symbol("1.3")) && option_value(pe, :min_peak_ratio) == 1.3
+        @test set_option!(pe, :replace_outliers, false) && !option_value(pe, :replace_outliers)
+        before = pe.passes[]
+        @test !set_option!(pe, :uod_threshold, Symbol("abc")) && occursin("number", pe.error[])
+        @test !set_option!(pe, :uod_neighborhood, 0) && pe.passes[] == before
         @test set_option!(pe, :uncertainty, true)
         @test pe.passes[][end].uncertainty && !pe.passes[][1].uncertainty
         @test !set_option!(pe, :subpixel, :nope)
@@ -75,6 +89,24 @@
         rows = pass_rows(pe)
         @test rows[1].window == 16 && rows[1].overlap == 75.0
         @test occursin("custom", passes_summary(pe))
+    end
+
+    @testset "pair bar: representative pair and shown result" begin
+        wf = PlanarWorkflow(; files = frames)
+        @test pair_position(wf) == (1, 3)
+        step_pair!(wf, 1)
+        @test wf.frames.pair[] == 2
+        step_pair!(wf, 5)
+        @test pair_position(wf) == (3, 3)
+        start_run!(wf; spawn = false)
+        set_step!(wf, :results)
+        @test pair_position(wf) == (1, 3)              # results: independent of the pair
+        go_to_pair!(wf, 2)
+        @test wf.explorer[].frame[] == 2 && wf.frames.pair[] == 3
+        step_pair!(wf, -1)
+        @test pair_position(wf) == (1, 3)
+        set_step!(wf, :images)
+        @test pair_position(wf) == (3, 3)
     end
 
     @testset "PlanarWorkflow recipe round trip" begin
@@ -167,7 +199,7 @@
                 length(c) == 1 && cancel_run!(wf)
             end
             start_run!(wf; spawn = false)
-            @test occursin("cancelled after", wf.run.status[]) && length(wf.run.completed[]) < 3
+            @test occursin("canceled after", wf.run.status[]) && length(wf.run.completed[]) < 3
             @test nframes(wf.explorer[]) == length(wf.run.completed[])
         end
         # in-memory run (no output file)
@@ -226,14 +258,14 @@
             @test saved isa PIVResult && isequal(saved.u, direct.u) && isequal(saved.v, direct.v)
             @test median(filter(!isnan, saved.u)) ≈ 3.0 atol = 0.3
 
-            # cancelling stops after the pair in flight and keeps no result
+            # canceling stops after the pair in flight and keeps no result
             empty!(wf.run.progress.listeners)
-            cancelled = joinpath(dir, "cancelled.jld2")
-            wf.run.output_path[] = cancelled
+            canceled = joinpath(dir, "canceled.jld2")
+            wf.run.output_path[] = canceled
             on(p -> p[1] == 1 && cancel_run!(wf), wf.run.progress)
             start_run!(wf; spawn = false)
-            @test wf.run.status[] == "cancelled; an ensemble keeps no partial result"
-            @test isempty(wf.run.completed[]) && !isfile(cancelled)
+            @test wf.run.status[] == "canceled; an ensemble keeps no partial result"
+            @test isempty(wf.run.completed[]) && !isfile(canceled)
             @test wf.run.progress[][1] == 1
             @test wf.results_path[] == out              # the previous results stay
         end

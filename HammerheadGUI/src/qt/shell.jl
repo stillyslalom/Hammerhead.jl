@@ -448,8 +448,6 @@ function _refresh_frames!(sh::PlanarShell)
     problem = frames_problem(fs)
     _set!(sh, "framesSummary", frames_summary(fs))
     _set!(sh, "framesProblem", problem === nothing ? "" : problem)
-    _set!(sh, "pairIndex", fs.pair[])
-    _set!(sh, "pairCount", npairs(fs))
     _set!(sh, "pairMode", String(fs.pair_mode[]))
     _set!(sh, "shown", String(fs.shown[]))
     return
@@ -492,6 +490,11 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "status", wf.status[])
 
     _refresh_frames!(sh)
+    # the pair bar: the representative pair, or on Results the shown result
+    pos, count = pair_position(wf)
+    _set!(sh, "pairIndex", pos)
+    _set!(sh, "pairCount", count)
+    _set!(sh, "autoContrast", sh.canvas.contrast[])
     problem = workflow_problem(wf)
     _set!(sh, "analysisProblem", problem === nothing ? "" : problem)
 
@@ -502,8 +505,14 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "correlation", String(option_value(pe, :correlation)))
     _set!(sh, "subpixel", String(option_value(pe, :subpixel)))
     _set!(sh, "accuracy", option_value(pe, :accuracy))
+    _set!(sh, "padding", option_value(pe, :padding))
+    _set!(sh, "apodization", option_value(pe, :apodization))
     _set!(sh, "uncertainty", option_value(pe, :uncertainty))
-    _set!(sh, "uodThreshold", option_value(pe, :uod_threshold))
+    _set!(sh, "uodEnable", option_value(pe, :uod_enable))
+    _set!(sh, "uodThreshold", _num(option_value(pe, :uod_threshold)))
+    _set!(sh, "uodNeighborhood", option_value(pe, :uod_neighborhood))
+    _set!(sh, "minPeakRatio", _num(option_value(pe, :min_peak_ratio)))
+    _set!(sh, "replaceOutliers", option_value(pe, :replace_outliers))
     _set!(sh, "mode", String(pe.mode[]))
     _set!(sh, "precision", string(pe.image_type[]))
 
@@ -530,8 +539,9 @@ function _refresh!(sh::WorkflowShell)
         fields = available_fields(res)
         _set!(sh, "resultFrame", ex.frame[])
         _set!(sh, "resultFrames", nframes(ex))
-        _set!(sh, "resultFieldKeys", join(String.(fields), "|"))
-        _set!(sh, "resultFieldLabels", join([field_label(res, f) for f in fields], "|"))
+        # newline-separated: labels such as "|velocity|" contain "|"
+        _set!(sh, "resultFieldKeys", join(String.(fields), "\n"))
+        _set!(sh, "resultFieldLabels", join([field_label(res, f) for f in fields], "\n"))
         _set!(sh, "resultField", String(ex.field[]))
         _set!(sh, "resultFieldLabel", field_label(res, ex.field[]))
         _set!(sh, "resultColorMode", String(ex.color_mode[]))
@@ -643,7 +653,9 @@ hh_set_step(name) = _with_shell(sh -> set_step!(sh.wf, Symbol(String(name))))
 hh_add_files(urls) = _with_shell(sh -> add_files!(sh.wf.frames, _paths(urls)))
 hh_clear_files() = _with_shell(sh -> clear_files!(_frames_target(sh.wf)))
 hh_set_pair_mode(mode) = _with_shell(sh -> set_pair_mode!(_frames_target(sh.wf), Symbol(String(mode))))
-hh_select_pair(i) = _with_shell(sh -> select_pair!(_frames_target(sh.wf), round(Int, i)))
+hh_select_pair(i) = _with_shell(sh -> go_to_pair!(sh.wf, round(Int, i)))
+hh_step_pair(delta) = _with_shell(sh -> step_pair!(sh.wf, round(Int, delta)))
+hh_set_contrast(on) = _with_shell(sh -> set_contrast!(sh.canvas, sh.wf, Bool(on)))
 hh_show_frame(which) = _with_shell(sh -> show_frame!(_frames_target(sh.wf), Symbol(String(which))))
 hh_fill_preset(level) = _with_shell(sh -> fill_preset!(sh.wf.passes, Symbol(String(level))))
 function hh_set_pass(i, field, value)
@@ -758,7 +770,7 @@ function _register_qml_functions()
     @qmlfunction hh_tick hh_grab_started hh_set_step hh_add_files hh_clear_files hh_set_pair_mode hh_select_pair
     @qmlfunction hh_show_frame hh_fill_preset hh_set_pass hh_add_pass hh_remove_pass hh_set_option
     @qmlfunction hh_set_mode hh_set_precision hh_test hh_set_output hh_start_run hh_cancel_run
-    @qmlfunction hh_particle_option
+    @qmlfunction hh_particle_option hh_step_pair hh_set_contrast
     @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_use_result_settings
     @qmlfunction hh_toggle_popout hh_result_frame hh_result_field hh_result_color_mode
     @qmlfunction hh_result_vectors hh_result_tool hh_result_clear_tool

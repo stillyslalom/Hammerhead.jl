@@ -1,7 +1,7 @@
 # Development and validation
 
 This section is for contributors and readers investigating how Hammerhead is
-tested. To learn the analysis workflow, start with
+tested. The analysis workflow is covered by
 [the tutorials](../tutorials/first_vector_field.md).
 
 ## Test a scientific change

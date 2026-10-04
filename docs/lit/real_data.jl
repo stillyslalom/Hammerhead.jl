@@ -1,16 +1,14 @@
-# # Find a vortex in a real recording
+# # A wing-tip vortex from a real recording
 #
-# The dark disk in these images is not an obstacle. It is the core of a
-# wing-tip vortex, where swirling flow has swept many particles away.
-# Can we recover the swirl—and see where the images give weaker evidence?
+# This tutorial measures the in-plane field of a wing-tip vortex and assesses
+# where the measurement is weaker. The dark disk in the images is the vortex
+# core, from which the swirling flow has centrifuged most particles.
 #
-# Use case A of the first International PIV Challenge [Stanislas2003](@cite),
-# recorded by C. Kähler (DLR) in the German–Dutch Wind Tunnels. The image pair
-# is included with Hammerhead; no download is needed.
+# The data is case A of the first International PIV Challenge
+# [Stanislas2003](@cite), recorded by C. Kähler (DLR) in the German–Dutch Wind
+# Tunnels. The image pair ships with Hammerhead.
 #
-# ## Look before you calculate
-#
-# Load both exposures and compare their particle patterns.
+# ## The images
 
 using Hammerhead
 using CairoMakie
@@ -31,9 +29,10 @@ let
     fig
 end
 
-# Notice the illumination bands, bright particle images and dark center.
-# Compare a well-seeded patch with the core at the **same contrast**.
-# Which patch would you expect to give the clearer correlation peak?
+# The images have illumination bands, bright particle images and a dark
+# core. At the **same contrast**, a well-seeded patch and a patch inside the
+# core differ markedly in the number of particle images available to a
+# correlation window.
 
 let
     fig = Figure(size = (650, 320))
@@ -47,13 +46,13 @@ let
     fig
 end
 
-# A core vector can agree with its neighbors even when few particles
-# contribute. Keep this image comparison in mind as you inspect the field.
+# A vector in the core can agree with its neighbors even when few particles
+# contribute to it, so agreement alone does not indicate a strong measurement.
 #
-# ## Recover the swirl
+# ## Measure the field
 #
-# First estimate how far particles move using generous 96 px windows.
-# Summarize only finite vectors without outlier or mask flags.
+# A single pass with 96 px windows estimates the displacement range. The
+# summary uses only finite vectors without outlier or mask flags.
 
 preview = run_piv(imgA, imgB,
     PIVParameters(window_size = 96, overlap = 48,
@@ -64,10 +63,10 @@ shifts = hypot.(preview.u[preview_ok], preview.v[preview_ok])
 (p95_shift_px = round(quantile(shifts, 0.95); digits = 1),
  largest_shift_px = round(maximum(shifts); digits = 1))
 
-# Compare this range with your first window's width. Shifts below roughly
-# one quarter of that width are a useful starting point, not a guarantee.
-# Here we begin at 64 px, refine to 32 px, and repeat the final window size
-# to estimate uncertainty.
+# Displacements below about one quarter of the first window's width are a
+# reasonable starting point, not a guarantee. The schedule begins at 64 px,
+# refines to 32 px, and repeats the final window size to estimate
+# uncertainty.
 
 passes = multipass_parameters([64, 32, 32];
     padding = true, apodization = :gauss, uncertainty = true)
@@ -85,21 +84,18 @@ let
     fig
 end
 
-# Follow the arrows around the dark core. These are in-plane displacements;
-# the free-stream direction is perpendicular to the light sheet.
-# Arrow lengths are enlarged threefold. Orange arrows carry outlier flags.
+# The vectors circulate around the dark core. They are in-plane
+# displacements; the free stream is perpendicular to the light sheet. Arrow
+# lengths are enlarged threefold, and orange arrows carry outlier flags. A
+# smooth field does not imply that the evidence is equally strong everywhere.
 #
-# **Try it:** reduce `stride` to 2 to see more vectors, then zoom your attention
-# to the dark core. Does a smooth-looking field mean equally good evidence
-# everywhere?
+# ## Measurement quality across the field
 #
-# ## Where is the measurement weaker?
-#
-# A validation flag finds vectors that fail a check, such as disagreement
-# with neighbors. A low peak ratio says another correlation peak competes
-# with the chosen shift. Estimated uncertainty describes random correlation
-# error [Wieneke2015](@cite). Use these together rather than treating one
-# map as a verdict.
+# Three diagnostics describe different things. A validation flag marks a
+# vector that fails a check, such as disagreement with its neighbors. A low
+# peak ratio means another correlation peak competes with the chosen shift.
+# The estimated uncertainty describes random correlation error
+# [Wieneke2015](@cite). They are read together rather than individually.
 
 valid = .!(result.outliers .| result.mask) .&
         isfinite.(result.u) .& isfinite.(result.v)
@@ -122,9 +118,8 @@ let
     fig
 end
 
-# Find the core in both maps. Compare it with the seeded outer region.
-# Are the uncertainty and peak ratio telling the same story?
-# Summarize each region with medians, excluding flagged and nonfinite values.
+# Both maps distinguish the core from the seeded outer region. Medians per
+# region, excluding flagged and nonfinite values, quantify the difference.
 
 distance_from_core = [hypot(x - 577, y - 545) for y in result.y, x in result.x]
 function region_quality(region)
@@ -141,11 +136,11 @@ end
 # neighbor check. This recording has no reference displacement field:
 # these diagnostics show evidence and sensitivity, not the true error.
 #
-# ## Does window size change the feature you care about?
+# ## Sensitivity to window size
 #
-# Use 48 px final windows on the same pair. Larger windows use more particles
-# but average motion over a larger footprint. Compare both fields along the
-# same horizontal line through the vortex.
+# A second analysis uses 48 px final windows. Larger windows contain more
+# particles but average the motion over a larger footprint. Both fields are
+# sampled along the same horizontal line through the vortex.
 
 passes48 = multipass_parameters([64, 48, 48];
     padding = true, apodization = :gauss, uncertainty = true)
@@ -165,19 +160,17 @@ let
     fig
 end
 
-# Both profiles are interpolated onto common positions; that makes comparison
-# possible, but cannot restore detail lost inside a large window.
-# Look near the steep changes, where a core-width or gradient estimate would
-# be most sensitive to processing choices.
+# Both profiles are interpolated onto common positions, which makes them
+# comparable but cannot restore detail averaged out by a large window. The
+# two differ most at the steep gradients, where a core-width or gradient
+# estimate is most sensitive to the processing. Increasing the overlap at a
+# fixed window size adds samples but not resolved detail.
 #
-# **Try it:** move the line above the core to `y = 400`. Does the difference
-# between window sizes change? Then increase overlap without changing window
-# size. More samples do not necessarily mean more resolved detail.
+# ## Effect of high-pass filtering
 #
-# ## Will a cleaner-looking background help?
-#
-# The illumination bands suggest high-pass filtering. Test that idea on the
-# same pair before adopting it: filters can remove useful particle signal too.
+# The illumination bands suggest high-pass filtering. Filters can also remove
+# particle signal, so the change is evaluated on the same pair before it is
+# adopted.
 
 filteredA = highpass_filter(imgA; sigma = 8)
 filteredB = highpass_filter(imgB; sigma = 8)
@@ -192,19 +185,18 @@ function pair_quality(r)
 end
 (raw = pair_quality(result), highpass = pair_quality(filtered_result))
 
-# Did the competing peaks weaken or strengthen? Did more vectors get flagged?
-# This comparison can reject an unhelpful setting, but a higher peak ratio
-# alone cannot prove a more accurate field.
+# The peak-ratio distribution and the flag count show whether competing
+# peaks weakened and whether more vectors were rejected. Such a comparison
+# can reject an unhelpful setting, but a higher peak ratio alone does not
+# establish a more accurate field. Other filter widths, or CLAHE
+# (`clahe`), are compared the same way; [Preprocess images](../howto/preprocessing.md)
+# describes what each operation changes.
 #
-# **Try it:** change the filter's `sigma`, or substitute
-# `clahe(imgA)` and `clahe(imgB)`. Compare the images and diagnostics on the
-# same region each time; the [preprocessing guide](../howto/preprocessing.md)
-# explains what each operation changes.
+# The results are in pixels between exposures: the sample data supplies no
+# spatial calibration or exposure delay. [Scale to physical units](../howto/scaling.md)
+# covers the conversion for a calibrated recording.
 #
-# This lesson reports pixels between exposures. The sample data supplies no
-# spatial calibration or exposure delay for velocity conversion. For your own
-# recording, measure both and follow [physical scaling](../howto/scaling.md).
-#
-# Next, [process a sequence](sequence_statistics.md) to distinguish a persistent
-# flow feature from pair-to-pair variation. For a difficult image region, use
-# [image inspection](../howto/image_quality.md) before adding more processing.
+# [From image pairs to flow statistics](sequence_statistics.md) separates a
+# persistent flow feature from pair-to-pair variation;
+# [Inspect particle-image quality](../howto/image_quality.md) covers difficult
+# image regions.

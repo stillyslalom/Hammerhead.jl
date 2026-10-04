@@ -701,7 +701,7 @@ const r_track = TrackingResult(
         @test isempty(me.polygons[]) && me.selected[] === nothing
         @test !any(polygon_mask(me))
 
-        # cancelling drops the polygon being drawn (and a pending hole)
+        # canceling drops the polygon being drawn (and a pending hole)
         @test !cancel_active!(me)
         C.click!(me, 5.0, 5.0); C.click!(me, 9.0, 5.0)
         @test cancel_active!(me) && isempty(me.active[])

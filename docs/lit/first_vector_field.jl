@@ -1,16 +1,18 @@
-# # Your first vector field
+# # A first vector field
 #
-# A pair of particle images can look almost identical even when the fluid is
-# swirling. By the end of this lesson, you will see that swirl as arrows,
-# explain where one arrow comes from, and decide what to do with a reflection.
+# This tutorial measures the displacement field of a synthetic vortex from one
+# particle-image pair. It shows how a single vector is obtained from a
+# correlation peak, how window size trades vector spacing against particle
+# count, how a stationary reflection biases the field and is masked, and how
+# pixel displacements convert to velocity.
 #
-# Run the blocks in order. You need `Hammerhead` and `CairoMakie` installed;
-# the images are generated here, so no download is needed.
+# The blocks run in order and need `Hammerhead` and `CairoMakie`; the images
+# are generated in the first block.
 #
-# ## Turn two images into arrows
+# ## Measure a displacement field
 #
-# Make a 256 × 256 pixel particle pair with a smooth rotating flow.
-# Each particle moves at most about three pixels between exposures.
+# The pair is 256 × 256 px with a smooth rotating flow; the largest
+# displacement between exposures is about 3 px.
 
 using Hammerhead
 using Hammerhead.SyntheticData
@@ -30,9 +32,9 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(
 )
 nothing # hide
 
-# Begin with large windows, then refine to smaller ones. Each pass uses the
-# previous field to align the images more closely. Here, the last two passes
-# use 16 px windows; the repeated pass also allows an uncertainty estimate.
+# The schedule starts with large windows and refines to smaller ones; each
+# pass deforms the images with the previous field before correlating. The
+# final 16 px window is repeated, which also allows an uncertainty estimate.
 
 passes = multipass_parameters([64, 32, 16, 16];
     padding = true, apodization = :gauss, uncertainty = true)
@@ -52,21 +54,19 @@ let
     fig
 end
 
-# Read the arrow directions: motion above the center is mostly rightward;
-# below it, mostly leftward. Arrow lengths are enlarged threefold in this plot.
-# `fine.u` is horizontal displacement, positive right; `fine.v` is vertical
-# displacement, positive down. Both are in **pixels between these exposures**.
+# Above the center the motion is mostly rightward, below it mostly leftward;
+# arrow lengths are enlarged threefold. `fine.u` is the horizontal
+# displacement (positive right) and `fine.v` the vertical displacement
+# (positive down), both in **pixels between the two exposures**.
 #
-# **Try it:** reverse the sign of `rate` and rerun the image-generation and
-# analysis blocks. Predict which arrows will reverse before looking.
+# ## How one vector is measured
 #
-# ## Where does one arrow come from?
+# Each vector comes from the particle *pattern* in one interrogation window.
+# The window in the first image is compared with the second image at every
+# candidate shift; the best alignment is a peak in the correlation plane.
 #
-# PIV follows a *pattern* of particles in a small window. It compares that
-# pattern against possible shifts in the next image. The best alignment
-# produces a peak in a correlation map.
-#
-# Run a simple 32 px analysis and keep those maps so we can inspect one.
+# A single 32 px pass with `keep_correlation_planes = true` retains the plane
+# of every window.
 
 basic = run_piv(imgA, imgB,
     PIVParameters(window_size = 32, overlap = 16,
@@ -88,7 +88,7 @@ let
                   xlabel = "column", ylabel = "row")
         image!(ax, (0.5, 32.5), (0.5, 32.5), win'; colormap = :grays)
     end
-    ax = Axis(fig[1, 3]; title = "Which shift aligns them?",
+    ax = Axis(fig[1, 3]; title = "Correlation plane",
               xlabel = "horizontal shift (px)", ylabel = "vertical shift (px)",
               yreversed = true, aspect = DataAspect())
     heatmap!(ax, (1:size(plane, 2)) .- zero_lag[2],
@@ -97,23 +97,22 @@ let
     fig
 end
 
-# The red point marks the estimated shift. Fitting around the brightest
-# sampled peak places it between pixels, so a displacement can be fractional.
+# The red point is the estimated shift. A fit around the highest sampled
+# value places the peak between pixels, so displacements are fractional.
 
 (window_center = (basic.x[j], basic.y[i]),
  displacement_px = (basic.u[i, j], basic.v[i, j]),
  integer_peak = probe.peakloc,
  subpixel_peak = probe.refined_peakloc)
 
-# **Try it:** choose another `i, j` and rerun this section. A window across
-# the vortex center contains different motion directions; how does its
-# correlation map differ? Retaining every map is useful here, but consumes
-# memory on large recordings.
+# A window across the vortex center contains several motion directions, and
+# its correlation peak is broader or split. Retaining every plane is useful
+# for this kind of inspection but costs memory on large recordings.
 #
-# ## More arrows, or more detail?
+# ## Window size and vector spacing
 #
-# Compare the simple field with the refined one using the same colors and
-# arrow scaling. The backgrounds show displacement magnitude in pixels.
+# The single-pass field and the refined field share colors and arrow scaling;
+# the backgrounds show displacement magnitude in pixels.
 
 let
     fig = Figure(size = (820, 370))
@@ -128,19 +127,16 @@ let
     fig
 end
 
-# Smaller windows reveal more variation near the center, but use fewer
-# particles per measurement. Overlap places arrows closer together; it does
-# not shrink the particle-sampling window.
+# Smaller windows resolve more variation near the center but contain fewer
+# particles per measurement. Overlap places vectors closer together without
+# shrinking the window each vector averages over, so it adds samples, not
+# resolution.
 #
-# **Try it:** change the last two window sizes to 32 and rerun. Look at the
-# vortex center and the spacing of the reported vectors, not just the number
-# of arrows.
+# ## Masking a stationary reflection
 #
-# ## A reflection can look like motion
-#
-# Add a bright rectangle that stays fixed in both images. It hides moving
-# particles and may attract a zero-shift correlation peak. First process it
-# without a mask, then tell PIV where the reflection is.
+# A bright rectangle fixed in both images hides the moving particles and
+# produces a zero-shift correlation peak. The pair is processed once without
+# a mask and once with the reflection excluded.
 
 imgA_refl, imgB_refl = copy(imgA), copy(imgB)
 for img in (imgA_refl, imgB_refl)
@@ -164,10 +160,10 @@ let
     fig
 end
 
-# Orange arrows carry an outlier flag. Their values can include replacements,
-# which are neighborhood estimates rather than new particle measurements.
-# In the masked result, windows with enough excluded pixels have no vector.
-# Check both flags when summarizing measured displacements.
+# Orange arrows carry an outlier flag. Their values may be replacements,
+# which are neighborhood estimates rather than particle measurements. In the
+# masked result, windows with enough excluded pixels have no vector. Summaries
+# of measured displacement should exclude both flags.
 
 accepted = .!(masked.mask .| masked.outliers) .&
            isfinite.(masked.u) .& isfinite.(masked.v)
@@ -175,15 +171,15 @@ accepted = .!(masked.mask .| masked.outliers) .&
  excluded_windows = count(masked.mask),
  flagged_vectors = count(masked.outliers))
 
-# **Try it:** make the mask rectangle too small. Can a partly covered window
-# still produce a plausible-looking arrow? A field's appearance alone cannot
-# tell you whether every vector is a sound measurement.
+# A mask that only partly covers the reflection can still leave
+# plausible-looking vectors in partly covered windows: the appearance of a
+# field does not establish that each vector is a sound measurement.
 #
-# ## From pixels to velocity
+# ## Converting to velocity
 #
-# Suppose a calibration gives **0.02 mm per pixel**, and the exposure delay
-# is **0.001 s**. A two-pixel displacement then means 40 mm/s.
-# These are example calibration values; use measured values for your setup.
+# With a calibration of **0.02 mm per pixel** and an exposure delay of
+# **0.001 s**, a two-pixel displacement corresponds to 40 mm/s. These values
+# are illustrative; a real setup uses its measured calibration and delay.
 
 scale = PhysicalScale(pixel_size = 0.02, dt = 0.001,
                       length_unit = "mm", time_unit = "s")
@@ -201,11 +197,10 @@ valid = .!(fine.mask .| fine.outliers)
 sigma_u = filter(isfinite, fine.uncertainty_u[valid])
 median(sigma_u)
 
-# This last number estimates random displacement uncertainty in pixels
-# [Wieneke2015](@cite), not calibration error or proof of accuracy.
-# The [uncertainty guide](../explanation/uncertainty.md) explains its limits.
+# This is the median random displacement uncertainty in pixels
+# [Wieneke2015](@cite); it does not include calibration error. Its scope is
+# described in [Uncertainty quantification](../explanation/uncertainty.md).
 #
-# You have now made a field, traced one vector to its particle pattern,
-# removed a known obstruction and converted its units. Next, try
-# [a real wind-tunnel recording](real_data.md), where the true motion is
-# unknown and the particles themselves reveal where to be cautious.
+# [A real wind-tunnel recording](real_data.md) applies the same steps to
+# measured images, where the true motion is unknown and the image content
+# varies across the field.

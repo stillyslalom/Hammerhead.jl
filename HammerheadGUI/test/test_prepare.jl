@@ -167,7 +167,7 @@
         canvas_click!(wf, 5.0, 5.0)
         set_prepare_page!(wf, :roi)
         @test isempty(ps.mask[].active[])
-        # ROI: a pending corner is cancelled by Escape and by leaving the page
+        # ROI: a pending corner is canceled by Escape and by leaving the page
         canvas_click!(wf, 5.0, 5.0)
         @test canvas_key!(wf, :escape) && ps.roi[].anchor[] === nothing
         canvas_click!(wf, 5.0, 5.0)

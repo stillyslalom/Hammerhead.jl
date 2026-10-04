@@ -1,4 +1,4 @@
-# How accurate are the measurements?
+# Measured accuracy and uncertainty coverage
 
 These results come from synthetic image studies with known particle motion,
 run on the CPU during development. Use them to choose window schedules and to
@@ -73,7 +73,7 @@ Two details of the covariance sum decide whether σ covers the random error.
 
 - The covariance sums use raw products of the smoothed correlation-difference
   field. The zero-mean condition of the method is the converged correlation
-  peak itself. Centring each window's field on its own mean, as releases
+  peak itself. Centering each window's field on its own mean, as releases
   before 0.2 did, forces the sum over all lags to zero and biased the
   truncated ±4 px sum low by about the number of summed lags divided by the
   window's pixel count, a third of the variance for 16 px windows.

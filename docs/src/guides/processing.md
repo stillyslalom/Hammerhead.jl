@@ -1,8 +1,8 @@
 # Choose how to measure the motion
 
-Start with a pair that contains the flow feature you care about. Measure it,
-inspect the vectors over the image, and change one setting at a time before
-processing the whole recording.
+Settings are best chosen on a representative pair that contains the flow
+feature of interest: measure it, inspect the vectors over the image, and
+change one setting at a time before processing the whole recording.
 
 ## Begin with planar PIV
 
@@ -15,14 +15,15 @@ imgB = load_image("frame_0002.tif")
 result = run_piv(imgA, imgB; effort=:medium)
 ```
 
-The [first vector-field lesson](../tutorials/first_vector_field.md) shows what
-the arrows mean. Then use [window sizes and effort](../howto/effort.md) to
-trade spatial detail against the particle signal within each window.
-Mask obscured regions and check the image quality when weak signal persists.
+[A first vector field](../tutorials/first_vector_field.md) explains how each
+vector is obtained. [Choose an effort level](../howto/effort.md) covers the
+trade-off between spatial detail and the particle signal within each window.
+Where the signal stays weak, mask obscured regions and check the image
+quality.
 
-## Match the method to the question
+## Methods
 
-| You want to measure… | Follow this example |
+| Quantity | Example |
 |:--|:--|
 | A field of particle-pattern displacements | [PIV on a real tip-vortex recording](../tutorials/real_data.md) |
 | A representative field when individual pairs are weak | [Pool correlations across pairs](../howto/ensemble.md) |

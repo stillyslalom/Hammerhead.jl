@@ -1,9 +1,9 @@
 # Analyze an image pair in the GUI
 
-Start with the frames of a recording. In one window you will check the
-images, mask what should not be measured, choose the passes, test one pair,
-run the recording, and inspect the result. For a complete session with sample
-images, follow [Your first PIV session in the GUI](../tutorials/gui_tour.md).
+The planar window takes the frames of a recording through image checks,
+masking, the pass schedule, a test on one pair, the batch run, and the
+results. [A PIV session in the GUI](../tutorials/gui_tour.md) is a complete
+session on sample images.
 
 ## Open the window
 
@@ -141,11 +141,11 @@ frame, after preprocessing and inside the mask, as you change the settings:
   particle diameters. The count under the settings follows each change.
 - **Matching:** the **Search radius** around each particle's predicted
   position in the second frame. With **PIV predictor** on, the pass table
-  below runs first and centres each search on the local flow, so the radius
+  below runs first and centers each search on the local flow, so the radius
   only has to cover the prediction's error; turn it off for displacements
   smaller than the radius. Intensity and diameter weights make matching
   prefer particles that look alike.
-- **Validation:** a normalized median test against neighbouring matches flags
+- **Validation:** a normalized median test against neighboring matches flags
   outliers; flagged matches stay in the result, marked.
 - **Tracks** (tracking only): the shortest track kept and how many missed
   frames a track may bridge.
@@ -191,21 +191,21 @@ Closing the window also cancels a run in this way.
 
 An ensemble run (**Run ensemble of N pairs**) pools every pair into one
 result, which is written with the settings when the run finishes. Its
-progress counts the pairs of each pass. Cancelling an ensemble stops after
+progress counts the pairs of each pass. Canceling an ensemble stops after
 the pair in progress and keeps no result.
 
 A PTV run writes one particle result per pair, like a PIV run. A tracking
 run (**Track through N frames**) writes one set of tracks when it finishes;
-its progress counts frame steps, and cancelling keeps no result.
+its progress counts frame steps, and canceling keeps no result.
 
 ## Inspect the results
 
 When a run finishes, **Results** holds its output. **Open results…** browses
 another results file; entries load one at a time.
 
-- **Pair** steps through the results, **Field** chooses what is coloured
+- **Pair** steps through the results, **Field** chooses what is colored
   (components, magnitude, diagnostics, and derived fields such as vorticity),
-  and **Colour range** switches between a robust 2–98 % range and the full range.
+  and **Color range** switches between a robust 2–98 % range and the full range.
 - **Inspect:** click a vector to read its position, components and status.
 - **Profile:** click two points to sample u, v and |V| along a line. A panel
   under the field plots them.
@@ -216,9 +216,9 @@ another results file; entries load one at a time.
 
 ![Results with the Profile tool: a line across the vortex and the velocity along it.](../assets/gui_window/results_profile.png)
 
-PTV results show each particle coloured by the chosen field with its
-displacement; tracks are drawn as lines coloured by mean speed, broken where
-a track bridged missed frames. With a scale attached, axes, colour bars and
+PTV results show each particle colored by the chosen field with its
+displacement; tracks are drawn as lines colored by mean speed, broken where
+a track bridged missed frames. With a scale attached, axes, color bars and
 summaries use its units.
 Profile and circulation need a planar PIV result. Check flagged vectors and the mask
 before you interpret derived quantities, because derivatives amplify local

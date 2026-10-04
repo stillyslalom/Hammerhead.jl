@@ -84,9 +84,10 @@ end
 
 tutorial_ptv_diagnostics(ptv, truthA, truthB)
 
-# Task: compare `linked` with `detections_a`, then inspect the unlinked
-# particles in the overlay. If missed particles cluster in dim or crowded
-# regions, tune detection before changing the match search radius.
+# `linked` relative to `detections_a` is the share of particles matched. When
+# the unlinked particles in the overlay cluster in dim or crowded regions,
+# detection is the limiting step and should be tuned before the match search
+# radius.
 #
 # ## Scattered vectors versus a gridded field
 #

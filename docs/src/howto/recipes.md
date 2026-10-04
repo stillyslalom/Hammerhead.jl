@@ -126,7 +126,7 @@ A stereo results file also stores the cameras and grid:
 
 Set `mode = :ptv` to match individual particles in each pair, as
 [`run_ptv_sequence`](@ref) does. The recipe's passes become the PIV
-predictor that centres each particle search, and `ptv` holds the detection
+predictor that centers each particle search, and `ptv` holds the detection
 and matching settings:
 
 ```@example recipes

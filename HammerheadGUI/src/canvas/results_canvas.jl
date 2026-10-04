@@ -1,8 +1,8 @@
 # Results step canvas: a scalar field with vectors (gridded results), particles
-# coloured by a field with their displacements (PTV), or trajectories coloured
+# colored by a field with their displacements (PTV), or trajectories colored
 # by mean speed (tracking); the selected node, and the
 # analysis tools of a ResultExplorer. Same rule as the image canvas: plots are
-# created once and only their inputs change. Frame, field, colour and tool
+# created once and only their inputs change. Frame, field, color and tool
 # choices are made with the window's controls; a click on the canvas goes to
 # the explorer's tool (inspect: select the nearest vector; profile: line
 # endpoints; circulation: contour vertices, right-click closes), Escape
@@ -28,8 +28,8 @@ struct ResultsCanvas
     ax::Axis
     dirty::Base.RefValue{Bool}
     field::Any
-    points::Any               # PTV particles, coloured by the field
-    tracks::Any               # trajectories, coloured by mean speed
+    points::Any               # PTV particles, colored by the field
+    tracks::Any               # trajectories, colored by mean speed
     colorbar::Colorbar
     shafts::Any
     heads::Any
@@ -52,7 +52,7 @@ function results_canvas()
               xlabel = "x (px)", ylabel = "y (px)")
     field = heatmap!(ax, 1:2, 1:2, _EMPTY_IMAGE; colormap = :viridis, colorrange = (0, 1),
                      nan_color = :transparent)
-    # scattered results colour with the heatmap's colormap and range (the
+    # scattered results color with the heatmap's colormap and range (the
     # heatmap then holds no data), so the colorbar serves every result type
     points = scatter!(ax, _NOPOINT; color = [0.0f0], colormap = :viridis, colorrange = (0, 1),
                       markersize = 8)
@@ -94,7 +94,7 @@ end
 function _register_gestures!(rc::ResultsCanvas)
     register_interaction!(rc.ax, :results_gesture) do event::MouseEvent, _
         ex = rc.explorer[]
-        ex === nothing && return Consume(false)
+        (ex === nothing || _modifier_held(rc.fig)) && return Consume(false)
         t = event.type
         if t === MouseEventTypes.leftclick || t === MouseEventTypes.leftdoubleclick
             return Consume(_results_gesture(() -> (click!(ex, event.data[1], event.data[2]); true), rc))

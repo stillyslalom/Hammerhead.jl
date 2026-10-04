@@ -41,7 +41,7 @@ end
 # device scratch buffer `dcs[k, comp, r, c]` (window index leading so a
 # wavefront's reads over adjacent windows coalesce, like the `Rt` plane batch);
 # the covariance-sum kernel then reads the cache. Covariance sums use raw
-# products, exactly as the CPU `uq_component!` (no window-mean centring).
+# products, exactly as the CPU `uq_component!` (no window-mean centering).
 # Stored in plane precision T (the value `_ka_uq_dcs` returned), so `Float64`
 # widening on read is bitwise-identical to the recompute path.
 @inline function _ka_uq_dc(A, B, r, c, k, transposed)

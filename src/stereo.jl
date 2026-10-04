@@ -433,7 +433,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
     end
     pending = nothing
     failed = false
-    cancelled = false
+    canceled = false
     try
         file === nothing || (file["format_version"] = RESULTS_FORMAT_VERSION)
         meter = Progress(length(acquisitions); desc = "Stereo PIV sequence: ",
@@ -441,7 +441,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
         pending = load_acquisition(first(acquisitions))
         for (i, acq) in enumerate(acquisitions)
             if cancel !== nothing && cancel()
-                cancelled = true
+                canceled = true
                 break
             end
             try
@@ -483,7 +483,7 @@ function _run_piv_stereo_sequence(acquisitions, dw1, dw2, params;
                 try
                     fetch_frames(pending)
                 catch
-                    (failed || cancelled) || rethrow()
+                    (failed || canceled) || rethrow()
                 end
             end
         finally

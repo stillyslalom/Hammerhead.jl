@@ -1,8 +1,8 @@
 # From one pair to a repeatable recording
 
-Once a representative pair looks useful, apply the same settings to the rest
-of the recording. Save both the results and the choices that produced them so
-you can return to an interesting frame or compare another processing method.
+Settings chosen on a representative pair are applied unchanged to the rest
+of the recording. Saving the settings with the results makes it possible to
+return to an individual frame or to compare another processing method later.
 
 ## Process the frames in acquisition order
 
@@ -17,7 +17,7 @@ run_piv_sequence(pairs, passes; output="vectors.jld2", collect_results=false)
 results = load_results("vectors.jld2"; lazy=true)
 ```
 
-Check a few pairs before running. For a time-resolved sequence where adjacent
+Check the pairing on a few pairs before running. For a time-resolved sequence where adjacent
 frames form each pair, use `image_pairs(files; mode=:chained)` instead.
 The [batch guide](../howto/batch.md) covers pairing, memory use and exports.
 
@@ -37,7 +37,7 @@ same_settings = load_recipe("vectors.jld2")
 its own, comparing two recipes, and pooled ensembles. The GUI window saves
 and opens the same recipe files.
 
-## Return to a questionable result
+## Revisit a questionable result
 
 Open the results file in the [result explorer](../howto/gui.md) and inspect the
 images for the pairs in question. Check the rejected vectors with the

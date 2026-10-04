@@ -339,7 +339,7 @@ _fallback_unit(::StereoPIVResult) = "world units"
 _fallback_unit(::AnyResult) = "px"
 
 # Position (length) unit and displacement/velocity unit. After `physical`
-# conversion a real attached scale leaves labelled unit strings; `nothing`
+# conversion a real attached scale leaves labeled unit strings; `nothing`
 # means unscaled, so we use the type's fallback.
 _length_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) : r.scale.length_unit
 _field_unit(r::AnyResult) = r.scale === nothing ? _fallback_unit(r) :
@@ -598,7 +598,7 @@ vorticity-area form `circulation(r; region = contour)` are both evaluated
 into `circulation_result`; the area form also reports valid and requested
 area and their coverage fraction. An incomplete area retains its partial
 integral; zero valid area yields `NaN`. With fewer vertices the gesture is
-cancelled. A no-op for the other tools.
+canceled. A no-op for the other tools.
 """
 function alt_click!(ex::ResultExplorer)
     ex.tool[] === :circulation || return ex

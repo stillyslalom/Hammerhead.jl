@@ -1,8 +1,8 @@
 # API reference
 
-Look up functions, arguments and saved-data contracts here. For a worked
-example, start with [your first vector field](../tutorials/first_vector_field.md)
-or [the GUI tour](../tutorials/gui_tour.md).
+Functions, arguments and saved-data contracts. For worked examples, see
+[A first vector field](../tutorials/first_vector_field.md) and
+[A PIV session in the GUI](../tutorials/gui_tour.md).
 
 ## Images to measurements
 

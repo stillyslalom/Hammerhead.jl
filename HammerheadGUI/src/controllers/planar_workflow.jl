@@ -90,6 +90,9 @@ function Base.show(io::IO, wf::PlanarWorkflow)
 end
 
 workflow_steps(::PlanarWorkflow) = WORKFLOW_STEPS
+_representative_pair(wf::PlanarWorkflow) = wf.frames.pair[]
+_pair_target(wf::PlanarWorkflow) = wf.frames
+npairs(wf::PlanarWorkflow) = npairs(wf.frames)
 prepare_pages(::PlanarWorkflow) = PREPARE_PAGES
 function workflow_problem(wf::PlanarWorkflow)
     msg = frames_problem(wf.frames)

@@ -87,7 +87,7 @@ end
 # the ΔC_i field after (1,2,1)/4 smoothing along the shift direction (§2.1 —
 # eliminates the negative pixel-noise covariance at δ = ±1).
 #
-# The products are raw, not centred on the window mean. The zero-mean
+# The products are raw, not centered on the window mean. The zero-mean
 # requirement of eq (6) is the convergence condition ΣΔC_i = ΔC ≈ 0, which the
 # predictor–corrector scheme establishes; it is not a request to subtract an
 # empirical mean (the paper's own implementation forms the S_δ as smoothed

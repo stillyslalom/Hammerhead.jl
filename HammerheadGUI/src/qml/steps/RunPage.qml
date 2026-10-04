@@ -16,7 +16,7 @@ StepPage {
           "that produced them."
         : "Process every pair with the current settings. Results are written to the output " +
           "file as they finish, together with the settings that produced them; the viewer " +
-          "shows the latest pair. Cancelling keeps the pairs already finished."
+          "shows the latest pair. Canceling keeps the pairs already finished."
 
     Label { text: "Output file"; font.weight: Font.DemiBold }
     RowLayout {
@@ -32,6 +32,13 @@ StepPage {
             text: "Browse…"
             enabled: !app.runRunning
             onClicked: outputDialog.open()
+        }
+        Button {
+            text: "Clear"
+            enabled: !app.runRunning && app.outputPath !== ""
+            onClicked: Julia.hh_set_output("")
+            ToolTip.visible: hovered
+            ToolTip.text: "Keep results in memory only"
         }
     }
 
@@ -54,8 +61,8 @@ StepPage {
     }
     Label {
         text: app.mode === "tracking"
-            ? "Cancelling tracking stops at the next frame and keeps no result."
-            : "Cancelling an ensemble stops after the pair in flight and keeps no result."
+            ? "Canceling tracking stops at the next frame and keeps no result."
+            : "Canceling an ensemble stops after the pair in flight and keeps no result."
         visible: app.mode === "ensemble" || app.mode === "tracking"
         opacity: 0.75
         wrapMode: Text.WordWrap

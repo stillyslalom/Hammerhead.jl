@@ -258,6 +258,43 @@ end
 cancel_run!(wf::AbstractWorkflow) = cancel_run!(wf.run)
 
 """
+    pair_position(wf::AbstractWorkflow) -> (index, count)
+
+What the window's pair bar shows: on the Results step the result being
+viewed and the number of results (when results are open), otherwise the
+representative pair and the pair count. The two positions are independent.
+"""
+function pair_position(wf::AbstractWorkflow)
+    ex = wf.explorer[]
+    wf.step[] === :results && ex !== nothing && return (ex.frame[], nframes(ex))
+    return (_representative_pair(wf), npairs(wf))
+end
+
+
+"""
+    go_to_pair!(wf::AbstractWorkflow, i)
+    step_pair!(wf::AbstractWorkflow, delta)
+
+Move the pair bar (see [`pair_position`](@ref)) to position `i`, or by
+`delta`: on the Results step this changes the result shown, elsewhere the
+representative pair.
+"""
+function go_to_pair!(wf::AbstractWorkflow, i::Integer)
+    ex = wf.explorer[]
+    if wf.step[] === :results && ex !== nothing
+        set_frame!(ex, i)
+    else
+        select_pair!(_pair_target(wf), i)
+    end
+    return wf
+end
+
+step_pair!(wf::AbstractWorkflow, delta::Integer) =
+    go_to_pair!(wf, clamp(first(pair_position(wf)) + delta, 1, max(last(pair_position(wf)), 1)))
+
+
+
+"""
     open_results!(wf::AbstractWorkflow, path)
 
 Browse a results file in the Results step (entries load on demand).

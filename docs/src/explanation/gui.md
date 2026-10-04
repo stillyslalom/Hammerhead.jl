@@ -56,7 +56,7 @@ frees GPU objects as soon as a plot is added to or removed from a displayed
 figure. Outside Qt's render pass that would happen without a context. Each
 canvas therefore creates all of its plots when it is built: overlays that are
 empty hold a placeholder of `NaN` points. Afterwards only the plots' data,
-colours and visibility change. The profile panel under the result field is
+colors and visibility change. The profile panel under the result field is
 an axis that exists from the start; outside the profile tool its layout row
 collapses and it is hidden.
 

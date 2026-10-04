@@ -35,7 +35,7 @@ window:
 - **Test pair:** run the current settings on the representative pair, exactly
   as the batch will, with a summary of valid vectors and peak ratios.
 - **Run:** process every pair in the background, writing results as they
-  finish; cancelling keeps the finished pairs.
+  finish; canceling keeps the finished pairs.
 - **Results:** browse fields, inspect vectors, and measure profiles and
   circulation.
 

@@ -133,7 +133,7 @@ fx = stereo_rig(acquisitions = 2)
     @test wf.test.result[] isa StereoPIVResult
     @test length(wf.run.completed[]) == 2 && nframes(wf.explorer[]) == 2
     @test wf.explorer[].field[] === :w && wf.camera[] == 2
-    # the grabbed window images exist and show something (not one colour)
+    # the grabbed window images exist and show something (not one color)
     for n in names
         @test isfile(png[n])
         img = HammerheadGUI.Controllers.FileIO.load(png[n])

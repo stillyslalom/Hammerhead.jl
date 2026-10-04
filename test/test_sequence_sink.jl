@@ -95,7 +95,7 @@ using Random
             @test seen == [1, 2, 3]
             @test all(samefield.(load_results(path), expected))
 
-            cancelled_path = joinpath(dir, "cancelled.jld2")
+            cancelled_path = joinpath(dir, "canceled.jld2")
             completed = Ref(0)
             @test run_piv_stereo_sequence(acquisitions, dw1, dw2;
                 effort = :low, collect_results = false, output = cancelled_path,

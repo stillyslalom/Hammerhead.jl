@@ -39,7 +39,7 @@ Added:
   viewer that follows the step and can pop out into its own window. Settings
   save and open as core `PIVRecipe` files (results files carry theirs); the
   test pair runs exactly the batch's `apply_recipe` call; runs write results
-  as they finish and can be cancelled. Controllers (`PlanarWorkflow`,
+  as they finish and can be canceled. Controllers (`PlanarWorkflow`,
   `FrameSet`, `PassesEditor`, `PairTest`, `RunState`) work without a window.
 - Prepare step in the window, with four pages: **Preprocess** (ordered core
   `PreprocessStep`s with every option editable, a raw/processed view, a
@@ -67,7 +67,7 @@ Added:
 - `stereo_window()`: the stereo PIV window — Images (two camera frame
   lists), Calibration (plates with z per camera, detection settings and
   model, fit, dewarp grid, self-calibration with apply; the viewer shows the
-  plate's dots coloured by reprojection error and magnified residual
+  plate's dots colored by reprojection error and magnified residual
   arrows), Prepare (Preprocess, Mask on the dewarped grid with the cameras'
   out-of-view area shaded, and a dt-only Scale), and the shared Passes, Test
   pair, Run and Results pages. A camera switch in the pair bar chooses the
@@ -94,11 +94,21 @@ Added:
   (or tracks up to ten frames from it), Run writes per-pair PTV results or
   one set of tracks, and Results draw particles and tracks. Settings save
   as particle recipes.
+- Window usability (test-drive feedback): the Results field menu picks the
+  field shown (it mismatched entries once a label contained "|"); Results
+  step through the pair bar, independent of the representative pair
+  (`pair_position`, `go_to_pair!`, `step_pair!`); ← / → step pairs or
+  results, A / B and shift+← / → switch frames; **Auto contrast** in the
+  pair bar (display only); ctrl-click resets the zoom in every mode; Passes
+  has separate **Zero padding** and **Gaussian weighting** switches and a
+  **Validation** section (normalized median test, threshold, neighborhood,
+  minimum peak ratio, replacement); the Run step's output path has
+  **Clear**. U.S. spelling throughout.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run
   pools all pairs into one result (written with its recipe), reports
-  progress per pass and pair (`run_progress`), and can be cancelled after
+  progress per pass and pair (`run_progress`), and can be canceled after
   the pair in flight (no partial result is kept). Results then shows the
   ensemble result. An ensemble test goes stale when the frames change.
 - The Qt windows refuse to open (`ArgumentError`) in a Julia session that
@@ -197,7 +207,7 @@ Changed and fixed:
 
 - Wieneke uncertainty estimates are no longer biased low. Covariance sums now
   use the raw smoothed correlation-difference products instead of
-  window-mean-centred ones, and the variance is floored at the independent-pixel
+  window-mean-centered ones, and the variance is floored at the independent-pixel
   term, so textured windows no longer report σ = 0. On synthetic data with
   16 px final windows, coverage of the random error rises from about 43%/75% to
   54%/90% at 1σ/2σ; σ values typically increase by 5–15%. Coverage of the

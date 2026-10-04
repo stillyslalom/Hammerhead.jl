@@ -217,7 +217,7 @@ function summary_lines(s::NamedTuple; previous = nothing)
                  "Valid matches: $(s.valid) ($(pct(s.valid_fraction))) · flagged: $(s.flagged)" *
                      delta(:valid_fraction, signed_pct),
                  "Median displacement: $(num(s.displacement)) px · median match residual: $(num(s.residual)) px"]
-        # without a predictor the search is centred on the particle itself; with
+        # without a predictor the search is centered on the particle itself; with
         # one, matches far from the prediction point to a poor predictor
         if s.predictor === :none && isfinite(s.displacement) && s.displacement > 0.8 * s.search_radius
             push!(lines, "Displacements approach the search radius ($(num(s.search_radius)) px): " *
@@ -262,8 +262,8 @@ batch's recipe mode, `pairs` its pair count (frame count for tracking), and
 `progress` in pairs; an `:ensemble` batch counts pair correlations
 accumulated over every pass (and both cameras for stereo) and finishes with
 one result; a `:tracking` batch counts frame steps and finishes with one
-`TrackingResult`. Cancelling a sequence keeps finished pairs, in memory and
-in the output file; cancelling an ensemble or tracking run stops at the next
+`TrackingResult`. Canceling a sequence keeps finished pairs, in memory and
+in the output file; canceling an ensemble or tracking run stops at the next
 pair or frame step and keeps no result.
 """
 struct RunState
@@ -333,7 +333,7 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
             end
             :done
         catch err
-            err isa BatchCancelled ? :cancelled : err
+            err isa BatchCancelled ? :canceled : err
         end
         deliver(() -> _finish_run!(rs, output, outcome))
     end
@@ -349,10 +349,10 @@ function _finish_run!(rs::RunState, output, outcome)
         rs.mode[] === :ensemble ? "done: ensemble of $(rs.pairs[]) pairs" * to :
         rs.mode[] === :tracking ? "done: $(_ntracks(rs)) tracks through $(rs.pairs[]) frames" * to :
         "done: $n pairs" * to
-    elseif outcome === :cancelled
-        rs.mode[] === :ensemble ? "cancelled; an ensemble keeps no partial result" :
-        rs.mode[] === :tracking ? "cancelled; tracking keeps no partial result" :
-                                  "cancelled after $n of $total pairs"
+    elseif outcome === :canceled
+        rs.mode[] === :ensemble ? "canceled; an ensemble keeps no partial result" :
+        rs.mode[] === :tracking ? "canceled; tracking keeps no partial result" :
+                                  "canceled after $n of $total pairs"
     else
         "failed: " * _errmsg(outcome)
     end

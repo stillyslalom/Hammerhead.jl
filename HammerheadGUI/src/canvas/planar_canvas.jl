@@ -56,6 +56,7 @@ struct PlanarCanvas
     tracks::Any              # tracking test/run trajectories
     frame_size::Base.RefValue{Union{Nothing,Dims{2}}}
     shown::Base.RefValue{Any}  # the matrix the frame heatmap shows
+    contrast::Base.RefValue{Bool}  # auto contrast (display only)
 end
 
 """
@@ -98,7 +99,7 @@ function planar_canvas(wf::PlanarWorkflow)
     c = PlanarCanvas(fig, ax, Ref(true), frame, mask, roi, boxes, box_labels, shafts, heads,
                      polygons, active_line, active_points, roi_corner, scale_line, scale_points,
                      scale_label, probe_box, particles, tracks, Ref{Union{Nothing,Dims{2}}}(nothing),
-                     Ref{Any}(nothing))
+                     Ref{Any}(nothing), Ref(false))
     fs, ps = wf.frames, wf.prepare
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loaded,
@@ -134,7 +135,7 @@ function _draw_particles!(c::PlanarCanvas, wf::PlanarWorkflow)
 end
 
 # Clicks become `canvas_click!`/`canvas_alt_click!` (consumed only when the
-# controller used them, so the Axis keeps its own click behaviour); a quick
+# controller used them, so the Axis keeps its own click behavior); a quick
 # second click arrives as a double click and counts as another click. Keys
 # go to `canvas_key!` while the canvas has focus. Shared by the workflow
 # canvases (planar and stereo).
@@ -142,6 +143,8 @@ _register_gestures!(c::PlanarCanvas, wf::PlanarWorkflow) = (_register_workflow_g
 
 function _register_workflow_gestures!(ax::Axis, fig::Figure, wf::AbstractWorkflow)
     register_interaction!(ax, :workflow_gesture) do event::MouseEvent, _
+        # a click with a modifier is Makie's (ctrl-click resets the zoom)
+        _modifier_held(fig) && return Consume(false)
         t = event.type
         used = if t === MouseEventTypes.leftclick || t === MouseEventTypes.leftdoubleclick
             _gesture(() -> canvas_click!(wf, event.data[1], event.data[2]), wf)
@@ -161,6 +164,48 @@ function _register_workflow_gestures!(ax::Axis, fig::Figure, wf::AbstractWorkflo
         return Consume(_gesture(() -> canvas_key!(wf, key), wf))
     end
     return ax
+end
+
+const _MODIFIER_KEYS = (Keyboard.left_control, Keyboard.right_control, Keyboard.left_shift,
+                        Keyboard.right_shift, Keyboard.left_alt, Keyboard.right_alt,
+                        Keyboard.left_super, Keyboard.right_super)
+_modifier_held(fig) = any(k -> k in events(fig).keyboardstate, _MODIFIER_KEYS)
+
+"""
+    set_contrast!(canvas, wf, auto::Bool)
+
+Show frames on the image canvas with their full intensity range, or (`auto`)
+stretched to the 0.5–99.5 % percentile band. Display only: the analysis
+always uses the frames' values.
+"""
+function set_contrast!(c, wf::AbstractWorkflow, auto::Bool)
+    c.contrast[] == auto && return c
+    c.contrast[] = auto
+    c.shown[] = nothing                     # redraw the current frame
+    _draw_frame!(c, wf)
+    return c
+end
+
+# The heatmap's color range for a frame: its extrema, or the 0.5–99.5 %
+# band of a subsample (auto contrast).
+function _frame_colorrange(img::AbstractMatrix, auto::Bool)
+    if !auto
+        lo, hi = Inf32, -Inf32
+        for v in img
+            isfinite(v) && ((lo, hi) = (min(lo, v), max(hi, v)))
+        end
+    else
+        stride = max(1, length(img) ÷ 250_000)
+        vals = Float32[img[k] for k in 1:stride:length(img) if isfinite(img[k])]
+        isempty(vals) && return (0.0f0, 1.0f0)
+        sort!(vals)
+        n = length(vals)
+        lo, hi = vals[clamp(round(Int, 0.005 * (n - 1)) + 1, 1, n)],
+                 vals[clamp(round(Int, 0.995 * (n - 1)) + 1, 1, n)]
+    end
+    isfinite(lo) || return (0.0f0, 1.0f0)
+    hi > lo || (hi = lo + 1)
+    return (Float32(lo), Float32(hi))
 end
 
 # A failing gesture reports in the status line instead of breaking Makie's
@@ -201,7 +246,8 @@ function _draw_frame!(c::PlanarCanvas, wf::PlanarWorkflow)
         c.frame_size[] = nothing
     else
         nr, nc = size(img)
-        _update!(c.frame, 1:nc, 1:nr, Float32.(permutedims(img)))
+        _update!(c.frame, 1:nc, 1:nr, Float32.(permutedims(img));
+                 colorrange = _frame_colorrange(img, c.contrast[]))
         # new frame dimensions: show the whole frame (keep the zoom otherwise);
         # explicit limits, as the heatmap's new data applies only at render time
         if size(img) != c.frame_size[]

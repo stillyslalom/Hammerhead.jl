@@ -1,8 +1,7 @@
 # Understand the measurements
 
-Use these explanations when a result raises a question. For a first practical
-walkthrough, begin with [a vector field](../tutorials/first_vector_field.md)
-and return here as you need the underlying ideas.
+These pages explain the methods and conventions behind the results. For a
+worked example, see [A first vector field](../tutorials/first_vector_field.md).
 
 | Question | Read |
 |:--|:--|

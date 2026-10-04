@@ -6,7 +6,7 @@
 # What it shows depends on the step:
 #   Images        the shown camera's raw frame (camera pixels)
 #   Calibration   the shown camera's selected plate image with the detected
-#                 dots (coloured by reprojection error), the fiducial markers,
+#                 dots (colored by reprojection error), the fiducial markers,
 #                 and the reprojection residuals as magnified arrows; on the
 #                 Self-calibration page, the shown camera's dewarped frame
 #                 with the selected pass's disparity map (camera 1 → 2)
@@ -44,7 +44,7 @@ struct StereoCanvas
     active_line::Any         # polygon being drawn
     active_points::Any
     probe_box::Any
-    dots::Any                # detected calibration dots, coloured by error
+    dots::Any                # detected calibration dots, colored by error
     residuals::Any           # magnified reprojection residuals
     square::Any              # fiducial markers
     triangle::Any
@@ -54,6 +54,7 @@ struct StereoCanvas
     title::Base.RefValue{String}
     note::Base.RefValue{String}  # calibration overlay legend, appended to the title
     residual_gain::Base.RefValue{Float64}
+    contrast::Base.RefValue{Bool}  # auto contrast (display only)
 end
 
 """
@@ -97,7 +98,7 @@ function stereo_canvas(wf::StereoWorkflow)
     c = StereoCanvas(fig, ax, Ref(true), frame, oov, mask, boxes, box_labels, shafts, heads,
                      polygons, active_line, active_points, probe_box, dots, residuals, square,
                      triangle, Ref{Union{Nothing,Dims{2}}}(nothing), Ref(:none), Ref{Any}(nothing),
-                     Ref(""), Ref(""), Ref(1.0))
+                     Ref(""), Ref(""), Ref(1.0), Ref(false))
     fs1, fs2, ps, cal = wf.frames1, wf.frames2, wf.prepare, wf.calibration
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs1.files, fs1.pair_mode, fs1.pair, fs1.shown, fs1.loaded,
@@ -236,7 +237,8 @@ function _draw_frame!(c::StereoCanvas, wf::StereoWorkflow)
         c.frame_size[] = nothing
     else
         nr, nc = size(img)
-        _update!(c.frame, 1:nc, 1:nr, Float32.(permutedims(img)))
+        _update!(c.frame, 1:nc, 1:nr, Float32.(permutedims(img));
+                 colorrange = _frame_colorrange(img, c.contrast[]))
         # new frame dimensions or space: show the whole frame (keep the zoom
         # otherwise). Explicit limits: the heatmap's new data applies only at
         # render time, so its data limits would still be the old frame's.
@@ -335,7 +337,7 @@ function _residual_gain(maxerr::Real, target::Real)
     return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * 10^e
 end
 
-# Detected dots (coloured by reprojection error once fitted), fiducial
+# Detected dots (colored by reprojection error once fitted), fiducial
 # markers, and the residual arrows of the shown plate.
 function _draw_calibration!(c::StereoCanvas, wf::StereoWorkflow)
     cr = wf.step[] === :calibration ? wf.calibration.reviews[wf.camera[]][] : nothing
@@ -367,7 +369,7 @@ function _draw_calibration!(c::StereoCanvas, wf::StereoWorkflow)
             _update!(c.dots, isempty(pts) ? _NOPOINT : pts;
                      color = isempty(errs) ? [0.0f0] : errs, colorrange = (0, max(emax, eps(Float32))))
             _update!(c.residuals, isempty(segs) ? [Point2f(NaN, NaN), Point2f(NaN, NaN)] : segs)
-            note = " · residual arrows ×$(_num(gain)) · dot colour: error " *
+            note = " · residual arrows ×$(_num(gain)) · dot color: error " *
                    "0–$(Controllers.display_number(round(emax; sigdigits = 2))) px"
         end
         _update!(c.square, g.square === nothing ? _NOPOINT : [Point2f(g.square...)])

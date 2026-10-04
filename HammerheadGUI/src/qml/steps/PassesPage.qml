@@ -13,7 +13,7 @@ StepPage {
     guidance: particles
         ? "Detect particles, match them between the frames of a pair, and validate the " +
           "matches. The viewer circles the particles detected on the shown frame with these " +
-          "settings. The PIV predictor below centres each particle's search on the local flow."
+          "settings. The PIV predictor below centers each particle's search on the local flow."
         : "Start from a preset, then adjust. Each pass refines the previous one; the first " +
           "window should be at least four times the largest displacement. The viewer " +
           "outlines each window size against the particles."
@@ -143,7 +143,7 @@ StepPage {
             checked: app.ptvUodEnable
             onToggled: Julia.hh_particle_option("uod_enable", checked)
             ToolTip.visible: hovered
-            ToolTip.text: "Normalized median test against neighbouring matches; flagged, never replaced"
+            ToolTip.text: "Normalized median test against neighboring matches; flagged, never replaced"
         }
         Label { text: "" }
         Label { text: "Threshold"; enabled: app.ptvUodEnable }
@@ -154,7 +154,7 @@ StepPage {
             onEditingFinished: if (text !== app.ptvUodThreshold) Julia.hh_particle_option("uod_threshold", text)
         }
         Label { text: "" }
-        Label { text: "Neighbours"; enabled: app.ptvUodEnable }
+        Label { text: "Neighbors"; enabled: app.ptvUodEnable }
         TextField {
             Layout.preferredWidth: 100
             enabled: app.ptvUodEnable
@@ -361,12 +361,21 @@ StepPage {
             currentIndex: Math.max(0, ["gauss3", "gauss9", "gauss2d"].indexOf(app.subpixel))
             onActivated: Julia.hh_set_option("subpixel", currentValue)
         }
-        Label { text: "Padding and Gaussian weighting" }
+        Label { text: "Zero padding" }
         Switch {
-            checked: app.accuracy
-            onToggled: Julia.hh_set_option("accuracy", checked)
+            checked: app.padding
+            onToggled: Julia.hh_set_option("padding", checked)
             ToolTip.visible: hovered
-            ToolTip.text: "Most accurate (about 0.03 px RMS); slower"
+            ToolTip.text: "Removes the circular-correlation bias toward zero displacement; slower. " +
+                          "With Gaussian weighting, the most accurate setting (about 0.03 px RMS)"
+        }
+        Label { text: "Gaussian weighting" }
+        Switch {
+            checked: app.apodization
+            onToggled: Julia.hh_set_option("apodization", checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Weights each window toward its center (Gaussian apodization), " +
+                          "suppressing edge effects"
         }
         Label { text: "Uncertainty on final pass"; visible: !particles }
         Switch {
@@ -376,6 +385,67 @@ StepPage {
             ToolTip.visible: hovered
             ToolTip.text: "Per-vector random-error estimate (Wieneke 2015); needs a converged final pass"
         }
+    }
+
+    Label {
+        text: "Validation"
+        font.weight: Font.DemiBold
+        Layout.topMargin: 12
+        visible: !particles
+    }
+    GridLayout {
+        visible: !particles
+        columns: 3
+        columnSpacing: 16
+        rowSpacing: 8
+        Label { text: "Normalized median test" }
+        Switch {
+            checked: app.uodEnable
+            onToggled: Julia.hh_set_option("uod_enable", checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Flags vectors that differ from their neighbors' median by more than " +
+                          "the threshold times the neighbors' median residual"
+        }
+        Label { text: "" }
+        Label { text: "Threshold"; enabled: app.uodEnable }
+        TextField {
+            Layout.preferredWidth: 100
+            enabled: app.uodEnable
+            text: app.uodThreshold
+            onEditingFinished: if (text !== app.uodThreshold) Julia.hh_set_option("uod_threshold", text)
+        }
+        Label { text: "2 is typical"; opacity: 0.75 }
+        Label { text: "Neighborhood"; enabled: app.uodEnable }
+        ComboBox {
+            Layout.preferredWidth: 100
+            enabled: app.uodEnable
+            textRole: "text"; valueRole: "value"
+            model: [{ text: "3 × 3", value: 1 }, { text: "5 × 5", value: 2 }, { text: "7 × 7", value: 3 }]
+            currentIndex: Math.max(0, [1, 2, 3].indexOf(app.uodNeighborhood))
+            onActivated: Julia.hh_set_option("uod_neighborhood", currentValue)
+            ToolTip.visible: hovered
+            ToolTip.text: "5 × 5 avoids flagging smooth gradients at the field edges"
+        }
+        Label { text: "" }
+        Label { text: "Minimum peak ratio" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.minPeakRatio
+            onEditingFinished: if (text !== app.minPeakRatio) Julia.hh_set_option("min_peak_ratio", text)
+            ToolTip.visible: hovered
+            ToolTip.text: "Flags vectors whose highest correlation peak is not this many times the " +
+                          "second; 1 disables the check"
+        }
+        Label { text: "1 = off"; opacity: 0.75 }
+        Label { text: "Replace flagged vectors" }
+        Switch {
+            checked: app.replaceOutliers
+            onToggled: Julia.hh_set_option("replace_outliers", checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Fill flagged vectors from their valid neighbors (they stay flagged). " +
+                          "Intermediate passes always replace them for the predictor."
+        }
+        Label { text: "" }
     }
 
     Label { text: "Evaluation"; font.weight: Font.DemiBold; Layout.topMargin: 12 }

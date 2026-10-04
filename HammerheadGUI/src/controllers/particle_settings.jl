@@ -99,7 +99,7 @@ function set_particle_option!(ps::ParticleSettings, option::Symbol, value)
         elseif option === :uod_enable
             _parse_bool(value, "the outlier test")
         elseif option === :uod_neighbors
-            _parse_int(value, "the neighbour count")
+            _parse_int(value, "the neighbor count")
         else
             _parse_real(value, replace(String(option), '_' => ' '))
         end

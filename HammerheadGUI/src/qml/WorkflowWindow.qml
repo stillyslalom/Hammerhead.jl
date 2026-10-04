@@ -29,6 +29,13 @@ ApplicationWindow {
     // Closing the main window ends the session (the pop-out window included).
     onClosing: { quitting = true; Qt.quit() }
 
+    // Pair and frame navigation. Text fields keep the keys they use (Qt
+    // offers them the key first), so typing is unaffected.
+    Shortcut { sequences: ["Left"]; onActivated: Julia.hh_step_pair(-1) }
+    Shortcut { sequences: ["Right"]; onActivated: Julia.hh_step_pair(1) }
+    Shortcut { sequences: ["A", "Shift+Left"]; onActivated: Julia.hh_show_frame("a") }
+    Shortcut { sequences: ["B", "Shift+Right"]; onActivated: Julia.hh_show_frame("b") }
+
     header: ToolBar {
         RowLayout {
             anchors.fill: parent

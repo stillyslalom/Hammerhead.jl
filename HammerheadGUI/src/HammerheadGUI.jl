@@ -83,6 +83,7 @@ export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
+       pair_position, go_to_pair!, step_pair!,
        TRACKING_TEST_FRAMES
 export StereoCalibration, CALIBRATION_OPTIONS, add_plate!, remove_plate!, set_plate_z!,
        clear_plates!, detect_options, set_calibration_option!, edit_calibration_option!,

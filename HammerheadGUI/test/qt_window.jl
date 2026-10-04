@@ -127,7 +127,7 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     @test areas == [:pop, :main]
     @test circulation[] !== nothing && isfinite(circulation[].line)
     @test isempty(wf.explorer[].tool_points[]) && wf.explorer[].tool[] === :circulation
-    # the grabbed window images exist and show something (not one colour)
+    # the grabbed window images exist and show something (not one color)
     for path in (mask_png, scale_png, profile_png, circulation_png)
         @test isfile(path)
         img = HammerheadGUI.Controllers.FileIO.load(path)

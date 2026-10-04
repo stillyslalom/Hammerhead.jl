@@ -157,7 +157,7 @@ center_σ = [r.uncertainty_u[iy, ix] for r in results
 # uncertainty interval on the mean. If the flow changes over time, inspect
 # the individual fields before treating a single mean as representative.
 #
-# ## Average vectors or average correlations?
+# ## Averaging vectors versus averaging correlations
 #
 # `field_statistics` averages accepted displacement vectors and preserves
 # their time variation. [`run_piv_ensemble`](@ref) sums each window's

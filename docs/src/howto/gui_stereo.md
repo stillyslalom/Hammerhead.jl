@@ -1,9 +1,9 @@
 # Run stereo PIV in the GUI
 
-Start with two cameras' frames of the same instants and each camera's
-calibration plate images. In one window you will calibrate both cameras,
-check the fits, build the common dewarped grid, move it onto the light sheet,
-and then prepare, test and run the recording as in the planar window. The
+The stereo window takes two cameras' frames of the same instants and each
+camera's calibration plate images. It calibrates both cameras, reviews the
+fits, builds the common dewarped grid, moves it onto the light sheet, and
+then prepares, tests and runs the recording as the planar window does. The
 result is three velocity components on a world-coordinate grid. For the
 geometry behind each step, see
 [Stereo geometry and self-calibration](../explanation/stereo.md); for the
@@ -87,7 +87,7 @@ fit again.
 ### Read the fit
 
 Back on **Plates**, each plate lists its detected dots and RMS error. Click
-a plate to show it. On the viewer, dots are coloured by reprojection error,
+a plate to show it. On the viewer, dots are colored by reprojection error,
 the fiducial markers are outlined, and the residual arrows are magnified by
 the gain named in the title, so sub-pixel errors are visible.
 

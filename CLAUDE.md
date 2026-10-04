@@ -46,7 +46,7 @@ tests are expected and do not indicate failed assertions.
 
 Core CI covers single-threaded Ubuntu on LTS/stable/prerelease Julia and
 four-threaded stable Julia on Ubuntu and Windows. Lifecycle regressions also
-exercise failed/cancelled batches: their prefetched loaders must finish before
+exercise failed/canceled batches: their prefetched loaders must finish before
 the driver returns, while the original failure remains the reported exception.
 
 ## Documentation (docs/)
@@ -55,11 +55,16 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 `howto/`, `explanation/`, `reference/`, plus `index.md` and `references.md`
 (bibliography). Rules that keep the build green:
 
-- Organize the site around reader tasks. Tutorials lead with a concrete
-  question, executable example and figure, then explain the result; page
-  titles name a reader's task; format/edge-case contracts go in API reference.
-  Write directly and affirmatively; place a limitation beside the decision it
-  changes and avoid habitual negative caveats.
+- Organize the site around reader tasks. Tutorials open by stating what they
+  measure, then an executable example and figure, then explain the result;
+  page titles name a reader's task; format/edge-case contracts go in API
+  reference. Write directly and affirmatively; place a limitation beside the
+  decision it changes and avoid habitual negative caveats.
+- Register: plain technical prose for a research audience. No classroom
+  framing ("lesson", "by the end you will…", "you have now…"), no rhetorical
+  questions in headings or text, no "Try it" exercises; headings name the
+  content ("Window size and vector spacing", not "More arrows, or more
+  detail?"). A sensitivity worth knowing is stated, not set as an exercise.
 - Tutorials are Literate.jl sources in `docs/lit/*.jl`; `make.jl` converts
   them into `docs/src/tutorials/` (gitignored) with executable `@example`
   blocks, so the docs build runs them end to end — they are integration
@@ -331,7 +336,7 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   buffer `uqdcs[k, comp, r, c]` (window index leading for coalesced wavefront
   reads, like `Rt`; +1 leading-dim pad) in plane precision T — so the Float64
   read-back is bitwise-identical to the recompute; the stats kernel reads the
-  cache (raw products, no window-mean centring, matching the CPU). Result: the stats kernel dropped
+  cache (raw products, no window-mean centering, matching the CPU). Result: the stats kernel dropped
   ~5–8×, the whole UQ-multipass pipeline ~2× (e.g. Float64 2048² 1.50 s →
   0.74 s device time), `:ka`↔`:cpu` still ~3e-15 and ensemble bitwise, all on
   hardware. Phase 5 flipped the plane batch to *plane-major* `Rt[i, j, k]`
@@ -384,7 +389,7 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
-**Workflow window (Qt, GUI_REDESIGN.md):** `planar_window()` is a Qt Quick
+**Workflow window (Qt; plan archived in `reference/archive/GUI_REDESIGN.md`):** `planar_window()` is a Qt Quick
 app (QML.jl + QMLMakie) over framework-free controllers. `PlanarWorkflow`
 (`controllers/planar_workflow.jl`) owns one controller per step — `FrameSet`
 (`frame_set.jl`), `PrepareState` (`prepare.jl`: Prepare sub-page + the four
@@ -545,7 +550,7 @@ bound-wise manual overrides persisting across frames; `push_result!`
 appends live and grows the view's slider via the `count` observable;
 planar results add derived fields (:vorticity/:divergence/:strain_rate/
 :swirling_strength/:q_criterion via flow_derivatives, cached per frame,
-unit-labelled 1/time — physical-at-construction keeps the gradients
+unit-labeled 1/time — physical-at-construction keeps the gradients
 exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
 switches; circulation reports both line-integral and vorticity-area
@@ -636,7 +641,7 @@ before comparing renders in tests; `word_wrap` labels need an explicit
   explicit repeated final window size). Statistics accumulate
   in Float64 (`2 × UQ_NSTATS` per window) and are additive across pairs
   (that's how the ensemble path pools them). The S_δ are raw products of the
-  (1,2,1)-smoothed ΔC_i field — never centre it on the window mean: that
+  (1,2,1)-smoothed ΔC_i field — never center it on the window mean: that
   forces the all-lag sum to zero and biased the ±4 truncated sum low by
   ~81/N (a third of the variance at 16 px; it caused every σ = 0). The sums
   are taken ring by ring until a ring's max drops below `0.05·S00`; inner

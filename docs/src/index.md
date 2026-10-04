@@ -2,10 +2,13 @@
 CurrentModule = Hammerhead
 ```
 
-# See the flow in your images
+# Hammerhead.jl
 
-Two exposures of illuminated particles reveal how a fluid moves. Hammerhead
-turns the change in their patterns into a field of displacement vectors.
+Hammerhead measures fluid motion from particle images: planar particle image
+velocimetry (PIV), stereo PIV with camera calibration and self-calibration,
+and particle tracking (PTV), with uncertainty estimates, statistics and
+derived quantities. HammerheadGUI provides a desktop workflow for the same
+analyses.
 
 ```@example welcome
 using Hammerhead, CairoMakie, Random # hide
@@ -24,14 +27,12 @@ plot_vector_field!(ax,r;stride=2,color=:cyan,lengthscale=3) # hide
 fig # hide
 ```
 
-*A synthetic particle pair and its measured swirl. Arrows show direction;
-their lengths are enlarged for visibility.*
+*A synthetic particle pair and its measured displacement field; arrow
+lengths are enlarged.*
 
-**[Start here: make your first vector field →](tutorials/first_vector_field.md)**
-
-Follow one image pair from particles to a correlation peak and a complete
-field. Then change the window size, mask a reflection, and convert pixels to
-velocity. No recording or calibration equipment is needed to try it.
+[A first vector field](tutorials/first_vector_field.md) follows one image pair
+from particle images to a correlation peak and a complete field, then covers
+window size, masking and conversion to velocity, using synthetic images.
 
 ## Install
 
@@ -41,21 +42,22 @@ In Julia 1.10 or later, press `]` to enter package mode:
 pkg> add Hammerhead CairoMakie
 ```
 
-`CairoMakie` draws the lesson figures. For desktop tools, also install
-`HammerheadGUI`.
+`CairoMakie` draws the tutorial figures. The desktop workflow is in the
+separate `HammerheadGUI` package (`pkg> add HammerheadGUI`).
 
-## Choose your next experiment
+## Tutorials
 
-- **Have a recording?** [Find a tip vortex](tutorials/real_data.md), including
-  the region where particles disappear and the vectors become harder to judge.
-- **Prefer desktop tools?** [Take the GUI tour](tutorials/gui_tour.md) to load
-  images, draw masks and explore a field.
-- **Have many frames?** [Measure flow statistics](tutorials/sequence_statistics.md)
-  from a sequence rather than a single pair.
-- **Need another view of motion?** [Use two cameras for stereo PIV](tutorials/stereo.md)
-  or [follow individual particles](tutorials/ptv.md).
+- [A wing-tip vortex from a real recording](tutorials/real_data.md): PIV on
+  PIV Challenge images, including a vortex core with few particles.
+- [From image pairs to flow statistics](tutorials/sequence_statistics.md):
+  sequences, mean and fluctuation fields, and ensemble correlation.
+- [Stereo PIV end to end](tutorials/stereo.md) and
+  [a real stereo recording](tutorials/stereo_real.md): calibration, dewarping,
+  self-calibration and three-component reconstruction.
+- [Particle tracking](tutorials/ptv.md): detection, matching and trajectories.
+- [A PIV session in the GUI](tutorials/gui_tour.md): the same workflow in the
+  desktop window.
 
-PIV follows particle *patterns* within small windows; PTV follows individual
-particles. A spatial calibration and the exposure delay turn displacement into
-velocity. Start with the images and check the measurement before interpreting
-small flow features.
+PIV measures the displacement of particle *patterns* within interrogation
+windows; PTV follows individual particles. A spatial calibration and the
+exposure delay convert displacement to velocity.

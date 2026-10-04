@@ -10,5 +10,8 @@ the active plan; outstanding items have been reconciled into the root roadmap.
   candidates are tracked in the current roadmap.
 - `FEEDBACK_PLAN.md` — implementation record for the completed feedback batches.
 - `feedback.md` — original review items resolved by `FEEDBACK_PLAN.md`.
+- `GUI_REDESIGN.md` — the workflow-first Qt GUI plan (slices 0–5, done
+  2026-10-04), including the Qt/QMLMakie issues and workarounds that the
+  roadmap's upstream-report item refers to.
 
 All current work is tracked in [`ROADMAP.md`](../../ROADMAP.md).

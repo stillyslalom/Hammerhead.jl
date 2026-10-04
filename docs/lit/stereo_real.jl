@@ -1,9 +1,9 @@
 # # Stereo on a real recording: vortex ring
 #
 # This tutorial uses a physical calibration plate and two camera recordings
-# to calculate a three-component velocity field. You will inspect the
-# calibration residuals, check self-calibration against its pass-by-pass
-# results, and assess the field using its uncertainty estimates. The
+# to calculate a three-component velocity field, and examines the
+# calibration residuals, the self-calibration passes, and the field's
+# uncertainty estimates. The
 # [synthetic stereo tutorial](stereo.md) introduces the same analysis chain.
 #
 # The data is case E of the 4th International Particle Image Velocimetry

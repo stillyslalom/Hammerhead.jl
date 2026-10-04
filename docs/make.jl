@@ -27,18 +27,18 @@ makedocs(;
         edit_link="main",
         assets=String["assets/citations.css"],
     ),
-    # Keep lessons and reader tasks visible; detailed pages remain linked,
+    # Keep tutorials and reader tasks visible; detailed pages remain linked,
     # searchable and built at their existing URLs beneath each topic.
     pages=[
-        "Start here" => "index.md",
-        "Learn by doing" => [
-            "Your first vector field" => "tutorials/first_vector_field.md",
-            "Find a vortex in a real recording" => "tutorials/real_data.md",
+        "Overview" => "index.md",
+        "Tutorials" => [
+            "A first vector field" => "tutorials/first_vector_field.md",
+            "A wing-tip vortex from a real recording" => "tutorials/real_data.md",
             "From image pairs to flow statistics" => "tutorials/sequence_statistics.md",
             "Stereo PIV end to end" => "tutorials/stereo.md",
             "Stereo on a real recording: vortex ring" => "tutorials/stereo_real.md",
             "Particle tracking (PTV)" => "tutorials/ptv.md",
-            "Your first PIV session in the GUI" => "tutorials/gui_tour.md",
+            "A PIV session in the GUI" => "tutorials/gui_tour.md",
         ],
         "Work with your recording" => [
             hide("Prepare images" => "guides/images.md", [
@@ -73,7 +73,7 @@ makedocs(;
             "Multi-pass interrogation and image deformation" => "explanation/multipass.md",
             "The masking model" => "explanation/masking.md",
             "Uncertainty quantification" => "explanation/uncertainty.md",
-            "How accurate are the measurements?" => "explanation/validation_results.md",
+            "Measured accuracy and uncertainty coverage" => "explanation/validation_results.md",
             "Stereo geometry and self-calibration" => "explanation/stereo.md",
             "Numeric precision policy" => "explanation/precision.md",
         ]),
