@@ -198,11 +198,9 @@ and tools.
 
 ## Work with two cameras
 
-The planar window handles one camera. For stereo, start with
-[Calibrate a real stereo rig](stereo_rig.md).
-`stereo_calibration(cr1, cr2; batch)` reviews both cameras' calibrations
-and installs the dewarpers into a `stereo_batch_runner` form, which runs the
-synchronized frames.
+For a stereo rig, `stereo_window()` adds a Calibration step and runs both
+cameras on a common dewarped grid; the other steps are the ones above. See
+[Run stereo PIV in the GUI](gui_stereo.md).
 
 ## Script the window's steps
 

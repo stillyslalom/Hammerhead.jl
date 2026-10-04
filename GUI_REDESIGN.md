@@ -197,7 +197,7 @@ grid, and self-calibration) and has no ROI.
    runs in the Run step (slice 4; the Test step already tests ensembles);
    the narrow Repeats column in the pass table clips its value (seen in the
    screenshots; cosmetic).
-3. Stereo window. Design (proposed 2026-10-04, unreviewed): "Slice 3
+3. ✅ Stereo window (2026-10-04; overnight, unreviewed). Design: "Slice 3
    design" below. 3a ✅ controllers (2026-10-04, overnight, unreviewed):
    `AbstractWorkflow` (workflow.jl) holds the shared settings/test/run/
    results functions with per-workflow hooks; `StereoWorkflow`
@@ -214,7 +214,19 @@ grid, and self-calibration) and has no ROI.
    `StereoCanvas`, `stereo_window()`; the Test/Run viewer shows vectors on the
    *shown* camera's dewarped frame (the camera switch applies on every step),
    and plate images given as paths appear only after the fit (they load in
-   the fit job). Next: retire the GLMakie stereo views/`StereoBatchRunner`.
+   the fit job). 3c ✅ retirement and docs (2026-10-04): the GLMakie
+   `stereo_batch_runner`/`stereo_calibration` views and the
+   `StereoBatchRunner` controller are removed (with `parse_schedule`);
+   `build_dewarpers(cr1, cr2)` moved to `calibration_review.jl` as the
+   script route into `stereo_window(; dewarpers)`; `calibration_review`,
+   `calibration_review!` and `selfcal_review` stay standalone. New how-to
+   `howto/gui_stereo.md` with `stereo_*` window screenshots from
+   `docs/gui_screenshots.jl` (the synthetic rig of `test/stereo_fixture.jl`).
+   Open questions for the user: (a) calibration persistence — plates, fits
+   and dewarpers are session state because the core has no file format for
+   cameras/dewarpers; saving a calibration needs a core format first;
+   (b) per-camera preprocessing and background subtraction need a core
+   `PIVRecipe` change (one preprocessing list serves both cameras today).
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.
 
@@ -336,3 +348,8 @@ and the `StereoBatchRunner` controller retire once the window covers them;
   someone tests it.
 - Whether the standalone `result_explorer` and `calibration_review` stay as
   separate entry points (proposed: yes) once their pages exist in the windows.
+- Stereo calibration persistence: a core file format for cameras/dewarpers
+  (or a calibration recipe) so the stereo window can save and reopen a
+  calibration (slice 3).
+- Per-camera preprocessing (and so background subtraction) in stereo: needs
+  `PIVRecipe` to hold one preprocessing list per camera (slice 3).

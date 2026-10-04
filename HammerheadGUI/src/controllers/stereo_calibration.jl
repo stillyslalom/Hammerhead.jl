@@ -424,10 +424,7 @@ function build_dewarpers!(cal::StereoCalibration)
     g = (cal.grid_generation[] += 1)
     cal.building[] = true
     cal.grid_status[] = "building the dewarp grid…"
-    job = function ()
-        grid = common_dewarp_grid(collect(cams), collect(sizes), z; spacing, coverage, margin)
-        return (ImageDewarper(cams[1], grid, sizes[1]), ImageDewarper(cams[2], grid, sizes[2]))
-    end
+    job = () -> _dewarper_pair(cams, sizes, z; spacing, coverage, margin)
     apply = function (out)
         g == cal.grid_generation[] || return
         cal.building[] = false

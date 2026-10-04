@@ -4,7 +4,7 @@
 Windows and controllers for setting up, running, and inspecting Hammerhead
 analyses: the planar and stereo workflow windows (`planar_window`,
 `stereo_window`), plus GLMakie views
-for results, calibration, and stereo batches. Use `Controllers` to configure
+for browsing results and reviewing calibrations. Use `Controllers` to configure
 and inspect an analysis without opening a window. Controller state is
 exposed through `Observables`.
 """
@@ -36,7 +36,6 @@ include("controllers/preprocess_preview.jl")
 include("controllers/roi_editor.jl")
 include("controllers/scale_tool.jl")
 include("controllers/calibration_review.jl")
-include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
 include("controllers/frame_set.jl")            # workflow window controllers
 include("controllers/passes_editor.jl")
 include("controllers/workflow_jobs.jl")
@@ -62,15 +61,12 @@ export PreprocessPreview, PREPROCESS_OPERATIONS, preprocess_label, add_step!, re
        estimate_background, set_image!, set_pair!, set_frames!, preview_frames,
        apply_pipeline, build_preprocess, pipeline_summary,
        set_probe_window!, clear_probe!, probe_rect, probe_correlation, probe_summary
-export BatchCancelled, parse_schedule, add_files!, clear_files!, frame_pairs,
-       set_schedule!, set_effort!, build_parameters, build_scale, validate,
-       start!, cancel!, save_settings, load_settings!
+export BatchCancelled, add_files!, clear_files!, frame_pairs, save_settings, load_settings!
 export ROIEditor, set_roi!, clear_roi!, cancel_corner!, roi_summary
 export ScaleTool, clear_points!, undo_point!, set_separation!, pixel_distance,
        pixel_size, physical_scale, scale_summary, scale_description
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors, plane_residuals,
-       plane_summary, fit_summary, selfcal_summary
-export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
+       plane_summary, fit_summary, selfcal_summary, build_dewarpers, set_dewarpers!
 export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair,
        pair_images, shown_image, frames_problem, frames_summary, frame_size, pair_loading
 export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type!,
@@ -107,14 +103,11 @@ export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
 export PreprocessPreview, add_step!, remove_step!, move_step!, set_step_option!,
        set_steps!, set_background!, set_image!, set_pair!, apply_pipeline,
        build_preprocess, set_probe_window!, clear_probe!, probe_summary
-export add_files!, clear_files!, set_schedule!, set_effort!, start!, cancel!,
-       save_settings, load_settings!
+export add_files!, clear_files!, save_settings, load_settings!
 export ROIEditor, set_roi!, clear_roi!
 export ScaleTool, clear_points!, set_separation!, pixel_size, physical_scale
 export CalibrationReview, calibration_review, calibration_review!,
-       selfcal_review, nplanes, set_plane!
-export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
-       set_dewarpers!, build_dewarpers
+       selfcal_review, nplanes, set_plane!, build_dewarpers, set_dewarpers!
 export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
        open_results!, set_step!, set_prepare_page!
 export StereoWorkflow, StereoCalibration, stereo_window, fit_calibration!, start_selfcal!,
@@ -123,7 +116,6 @@ export StereoWorkflow, StereoCalibration, stereo_window, fit_calibration!, start
 include("views/widgets.jl")
 include("views/result_explorer.jl")
 include("views/calibration_review.jl")
-include("views/stereo_batch.jl")
 include("canvas/planar_canvas.jl")
 include("canvas/results_canvas.jl")
 include("canvas/stereo_canvas.jl")

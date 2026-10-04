@@ -69,7 +69,18 @@ Breaking:
   `set_scale!`, `set_pixel_size!`, `set_dt!`, `batch_recipe`,
   `preprocess_steps`, `apply_roi!`, `apply_scale!`); use `PlanarWorkflow`,
   whose `workflow_recipe`, `save_settings` and `load_settings!` cover the
-  saved settings. `StereoBatchRunner` and the stereo views are unchanged.
+  saved settings.
+- The GLMakie stereo windows `stereo_batch_runner` and `stereo_calibration`
+  and the `StereoBatchRunner` controller are removed (with its
+  `set_schedule!`, `set_effort!`, `build_parameters`, `build_scale`,
+  `validate`, `start!`, `cancel!` and `stereo_pairs`, and the
+  `parse_schedule` helper); `stereo_window` covers calibration, dewarping,
+  self-calibration and synchronized runs. `build_dewarpers(cr1, cr2)` stays
+  and builds a dewarper pair from two `CalibrationReview`s, for
+  `stereo_window(; dewarpers)` or `run_piv_stereo`; `set_dewarpers!` now
+  applies to a `StereoWorkflow` or `StereoCalibration`. The standalone
+  `calibration_review`, `calibration_review!`, `selfcal_review` and
+  `result_explorer` views stay.
 - `PreprocessPreview` holds a `Vector{PreprocessStep}`: `add_step!`,
   `remove_step!`, `move_step!`, `set_step_option!` and `set_steps!` replace
   `PreprocStep`, `enable_step!` and `set_step_param!` (the `enabled` keyword

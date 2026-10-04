@@ -61,7 +61,10 @@ makedocs(;
                 "Batch processing and result files" => "howto/batch.md",
                 "Save settings and reuse them" => "howto/recipes.md",
             ]),
-            "Work in the GUI" => "howto/gui.md",
+            "Work in the GUI" => [
+                "Analyze an image pair in the GUI" => "howto/gui.md",
+                "Run stereo PIV in the GUI" => "howto/gui_stereo.md",
+            ],
         ],
         hide("Understand the measurements" => "explanation/index.md", [
             "Coordinates, signs, and units" => "explanation/conventions.md",
@@ -87,6 +90,7 @@ makedocs(;
             "Synthetic data" => "reference/synthetic.md",
             "PTV (particle tracking)" => "reference/ptv.md",
             "GUI (HammerheadGUI)" => "reference/gui.md",
+            "GUI stereo window" => "reference/gui_stereo.md",
             "GUI result explorer" => "reference/gui_results.md",
             "KernelAbstractions and GPU backends" => "reference/backends.md",
             "Feature matrix" => "reference/feature_matrix.md",

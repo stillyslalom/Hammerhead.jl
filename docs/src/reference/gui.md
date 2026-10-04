@@ -4,13 +4,16 @@ CurrentModule = HammerheadGUI
 
 # Graphical user interface (GUI; HammerheadGUI)
 
-The planar PIV window ([`planar_window`](@ref)) is a Qt Quick application
-(QML.jl) with Makie canvases. Every button calls a function in
-`HammerheadGUI.Controllers`, so the same steps run in a script, without a
-display. Start with the [GUI tour](../tutorials/gui_tour.md) for a worked
-session, or [Analyze an image pair in the GUI](../howto/gui.md) for the
-window's tasks. Result browsing and interactive analysis have a separate
-[result explorer reference](gui_results.md).
+The planar PIV window ([`planar_window`](@ref)) and the stereo PIV window
+([`stereo_window`](@ref)) are Qt Quick applications (QML.jl) with Makie
+canvases. Every button calls a function in `HammerheadGUI.Controllers`, so
+the same steps run in a script, without a display. Start with the
+[GUI tour](../tutorials/gui_tour.md) for a worked session,
+[Analyze an image pair in the GUI](../howto/gui.md) for the planar window's
+tasks, or [Run stereo PIV in the GUI](../howto/gui_stereo.md) for the stereo
+window. The stereo window's calibration and workflow controllers have their
+own [stereo reference](gui_stereo.md), and result browsing and interactive
+analysis a separate [result explorer reference](gui_results.md).
 
 ```@index
 Pages = ["gui.md"]
@@ -19,8 +22,8 @@ Pages = ["gui.md"]
 ## Workflow window
 
 `planar_window` shows a [`PlanarWorkflow`](@ref Controllers.PlanarWorkflow)
-and `stereo_window` a [`StereoWorkflow`](@ref Controllers.StereoWorkflow);
-the same controllers run without a window. Its canvases create every plot
+and [`stereo_window`](@ref) a [`StereoWorkflow`](@ref Controllers.StereoWorkflow);
+the same controllers run without a window. The canvases create every plot
 before they are first shown and afterwards only update plot data, because a
 Qt canvas has a current OpenGL context only while Qt renders it.
 `request_grab` saves an image of the open window for screenshots and render
@@ -29,7 +32,7 @@ checks.
 ```@autodocs
 Modules = [HammerheadGUI]
 Order = [:module, :type, :function, :constant, :macro]
-Pages = ["shell.jl", "planar_canvas.jl", "results_canvas.jl", "stereo_canvas.jl"]
+Pages = ["qt/shell.jl", "planar_canvas.jl", "results_canvas.jl"]
 ```
 
 ## Workflow controllers
@@ -58,24 +61,6 @@ Pages = ["controllers/workflow.jl", "planar_workflow.jl", "frame_set.jl",
          "workflow_jobs.jl"]
 ```
 
-## Stereo workflow controllers
-
-[`StereoWorkflow`](@ref Controllers.StereoWorkflow) is the stereo
-counterpart of `PlanarWorkflow`; both are
-[`AbstractWorkflow`](@ref Controllers.AbstractWorkflow)s and share the
-settings, test, run, and results functions above. It adds two synchronized
-camera frame sets and the Calibration step,
-[`StereoCalibration`](@ref Controllers.StereoCalibration): plate images
-per camera, grid detection and camera fits, the shared dewarp grid, and
-self-calibration. Its Prepare step works on the dewarped grid, and its
-test and run call the stereo `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`.
-
-```@autodocs
-Modules = [HammerheadGUI.Controllers]
-Order = [:module, :type, :function, :constant, :macro]
-Pages = ["controllers/stereo_workflow.jl", "controllers/stereo_calibration.jl"]
-```
-
 ## Prepare editors
 
 The Prepare step's pages edit the workflow through these controllers
@@ -93,24 +78,4 @@ Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
 Pages = ["controllers/preprocess_preview.jl", "controllers/mask_editor.jl",
          "controllers/roi_editor.jl", "controllers/scale_tool.jl", "controllers/shared.jl"]
-```
-
-## Calibration review and stereo batches
-
-These GLMakie views cover stereo until the stereo workflow window exists:
-[`calibration_review`](@ref) checks dot detection and reprojection errors per
-calibration plane, [`stereo_calibration`](@ref) builds the shared dewarping
-grid from two reviews, and [`stereo_batch_runner`](@ref) runs synchronized
-camera frames. [`selfcal_review`](@ref) browses a self-calibration report.
-
-```@autodocs
-Modules = [HammerheadGUI]
-Order = [:module, :type, :function, :constant, :macro]
-Pages = ["HammerheadGUI.jl", "views/calibration_review.jl", "views/stereo_batch.jl"]
-```
-
-```@autodocs
-Modules = [HammerheadGUI.Controllers]
-Order = [:module, :type, :function, :constant, :macro]
-Pages = ["controllers/calibration_review.jl", "controllers/stereo_batch.jl"]
 ```

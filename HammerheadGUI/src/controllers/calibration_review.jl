@@ -180,3 +180,34 @@ function selfcal_summary(report::SelfCalibrationReport)
     push!(lines, "correction: rotation $(_fmt(angle))°, shift $(_fmt(LinearAlgebra.norm(report.t))) (world units)")
     return join(lines, "\n")
 end
+
+"""
+    build_dewarpers(cr1::CalibrationReview, cr2::CalibrationReview;
+                    z = 0.0, spacing = :auto, coverage = :intersection,
+                    margin = 0.0) -> (dw1, dw2)
+
+Build a pair of [`ImageDewarper`](@ref)s on one world-coordinate grid from
+two fitted reviews, for example to pass to `stereo_window(; dewarpers)` or
+`run_piv_stereo`. `z` selects the world plane; `spacing` and `margin` use
+the calibrations' world length unit. `coverage = :intersection` or `:union`
+combines the cameras' projected boundary boxes, not their exact visible
+regions; out-of-view samples remain masked per camera. The grid uses each
+review's first plate image size. Throws if either camera has no fit.
+"""
+function build_dewarpers(cr1::CalibrationReview, cr2::CalibrationReview;
+                         z::Real = 0.0, spacing = :auto,
+                         coverage::Symbol = :intersection, margin::Real = 0.0)
+    cam1, cam2 = cr1.camera[], cr2.camera[]
+    cam1 === nothing && throw(ArgumentError("camera 1 has no fitted calibration: $(cr1.fit_message[])"))
+    cam2 === nothing && throw(ArgumentError("camera 2 has no fitted calibration: $(cr2.fit_message[])"))
+    return _dewarper_pair((cam1, cam2), (size(cr1.images[1]), size(cr2.images[1])), z;
+                          spacing, coverage, margin)
+end
+
+# Two cameras' dewarpers on their common grid (shared with the stereo
+# workflow's Calibration step, which captures cameras and sizes first so the
+# build can run on a worker).
+function _dewarper_pair(cams, sizes, z::Real; spacing, coverage::Symbol, margin::Real)
+    grid = common_dewarp_grid(collect(cams), collect(sizes), z; spacing, coverage, margin)
+    return (ImageDewarper(cams[1], grid, sizes[1]), ImageDewarper(cams[2], grid, sizes[2]))
+end

@@ -84,7 +84,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `Pages` suffix-matches: `"calibration.jl"` also catches
   `planar_calibration.jl`, so use `"src/calibration.jl"` there.
   `reference/internals.md` catches all non-exported docstrings via
-  `Public = false`.
+  `Public = false`. A page's HTML must stay under Documenter's 200 KiB
+  `size_threshold` (the build fails above it): the GUI reference is split
+  into `reference/gui.md` (planar/shared), `gui_stereo.md`, `gui_results.md`.
 - Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
   style); cite as `[Wieneke2005](@cite)` / `[Wieneke2015](@citet)`. PDFs
   for content-checking live in `reference/`.
@@ -433,9 +435,11 @@ runs inline (tests rely on it); test/run take an explicit `spawn` kwarg.
 Closing a window abandons in-flight jobs (`_abandon_jobs!`) and restores
 `deliver`/`spawn`. `request_grab(path)` saves the window body via QML
 `grabToImage` on the next tick (works offscreen); `_TICK_HOOK[]` lets a
-script drive an open window — see `test/qt_window.jl` and
-`docs/gui_screenshots.jl` (local-only; regenerates the committed
-`docs/src/assets/gui_window/*.png`).
+script drive an open window — see `test/qt_window.jl`,
+`test/qt_stereo_window.jl`, and `docs/gui_screenshots.jl` (local-only;
+regenerates the committed `docs/src/assets/gui_window/*.png`, planar and
+`stereo_*`, from synthetic scenes — the stereo one is
+`test/stereo_fixture.jl`'s rig).
 
 Rules learned the hard way:
 (1) **never destroy a `MakieArea`** — jlqml connects a context-less
@@ -512,19 +516,20 @@ exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
 switches; circulation reports both line-integral and vorticity-area
 estimators; `profile_series`/`tool_summary` feed the window's panel);
-`StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two
-synchronized frame lists + an `ImageDewarper` pair —
-`build_dewarpers(cr1, cr2)` composes `common_dewarp_grid` from two fitted
-`CalibrationReview`s, and the workflow view embeds both reviews via the
-embeddable `calibration_review!`; runs `run_piv_stereo_sequence` with its
-NATIVE zero-arg `cancel` predicate — no exception, completed prefix
-returned — and a dt-only stereo scale);
 `CalibrationReview`/
-`calibration_review` + `selfcal_review` (grid-detection/reprojection review
-and the `SelfCalibrationReport` browser — its disparity maps open in an
-embedded explorer via `result_explorer!(gridposition, ex)`, the embeddable
-form all composite views should use). The stereo views stay until the stereo
-window (GUI_REDESIGN slice 3). The Prepare editors' controllers also work
+`calibration_review` (+ embeddable `calibration_review!`) + `selfcal_review`
+(grid-detection/reprojection review and the `SelfCalibrationReport` browser —
+its disparity maps open in an embedded explorer via
+`result_explorer!(gridposition, ex)`, the embeddable form all composite views
+should use); `build_dewarpers(cr1, cr2)` (in `calibration_review.jl`) builds a
+dewarper pair from two fitted reviews for `stereo_window(; dewarpers)`, sharing
+`_dewarper_pair` with the window's grid build. The stereo window replaced the
+GLMakie stereo batch/calibration views (2026-10-04). Stereo window
+conventions: calibration inputs (plates, detection, grid, self-calibration)
+are session state — no core file format holds cameras/dewarpers, so they are
+not in the recipe; plate images given as paths load in the fit job; one
+recipe preprocessing list serves both cameras, so stereo has no background
+estimate. The Prepare editors' controllers also work
 alone: `PreprocessPreview` holds core `PreprocessStep`s and previews with
 `recipe_preprocess`, so it is exactly the batch; `MaskEditor` exports via
 `Hammerhead.polygon_mask(::MaskEditor)` and `save_mask` writes the

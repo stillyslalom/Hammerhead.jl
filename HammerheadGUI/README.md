@@ -44,6 +44,22 @@ core `PIVRecipe`, and every results file carries the recipe that produced it.
 `planar_window` returns its workflow when the window closes; the controllers
 in `HammerheadGUI.Controllers` run the same steps from a script.
 
+## Open the stereo PIV window
+
+```julia
+using HammerheadGUI
+wf = stereo_window()
+```
+
+The stereo window follows the same steps for two cameras and adds
+**Calibration**: plate images with their z positions per camera, dot
+detection and the camera model (Soloff or pinhole), the fit's reprojection
+residuals on each plate, the common dewarp grid, and self-calibration onto
+the light sheet. Prepare, the passes, the test and the run work on the
+dewarped grid, and Results shows u, v and w on world axes. Settings files
+hold the processing settings; pass `dewarpers = (dw1, dw2)` to start from a
+calibration built in a script (`build_dewarpers(cr1, cr2)`).
+
 ## Other tools
 
 - **Result explorer:** `result_explorer("results.jld2"; lazy = true)` browses
@@ -51,15 +67,14 @@ in `HammerheadGUI.Controllers` run the same steps from a script.
   vectors, components, diagnostics, uncertainty, derived quantities such as
   vorticity, and profile and circulation measurements, in physical units when
   a `PhysicalScale` is attached.
-- **Stereo workflow:** review dot detection and reprojection errors across
-  calibration planes with `calibration_review`, build a shared dewarping grid
-  with `stereo_calibration`, and process synchronized camera frames with
-  `stereo_batch_runner()`. Use `selfcal_review(report)` to inspect disparity
-  maps and the self-calibration report.
+- **Calibration review:** `calibration_review(images, zs; spacing)` shows one
+  camera's dot detection and reprojection errors across calibration planes,
+  and `selfcal_review(report)` shows a self-calibration report with its
+  disparity maps.
 
 See the [GUI tutorial](https://stillyslalom.github.io/Hammerhead.jl/dev/tutorials/gui_tour/)
-for a worked example and the [GUI guide](../docs/src/howto/gui.md) for each
-step's tasks.
+for a worked example, and the [planar](../docs/src/howto/gui.md) and
+[stereo](../docs/src/howto/gui_stereo.md) GUI guides for each step's tasks.
 
 ## Development
 

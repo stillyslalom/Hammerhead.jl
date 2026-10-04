@@ -77,7 +77,8 @@ studies, and the Qt/QML GUI prototype. They are recoverable from commit
 The current GUI is a set of separate tool windows. Users have to know which
 window to open next and carry settings between them by hand.
 
-- [ ] **One main window per modality** (planar, stereo, PTV), organized as
+- [ ] **One main window per modality** (planar ✅ `planar_window`, stereo ✅
+  `stereo_window`, PTV pending), organized as
   steps: Images → Prepare (preprocessing, mask, ROI, and scale as embedded
   panels) → Passes → Test pair → Run → Results. Each step shows its effect on
   a representative pair before the batch runs.
@@ -92,9 +93,10 @@ window to open next and carry settings between them by hand.
   - Supersedes the parked stash `Shared recipe workbench WIP parked for
     experimental QML integration` (built on the removed revision editors);
     drop the stash once the redesign starts.
-- [ ] Stereo and ensemble save/open settings in the GUI. `apply_recipe`
-  already supports both; the stereo batch form and an ensemble mode need the
-  same save/open buttons as the planar form.
+- [ ] Ensemble runs in the GUI windows. `apply_recipe` already supports
+  them; the windows test ensembles but run sequences only (GUI_REDESIGN
+  slice 4). Stereo save/open settings landed with `stereo_window`
+  (2026-10-04).
 - [ ] Exercise the redesigned workflow with a lab user and record concrete
   friction before adding further features.
 
