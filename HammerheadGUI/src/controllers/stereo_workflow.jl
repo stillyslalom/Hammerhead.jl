@@ -265,7 +265,7 @@ function workflow_problem(wf::StereoWorkflow)
     msg = frames_problem(wf)
     msg === nothing || return msg
     wf.calibration.dewarpers[] === nothing && return "calibrate the cameras first (no dewarpers)"
-    return nothing
+    return _backend_problem(wf)
 end
 
 # ---------------------------------------------------------------- calibration

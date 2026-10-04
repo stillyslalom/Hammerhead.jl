@@ -229,7 +229,7 @@ cr2 = CalibrationReview(cam2_plate_paths, zs; detect...)
 dw1, dw2 = build_dewarpers(cr1, cr2)   # common grid at z = 0
 
 wf = stereo_window(files1 = cam1_paths, files2 = cam2_paths,
-                   dewarpers = (dw1, dw2), settings = "stereo_settings.jld2")
+                   dewarpers = (dw1, dw2), settings = "stereo_settings.toml")
 ```
 
 The window then starts at a calibrated rig: self-calibrate on the

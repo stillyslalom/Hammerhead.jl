@@ -107,6 +107,45 @@ _supports_unified_memory(::_CPUBackend) = false
 # engines tile it internally) instead of fanning out across host threads.
 _check_backend_params(::_AbstractHammerheadBackend, passes) = nothing
 _engine_nchunks(::_AbstractHammerheadBackend, requested::Int) = requested
+# A device extension reports whether its device works in this session.
+_backend_functional(::_AbstractHammerheadBackend) = true
+
+"""
+    backend_available(backend::Symbol) -> Bool
+
+Whether `backend` can run in this session: `:cpu` and `:ka` always;
+`:cuda` and `:amdgpu` once their device package is loaded (`using CUDA`,
+`using AMDGPU`) and reports a working device.
+"""
+function backend_available(backend::Symbol)
+    b = try
+        _resolve_backend(backend)
+    catch err
+        err isa ArgumentError || rethrow()
+        return false
+    end
+    return _backend_functional(b)
+end
+
+"""
+    backend_problem(backend::Symbol, passes) -> Union{Nothing,String}
+
+`nothing` when the pass schedule (a `PIVParameters` or a vector of them) can
+run on `backend`, otherwise why not: the backend is not loaded, or a pass
+uses a setting the backend does not implement (on the KernelAbstractions
+and GPU backends: an enlarged search area, `subpixel_method = :gauss2d`,
+retained correlation planes, or non-default interpolation).
+"""
+function backend_problem(backend::Symbol, passes)
+    try
+        _check_backend_params(_resolve_backend(backend),
+                              passes isa PIVParameters ? [passes] : passes)
+    catch err
+        err isa ArgumentError || rethrow()
+        return err.msg
+    end
+    return nothing
+end
 
 """
     PIVParameters(; kwargs...)
@@ -195,6 +234,14 @@ Immutable, validated configuration for a PIV analysis.
   [`run_piv`](@ref) returns the final pass, set it on the final pass only
   (pair it with the `final` keyword of [`multipass_parameters`](@ref)). See
   [`PIVResult`](@ref).
+- `image_interpolation = :cubic`: how a deforming pass resamples the images,
+  `:cubic` (cubic B-spline, the accurate default) or `:linear` (bilinear:
+  faster, but it smooths particle images and adds a sub-pixel bias).
+- `predictor_interpolation = :linear`: how the predictor field is
+  interpolated between its vectors for the deformation, `:linear` or
+  `:cubic` (a cubic B-spline through the vectors; smoother in strongly
+  curved flow, with a little overshoot at sharp changes). KernelAbstractions
+  and GPU backends support only the defaults.
 
 Multi-pass interrogation is configured with a vector of `PIVParameters` (one
 per pass) — see [`run_piv`](@ref) and [`multipass_parameters`](@ref).
@@ -219,6 +266,8 @@ struct PIVParameters
     max_iterations::Int
     convergence_tol::Float64
     keep_correlation_planes::Bool
+    image_interpolation::Symbol
+    predictor_interpolation::Symbol
 
     function PIVParameters(;
         window_size::Union{Int,Tuple{Int,Int}} = (32, 32),
@@ -240,6 +289,8 @@ struct PIVParameters
         max_iterations::Int = 1,
         convergence_tol::Real = 0.05,
         keep_correlation_planes::Bool = false,
+        image_interpolation::Symbol = :cubic,
+        predictor_interpolation::Symbol = :linear,
     )
         ws = window_size isa Int ? (window_size, window_size) : window_size
         ss = search_area_size === nothing ? ws :
@@ -273,10 +324,15 @@ struct PIVParameters
             throw(ArgumentError("max_iterations must be at least 1, got $max_iterations"))
         convergence_tol >= 0 ||
             throw(ArgumentError("convergence_tol must be non-negative, got $convergence_tol"))
+        image_interpolation in (:cubic, :linear) ||
+            throw(ArgumentError("image_interpolation must be :cubic or :linear, got :$image_interpolation"))
+        predictor_interpolation in (:linear, :cubic) ||
+            throw(ArgumentError("predictor_interpolation must be :linear or :cubic, got :$predictor_interpolation"))
         new(ws, ss, ov, correlation_method, padding, apodization, subpixel_method,
             n_peaks, peak_finder, uncertainty, uod_enable, Float64(uod_threshold), uod_neighborhood,
             Float64(min_peak_ratio), map(parse_validator, validation), replace_outliers,
-            max_iterations, Float64(convergence_tol), keep_correlation_planes)
+            max_iterations, Float64(convergence_tol), keep_correlation_planes,
+            image_interpolation, predictor_interpolation)
     end
 end
 
@@ -295,7 +351,10 @@ function Base.show(io::IO, p::PIVParameters)
         ", replace_outliers=$(p.replace_outliers)",
         p.max_iterations > 1 ?
             ", max_iterations=$(p.max_iterations), convergence_tol=$(p.convergence_tol)" : "",
-        p.keep_correlation_planes ? ", keep_correlation_planes=true" : "", ")")
+        p.keep_correlation_planes ? ", keep_correlation_planes=true" : "",
+        p.image_interpolation === :cubic ? "" : ", image_interpolation=:$(p.image_interpolation)",
+        p.predictor_interpolation === :linear ? "" :
+            ", predictor_interpolation=:$(p.predictor_interpolation)", ")")
 end
 
 """

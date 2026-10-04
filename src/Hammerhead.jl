@@ -12,15 +12,16 @@ import FileIO
 using ImageCore: Colorant, Gray
 using ImageFiltering: imfilter, KernelFactors
 using JLD2: jldopen
+import TOML
 using ProgressMeter: Progress, next!
 
 export PIVParameters, PIVResult, run_piv, multipass_parameters, effort_schedule, PIVWorkspace, piv_workspace
-export benchmark_piv_configurations
+export benchmark_piv_configurations, backend_available, backend_problem
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
 export ResultFile, load_sources
 export PreprocessStep, PIVRecipe, save_recipe, load_recipe, apply_recipe
-export recipe_preprocess, recipe_diff
+export recipe_preprocess, recipe_diff, recipe_toml
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
 export export_table, export_vtk, TABLE_SCHEMA_VERSION, TABLE_COLUMNS
 export polygon_mask, automatic_mask, grow_mask, shrink_mask, load_mask

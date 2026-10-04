@@ -282,6 +282,7 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
                 ps.ruler_name,
                 pp.error_step, pp.status, pp.processed2,
                 pe.passes, pe.preset, pe.mode, pe.image_type, pe.error,
+                pe.backend, pe.gpu_loading, pe.gpu_status,
                 t.result, t.running, t.status, r.output_path, r.running, r.progress, r.status,
                 r.completed, r.finished_output)
         on(mark, obs)
@@ -320,7 +321,13 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
                    "ptvUodEnable" => true, "ptvPredictor" => "piv", "ptvMinTrackLength" => 3,
                    "ptvMaxGap" => 0, "ptvError" => "", "ptvDetectStatus" => "", "frameCount" => 0,
                    "resultVectors" => true, "selectionText" => "", "resultsStatus" => "",
-                   "resultTool" => "inspect", "resultToolsAvailable" => false, "toolSummary" => "")
+                   "resultTool" => "inspect", "resultToolsAvailable" => false, "toolSummary" => "",
+                   # the GPU switch: installed device packages are looked up once
+                   "gpuInstalled" => !isempty(gpu_packages()),
+                   "gpuPackages" => join((Controllers._gpu_package(b) for b in gpu_packages()), " and "),
+                   # per-frame mask images (planar only)
+                   "frameMaskCount" => 0, "frameMasksInfo" => "", "patternDir3" => "",
+                   "pattern3" => "*.png", "patternCount3" => 0, "patternInfo3" => "")
         _set!(sh, k, v)
     end
     _sync_pass_rows!(sh)
@@ -333,10 +340,12 @@ end
 function _connect_window!(sh::PlanarShell, mark)
     wf = sh.wf
     fs = wf.frames
-    for obs in (wf.roi, fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error,
-                fs.pattern_dir, fs.pattern, fs.pattern_matches, fs.pattern_error)
+    for f in (fs, wf.frame_masks), obs in (f.files, f.pair_mode, f.pair, f.loading, f.loaded, f.load_error,
+                                          f.pattern_dir, f.pattern, f.pattern_matches, f.pattern_error)
         on(mark, obs)
     end
+    on(mark, wf.roi)
+    on(mark, fs.shown)
     pt = wf.particles
     for obs in (pt.ptv, pt.predictor, pt.min_track_length, pt.max_gap, pt.error, pt.detect_status)
         on(mark, obs)
@@ -470,6 +479,16 @@ function _refresh_frames!(sh::PlanarShell)
     _set!(sh, "pairMode", String(fs.pair_mode[]))
     _refresh_pattern!(sh, 0, fs)
     _set!(sh, "shown", String(fs.shown[]))
+    fm = sh.wf.frame_masks
+    _refresh_pattern!(sh, 3, fm)
+    nm = length(fm.files[])
+    problem = frame_masks_problem(sh.wf)
+    _set!(sh, "frameMaskCount", nm)
+    _set!(sh, "frameMasksInfo", problem !== nothing ? problem :
+                                nm == 0 ? "none: every pair uses the mask above" :
+                                "$nm mask image" * (nm == 1 ? "" : "s") * ", one per frame" *
+                                (fm.loading[] ? " (loading the pair's masks…)" :
+                                 isempty(fm.load_error[]) ? "" : "; " * fm.load_error[]))
     return
 end
 
@@ -519,7 +538,7 @@ function _refresh!(sh::WorkflowShell)
     catch
         true
     end
-    _set!(sh, "title", "Hammerhead — $(_window_kind(wf)) — " * name * (modified ? " •" : ""))
+    _set!(sh, "title", "Hammerhead $(_window_kind(wf)) | " * name * (modified ? " •" : ""))
     _set!(sh, "step", String(wf.step[]))
     _set!(sh, "status", wf.status[])
 
@@ -541,6 +560,8 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "accuracy", option_value(pe, :accuracy))
     _set!(sh, "padding", option_value(pe, :padding))
     _set!(sh, "apodization", option_value(pe, :apodization))
+    _set!(sh, "imageInterpolation", String(option_value(pe, :image_interpolation)))
+    _set!(sh, "predictorInterpolation", String(option_value(pe, :predictor_interpolation)))
     _set!(sh, "uncertainty", option_value(pe, :uncertainty))
     _set!(sh, "uodEnable", option_value(pe, :uod_enable))
     _set!(sh, "uodThreshold", _num(option_value(pe, :uod_threshold)))
@@ -549,6 +570,9 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "replaceOutliers", option_value(pe, :replace_outliers))
     _set!(sh, "mode", String(pe.mode[]))
     _set!(sh, "precision", string(pe.image_type[]))
+    _set!(sh, "gpuOn", pe.backend[] !== :cpu || pe.gpu_loading[])
+    _set!(sh, "gpuLoading", pe.gpu_loading[])
+    _set!(sh, "gpuStatus", pe.gpu_status[])
 
     s = test_summary(t)
     _set!(sh, "testRunning", t.running[])
@@ -671,9 +695,36 @@ function _with_shell(f)
 end
 
 # Returns 0 (nothing to draw), 1 (redraw the canvases), or 2 (close the window).
+# The Hammerhead icon (docs/make_icons.jl writes it).
+const ICON_ICO = joinpath(QML_DIR, "icons", "hammerhead.ico")
+const _ICON_TRIES = Ref(0)
+
+# Windows: show the icon in the title bar and taskbar. Qt Quick windows have
+# no icon property and QML.jl does not expose QGuiApplication's, so the icon
+# is sent to the window (found by its title) on the first ticks after it
+# opens. Elsewhere the window keeps the platform default.
+function _set_window_icon(title::AbstractString)
+    Sys.iswindows() || return true
+    hwnd = ccall((:FindWindowW, "user32"), Ptr{Cvoid}, (Ptr{Cvoid}, Cwstring), C_NULL, title)
+    hwnd == C_NULL && return false
+    for (which, metric) in ((0, 49), (1, 11))     # ICON_SMALL/SM_CXSMICON, ICON_BIG/SM_CXICON
+        px = ccall((:GetSystemMetrics, "user32"), Cint, (Cint,), metric)
+        icon = ccall((:LoadImageW, "user32"), Ptr{Cvoid},
+                     (Ptr{Cvoid}, Cwstring, Cuint, Cint, Cint, Cuint),
+                     C_NULL, ICON_ICO, 1, px, px, 0x10)      # IMAGE_ICON, LR_LOADFROMFILE
+        icon == C_NULL ||
+            ccall((:SendMessageW, "user32"), Ptr{Cvoid}, (Ptr{Cvoid}, Cuint, Csize_t, Ptr{Cvoid}),
+                  hwnd, 0x0080, which, icon)                 # WM_SETICON
+    end
+    return true
+end
+
 function hh_tick()
     sh = _SHELL[]
     sh === nothing && return 0
+    if _ICON_TRIES[] > 0
+        _ICON_TRIES[] = _set_window_icon(get(sh.shown, "title", "")) ? 0 : _ICON_TRIES[] - 1
+    end
     if _TICK_HOOK[] !== nothing
         try
             _TICK_HOOK[](sh)
@@ -758,6 +809,7 @@ function hh_particle_option(option, value)
     end
 end
 hh_set_precision(p) = _with_shell(sh -> set_image_type!(sh.wf.passes, String(p) == "Float32" ? Float32 : Float64))
+hh_use_gpu(on) = _with_shell(sh -> use_gpu!(sh.wf, Bool(on)))
 hh_test() = _with_shell(sh -> test_pair!(sh.wf))
 hh_set_output(url) = _with_shell(sh -> (sh.wf.run.output_path[] = _url_to_path(String(url))))
 hh_start_run() = _with_shell(sh -> start_run!(sh.wf))
@@ -826,13 +878,17 @@ hh_set_scale(field, value) = _with_shell(sh -> edit_scale!(sh.wf, Symbol(String(
 hh_clear_scale() = _with_shell(sh -> clear_scale!(sh.wf))
 hh_load_ruler(url) = _with_shell(sh -> load_ruler!(sh.wf, _url_to_path(String(url))))
 hh_clear_ruler() = _with_shell(sh -> clear_ruler!(sh.wf))
-# Frames by folder and pattern; camera 0 is the planar window's frame set.
-_pattern_frames(sh, k) = k == 0 ? sh.wf.frames : camera_frames(sh.wf, k)
+# Frames by folder and pattern; camera 0 is the planar window's frame set,
+# 3 its per-frame mask images.
+_pattern_frames(sh, k) = k == 0 ? sh.wf.frames : k == 3 ? sh.wf.frame_masks : camera_frames(sh.wf, k)
+hh_add_frame_masks(urls) = _with_shell(sh -> add_files!(sh.wf.frame_masks, _paths(urls)))
+hh_clear_frame_masks() = _with_shell(sh -> clear_files!(sh.wf.frame_masks))
 hh_set_frame_pattern(k, dir, pattern) =
     _with_shell(sh -> set_frame_pattern!(_pattern_frames(sh, round(Int, k)), _url_to_path(String(dir)),
                                          String(pattern)))
 hh_add_matching(k) = _with_shell(sh -> (n = add_matching!(_pattern_frames(sh, round(Int, k)));
-                                        sh.wf.status[] = "added $n frame" * (n == 1 ? "" : "s")))
+                                        sh.wf.status[] = "added $n " * (k == 3 ? "mask image" : "frame") *
+                                                         (n == 1 ? "" : "s")))
 function hh_pattern_from_frames(k, urls)
     _with_shell() do sh
         paths = _paths(urls)
@@ -892,6 +948,7 @@ function _register_qml_functions()
     @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi
     @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points hh_load_ruler hh_clear_ruler
     @qmlfunction hh_set_frame_pattern hh_add_matching hh_pattern_from_frames
+    @qmlfunction hh_add_frame_masks hh_clear_frame_masks hh_use_gpu
     _register_stereo_functions()
     return
 end
@@ -919,6 +976,7 @@ function _run_window(setup, wf::AbstractWorkflow, qml::AbstractString, make_shel
         _SHELL[] = sh
         _CLOSE_REQUESTED[] = false
         _register_qml_functions()
+        _ICON_TRIES[] = 120                    # about two seconds of ticks
         loadqml(joinpath(QML_DIR, qml); app = sh.app,
                 stepModel = sh.step_model, passModel = sh.pass_model,
                 prepModel = sh.prep_model, (Symbol(k) => m for (k, m) in sh.models)...)

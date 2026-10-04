@@ -5,6 +5,12 @@
     # Device backends run the whole grid as one logical batch, not host-thread
     # fan-out.
     @test Hammerhead._engine_nchunks(kab, 8) == 1
+    # availability and per-backend setting checks
+    @test backend_available(:cpu) && backend_available(:ka) && !backend_available(:nonexistent)
+    @test backend_problem(:ka, PIVParameters()) === nothing
+    @test backend_problem(:cpu, [PIVParameters(subpixel_method = :gauss2d)]) === nothing
+    @test occursin("gauss2d", backend_problem(:ka, [PIVParameters(subpixel_method = :gauss2d)]))
+    @test occursin("unsupported", backend_problem(:nonexistent, PIVParameters()))
 
     rng = MersenneTwister(20260712)
     image_size = (256, 256)

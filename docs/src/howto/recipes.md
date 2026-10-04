@@ -46,11 +46,23 @@ they use the built-in validators.
 
 ## Save it and load it again
 
+A `.toml` path writes a plain-text settings file. Arrays go in image files
+beside it, named after it: the mask as `settings.mask.png` (white =
+excluded) and a background as `settings.background.tif`. Keep them together
+with the settings file.
+
 ```@example recipes
 dir = mktempdir()
-save_recipe(joinpath(dir, "settings.jld2"), recipe)
-load_recipe(joinpath(dir, "settings.jld2")) == recipe
+save_recipe(joinpath(dir, "settings.toml"), recipe)
+load_recipe(joinpath(dir, "settings.toml")) == recipe
 ```
+
+```@example recipes
+print(read(joinpath(dir, "settings.toml"), String)[1:400], "…")
+```
+
+Any other extension writes one JLD2 file holding the same text and the
+arrays. [`recipe_toml`](@ref) returns the text without writing anything.
 
 ## Apply it to a recording
 
@@ -67,6 +79,30 @@ length(results), results[1].scale.length_unit
 Pairs can be file paths, as from [`image_pairs`](@ref), or in-memory images.
 Other keywords, such as `backend = :cuda`, `collect_results = false` or
 `on_result`, go to the driver; see [Batch processing](batch.md).
+
+## Masks that move from pair to pair
+
+A boundary that moves during the recording (a flapping wall, a free surface)
+needs a mask per frame. These masks are input data, like the frames, so they
+are passed beside the pairs rather than stored in the recipe: one entry per
+pair, either a mask image path (white = excluded), a `Bool` matrix, or a tuple
+of the two frames' masks, which are unioned. Each pair's mask is also unioned
+with the recipe's static mask.
+
+```@example recipes
+moving = map(1:4) do k
+    m = falses(128, 128)
+    m[:, 1:16k] .= true                      # a wall that advances each pair
+    m
+end
+masked = apply_recipe(recipe, pairs; masks = moving, progress = false)
+[count(r.mask) for r in masked]              # masked vectors per pair
+```
+
+Mask image paths given this way are stored with the results;
+[`load_sources`](@ref)`(output; masks = true)` lists them. A function
+`(i, imgA, imgB) -> mask` computes each pair's mask instead. Per-pair masks
+apply to `:sequence` and `:ptv` recipes.
 
 ## Recover the settings from a results file
 
@@ -145,7 +181,8 @@ recordings on the CPU and use a mask instead of an ROI.
 
 ## In the GUI
 
-The planar window's **Save settings…** button writes the same recipe file, and
-**Open settings…** loads a recipe file or an earlier run's results file into
-the window. A run in the window stores its recipe in the results file, as
-`apply_recipe` does. See [Analyze an image pair in the GUI](gui.md).
+The planar window's **Save settings…** button writes the same recipe file
+(TOML by default), and **Open settings…** loads a recipe file or an earlier
+run's results file into the window. A run in the window stores its recipe in
+the results file, as `apply_recipe` does. Per-frame mask images are added on
+**Prepare › Mask**. See [Analyze an image pair in the GUI](gui.md).

@@ -161,7 +161,7 @@ function selfcal_summary(report::SelfCalibrationReport)
         s = "pass $k: disparity median magnitude $(_fmt(p.disparity_median)) px, " *
             "RMS $(_fmt(p.disparity_rms)) px ($(p.n_vectors) vectors)"
         if p.plane === nothing
-            s *= " — no correction"
+            s *= ", no correction"
         else
             s *= "\n  plane a = $(_fmt(p.plane.a)), b = $(_fmt(p.plane.b)), " *
                  "c = $(_fmt(p.plane.c)); triangulation rms $(_fmt(p.triangulation_rms)) px"

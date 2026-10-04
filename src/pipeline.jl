@@ -427,12 +427,19 @@ function run_piv(imgA::AbstractMatrix{<:Real}, imgB::AbstractMatrix{<:Real},
     end
 
     result = nothing
+    linear_itps = nothing          # bilinear interpolants, built if a pass asks
     for (k, params) in enumerate(passes)
         predictor = result === nothing ? nothing :
                     build_predictor(result, predictor_smoothing)
+        pa, pb = itpA, itpB
+        if params.image_interpolation === :linear && itpA !== nothing
+            linear_itps === nothing &&
+                (linear_itps = (linear_interpolant(imgA, T), linear_interpolant(imgB, T)))
+            pa, pb = linear_itps
+        end
         # Intermediate passes always replace invalid vectors: the predictor
         # field must stay well behaved for the deformation to converge.
-        result = piv_pass(imgA, imgB, params, predictor, itpA, itpB;
+        result = piv_pass(imgA, imgB, params, predictor, pa, pb;
                           threaded, force_replace = k < length(passes),
                           predictor_smoothing, mask, mask_threshold,
                           warp_buffers, backend = be, workspace,
@@ -567,7 +574,7 @@ end
 # Gridded(Linear())/Flat() evaluation the CPU deformation interpolates the
 # images with, run on the host — the vector grid is tiny next to the images,
 # so every backend shares this bit (vector attribution is backend-independent).
-function predictor_interpolant(y, x, field)
+function predictor_interpolant(y, x, field; method::Symbol = :linear)
     # A coarse window can fill one or both image dimensions. There is no
     # measured gradient on a singleton axis, so extend its value constantly.
     # Interpolations requires two knots for Gridded(Linear()); duplicate only
@@ -578,13 +585,46 @@ function predictor_interpolant(y, x, field)
         x = single_x ? [first(x) - 1, first(x) + 1] : x
         field = repeat(field; outer = (single_y ? 2 : 1, single_x ? 2 : 1))
     end
+    # a cubic B-spline needs a few nodes per axis; coarser grids stay linear
+    method === :cubic && length(y) >= 4 && length(x) >= 4 &&
+        return _CubicPredictor(collect(Float64, y), collect(Float64, x),
+                               extrapolate(interpolate(field, BSpline(Cubic(Line(OnGrid())))), Flat()))
     return extrapolate(interpolate((y, x), field, Gridded(Linear())), Flat())
 end
 
+# A cubic B-spline through the predictor vectors, evaluated in node-index
+# space; positions map to fractional node indices piecewise linearly, which
+# is exact on the regular pass grids (an extended search area moves only the
+# outer nodes inward).
+struct _CubicPredictor{I}
+    y::Vector{Float64}
+    x::Vector{Float64}
+    itp::I
+end
+
+(p::_CubicPredictor)(yq, xq) = p.itp(_node_position(p.y, yq), _node_position(p.x, xq))
+
+function _node_position(g::Vector{Float64}, q)
+    ascending = g[end] > g[1]
+    k = ascending ? searchsortedlast(g, q) : searchsortedlast(g, q; rev = true)
+    k < 1 && return 1.0
+    k >= length(g) && return Float64(length(g))
+    return k + (q - g[k]) / (g[k+1] - g[k])
+end
+
+"""
+    linear_interpolant(img, ::Type{T}) -> extrapolation
+
+A zero-extrapolated bilinear interpolant in precision `T`, used by passes
+with `image_interpolation = :linear` (see [`PIVParameters`](@ref)).
+"""
+linear_interpolant(img::AbstractMatrix, ::Type{T}) where {T} =
+    extrapolate(interpolate(eltype(img) === T ? img : T.(img), BSpline(Linear())), zero(T))
+
 function predictor_node_values(predictor, x::AbstractVector, y::AbstractVector,
-                               ::Type{T}) where {T}
-    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u)
-    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v)
+                               ::Type{T}; method::Symbol = :linear) where {T}
+    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u; method)
+    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v; method)
     return T[itp_u(yi, xj) for yi in y, xj in x],
            T[itp_v(yi, xj) for yi in y, xj in x]
 end
@@ -597,17 +637,25 @@ function apply_predictor(imgA::AbstractMatrix, imgB::AbstractMatrix, itpA, itpB,
                          predictor, x::AbstractVector, y::AbstractVector, ::Type{T};
                          threaded::Bool = false,
                          warpA::Union{Nothing,Matrix{T}} = nothing,
-                         warpB::Union{Nothing,Matrix{T}} = nothing) where {T}
+                         warpB::Union{Nothing,Matrix{T}} = nothing,
+                         interpolation::Symbol = :linear) where {T}
     ny, nx = length(y), length(x)
     predictor === nothing && return imgA, imgB, zeros(T, ny, nx), zeros(T, ny, nx)
-    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u)
-    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v)
+    itp_u = predictor_interpolant(predictor.y, predictor.x, predictor.u; method = interpolation)
+    itp_v = predictor_interpolant(predictor.y, predictor.x, predictor.v; method = interpolation)
     warpA, warpB = deform_images(itpA, itpB, itp_u, itp_v, size(imgA), T;
                                  threaded, warpA, warpB)
     u = T[itp_u(yi, xj) for yi in y, xj in x]
     v = T[itp_v(yi, xj) for yi in y, xj in x]
     return warpA, warpB, u, v
 end
+
+# The predictor-interpolation keyword, passed only when it differs from the
+# default (device deformation methods take no such keyword; their backends
+# reject non-default choices up front).
+_predictor_kw(params::PIVParameters) =
+    params.predictor_interpolation === :linear ? (;) :
+    (; interpolation = params.predictor_interpolation)
 
 # Backend-dispatched deformation seam: the default is the CPU cubic-B-spline
 # path above (dropping the deform context, which the CPU path never needs);
@@ -764,7 +812,8 @@ function piv_pass(imgA::AbstractMatrix, imgB::AbstractMatrix, params::PIVParamet
         warpA, warpB, u, v = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                              grid.x, grid.y, T; threaded,
                                              warpA = bufA, warpB = bufB,
-                                             ctx = deform_context)
+                                             ctx = deform_context,
+                                             _predictor_kw(params)...)
         source_gate = _original_source_gate(source_context, predictor, grid, params, mask;
                                            gate = source_gate, threaded)
         if it > 1

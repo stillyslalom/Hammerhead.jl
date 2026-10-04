@@ -9,8 +9,8 @@ import jlqml
 StepPage {
     id: page
     title: "Images"
-    guidance: "Add each camera's frames in acquisition order — frame i of camera 1 and of " +
-              "camera 2 must show the same instant — then choose how they form pairs. Step " +
+    guidance: "Add each camera's frames in acquisition order (frame i of camera 1 and of " +
+              "camera 2 must show the same instant), then choose how they form pairs. Step " +
               "through pairs, frames A and B, and the cameras below the viewer."
 
     property int addingCamera: 1

@@ -377,6 +377,30 @@ StepPage {
             ToolTip.text: "Weights each window toward its center (Gaussian apodization), " +
                           "suppressing edge effects"
         }
+        Label { text: "Image interpolation" }
+        ComboBox {
+            Layout.preferredWidth: 220
+            textRole: "text"; valueRole: "value"
+            model: [{ text: "Cubic B-spline", value: "cubic" },
+                    { text: "Bilinear", value: "linear" }]
+            currentIndex: app.imageInterpolation === "linear" ? 1 : 0
+            onActivated: Julia.hh_set_option("image_interpolation", currentValue)
+            ToolTip.visible: hovered
+            ToolTip.text: "How deforming passes resample the images. Bilinear is faster but " +
+                          "smooths particle images and adds a sub-pixel bias"
+        }
+        Label { text: "Predictor interpolation" }
+        ComboBox {
+            Layout.preferredWidth: 220
+            textRole: "text"; valueRole: "value"
+            model: [{ text: "Bilinear", value: "linear" },
+                    { text: "Cubic B-spline", value: "cubic" }]
+            currentIndex: app.predictorInterpolation === "cubic" ? 1 : 0
+            onActivated: Julia.hh_set_option("predictor_interpolation", currentValue)
+            ToolTip.visible: hovered
+            ToolTip.text: "How the previous pass's vectors are interpolated to deform the images. " +
+                          "Cubic follows strongly curved flow more closely"
+        }
         Label { text: "Uncertainty on final pass"; visible: !particles }
         Switch {
             visible: !particles
@@ -507,6 +531,34 @@ StepPage {
                     { text: "Float32 (less memory)", value: "Float32" }]
             currentIndex: app.precision === "Float32" ? 1 : 0
             onActivated: Julia.hh_set_precision(currentValue)
+        }
+        Label { text: "Run on the GPU"; enabled: gpuSwitch.enabled }
+        RowLayout {
+            spacing: 8
+            Switch {
+                id: gpuSwitch
+                enabled: app.gpuInstalled && !app.gpuLoading && !passesPage.particleModes
+                checked: app.gpuOn
+                onToggled: {
+                    Julia.hh_use_gpu(checked)
+                    checked = Qt.binding(() => app.gpuOn)
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: !app.gpuInstalled ?
+                    "Install a GPU package (CUDA for NVIDIA, AMDGPU for AMD) in the " +
+                    "environment to enable this" :
+                    passesPage.particleModes ? "Particle analysis runs on the CPU" :
+                    "Tests and runs use " + app.gpuPackages + "; loading it the first " +
+                    "time takes a while"
+            }
+            BusyIndicator { running: app.gpuLoading; visible: running; implicitHeight: 24; implicitWidth: 24 }
+            Label {
+                text: app.gpuStatus
+                visible: text !== ""
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.preferredWidth: 240
+            }
         }
     }
 }

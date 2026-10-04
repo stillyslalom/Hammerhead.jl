@@ -74,6 +74,11 @@
         @test set_option!(pe, :uod_neighborhood, 1) && option_value(pe, :uod_neighborhood) == 1
         @test set_option!(pe, :min_peak_ratio, Symbol("1.3")) && option_value(pe, :min_peak_ratio) == 1.3
         @test set_option!(pe, :replace_outliers, false) && !option_value(pe, :replace_outliers)
+        @test set_option!(pe, :image_interpolation, :linear) &&
+              all(q -> q.image_interpolation === :linear, pe.passes[])
+        @test set_option!(pe, :predictor_interpolation, :cubic) &&
+              option_value(pe, :predictor_interpolation) === :cubic
+        @test !set_option!(pe, :image_interpolation, :quintic) && occursin("quintic", pe.error[])
         before = pe.passes[]
         @test !set_option!(pe, :uod_threshold, Symbol("abc")) && occursin("number", pe.error[])
         @test !set_option!(pe, :uod_neighborhood, 0) && pe.passes[] == before
@@ -139,6 +144,47 @@
         @test wf.scale[].pixel_size ≈ 0.5                       # the measured scale stays
     end
 
+    @testset "run and results go stale; GPU backend" begin
+        wf = PlanarWorkflow(; files = frames)
+        fill_preset!(wf.passes, :low)
+        @test step_status(wf, :run) == (:todo, "not run") && !run_stale(wf)
+        start_run!(wf; spawn = false)
+        @test step_status(wf, :run)[1] === :ok && step_status(wf, :results)[1] === :ok
+        set_option!(wf.passes, :correlation, :phase)
+        @test run_stale(wf)
+        @test step_status(wf, :run)[1] === :attention && step_status(wf, :results)[1] === :attention
+        set_option!(wf.passes, :correlation, :cross)
+        @test !run_stale(wf) && step_status(wf, :run)[1] === :ok
+        add_files!(wf.frames, frames[1:2])                       # a new pair
+        @test run_stale(wf) && step_status(wf, :results)[1] === :attention
+
+        # the hardware-free :ka backend stands in for a GPU
+        wf = PlanarWorkflow(; files = frames)
+        fill_preset!(wf.passes, :low)
+        @test_throws ArgumentError set_backend!(wf.passes, :nonexistent)
+        set_backend!(wf.passes, :ka)
+        test_pair!(wf; spawn = false)
+        direct = only(apply_recipe(workflow_recipe(wf), [current_pair(wf.frames)];
+                                   backend = :ka, progress = false))
+        @test isequal(wf.test.result[].u, direct.u) && !test_stale(wf)
+        start_run!(wf; spawn = false)
+        @test wf.run.options[] == (; backend = :ka) && !run_stale(wf)
+        set_backend!(wf.passes, :cpu)
+        @test test_stale(wf) && run_stale(wf)
+        set_backend!(wf.passes, :ka)
+        set_option!(wf.passes, :subpixel, :gauss2d)
+        @test occursin("on the GPU", workflow_problem(wf))
+        @test occursin("switch the GPU off", workflow_problem(wf))
+        set_mode!(wf.passes, :ptv)                               # particles: CPU regardless
+        @test workflow_problem(wf) === nothing
+        use_gpu!(wf, false)
+        @test wf.passes.backend[] === :cpu
+        if isempty(gpu_packages())
+            use_gpu!(wf, true; spawn = false)
+            @test occursin("no GPU package", wf.passes.gpu_status[]) && wf.passes.backend[] === :cpu
+        end
+    end
+
     @testset "pair bar: representative pair and shown result" begin
         wf = PlanarWorkflow(; files = frames)
         @test pair_position(wf) == (1, 3)
@@ -176,7 +222,7 @@
         @test !settings_modified(wf)
         @test wf.passes.preset[] === nothing
         mktempdir() do dir
-            path = save_settings(wf, joinpath(dir, "s.jld2"))
+            path = save_settings(wf, joinpath(dir, "s.toml"))
             wf2 = PlanarWorkflow(files = frames)
             load_settings!(wf2, path)
             @test workflow_recipe(wf2) == loaded && wf2.settings_path[] == path
@@ -262,6 +308,46 @@
             sleep(0.05)
         end
         @test wf.test.result[] isa PIVResult
+    end
+
+    @testset "per-frame mask images" begin
+        wf = PlanarWorkflow(files = frames)
+        fill_preset!(wf.passes, :low)
+        mktempdir() do dir
+            paths = map(1:6) do k
+                m = falses(128, 128)
+                k == 4 && (m[:, 1:48] .= true)           # frame 4: the second pair's frame B
+                p = joinpath(dir, "mask_$k.png")
+                C.FileIO.save(p, C.Gray.(m))
+                p
+            end
+            add_files!(wf.frame_masks, paths[1:5])
+            @test occursin("5 mask images for 6 frames", workflow_problem(wf))
+            add_files!(wf.frame_masks, paths[6:6])
+            @test workflow_problem(wf) === nothing
+            @test representative_mask(wf) == falses(128, 128)
+            select_pair!(wf.frames, 2)
+            @test wf.frame_masks.pair[] == 2 && count(representative_mask(wf)) == 128 * 48
+            test_pair!(wf; spawn = false)
+            res = wf.test.result[]
+            direct = only(apply_recipe(workflow_recipe(wf), [current_pair(wf.frames)];
+                                       masks = [(paths[3], paths[4])], progress = false))
+            @test isequal(res.u, direct.u) && any(res.mask) && !test_stale(wf)
+            select_pair!(wf.frames, 1)
+            test_pair!(wf; spawn = false)
+            @test !any(wf.test.result[].mask)
+            out = joinpath(dir, "masked.jld2")
+            wf.run.output_path[] = out
+            start_run!(wf; spawn = false)
+            @test [any(r.mask) for r in wf.run.completed[]] == [false, true, false]
+            @test load_sources(out; masks = true)[2] == paths[3:4]
+            # pair-by-pair modes only
+            set_mode!(wf.passes, :ensemble)
+            @test occursin("pair by pair", workflow_problem(wf))
+            set_mode!(wf.passes, :sequence)
+            clear_files!(wf.frame_masks)
+            @test workflow_problem(wf) === nothing && test_stale(wf)
+        end
     end
 
     @testset "ensemble: test, run, progress, cancellation" begin

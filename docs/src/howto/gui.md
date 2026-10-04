@@ -18,11 +18,13 @@ wf = planar_window()
 
 The call returns when you close the window. It returns the window's
 `PlanarWorkflow`, with every setting you made. Pass frames or saved settings
-to start further along: `planar_window(files = paths, settings = "settings.jld2")`.
+to start further along: `planar_window(files = paths, settings = "settings.toml")`.
 
 The steps on the left run in order: **Images → Prepare → Passes → Test pair →
 Run → Results**. Each step shows a one-line summary, and a dot marks it as
-to do, done, needing attention, or busy. The viewer on the right follows the
+to do, done, needing attention, or busy. Changing a setting after a test or
+run marks **Test pair**, **Run** and **Results** as needing attention until
+they are repeated. The viewer on the right follows the
 step: frames and overlays while you prepare, window outlines on **Passes**,
 vectors on **Test pair** and **Run**, and the result field on **Results**.
 The toolbar at the viewer's right edge sets what a drag does: **Edit** (the
@@ -98,7 +100,13 @@ close the polygon. The shaded area is excluded from the analysis.
 
 ![Prepare, Mask page: a polygon excludes the reflection.](../assets/gui_window/prepare_mask.png)
 
-The mask is static: it stays in the lab frame for every pair. For automatic
+This mask is static: it stays in the lab frame for every pair. For a boundary
+that moves, add **Per-frame mask images** below it: one image per frame
+(white = excluded), in frame order, chosen as files or by folder and pattern
+as on **Images**. Each pair is analyzed with both of its frames' mask images
+and the static mask, and the viewer shades the representative pair's
+combined mask. Mask images are input data like the frames, so they are not
+saved with the settings; they apply to PIV per pair and PTV. For automatic
 masks and the masking model, see [Mask reflections and geometry](masking.md).
 
 ### Analyze part of the frame
@@ -137,13 +145,22 @@ trade-off.
 Below the table:
 
 - **Correlation:** method, subpixel fit, **Zero padding** and **Gaussian
-  weighting** (together the most accurate setting), and per-vector
-  **Uncertainty on final pass**.
+  weighting** (together the most accurate setting), the deformation's
+  **Image interpolation** (cubic B-spline, or faster bilinear with a
+  sub-pixel bias) and **Predictor interpolation** (bilinear, or cubic for
+  strongly curved flow), and per-vector **Uncertainty on final pass**.
 - **Validation:** the normalized median test (threshold and neighborhood),
   a minimum peak ratio, and whether flagged vectors are replaced.
 - **Correlation probe:** click the viewer to correlate one window of the
   final pass's size on the processed pair, as on **Preprocess**.
 - **Precision:** Float32 halves the memory of Float64.
+- **Run on the GPU:** tests and runs use CUDA (NVIDIA) or AMDGPU (AMD) when
+  one of those packages is installed in the environment; the switch is
+  unavailable otherwise. The first switch-on loads the package, which takes
+  a while. GPU backends cover PIV per pair and ensembles with the default
+  interpolation, equal search and window sizes, and the 3- or 9-point
+  subpixel fit; the step reports a setting outside that range. Particle
+  analysis runs on the CPU. See [Run PIV on a GPU](gpu.md).
 
 A **PIV ensemble** sums the correlation over all pairs into one mean field
 (see [Measure one field from many pairs](ensemble.md)). The window tests an
@@ -269,7 +286,9 @@ errors.
 ## Save and reuse the settings
 
 **Save settings…** writes the passes, preprocessing, mask, region and scale to
-a recipe file. **Open settings…**, or **Reuse settings…** on **Images**, reads
+a recipe file: plain TOML text, with the mask and any background as image
+files beside it (choose a `.jld2` name for a single file instead).
+**Open settings…**, or **Reuse settings…** on **Images**, reads
 a recipe file or the settings stored in any results file. A dot after the
 title in the window bar marks unsaved
 changes. Settings files are core recipes, so a script can run them with

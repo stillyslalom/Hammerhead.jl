@@ -1,7 +1,9 @@
 # Saved processing settings: a recipe captures everything needed to process a
 # recording again (passes, preprocessing, mask, ROI, scale), independent of the
-# images it is applied to. Recipes are stored as plain JLD2 dictionaries.
-const RECIPE_FORMAT_VERSION = 2   # 2: per-camera preprocessing, PTV and tracking modes
+# images it is applied to. Recipes are written as TOML text: a settings file
+# with its arrays (mask, backgrounds) in image files beside it, or the same
+# text embedded in a JLD2 file with the arrays stored next to it.
+const RECIPE_FORMAT_VERSION = 3   # 2: per-camera preprocessing, PTV/tracking; 3: TOML text
 
 """
     PreprocessStep(operation; kwargs...)
@@ -243,8 +245,8 @@ end
 _steps_data(steps) = [Dict{String,Any}("operation" => String(s.operation),
                                         "options" => deepcopy(s.options)) for s in steps]
 _steps_from_data(data) =
-    [PreprocessStep(Symbol(s["operation"]); (Symbol(k) => v for (k, v) in s["options"])...)
-     for s in data]
+    PreprocessStep[PreprocessStep(Symbol(s["operation"]); (Symbol(k) => v for (k, v) in s["options"])...)
+               for s in data]
 
 function _recipe_data(r::PIVRecipe)
     pre = r.preprocessing
@@ -272,12 +274,13 @@ function _recipe_from_data(d)
     steps = haskey(d, "camera_preprocessing") ?
             Tuple(_steps_from_data(s) for s in d["camera_preprocessing"]) :
             _steps_from_data(d["preprocessing"])
-    s = d["scale"]
+    s = get(d, "scale", nothing)
     scale = s === nothing ? nothing :
             PhysicalScale(s["pixel_size"], s["dt"], s["length_unit"], s["time_unit"])
-    roi = d["roi"] === nothing ? nothing : ROI(d["roi"][1]:d["roi"][2], d["roi"][3]:d["roi"][4])
+    r = get(d, "roi", nothing)
+    roi = r === nothing ? nothing : ROI(r[1]:r[2], r[3]:r[4])
     PIVRecipe([_pass_from_data(p) for p in d["passes"]];
-              preprocessing = steps, mask = d["mask"], roi, scale,
+              preprocessing = steps, mask = get(d, "mask", nothing), roi, scale,
               mode = Symbol(d["mode"]),
               image_type = d["image_type"] == "Float32" ? Float32 : Float64,
               predictor_smoothing = d["predictor_smoothing"],
@@ -298,9 +301,90 @@ function _ptv_from_data(data)
     PTVParameters(; args...)
 end
 
+# --- TOML text ------------------------------------------------------------------
+
+# The recipe as TOML text. Arrays (the mask, background images) are handed to
+# `put(name, array)`, which stores them and returns the reference written in
+# their place; `nothing` settings are left out (absent keys load as defaults).
+function _recipe_toml(r::PIVRecipe, put)
+    d = _recipe_data(r)
+    d["recipe_format_version"] = RECIPE_FORMAT_VERSION
+    d["hammerhead_version"] = string(pkgversion(@__MODULE__))
+    r.mask === nothing || (d["mask"] = put("mask", r.mask))
+    nbg = Ref(0)
+    function steps_toml(steps, prefix)
+        map(steps) do s
+            o = Dict{String,Any}("operation" => String(s.operation))
+            for (k, v) in s.options
+                if v isa AbstractMatrix
+                    nbg[] += 1
+                    o[k] = put(prefix * "background" * (nbg[] == 1 ? "" : string(nbg[])), v)
+                else
+                    o[k] = v
+                end
+            end
+            o
+        end
+    end
+    if r.preprocessing isa Tuple
+        delete!(d, "camera_preprocessing")
+        for (c, steps) in enumerate(r.preprocessing)
+            nbg[] = 0
+            d["camera$(c)_preprocessing"] = steps_toml(steps, "camera$c.")
+        end
+    else
+        d["preprocessing"] = steps_toml(r.preprocessing, "")
+    end
+    filter!(kv -> kv.second !== nothing, d)
+    io = IOBuffer()
+    println(io, "# Hammerhead processing settings (PIVRecipe)")
+    TOML.print(io, d; sorted = true, by = _toml_key_order)
+    # a blank line before every table header, so repeated passes stand apart
+    return replace(String(take!(io)), r"(?<=[^\n])\n(?=\[)" => "\n\n")
+end
+
+# Settings in the order a reader looks for them (each key's first rank wins:
+# PIV and PTV parameters share some names).
+const _TOML_KEY_ORDER = let order = Dict{String,Int}()
+    for k in ("recipe_format_version", "hammerhead_version", "mode", "image_type", "mask", "roi",
+              "predictor_smoothing", "mask_threshold", "ptv_predictor", "min_track_length",
+              "max_gap", "operation", "options", "pixel_size", "dt", "length_unit", "time_unit",
+              map(String, fieldnames(PIVParameters))..., map(String, fieldnames(PTVParameters))...)
+        get!(order, k, length(order) + 1)
+    end
+    order
+end
+_toml_key_order(k) = (get(_TOML_KEY_ORDER, k, typemax(Int)), k)
+
+# A recipe from TOML text; `get(ref, kind)` returns the array a reference
+# names (`kind` is `:mask` or `:background`).
+function _recipe_from_toml(get, text::AbstractString, source::AbstractString)
+    d = TOML.parse(text)
+    version = Base.get(d, "recipe_format_version", nothing)
+    version == RECIPE_FORMAT_VERSION ||
+        throw(ArgumentError("$source has unsupported recipe_format_version $version"))
+    haskey(d, "mask") && (d["mask"] = BitMatrix(get(d["mask"], :mask)))
+    function steps_data(steps)
+        map(steps) do s
+            o = Dict{String,Any}(k => v for (k, v) in s if k != "operation")
+            haskey(o, "background") && (o["background"] = get(o["background"], :background))
+            Dict{String,Any}("operation" => s["operation"], "options" => o)
+        end
+    end
+    if haskey(d, "camera1_preprocessing")
+        d["camera_preprocessing"] = [steps_data(Base.get(d, "camera$(c)_preprocessing", []))
+                                     for c in 1:2]
+    else
+        d["preprocessing"] = steps_data(Base.get(d, "preprocessing", []))
+    end
+    return _recipe_from_data(d)
+end
+
+# A recipe inside a JLD2 file (a settings file or a results file): the TOML
+# text, with the arrays it names stored under "recipe_arrays/".
 function _write_recipe(file, recipe::PIVRecipe)
     file["recipe_format_version"] = RECIPE_FORMAT_VERSION
-    file["recipe"] = _recipe_data(recipe)
+    file["recipe_toml"] = _recipe_toml(recipe, (name, a) -> (file["recipe_arrays/" * name] = a; name))
     file["recipe_software"] = Dict{String,Any}(
         "hammerhead_version" => string(pkgversion(@__MODULE__)),
         "julia_version" => string(VERSION))
@@ -310,30 +394,69 @@ end
 """
     save_recipe(path, recipe) -> path
 
-Save a [`PIVRecipe`](@ref) to a JLD2 file. The file also records the
-Hammerhead and Julia versions that saved it.
+Save a [`PIVRecipe`](@ref). A `.toml` path writes a TOML settings file;
+its arrays go in image files beside it, named after it: the mask as
+`<name>.mask.png` (white = excluded) and each background as
+`<name>.background.tif` (Float64 TIFF; per-camera backgrounds as
+`<name>.camera1.background.tif`, …). Keep these files together. Any other
+path writes a JLD2 file holding the same TOML text and the arrays. Both
+record the Hammerhead version that saved them.
 """
 function save_recipe(path::AbstractString, recipe::PIVRecipe)
-    jldopen(file -> _write_recipe(file, recipe), path, "w")
+    if _is_toml(path)
+        dir = dirname(abspath(path))
+        stem = splitext(basename(path))[1]
+        text = _recipe_toml(recipe, function (name, a)
+            file = "$stem.$name" * (a isa BitMatrix ? ".png" : ".tif")
+            FileIO.save(joinpath(dir, file), Gray.(a))
+            file
+        end)
+        write(path, text)
+    else
+        jldopen(file -> _write_recipe(file, recipe), path, "w")
+    end
     path
 end
+
+_is_toml(path) = lowercase(splitext(path)[2]) == ".toml"
 
 """
     load_recipe(path) -> PIVRecipe
 
-Load a recipe saved with [`save_recipe`](@ref), or the recipe that produced a
-results file written by [`apply_recipe`](@ref).
+Load a recipe saved with [`save_recipe`](@ref) (a TOML settings file with
+its image files, or a JLD2 file), or the recipe that produced a results file
+written by [`apply_recipe`](@ref). Recipes saved by earlier versions load too.
 """
 function load_recipe(path::AbstractString)
+    if _is_toml(path)
+        dir = dirname(abspath(path))
+        return _recipe_from_toml(read(path, String), path) do ref, kind
+            file = joinpath(dir, ref)
+            isfile(file) ||
+                throw(ArgumentError("$path refers to $ref, which is not beside it"))
+            kind === :mask ? load_mask(file) : load_image(Float64, file)
+        end
+    end
     jldopen(path, "r") do file
+        haskey(file, "recipe_toml") &&
+            return _recipe_from_toml((ref, _) -> file["recipe_arrays/" * ref], file["recipe_toml"], path)
         haskey(file, "recipe") ||
             throw(ArgumentError("$path contains no Hammerhead recipe"))
         version = file["recipe_format_version"]
-        version in (1, RECIPE_FORMAT_VERSION) ||
+        version in (1, 2) ||
             throw(ArgumentError("$path has unsupported recipe_format_version $version"))
         _recipe_from_data(file["recipe"])
     end
 end
+
+"""
+    recipe_toml(recipe) -> String
+
+The recipe as the TOML text [`save_recipe`](@ref) writes, with each array
+replaced by its name (`"mask"`, `"background"`, …): a readable summary of
+the settings.
+"""
+recipe_toml(recipe::PIVRecipe) = _recipe_toml(recipe, (name, _) -> name)
 
 """
     apply_recipe(recipe, pairs; output=nothing, backend=:cpu, kwargs...)
@@ -356,18 +479,37 @@ A `:sequence` recipe returns one result per pair, like
 are saved there and the recipe is stored alongside them, so
 `load_recipe(output)` recovers the settings; a stereo run also stores the
 cameras and grid, so [`load_calibration`](@ref)`(output)` recovers the
-dewarpers. Remaining keywords (such as
+dewarpers.
+
+`masks` adds masks that change from pair to pair (input data, like the
+frames; `:sequence` and `:ptv` recipes): one entry per pair — a Bool matrix,
+a mask image path (white = excluded, as [`load_mask`](@ref) reads it), or a
+tuple of two such entries for frames A and B (unioned) — or a function
+`(i, imgA, imgB) -> mask`. Files load as each pair is analyzed. Each pair's
+mask is unioned with the recipe's static mask, and mask image paths are
+stored with the results ([`load_sources`](@ref)`(output; masks = true)`).
+Remaining keywords (such as
 `progress`, `on_result`, `collect_results`, or `threaded`) go to the
 underlying driver.
 """
 function apply_recipe(recipe::PIVRecipe, pairs::AbstractVector;
                       output::Union{Nothing,AbstractString,Function} = nothing,
-                      backend::Symbol = :cpu, kwargs...)
+                      backend::Symbol = :cpu, masks = nothing, kwargs...)
     recipe.preprocessing isa Tuple &&
         throw(ArgumentError("per-camera preprocessing needs a stereo recording"))
-    recipe.mode in (:ptv, :tracking) && return _apply_ptv(recipe, pairs; output, backend, kwargs...)
+    masks === nothing || recipe.mode in (:sequence, :ptv) ||
+        throw(ArgumentError("per-pair masks need a :sequence or :ptv recipe; " *
+                            "a :$(recipe.mode) recipe takes the recipe's static mask only"))
+    masks isa AbstractVector && length(masks) != length(pairs) &&
+        throw(DimensionMismatch("masks has $(length(masks)) entries for $(length(pairs)) pairs"))
+    mask = _recipe_mask(recipe.mask, masks)
+    if recipe.mode in (:ptv, :tracking)
+        return _with_mask_sources(output, masks) do
+            _apply_ptv(recipe, pairs; output, backend, mask, kwargs...)
+        end
+    end
     common = (; preprocess = recipe_preprocess(recipe), image_type = recipe.image_type,
-              mask = recipe.mask, scale = recipe.scale, backend,
+              mask, scale = recipe.scale, backend,
               predictor_smoothing = recipe.predictor_smoothing,
               mask_threshold = recipe.mask_threshold)
     if recipe.mode === :ensemble
@@ -379,10 +521,63 @@ function apply_recipe(recipe::PIVRecipe, pairs::AbstractVector;
         output === nothing || _save_with_recipe(output, result, recipe)
         return result
     end
-    return _with_recipe(output, recipe) do
-        run_piv_sequence(pairs, recipe.passes; output, roi = recipe.roi, common..., kwargs...)
+    return _with_mask_sources(output, masks) do
+        _with_recipe(output, recipe) do
+            run_piv_sequence(pairs, recipe.passes; output, roi = recipe.roi, common..., kwargs...)
+        end
     end
 end
+
+# Per-pair masks (input data, like the frames) unioned with the recipe's
+# static mask: a callback for the sequence drivers that loads mask files as
+# each pair is analyzed. An entry is a Bool matrix, a mask image path
+# (`load_mask`: white = excluded), or a tuple of two (frames A and B,
+# unioned); `nothing` leaves only the static mask.
+_recipe_mask(static, ::Nothing) = static
+function _recipe_mask(static, masks)
+    return function (i, imgA, imgB)
+        m = _mask_entry(masks isa Function ? masks(i, imgA, imgB) : masks[i])
+        m === nothing && return static === nothing ? falses(size(imgA)) : static
+        static === nothing && return m
+        size(m) == size(static) ||
+            throw(DimensionMismatch("pair $i: mask is $(size(m)) but the recipe's mask is $(size(static))"))
+        return BitMatrix(m .| static)
+    end
+end
+
+_mask_entry(::Nothing) = nothing
+_mask_entry(m::AbstractMatrix{Bool}) = m
+_mask_entry(path::AbstractString) = load_mask(path)
+function _mask_entry(t::Tuple)
+    a, b = _mask_entry(t[1]), _mask_entry(t[2])
+    a === nothing && return b
+    b === nothing && return a
+    size(a) == size(b) || throw(DimensionMismatch("the two frames' masks differ in size"))
+    return BitMatrix(a .| b)
+end
+_mask_entry(x) = throw(ArgumentError("a mask entry is a Bool matrix, a mask image path, or a pair of them; got $(typeof(x))"))
+
+# Record mask image paths next to the results (when the masks were files).
+function _with_mask_sources(run, output, masks)
+    started = time()
+    try
+        return run()
+    finally
+        if output isa AbstractString && masks isa AbstractVector && isfile(output) &&
+           mtime(output) >= started - 1
+            labels = [_mask_labels(e) for e in masks]
+            any(!isempty, labels) && jldopen(output, "r+") do file
+                for (i, l) in enumerate(labels)
+                    isempty(l) || (file[mask_source_key(i)] = l)
+                end
+            end
+        end
+    end
+end
+
+_mask_labels(e::AbstractString) = [String(e)]
+_mask_labels(t::Tuple) = all(x -> x isa AbstractString, t) ? String[String(x) for x in t] : String[]
+_mask_labels(_) = String[]
 
 function apply_recipe(recipe::PIVRecipe, pairs1::AbstractVector, pairs2::AbstractVector,
                       dw1::ImageDewarper, dw2::ImageDewarper;
@@ -414,21 +609,23 @@ function _apply_ptv(recipe::PIVRecipe, inputs::AbstractVector; output, backend::
     backend === :cpu ||
         throw(ArgumentError("PTV and tracking recipes run on the CPU, got backend = :$backend"))
     common = (; preprocess = recipe_preprocess(recipe), image_type = recipe.image_type,
-              mask = recipe.mask, scale = recipe.scale,
+              mask = get(kwargs, :mask, recipe.mask), scale = recipe.scale,
               predictor = recipe.ptv_predictor === :piv ? :piv : nothing,
               piv_passes = recipe.passes)
     if recipe.mode === :tracking
         output isa Function &&
             throw(ArgumentError("a tracking result needs a single output path"))
         result = track_particles(inputs, recipe.ptv; min_track_length = recipe.min_track_length,
-                                 max_gap = recipe.max_gap, common..., kwargs...)
+                                 max_gap = recipe.max_gap, common..., _without_mask(kwargs)...)
         output === nothing || _save_with_recipe(output, result, recipe)
         return result
     end
     return _with_recipe(output, recipe) do
-        run_ptv_sequence(inputs, recipe.ptv; output, common..., kwargs...)
+        run_ptv_sequence(inputs, recipe.ptv; output, common..., _without_mask(kwargs)...)
     end
 end
+
+_without_mask(kwargs) = (k => v for (k, v) in pairs(kwargs) if k !== :mask)
 
 # Store the recipe next to the results even when the batch stops early, so a
 # partial file still records how it was produced.

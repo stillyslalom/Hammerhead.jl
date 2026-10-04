@@ -42,6 +42,12 @@ ApplicationWindow {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 4
+            Image {
+                source: "icons/hammerhead.svg"
+                sourceSize.width: 22
+                sourceSize.height: 22
+                Layout.rightMargin: 6
+            }
             ToolButton { text: "Open settings…"; onClicked: openSettingsDialog.open() }
             ToolButton { text: "Save settings…"; onClicked: saveSettingsDialog.open() }
             Item { Layout.fillWidth: true }
@@ -203,15 +209,15 @@ ApplicationWindow {
     FileDialog {
         id: openSettingsDialog
         title: "Open settings"
-        nameFilters: ["Settings or results (*.jld2)", "All files (*)"]
+        nameFilters: ["Settings or results (*.toml *.jld2)", "All files (*)"]
         onAccepted: Julia.hh_open_settings(selectedFile.toString())
     }
     FileDialog {
         id: saveSettingsDialog
         title: "Save settings"
         fileMode: FileDialog.SaveFile
-        defaultSuffix: "jld2"
-        nameFilters: ["Settings (*.jld2)"]
+        defaultSuffix: "toml"
+        nameFilters: ["Settings (*.toml)", "Settings in a JLD2 file (*.jld2)"]
         onAccepted: Julia.hh_save_settings(selectedFile.toString())
     }
 }

@@ -25,7 +25,7 @@ makedocs(;
     format=Documenter.HTML(;
         canonical="https://stillyslalom.github.io/Hammerhead.jl",
         edit_link="main",
-        assets=String["assets/citations.css"],
+        assets=String["assets/favicon.ico", "assets/citations.css"],
     ),
     # Keep tutorials and reader tasks visible; detailed pages remain linked,
     # searchable and built at their existing URLs beneath each topic.
@@ -90,6 +90,7 @@ makedocs(;
             "Synthetic data" => "reference/synthetic.md",
             "PTV (particle tracking)" => "reference/ptv.md",
             "GUI (HammerheadGUI)" => "reference/gui.md",
+            "GUI Prepare editors" => "reference/gui_prepare.md",
             "GUI stereo window" => "reference/gui_stereo.md",
             "GUI result explorer" => "reference/gui_results.md",
             "KernelAbstractions and GPU backends" => "reference/backends.md",

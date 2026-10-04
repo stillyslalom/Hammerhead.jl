@@ -218,10 +218,13 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                 warpbufs = (nothing, nothing)
             end
         end
+        if predictor !== nothing && params.image_interpolation === :linear
+            itpA, itpB = linear_interpolant(imgA, T), linear_interpolant(imgB, T)
+        end
         warpA, warpB, pu, pv = apply_predictor(backend, imgA, imgB, itpA, itpB, predictor,
                                                grid.x, grid.y, T; threaded,
                                                warpA = warpbufs[1], warpB = warpbufs[2],
-                                               ctx = dctx)
+                                               ctx = dctx, _predictor_kw(params)...)
         source_context = _original_support_context(imgA, imgB, mask, T, workspace)
         source_gate = _original_source_gate(source_context, predictor, grid, params, mask;
                                            gate = source_gate, threaded)

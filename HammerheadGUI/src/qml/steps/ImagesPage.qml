@@ -66,7 +66,7 @@ StepPage {
     FileDialog {
         id: reuseSettingsDialog
         title: "Reuse settings"
-        nameFilters: ["Settings or results (*.jld2 *.toml)", "All files (*)"]
+        nameFilters: ["Settings or results (*.toml *.jld2)", "All files (*)"]
         onAccepted: Julia.hh_open_settings(selectedFile.toString())
     }
 

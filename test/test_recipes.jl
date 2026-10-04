@@ -53,6 +53,37 @@ using JLD2
                 f["recipe"] = Hammerhead._recipe_data(recipe)
             end
             @test load_recipe(joinpath(dir, "v1.jld2")) == recipe
+            # ... and version 2 (a plain dictionary rather than TOML text)
+            jldopen(joinpath(dir, "v2.jld2"), "w") do f
+                f["recipe_format_version"] = 2
+                f["recipe"] = Hammerhead._recipe_data(recipe)
+            end
+            @test load_recipe(joinpath(dir, "v2.jld2")) == recipe
+            @test occursin("[[passes]]", jldopen(f -> f["recipe_toml"], path))
+
+            # TOML settings files keep their arrays in image files beside them
+            toml = save_recipe(joinpath(dir, "settings.toml"), recipe)
+            @test isfile(joinpath(dir, "settings.mask.png"))
+            @test isfile(joinpath(dir, "settings.background.tif"))
+            text = read(toml, String)
+            @test occursin("mask = \"settings.mask.png\"", text) && occursin("window_size", text)
+            @test load_recipe(toml) == recipe
+            cams = PIVRecipe(passes; preprocessing = ([PreprocessStep(:subtract_background; background)],
+                                                      [PreprocessStep(:subtract_background;
+                                                                      background = 2 .* background),
+                                                       PreprocessStep(:clahe)]),
+                             mode = :ensemble, scale = PhysicalScale(1.0, 0.5, "mm", "s"))
+            @test load_recipe(save_recipe(joinpath(dir, "stereo.toml"), cams)) == cams
+            @test isfile(joinpath(dir, "stereo.camera2.background.tif"))
+            ptv = PIVRecipe(passes; mode = :tracking, ptv = PTVParameters(threshold = 0.2),
+                            ptv_predictor = :none, max_gap = 1)
+            @test load_recipe(save_recipe(joinpath(dir, "ptv.toml"), ptv)) == ptv
+            @test occursin("background = \"background\"", recipe_toml(recipe))
+            rm(joinpath(dir, "settings.mask.png"))
+            @test_throws ArgumentError load_recipe(toml)
+            write(joinpath(dir, "future.toml"), replace(text, r"recipe_format_version = \d+" =>
+                                                             "recipe_format_version = 99"))
+            @test_throws ArgumentError load_recipe(joinpath(dir, "future.toml"))
             save_results(joinpath(dir, "r.jld2"), run_piv(pairs[1]...))
             @test_throws ArgumentError load_recipe(joinpath(dir, "r.jld2"))
         end
@@ -115,6 +146,34 @@ using JLD2
             mem = joinpath(dir, "mem.jld2")
             run_piv_sequence(pairs[1:2], passes; output = mem, progress = false)
             @test load_sources(mem) == [String[], String[]]
+        end
+    end
+
+    @testset "per-pair masks" begin
+        mktempdir() do dir
+            m1 = falses(n, n); m1[1:24, :] .= true
+            m2 = falses(n, n); m2[:, 70:end] .= true
+            p1 = joinpath(dir, "m1.png")
+            Hammerhead.FileIO.save(p1, Hammerhead.Gray.(m1))
+            r = PIVRecipe(passes; mask)
+            out = joinpath(dir, "masked.jld2")
+            res = apply_recipe(r, pairs; masks = [p1, nothing, (p1, m2)], output = out,
+                               progress = false)
+            direct = run_piv_sequence(pairs, passes; progress = false,
+                                      mask = [m1 .| mask, mask, m1 .| m2 .| mask])
+            @test all(isequal(a.u, b.u) && a.mask == b.mask for (a, b) in zip(res, direct))
+            @test load_sources(out; masks = true) == [[p1], String[], String[]]
+            @test load_recipe(out) == r
+            # a callback, and PTV recipes
+            cb = apply_recipe(r, pairs[1:1]; masks = (i, a, b) -> m2, progress = false)
+            @test isequal(only(cb).u, only(run_piv_sequence(pairs[1:1], passes; progress = false,
+                                                            mask = [m2 .| mask])).u)
+            pr = PIVRecipe(passes; mode = :ptv, ptv = PTVParameters(search_radius = 4))
+            ptv = only(apply_recipe(pr, pairs[1:1]; masks = [m1], progress = false))
+            @test all(y -> y > 24, ptv.y)                                # no particles in the mask
+            @test_throws ArgumentError apply_recipe(PIVRecipe(passes; mode = :ensemble), pairs;
+                                                    masks = [p1, p1, p1])
+            @test_throws DimensionMismatch apply_recipe(r, pairs; masks = [p1])
         end
     end
 

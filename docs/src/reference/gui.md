@@ -13,7 +13,8 @@ the same steps run in a script, without a display. Start with the
 tasks, or [Run stereo PIV in the GUI](../howto/gui_stereo.md) for the stereo
 window. The stereo window's calibration and workflow controllers have their
 own [stereo reference](gui_stereo.md), and result browsing and interactive
-analysis a separate [result explorer reference](gui_results.md).
+analysis a separate [result explorer reference](gui_results.md); the Prepare
+step's editors are in the [Prepare editors reference](gui_prepare.md).
 
 ```@index
 Pages = ["gui.md"]
@@ -58,24 +59,5 @@ Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
 Pages = ["controllers/workflow.jl", "planar_workflow.jl", "frame_set.jl",
          "controllers/prepare.jl", "prepare_workflow.jl", "passes_editor.jl",
-         "particle_settings.jl", "workflow_jobs.jl"]
-```
-
-## Prepare editors
-
-The Prepare step's pages edit the workflow through these controllers
-(`wf.prepare.preview`, `wf.prepare.mask[]`, `wf.prepare.roi[]`,
-`wf.prepare.scale[]`). [`PreprocessPreview`](@ref Controllers.PreprocessPreview)
-holds core `PreprocessStep`s and previews them with `recipe_preprocess`;
-[`MaskEditor`](@ref Controllers.MaskEditor) exports its polygons with
-`polygon_mask`; [`ROIEditor`](@ref Controllers.ROIEditor) edits core `ROI`
-bounds; [`ScaleTool`](@ref Controllers.ScaleTool) measures a pixel size from
-two points of known separation. Each editor also works on its own, given an
-image or an image size.
-
-```@autodocs
-Modules = [HammerheadGUI.Controllers]
-Order = [:module, :type, :function, :constant, :macro]
-Pages = ["controllers/preprocess_preview.jl", "controllers/mask_editor.jl",
-         "controllers/roi_editor.jl", "controllers/scale_tool.jl", "controllers/shared.jl"]
+         "particle_settings.jl", "workflow_jobs.jl", "compute.jl"]
 ```

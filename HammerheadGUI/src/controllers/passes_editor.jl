@@ -4,7 +4,8 @@
 
 const PASS_FIELDS = (:window, :search, :overlap, :iterations)
 const SHARED_OPTIONS = (:correlation, :subpixel, :accuracy, :padding, :apodization, :uod_enable,
-                        :uod_threshold, :uod_neighborhood, :min_peak_ratio, :replace_outliers)
+                        :uod_threshold, :uod_neighborhood, :min_peak_ratio, :replace_outliers,
+                        :image_interpolation, :predictor_interpolation)
 
 """
     PassesEditor(; image_size = nothing, mode = :sequence, image_type = Float64)
@@ -16,6 +17,9 @@ while it is unedited (`nothing` once edited or loaded from a recipe).
 `:ensemble`, or the particle modes `:ptv`/`:tracking`, where the schedule is
 the PIV predictor), `image_type` the processing precision,
 and `error` the message from the last rejected edit (empty when none).
+`backend` is where tests and runs execute (`:cpu`, or a GPU backend chosen
+with [`use_gpu!`](@ref)); `gpu_loading` and `gpu_status` report loading a
+device package.
 """
 struct PassesEditor
     passes::Observable{Vector{PIVParameters}}
@@ -24,6 +28,9 @@ struct PassesEditor
     image_type::Observable{DataType}
     image_size::Observable{Union{Nothing,Dims{2}}}
     error::Observable{String}
+    backend::Observable{Symbol}
+    gpu_loading::Observable{Bool}
+    gpu_status::Observable{String}
 end
 
 function PassesEditor(; image_size = nothing, mode::Symbol = :sequence,
@@ -33,7 +40,8 @@ function PassesEditor(; image_size = nothing, mode::Symbol = :sequence,
         throw(ArgumentError("image_type must be Float32 or Float64, got $image_type"))
     pe = PassesEditor(Observable(PIVParameters[]), Observable{Union{Nothing,Symbol}}(nothing),
                       Observable(mode), Observable{DataType}(image_type),
-                      Observable{Union{Nothing,Dims{2}}}(image_size), Observable(""))
+                      Observable{Union{Nothing,Dims{2}}}(image_size), Observable(""),
+                      Observable(:cpu), Observable(false), Observable(""))
     fill_preset!(pe, preset)
     return pe
 end
@@ -176,7 +184,9 @@ Set an option on every pass: `:correlation` (`:cross`/`:phase`),
 `false`/`:none`), `:accuracy` (both of these together), the normalized
 median test `:uod_enable` (`Bool`), `:uod_threshold`, and
 `:uod_neighborhood` (half-width: 1 = 3×3, 2 = 5×5, 3 = 7×7),
-`:min_peak_ratio`, or `:replace_outliers`. `:uncertainty` applies to the
+`:min_peak_ratio`, `:replace_outliers`, or the deformation's
+`:image_interpolation` (`:cubic`/`:linear`) and `:predictor_interpolation`
+(`:linear`/`:cubic`). `:uncertainty` applies to the
 final pass only. Invalid values return `false` and set `error`.
 """
 function set_option!(pe::PassesEditor, option::Symbol, value)
@@ -196,6 +206,8 @@ function set_option!(pe::PassesEditor, option::Symbol, value)
         option === :uod_threshold ? (; uod_threshold = _option_number(value, "the outlier threshold")) :
         option === :uod_neighborhood ? (; uod_neighborhood = Int(_option_number(value, "the neighborhood"))) :
         option === :min_peak_ratio ? (; min_peak_ratio = _option_number(value, "the minimum peak ratio")) :
+        option === :image_interpolation ? (; image_interpolation = Symbol(value)) :
+        option === :predictor_interpolation ? (; predictor_interpolation = Symbol(value)) :
         (; replace_outliers = Bool(value))
     catch err
         err isa Union{ArgumentError,InexactError} || rethrow()
@@ -258,6 +270,8 @@ function option_value(pe::PassesEditor, option::Symbol)
     option === :uod_threshold && return p.uod_threshold
     option === :min_peak_ratio && return p.min_peak_ratio
     option === :replace_outliers && return p.replace_outliers
+    option === :image_interpolation && return p.image_interpolation
+    option === :predictor_interpolation && return p.predictor_interpolation
     option === :uncertainty && return p.uncertainty
     throw(ArgumentError("unknown option :$option"))
 end

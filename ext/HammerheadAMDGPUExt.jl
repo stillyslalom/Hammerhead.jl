@@ -63,6 +63,7 @@ _supports_fp64(::_AMDGPUBackend) = true
 
 _check_backend_params(b::_AMDGPUBackend, passes) =
     _ka_scope_check(passes, :amdgpu, _supports_fp64(b))
+Hammerhead._backend_functional(::_AMDGPUBackend) = AMDGPU.functional()
 
 # Windows per device sub-batch. The analysis kernel launches one *workgroup*
 # per window, so the sub-batch size *is* that kernel's launch parallelism (in

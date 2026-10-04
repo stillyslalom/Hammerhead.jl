@@ -104,7 +104,8 @@ function planar_canvas(wf::PlanarWorkflow)
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loaded,
           wf.step, ps.page, ps.show_processed, pp.processed, ps.ruler)
-    onany((_...) -> _draw_geometry!(c, wf), wf.mask, wf.roi)
+    fm = wf.frame_masks
+    onany((_...) -> _draw_geometry!(c, wf), wf.mask, wf.roi, fm.files, fm.loaded, fs.pair)
     onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes, wf.passes.mode,
           wf.particles.predictor, fs.files, fs.pair, wf.roi)
     onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed)
@@ -364,7 +365,7 @@ function _draw_probe!(probe_box, pp, frame_size)
 end
 
 function _draw_geometry!(c::PlanarCanvas, wf::PlanarWorkflow)
-    _draw_raster!(c.mask, wf.mask[])
+    _draw_raster!(c.mask, representative_mask(wf))
     roi = wf.roi[]
     if roi === nothing
         _update!(c.roi, _NOPOINT)

@@ -33,6 +33,10 @@ result = run_piv(imgA, imgB; effort = :high, backend = :amdgpu)
 For NVIDIA, use `using CUDA`, check `CUDA.functional()`, and pass
 `backend = :cuda`. The built-in `backend = :ka` runs the portable
 KernelAbstractions kernels on the CPU. Use `:cpu` for ordinary CPU analysis.
+[`backend_available`](@ref)`(:amdgpu)` reports whether a backend is loaded
+and has a working device, and [`backend_problem`](@ref)`(:amdgpu, passes)`
+names the first setting a schedule uses that the backend does not implement
+(`nothing` when it can run).
 
 The available selectors are:
 

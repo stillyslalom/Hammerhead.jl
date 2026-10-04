@@ -43,7 +43,7 @@ StepPage {
     }
 
     PreprocessPane { visible: app.preparePage === "preprocess"; stereo: preparePage.stereo; Layout.fillWidth: true }
-    MaskPane { visible: app.preparePage === "mask"; Layout.fillWidth: true }
+    MaskPane { visible: app.preparePage === "mask"; stereo: preparePage.stereo; Layout.fillWidth: true }
     RoiPane { visible: !stereo && app.preparePage === "roi"; Layout.fillWidth: true }
     ScalePane { visible: app.preparePage === "scale"; stereo: preparePage.stereo; Layout.fillWidth: true }
 }

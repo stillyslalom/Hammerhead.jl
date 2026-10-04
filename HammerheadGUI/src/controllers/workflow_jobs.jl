@@ -15,7 +15,8 @@ The latest test of the current settings on the representative pair:
 `recipe` and `pair` it was computed with, `seconds` taken, the `previous`
 test's summary for comparison, and `running`/`status`. `inputs[]` holds the
 `apply_recipe` inputs after the recipe (pairs; for stereo also the
-dewarpers) of the last successful test.
+dewarpers) of the last successful test, and `options[]` its keyword inputs
+(per-pair `masks`).
 """
 const TestResult = Union{Nothing,PIVResult,StereoPIVResult,PTVResult,TrackingResult}
 
@@ -28,27 +29,29 @@ struct PairTest
     running::Observable{Bool}
     status::Observable{String}
     inputs::Base.RefValue{Any}
+    options::Base.RefValue{Any}
 end
 
 PairTest() = PairTest(Observable{TestResult}(nothing),
                       Observable{Union{Nothing,PIVRecipe}}(nothing), Observable(0),
                       Observable(0.0), Observable{Union{Nothing,NamedTuple}}(nothing),
-                      Observable(false), Observable(""), Ref{Any}(nothing))
+                      Observable(false), Observable(""), Ref{Any}(nothing), Ref{Any}((;)))
 
 """
-    start_test!(pt::PairTest, recipe, pairs, label; deliver = f -> f(), spawn = true)
-    start_test!(pt::PairTest, recipe, inputs::Tuple, label; deliver, spawn)
+    start_test!(pt::PairTest, recipe, pairs, label; deliver = f -> f(), spawn = true, options = (;))
+    start_test!(pt::PairTest, recipe, inputs::Tuple, label; deliver, spawn, options)
 
-Run `apply_recipe(recipe, pairs)` (one pair, or several for an ensemble
-recipe) and store the result. `label` is the representative pair index.
-The tuple form runs `apply_recipe(recipe, inputs...)`, e.g. the stereo
-`(pairs1, pairs2, dw1, dw2)`.
+Run `apply_recipe(recipe, pairs; options...)` (one pair, or several for an
+ensemble recipe) and store the result. `label` is the representative pair
+index. The tuple form runs `apply_recipe(recipe, inputs...)`, e.g. the stereo
+`(pairs1, pairs2, dw1, dw2)`; `options` are further keyword inputs such as
+per-pair `masks`.
 """
 start_test!(pt::PairTest, recipe::PIVRecipe, pairs::AbstractVector, label::Integer; kwargs...) =
     start_test!(pt, recipe, (pairs,), label; kwargs...)
 
 function start_test!(pt::PairTest, recipe::PIVRecipe, inputs::Tuple, label::Integer;
-                     deliver = f -> f(), spawn::Bool = true)
+                     deliver = f -> f(), spawn::Bool = true, options::NamedTuple = (;))
     pt.running[] && return pt
     pt.running[] = true
     pt.status[] = recipe.mode === :ensemble ?
@@ -58,21 +61,22 @@ function start_test!(pt::PairTest, recipe::PIVRecipe, inputs::Tuple, label::Inte
     job = function ()
         t0 = time()
         outcome = try
-            r = apply_recipe(recipe, inputs...; progress = false)
+            r = apply_recipe(recipe, inputs...; progress = false, options...)
             (; result = r isa AbstractVector ? first(r) : r, seconds = time() - t0, err = nothing)
         catch err
             (; result = nothing, seconds = time() - t0, err)
         end
-        deliver(() -> _finish_test!(pt, recipe, Int(label), outcome, inputs))
+        deliver(() -> _finish_test!(pt, recipe, Int(label), outcome, inputs, options))
     end
     _run_job(job, spawn)
     return pt
 end
 
-function _finish_test!(pt::PairTest, recipe, label, outcome, inputs = nothing)
+function _finish_test!(pt::PairTest, recipe, label, outcome, inputs = nothing, options = (;))
     if outcome.err === nothing
         pt.result[] === nothing || (pt.previous[] = test_summary(pt.result[], pt.recipe[], pt.seconds[]))
         pt.inputs[] = inputs
+        pt.options[] = options
         pt.recipe[] = recipe
         pt.pair[] = label
         pt.seconds[] = outcome.seconds
@@ -244,7 +248,7 @@ function summary_lines(s::NamedTuple; previous = nothing)
     if isfinite(s.max_displacement)
         line = "Largest displacement: $(num(s.max_displacement)) px"
         s.max_displacement > s.quarter_window &&
-            (line *= " — above ¼ of the final window ($(num(s.quarter_window)) px); use a larger first window")
+            (line *= "; above ¼ of the final window ($(num(s.quarter_window)) px); use a larger first window")
         push!(lines, line)
     end
     push!(lines, @sprintf("Time: %.2f s", s.seconds))
@@ -280,29 +284,32 @@ struct RunState
     cancel::Threads.Atomic{Bool}
     recipe::Base.RefValue{Any}               # the last run's recipe and inputs
     inputs::Base.RefValue{Any}
+    options::Base.RefValue{Any}              # ... and its keyword inputs
 end
 
 RunState(; output_path::AbstractString = "") =
     RunState(Observable(String(output_path)), Observable(false), Observable((0, 0)),
              Observable(""), Observable(Any[]), Observable(0.0),
              Observable{Union{Nothing,String}}(nothing), Observable(:sequence), Observable(0),
-             Observable(1), Threads.Atomic{Bool}(false), Ref{Any}(nothing), Ref{Any}(nothing))
+             Observable(1), Threads.Atomic{Bool}(false), Ref{Any}(nothing), Ref{Any}(nothing),
+             Ref{Any}((;)))
 
 """
-    start_run!(rs::RunState, recipe, pairs; deliver = f -> f(), spawn = true)
-    start_run!(rs::RunState, recipe, inputs::Tuple; deliver, spawn)
+    start_run!(rs::RunState, recipe, pairs; deliver = f -> f(), spawn = true, options = (;))
+    start_run!(rs::RunState, recipe, inputs::Tuple; deliver, spawn, options)
 
 Run `apply_recipe(recipe, pairs)` as a batch, writing to `output_path` when
 set (the file also stores the recipe). A `:sequence` recipe appends each
 finished pair to `completed` as it arrives; an `:ensemble` recipe appends its
 one pooled result when the run finishes. The tuple form runs
-`apply_recipe(recipe, inputs...)`, e.g. the stereo `(pairs1, pairs2, dw1, dw2)`.
+`apply_recipe(recipe, inputs...)`, e.g. the stereo `(pairs1, pairs2, dw1, dw2)`;
+`options` are further keyword inputs such as per-pair `masks`.
 """
 start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector; kwargs...) =
     start_run!(rs, recipe, (pairs,); kwargs...)
 
 function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
-                    deliver = f -> f(), spawn::Bool = true)
+                    deliver = f -> f(), spawn::Bool = true, options::NamedTuple = (;))
     rs.running[] && return rs
     pairs = first(inputs)
     isempty(pairs) && (rs.status[] = "no pairs to process"; return rs)
@@ -314,6 +321,7 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
     rs.completed[] = Any[]
     rs.recipe[] = recipe
     rs.inputs[] = inputs
+    rs.options[] = options
     rs.mode[] = recipe.mode
     rs.pairs[] = length(pairs)
     rs.cameras[] = cameras
@@ -331,9 +339,10 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
         keep = r -> deliver(() -> (push!(rs.completed[], r); notify(rs.completed)))
         outcome = try
             if pooled
-                keep(apply_recipe(recipe, inputs...; output, progress))
+                keep(apply_recipe(recipe, inputs...; output, progress, options...))
             else
-                apply_recipe(recipe, inputs...; output, progress, on_result = (i, r) -> keep(r))
+                apply_recipe(recipe, inputs...; output, progress, on_result = (i, r) -> keep(r),
+                             options...)
             end
             :done
         catch err

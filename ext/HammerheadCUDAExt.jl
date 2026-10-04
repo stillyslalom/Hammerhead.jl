@@ -63,6 +63,7 @@ _supports_fp64(::_CUDABackend) = true
 
 _check_backend_params(b::_CUDABackend, passes) =
     _ka_scope_check(passes, :cuda, _supports_fp64(b))
+Hammerhead._backend_functional(::_CUDABackend) = CUDA.functional()
 
 # Windows per device sub-batch. The analysis kernel launches one *workgroup*
 # per window, so the sub-batch size *is* that kernel's launch parallelism (in

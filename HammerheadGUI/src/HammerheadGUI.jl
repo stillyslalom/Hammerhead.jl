@@ -42,6 +42,7 @@ include("controllers/particle_settings.jl")
 include("controllers/workflow_jobs.jl")
 include("controllers/prepare.jl")              # before the workflows (field type)
 include("controllers/workflow.jl")             # AbstractWorkflow + shared steps
+include("controllers/compute.jl")
 include("controllers/planar_workflow.jl")
 include("controllers/stereo_calibration.jl")
 include("controllers/stereo_workflow.jl")
@@ -86,7 +87,8 @@ export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt
        canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note,
        load_ruler!, clear_ruler!, passes_probe_available
-export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
+export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem, frame_masks_problem,
+       representative_mask, run_stale, GPU_BACKENDS, gpu_packages, use_gpu!, set_backend!
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
        pair_position, go_to_pair!, step_pair!, save_run_results!, results_in_memory,

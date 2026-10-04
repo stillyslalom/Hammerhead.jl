@@ -19,8 +19,11 @@ versioned file and loads as an empty vector.
 Users who need long-lived, language-neutral archives should also export the
 table or VTK form.
 
-Saved recipes carry `recipe_format_version = 1`, both in files written by
+Saved recipes carry `recipe_format_version = 3`, both in files written by
 [`save_recipe`](@ref) and in result files written by [`apply_recipe`](@ref).
+Version 3 is TOML text: a `.toml` settings file with its arrays in image files
+beside it, or the same text embedded in a JLD2 file with the arrays stored
+next to it. Versions 1 and 2 (plain JLD2 dictionaries) still load;
 [`load_recipe`](@ref) rejects unknown versions. Pass settings added to
 [`PIVParameters`](@ref) in later releases take their defaults when an older
 recipe is loaded.

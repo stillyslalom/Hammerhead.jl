@@ -91,7 +91,8 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `reference/internals.md` catches all non-exported docstrings via
   `Public = false`. A page's HTML must stay under Documenter's 200 KiB
   `size_threshold` (the build fails above it): the GUI reference is split
-  into `reference/gui.md` (planar/shared), `gui_stereo.md`, `gui_results.md`.
+  into `reference/gui.md` (planar/shared), `gui_prepare.md`, `gui_stereo.md`,
+  `gui_results.md`.
 - Citations: DocumenterCitations with `docs/src/refs.bib` (authoryear
   style); cite as `[Wieneke2005](@cite)` / `[Wieneke2015](@citet)`. PDFs
   for content-checking live in `reference/`.
@@ -105,7 +106,11 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 - `types.jl` — `PhysicalScale` (pixel size + dt + display-only unit labels;
   Float64 factors, validated), `PIVParameters` (immutable, validated in inner
-  constructor; `keep_correlation_planes` opts into per-window plane storage),
+  constructor; `keep_correlation_planes` opts into per-window plane storage;
+  `image_interpolation = :cubic|:linear` and `predictor_interpolation =
+  :linear|:cubic` are CPU-only deformation choices — `_ka_scope_check`
+  rejects non-defaults, and `_predictor_kw` passes the predictor keyword
+  only when non-default so device `apply_predictor` methods need no kwarg),
   `PIVResult{T}` (trailing `correlation_planes` and `scale` fields, `nothing`
   unless supplied; backward-compatible 11-/12-arg constructors keep old call
   sites valid — every result type uses the same trailing-`scale` trick)
@@ -257,9 +262,15 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   predictor, planar/CPU only, no ROI; `:tracking` takes the frame sequence
   and returns one `TrackingResult`) with ordered built-in
   `PreprocessStep`s (backgrounds copied in); `save_recipe`/`load_recipe`
-  (JLD2, `RECIPE_FORMAT_VERSION = 2` — v2 added per-camera preprocessing;
-  v1 still loads, unknown versions rejected);
-  `apply_recipe(recipe, pairs; output, backend, ...)` and the stereo method
+  (`RECIPE_FORMAT_VERSION = 3` = TOML text: `.toml` paths write sidecar
+  `<stem>.mask.png` / `<stem>.background.tif` (Float64 TIFF, exact); JLD2
+  recipe/results files store `recipe_toml` + `recipe_arrays/<name>`;
+  `nothing` settings are omitted and missing keys default; v1/v2 plain-dict
+  JLD2 still load, unknown versions rejected; `recipe_toml(r)` for display);
+  `apply_recipe(recipe, pairs; output, backend, masks, ...)` (per-pair
+  `masks` — input data, never in the recipe — unioned with the static mask,
+  `:sequence`/`:ptv` only; paths recorded as `mask_sources/…`, read by
+  `load_sources(path; masks = true)`) and the stereo method
   `apply_recipe(recipe, pairs1, pairs2, dw1, dw2; ...)` dispatch to the
   sequence/ensemble drivers and store the recipe in the results file, so
   `load_recipe(results_path)` recovers it (stereo results also store the
@@ -403,7 +414,20 @@ becomes the editor's raster), and an unedited opened recipe round-trips `==`.
 Test pair and Run both call `apply_recipe`; an ensemble Run returns one
 result (no `on_result`; `RunState.mode/pairs/cameras` + `run_progress` turn
 the core's per-pair-per-pass ticks into "pass k of P" text; cancel throws
-from `progress` and keeps nothing). Particle analysis is a set of planar
+from `progress` and keeps nothing). `wf.frame_masks` is a second `FrameSet`
+(pairing and pair index follow `wf.frames`) of per-frame mask images; test
+and run pass them through the `_input_kwargs(wf, :test|:run)` hook as
+`apply_recipe(...; masks)` (`PairTest.options` records them for staleness),
+and `representative_mask(wf)` (static ∪ both frames' images) feeds the
+canvas shade and the detection preview.
+`compute.jl` holds the **Run on the GPU** switch: `wf.passes.backend`
+(`:cpu` or a registered backend), `use_gpu!` loads the first installed
+device package (`Base.find_package` → `Base.require(Main, …)` on a worker,
+then `invokelatest(backend_available, b)`), and `_backend_kw`/`_backend_problem`
+feed `_input_kwargs` and `workflow_problem` (PIV modes only; particles stay
+on the CPU). `run_stale(wf)` drives the Run/Results attention state the way
+`test_stale` drives Test pair.
+Particle analysis is a set of planar
 modes, not a window: `passes.mode` ∈ `ANALYSIS_MODES` (`:sequence`,
 `:ensemble`, `:ptv`, `:tracking`); `ParticleSettings` (`wf.particles`,
 `particle_settings.jl`) holds `PTVParameters`/predictor/track options and

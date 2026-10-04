@@ -140,6 +140,7 @@ const RESULTS_FORMAT_VERSION = 1
 
 result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
+mask_source_key(i::Integer) = "mask_sources/" * lpad(i, 6, '0')
 
 """
     save_results(path, results; recipe = nothing, calibration = nothing,
@@ -188,19 +189,21 @@ save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVRe
              kwargs...) = save_results(path, [result]; kwargs...)
 
 """
-    load_sources(path) -> Vector{Vector{String}}
+    load_sources(path; masks = false) -> Vector{Vector{String}}
 
 The frame labels stored with each result of a results file, in order: for
 results from file paths, the paths of the frames that produced the result
 (two for a planar pair, four for a stereo acquisition). An entry is empty
 when no labels were stored (in-memory frames, or a pooled ensemble result).
+With `masks = true`, the per-pair mask image paths given to
+[`apply_recipe`](@ref) instead.
 """
-function load_sources(path::AbstractString)
+function load_sources(path::AbstractString; masks::Bool = false)
+    key = masks ? mask_source_key : source_key
     jldopen(path, "r") do f
         _check_results_format(f, path)
         n = haskey(f, "results") ? length(keys(f["results"])) : 0
-        return [haskey(f, source_key(i)) ? String[String(x) for x in f[source_key(i)]] : String[]
-                for i in 1:n]
+        return [haskey(f, key(i)) ? String[String(x) for x in f[key(i)]] : String[] for i in 1:n]
     end
 end
 

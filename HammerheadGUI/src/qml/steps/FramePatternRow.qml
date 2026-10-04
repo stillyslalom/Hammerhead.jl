@@ -1,6 +1,6 @@
 // Frames by folder and file-name pattern, for one frame list (camera 0 is the
-// planar window's; 1 and 2 the stereo cameras). The pattern can be typed, or
-// inferred from two frames of the recording.
+// planar window's; 1 and 2 the stereo cameras; 3 the planar per-frame mask
+// images). The pattern can be typed, or inferred from two files of the list.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -10,6 +10,7 @@ import jlqml
 ColumnLayout {
     id: row
     property int camera: 0
+    property string noun: "frames"
     spacing: 6
     Layout.fillWidth: true
 
@@ -21,7 +22,7 @@ ColumnLayout {
             id: dirField
             Layout.fillWidth: true
             text: app["patternDir" + row.camera]
-            placeholderText: "a folder of frames"
+            placeholderText: "a folder of " + row.noun
             selectByMouse: true
             onEditingFinished: if (text !== app["patternDir" + row.camera])
                 Julia.hh_set_frame_pattern(row.camera, text, patternField.text)
@@ -43,10 +44,10 @@ ColumnLayout {
             ToolTip.text: "* matches any run of characters, ? one character"
         }
         Button {
-            text: "From two frames…"
+            text: "From two files…"
             onClicked: twoFramesDialog.open()
             ToolTip.visible: hovered
-            ToolTip.text: "Choose two frames of the recording (e.g. the first pair); " +
+            ToolTip.text: "Choose two " + row.noun + " (e.g. the first pair's); " +
                           "the folder and pattern follow from their names"
         }
         Button {
@@ -66,12 +67,12 @@ ColumnLayout {
 
     FolderDialog {
         id: folderDialog
-        title: "Folder of frames"
+        title: "Folder of " + row.noun
         onAccepted: Julia.hh_set_frame_pattern(row.camera, selectedFolder.toString(), patternField.text)
     }
     FileDialog {
         id: twoFramesDialog
-        title: "Choose two frames"
+        title: "Choose two " + row.noun
         fileMode: FileDialog.OpenFiles
         nameFilters: ["Images (*.tif *.tiff *.png *.bmp *.jpg *.jpeg)", "All files (*)"]
         onAccepted: Julia.hh_pattern_from_frames(row.camera,

@@ -24,6 +24,10 @@ function _ka_scope_check(passes, name::Symbol, fp64::Bool = true)
         p.keep_correlation_planes &&
             throw(ArgumentError("backend :$name does not support keep_correlation_planes yet; " *
                                 "use backend = :cpu"))
+        (p.image_interpolation === :cubic && p.predictor_interpolation === :linear) ||
+            throw(ArgumentError("backend :$name supports only the default interpolation " *
+                                "(image_interpolation = :cubic, predictor_interpolation = :linear); " *
+                                "use backend = :cpu"))
     end
     return nothing
 end

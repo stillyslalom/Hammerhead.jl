@@ -264,7 +264,7 @@ StepPage {
             }
         }
         Label {
-            text: "Plates or detection settings changed since the fit — fit again"
+            text: "Plates or detection settings changed since the fit; fit again"
             visible: app.calFitStale
             color: "#b06f00"
             wrapMode: Text.WordWrap

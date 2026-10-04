@@ -193,7 +193,7 @@ print(tool_summary(ex))
 # The results file already holds the settings that produced it. **Save
 # settings…** writes them to a separate recipe file as well:
 
-settings_path = joinpath(work, "vortex-settings.jld2")
+settings_path = joinpath(work, "vortex-settings.toml")
 save_settings(wf, settings_path)                     # Save settings…
 load_recipe(settings_path) == load_recipe(wf.run.output_path[])
 

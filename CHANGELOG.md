@@ -33,6 +33,25 @@ Added:
   `track_particles` on a frame sequence, and stores the recipe with the
   results. `track_particles` gained a `preprocess` keyword. `self_calibrate` accepts
   a per-camera `preprocess = (f1, f2)` tuple, like the stereo drivers.
+- Recipes are TOML text (format version 3). `save_recipe("x.toml", r)` writes
+  a readable settings file with the mask (`x.mask.png`) and backgrounds
+  (`x.background.tif`, Float64) beside it; JLD2 recipe and results files embed
+  the same text plus the arrays. `recipe_toml(r)` returns the text. Version 1
+  and 2 files still load. TOML (a standard library) is a new dependency.
+- `apply_recipe(recipe, pairs; masks)` takes per-pair masks for a moving
+  boundary: one entry per pair (a mask image path, a `Bool` matrix, or a
+  tuple of the two frames' masks), or a function `(i, imgA, imgB) -> mask`;
+  each is unioned with the recipe's static mask. Mask paths are stored with
+  the results: `load_sources(path; masks = true)`.
+- `backend_available(backend)` reports whether a backend is loaded and has a
+  working device (`CUDA.functional()` / `AMDGPU.functional()` for the GPU
+  extensions); `backend_problem(backend, passes)` returns why a schedule
+  cannot run on a backend, or `nothing`.
+- `PIVParameters(image_interpolation = :cubic | :linear,
+  predictor_interpolation = :linear | :cubic)` choose how deforming passes
+  resample the images (cubic B-spline by default) and interpolate the
+  predictor field (bilinear by default; `:cubic` is a cubic B-spline through
+  the vectors). KernelAbstractions and GPU backends support only the defaults.
 
 ### HammerheadGUI
 
@@ -124,6 +143,22 @@ Added:
   Scale: measure the pixel size on a separate ruler image (`load_ruler!`).
   A viewer toolbar sets the view mode (edit, zoom, pan; `set_view_mode!`),
   resets the view, and saves it as an image.
+- Prepare › Mask: **Per-frame mask images** for a moving boundary (files, or
+  folder and pattern), one per frame; each pair uses both frames' images and
+  the static mask, and the viewer shades the representative pair's combined
+  mask (`wf.frame_masks`, `representative_mask`, `frame_masks_problem`).
+  Passes: **Image interpolation** and **Predictor interpolation**. **Save
+  settings…** writes a TOML settings file by default (`.jld2` still
+  accepted). `start_test!`/`start_run!` take `options` keyword inputs for
+  `apply_recipe`.
+- Passes: **Run on the GPU** switch (`use_gpu!`, `set_backend!`,
+  `gpu_packages`): loads CUDA or AMDGPU on first use and runs PIV tests and
+  batches on it; unavailable when neither package is installed. Settings the
+  GPU backends do not implement are reported on the step.
+- The Run and Results steps turn to needing attention when settings or inputs
+  change after a run (`run_stale`), as Test pair already did; a failed or
+  canceled run also needs attention. The window title reads
+  `Hammerhead planar PIV | settings.toml`.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run

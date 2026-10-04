@@ -144,8 +144,10 @@ function _original_source_gate(context, predictor, grid, params, mask;
     shape = (length(grid.y), length(grid.x))
     # A fresh name: reassigning a captured variable would box it.
     out = gate === nothing ? fill(true, shape) : fill!(gate, true)
-    itpu = predictor_interpolant(predictor.y, predictor.x, predictor.u)
-    itpv = predictor_interpolant(predictor.y, predictor.x, predictor.v)
+    itpu = predictor_interpolant(predictor.y, predictor.x, predictor.u;
+                                 method = params.predictor_interpolation)
+    itpv = predictor_interpolant(predictor.y, predictor.x, predictor.v;
+                                 method = params.predictor_interpolation)
     wr, wc = params.window_size
     sr, sc = params.search_area_size
     mr, mc = div.(params.search_area_size .- params.window_size, 2)

@@ -5,9 +5,11 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import jlqml
+import ".."
 
 ColumnLayout {
     spacing: 10
+    property bool stereo: false
 
     Label {
         text: "Click the image to add vertices and right-click to close the polygon " +
@@ -68,6 +70,46 @@ ColumnLayout {
         Button { text: "Save mask image…"; enabled: app.hasMask; onClicked: saveMaskDialog.open() }
     }
 
+    Label {
+        text: "Per-frame mask images"
+        font.weight: Font.DemiBold
+        Layout.topMargin: 12
+        visible: !stereo
+    }
+    Label {
+        visible: !stereo
+        text: "For a moving boundary: one mask image per frame (white = excluded), in frame " +
+              "order. Each pair is analyzed with both of its frames' mask images and the mask " +
+              "above. They are input data like the frames and are not saved with the settings."
+        wrapMode: Text.WordWrap
+        opacity: 0.75
+        Layout.fillWidth: true
+    }
+    FramePatternRow { camera: 3; noun: "mask images"; visible: !stereo }
+    RowLayout {
+        spacing: 8
+        visible: !stereo
+        Button { text: "Add mask images…"; onClicked: frameMasksDialog.open() }
+        Button {
+            text: "Clear"
+            enabled: app.frameMaskCount > 0
+            onClicked: Julia.hh_clear_frame_masks()
+        }
+    }
+    Label {
+        visible: !stereo
+        text: app.frameMasksInfo
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
+
+    FileDialog {
+        id: frameMasksDialog
+        title: "Add mask images (one per frame, white = excluded)"
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["Images (*.png *.tif *.tiff *.bmp)", "All files (*)"]
+        onAccepted: Julia.hh_add_frame_masks(selectedFiles.map(u => u.toString()).join("\n"))
+    }
     FileDialog {
         id: openMaskDialog
         title: "Open mask image (white = excluded)"

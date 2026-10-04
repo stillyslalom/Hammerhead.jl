@@ -18,6 +18,10 @@ Step controllers: `frames` (`FrameSet`), `prepare` (`PrepareState`),
 `explorer` holds a `ResultExplorer` for the Results step. Preprocessing,
 mask, ROI, and physical scale are kept in `preprocessing`, `mask`, `roi`,
 and `scale`; the Prepare step's editors read and write them.
+`frame_masks` (a `FrameSet` paired like `frames`) lists optional per-frame
+mask images (white = excluded) for a moving boundary: input data like the
+frames, not part of the settings. Each pair is analyzed with both of its
+frames' mask images unioned with `mask` (see [`representative_mask`](@ref)).
 
 `workflow_recipe` assembles the current settings as a core
 `PIVRecipe`; `passes.mode` picks the analysis (one of
@@ -38,6 +42,7 @@ tasks and hand their results to `deliver`. Without it they run inline.
 """
 struct PlanarWorkflow <: AbstractWorkflow
     frames::FrameSet
+    frame_masks::FrameSet
     prepare::PrepareState
     passes::PassesEditor
     particles::ParticleSettings
@@ -62,8 +67,16 @@ end
 function PlanarWorkflow(; files = Any[], pair_mode::Symbol = :paired, deliver = f -> f())
     spawn, deliver_ref = Ref(false), Ref{Any}(deliver)
     frames = FrameSet(; files, pair_mode, spawn, deliver = deliver_ref)
+    frame_masks = FrameSet(; pair_mode, spawn, deliver = deliver_ref)
+    frame_masks.pattern[] = "*.png"
+    # the mask images pair like the frames and follow the representative pair
+    on(m -> set_pair_mode!(frame_masks, m), frames.pair_mode)
+    onany(frames.pair, frame_masks.files) do i, _
+        frame_masks.pair[] == i || (frame_masks.pair[] = i)
+    end
     prepare = PrepareState(; runner = _workflow_runner(spawn, deliver_ref))
-    wf = PlanarWorkflow(frames, prepare, PassesEditor(), ParticleSettings(), PairTest(), RunState(),
+    wf = PlanarWorkflow(frames, frame_masks, prepare, PassesEditor(), ParticleSettings(),
+                        PairTest(), RunState(),
                         Observable(:images),
                         Observable(PreprocessStep[]),
                         Observable{Union{Nothing,BitMatrix}}(nothing),
@@ -80,7 +93,7 @@ function PlanarWorkflow(; files = Any[], pair_mode::Symbol = :paired, deliver = 
     _connect_results!(wf)
     pp = prepare.preview
     onany((_...) -> _request_detection!(wf), wf.step, wf.passes.mode, wf.particles.ptv, wf.mask,
-          frames.shown, pp.processed)
+          frames.shown, pp.processed, frame_masks.files, frame_masks.loaded)
     return wf
 end
 
@@ -115,7 +128,58 @@ function workflow_problem(wf::PlanarWorkflow)
         return "an ensemble analyzes whole frames: clear the region (Prepare › Region) or use a mask"
     _particle_mode(mode) && wf.roi[] !== nothing &&
         return "particle analysis covers whole frames: clear the region (Prepare › Region) or use a mask"
+    msg = frame_masks_problem(wf)
+    return msg === nothing ? _backend_problem(wf) : msg
+end
+
+"""
+    frame_masks_problem(wf::PlanarWorkflow) -> Union{Nothing,String}
+
+`nothing` without per-frame mask images or when they match the frames (one
+per frame, in a pair-by-pair mode: PIV per pair or PTV), otherwise why they
+cannot be used.
+"""
+function frame_masks_problem(wf::PlanarWorkflow)
+    nm = length(wf.frame_masks.files[])
+    nm == 0 && return nothing
+    nf = length(wf.frames.files[])
+    nm == nf || return "$nm mask image" * (nm == 1 ? "" : "s") * " for $nf frame" *
+                       (nf == 1 ? "" : "s") * ": per-frame masks need one image per frame"
+    wf.passes.mode[] in (:sequence, :ptv) ||
+        return "per-frame masks apply pair by pair (PIV per pair or PTV); " *
+               "clear them (Prepare › Mask) for an ensemble or tracking"
     return nothing
+end
+
+"""
+    representative_mask(wf::PlanarWorkflow) -> Union{Nothing,BitMatrix}
+
+The mask the representative pair is analyzed with: `wf.mask` unioned with
+both frames' per-frame mask images (once they are loaded; until then, or
+without mask images, `wf.mask` alone).
+"""
+function representative_mask(wf::PlanarWorkflow)
+    m, fm = wf.mask[], wf.frame_masks
+    isempty(fm.files[]) && return m
+    imgs = try
+        pair_images(fm)
+    catch
+        nothing
+    end
+    imgs === nothing && return m
+    d = (imgs[1] .>= 0.5f0) .| (imgs[2] .>= 0.5f0)
+    m === nothing && return BitMatrix(d)
+    size(m) == size(d) || return m
+    return m .| d
+end
+
+# The per-pair masks argument of apply_recipe: the representative pair's
+# mask images (test) or every pair's (run), as (frame A, frame B) paths.
+function _input_kwargs(wf::PlanarWorkflow, which::Symbol)
+    kw, fm = _backend_kw(wf), wf.frame_masks
+    (isempty(fm.files[]) || !(wf.passes.mode[] in (:sequence, :ptv))) && return kw
+    which === :test && return (; kw..., masks = Any[current_pair(fm)])
+    return (; kw..., masks = Any[p for p in frame_pairs(fm)])
 end
 
 # ---------------------------------------------------------------- detection preview
@@ -127,10 +191,10 @@ function _request_detection!(wf::PlanarWorkflow)
     ps = wf.particles
     active = wf.step[] === :passes && _particle_mode(wf.passes.mode[])
     img = active ? _detection_frame(wf) : nothing
-    m = wf.mask[]
+    m = active ? representative_mask(wf) : nothing
     key = (img, ps.ptv[], m)
     k = ps.key[]
-    k !== nothing && k[1] === key[1] && k[2] == key[2] && k[3] === key[3] && return wf
+    k !== nothing && k[1] === key[1] && k[2] == key[2] && isequal(k[3], key[3]) && return wf
     ps.key[] = key
     g = (ps.generation[] += 1)
     if img === nothing

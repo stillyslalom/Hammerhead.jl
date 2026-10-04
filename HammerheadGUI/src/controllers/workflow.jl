@@ -10,6 +10,7 @@
 #   _load_specific!(wf, r)      recipe fields only this workflow has (planar: ROI, particles)
 #   _test_inputs(wf)            apply_recipe's positional inputs after the recipe,
 #   _run_inputs(wf)             for the test and for the batch
+#   _input_kwargs(wf, which)    apply_recipe keyword inputs for :test / :run (planar: masks)
 #   _test_label(wf)             the representative pair's index
 #   _inputs_stale(wf)           whether the test's inputs changed (pair, dewarpers)
 #   _step_status(wf, step)      rail status of the steps that are not shared
@@ -71,6 +72,8 @@ function prepare_pages end
 the first missing or inconsistent input.
 """
 function workflow_problem end
+
+_input_kwargs(wf::AbstractWorkflow, ::Symbol) = _backend_kw(wf)
 
 # Where background computations run: inline, or (with `spawn[]`) on a worker
 # whose result is applied through `deliver[]` on the GUI thread.
@@ -203,7 +206,7 @@ function test_pair!(wf::AbstractWorkflow; spawn::Bool = true)
         return wf
     end
     start_test!(wf.test, recipe, _test_inputs(wf), _test_label(wf);
-                deliver = wf.deliver[], spawn)
+                deliver = wf.deliver[], spawn, options = _input_kwargs(wf, :test))
     return wf
 end
 
@@ -234,7 +237,42 @@ an ensemble the leading pairs; for a stereo workflow also the dewarpers)
 changed since the last test.
 """
 test_stale(wf::AbstractWorkflow) =
-    wf.test.recipe[] === nothing || wf.test.recipe[] != workflow_recipe(wf) || _inputs_stale(wf)
+    wf.test.recipe[] === nothing || wf.test.recipe[] != workflow_recipe(wf) ||
+    wf.test.options[] != _input_kwargs(wf, :test) || _inputs_stale(wf)
+
+"""
+    run_stale(wf::AbstractWorkflow) -> Bool
+
+Whether the settings or the inputs (frames, mask images, backend; for a
+stereo workflow the dewarpers) changed since the last run. `false` before
+the first run.
+"""
+function run_stale(wf::AbstractWorkflow)
+    rs = wf.run
+    rs.recipe[] === nothing && return false
+    rs.recipe[] != workflow_recipe(wf) && return true
+    rs.options[] != _input_kwargs(wf, :run) && return true
+    current = try
+        _run_inputs(wf)
+    catch
+        return true
+    end
+    inp = rs.inputs[]
+    (inp === nothing || length(inp) != length(current)) && return true
+    return !all(((a, b),) -> _same_input(a, b), zip(inp, current))
+end
+
+_same_input(a::AbstractVector, b::AbstractVector) =
+    length(a) == length(b) && all(((x, y),) -> _same_input(x, y), zip(a, b))
+_same_input(a::Tuple, b::Tuple) =
+    length(a) == length(b) && all(((x, y),) -> _same_input(x, y), zip(a, b))
+_same_input(a, b) = _same_entry(a, b)
+
+# Whether the Results step shows the last run's results (in memory, or the
+# file it wrote), rather than a results file opened separately.
+_results_from_run(wf::AbstractWorkflow) =
+    wf.explorer[] !== nothing && wf.run.recipe[] !== nothing &&
+    (wf.results_path[] === nothing || wf.results_path[] == wf.run.finished_output[])
 
 """
     start_run!(wf::AbstractWorkflow; spawn = true)
@@ -252,7 +290,8 @@ function start_run!(wf::AbstractWorkflow; spawn::Bool = true)
         wf.run.status[] = _errmsg(err)
         return wf
     end
-    start_run!(wf.run, recipe, _run_inputs(wf); deliver = wf.deliver[], spawn)
+    start_run!(wf.run, recipe, _run_inputs(wf); deliver = wf.deliver[], spawn,
+               options = _input_kwargs(wf, :run))
     return wf
 end
 
@@ -434,14 +473,21 @@ function step_status(wf::AbstractWorkflow, step::Symbol)
             (txt = "ensemble of $(length(first(inp))) pairs: " * txt)
         return test_stale(wf) ? (:attention, "settings changed since: " * txt) : (:ok, txt)
     elseif step === :run
-        wf.run.running[] && return (:busy, run_progress(wf.run))
-        return isempty(wf.run.status[]) ? (:todo, "not run") : (:ok, wf.run.status[])
+        rs = wf.run
+        rs.running[] && return (:busy, run_progress(rs))
+        isempty(rs.status[]) && return (:todo, "not run")
+        run_stale(wf) && return (:attention, "settings changed since: " * rs.status[])
+        ok = startswith(rs.status[], "done")
+        return (ok ? :ok : :attention, rs.status[])
     elseif step === :results
         ex = wf.explorer[]
         ex === nothing && return (:todo, "no results yet")
         n = nframes(ex)
-        return (:ok, wf.results_path[] === nothing ? "$n result" * (n == 1 ? "" : "s") * " in memory" :
-                     basename(wf.results_path[]))
+        txt = wf.results_path[] === nothing ? "$n result" * (n == 1 ? "" : "s") * " in memory" :
+              basename(wf.results_path[])
+        _results_from_run(wf) && run_stale(wf) &&
+            return (:attention, "settings changed since the run: " * txt)
+        return (:ok, txt)
     end
     return _step_status(wf, step)
 end

@@ -56,7 +56,7 @@ StepPage {
             anchors.right: parent.right
             spacing: 6
             Label {
-                text: "Settings or pair changed since this test (pair " + app.testPair + ") — test again"
+                text: "Settings or pair changed since this test (pair " + app.testPair + "); test again"
                 visible: app.testStale
                 color: "#b06f00"
                 wrapMode: Text.WordWrap
