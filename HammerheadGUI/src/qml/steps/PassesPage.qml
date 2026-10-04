@@ -91,7 +91,7 @@ StepPage {
             delegate: SpinBox {
                 Layout.row: model.number
                 Layout.column: 4
-                Layout.preferredWidth: 80
+                Layout.preferredWidth: 100
                 from: 1; to: 10; editable: true
                 value: model.iterations
                 onValueModified: Julia.hh_set_pass(model.number, "iterations", value)

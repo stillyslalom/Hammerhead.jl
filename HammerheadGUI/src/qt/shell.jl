@@ -35,6 +35,25 @@ function _qt_init!()
     return
 end
 
+# Glyphs a canvas may show (ASCII, the symbols of the controllers' labels,
+# Makie's tick minus). A glyph first laid out while a window is open reaches
+# the atlas texture through a callback that runs outside Qt's render, where
+# no GL context is current, and draws as garbage; glyphs in the atlas before
+# the first render upload with it.
+const _CANVAS_GLYPHS = vcat(Char(32):Char(126), collect("°±²³·¼×÷ΓΔεπσωµ–—−…›→↔∘≤≥≈|"))
+
+function _warm_glyph_atlas!()
+    atlas = Makie.get_texture_atlas()
+    fonts = Makie.theme(:fonts)
+    for key in keys(fonts)
+        font = Makie.to_font(fonts[key][])
+        for c in _CANVAS_GLYPHS
+            Makie.insert_glyph!(atlas, c, font)
+        end
+    end
+    return
+end
+
 # After a window closes Qt has destroyed its GL contexts: forget the canvases'
 # screens so GLMakie neither renders to them nor frees them at exit.
 function _release_qml_screens!()
@@ -154,11 +173,16 @@ mutable struct PrepStepRow
 end
 
 """
-State shared between a `PlanarWorkflow` and its QML window.
+State shared between a workflow (`PlanarWorkflow` or `StereoWorkflow`) and
+its QML window: the property map `app`, the item models, the image canvas
+(`PlanarCanvas`/`StereoCanvas`), the results canvas, and the queue of
+background updates that `hh_tick` drains. `PlanarShell` and `StereoShell`
+are its two forms; `models` holds a window's extra item models by their QML
+name (stereo: the plate lists).
 """
-mutable struct PlanarShell
-    wf::PlanarWorkflow
-    canvas::PlanarCanvas
+mutable struct WorkflowShell{W<:AbstractWorkflow,C}
+    wf::W
+    canvas::C
     host::CanvasHost
     results::ResultsCanvas
     app::JuliaPropertyMap
@@ -171,25 +195,31 @@ mutable struct PlanarShell
     queue::Channel{Any}
     dirty::Base.RefValue{Bool}
     shown::Dict{String,Any}
+    models::Dict{String,JuliaItemModel}
+    rows::Dict{String,Any}                         # the extra models' rows (and caches)
 end
 
-function PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf))
-    canvas = planar_canvas(wf)
+const PlanarShell = WorkflowShell{PlanarWorkflow,PlanarCanvas}
+
+PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)) =
+    WorkflowShell(wf, planar_canvas(wf); queue)
+
+function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Channel{Any}(Inf))
     app = JuliaPropertyMap()
     host = CanvasHost(app, canvas.fig)
-    step_rows = [StepRow(String(s), Controllers.STEP_LABELS[s], "todo", "") for s in WORKFLOW_STEPS]
+    step_rows = [StepRow(String(s), Controllers.STEP_LABELS[s], "todo", "") for s in workflow_steps(wf)]
     pass_rows = PassRow[]
     prep_rows = PrepStepRow[]
     results = results_canvas()
-    sh = PlanarShell(wf, canvas, host, results, app, step_rows, JuliaItemModel(step_rows),
-                     pass_rows, JuliaItemModel(pass_rows), prep_rows, JuliaItemModel(prep_rows),
-                     queue, Ref(true), Dict{String,Any}())
+    sh = WorkflowShell(wf, canvas, host, results, app, step_rows, JuliaItemModel(step_rows),
+                       pass_rows, JuliaItemModel(pass_rows), prep_rows, JuliaItemModel(prep_rows),
+                       queue, Ref(true), Dict{String,Any}(), Dict{String,JuliaItemModel}(),
+                       Dict{String,Any}())
     mark = (_...) -> (sh.dirty[] = true)
-    fs, ps, pe, t, r = wf.frames, wf.prepare, wf.passes, wf.test, wf.run
+    ps, pe, t, r = wf.prepare, wf.passes, wf.test, wf.run
     pp = ps.preview
-    for obs in (wf.step, wf.preprocessing, wf.mask, wf.roi, wf.scale, wf.saved, wf.settings_path,
-                wf.explorer, wf.results_path, wf.status, fs.files, fs.pair_mode, fs.pair, fs.shown,
-                fs.loading, fs.loaded, fs.load_error,
+    for obs in (wf.step, wf.preprocessing, wf.mask, wf.scale, wf.saved, wf.settings_path,
+                wf.explorer, wf.results_path, wf.status,
                 ps.revision, ps.status, ps.background_running, ps.roi_error, ps.scale_error,
                 pp.error_step, pp.status, pp.processed2,
                 pe.passes, pe.preset, pe.mode, pe.image_type, pe.error,
@@ -197,6 +227,7 @@ function PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)
                 r.completed)
         on(mark, obs)
     end
+    _connect_window!(sh, mark)
     on(pe.passes) do _
         _sync_pass_rows!(sh)
     end
@@ -224,30 +255,46 @@ function PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)
     return sh
 end
 
+# The planar window's own observables: the frames and the ROI.
+function _connect_window!(sh::PlanarShell, mark)
+    wf = sh.wf
+    fs = wf.frames
+    for obs in (wf.roi, fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error)
+        on(mark, obs)
+    end
+    return sh
+end
+
 # Assign a QML property only when its value changed.
-function _set!(sh::PlanarShell, key::String, val)
+function _set!(sh::WorkflowShell, key::String, val)
     haskey(sh.shown, key) && isequal(sh.shown[key], val) && return
     sh.shown[key] = val
     sh.app[key] = val
     return
 end
 
-function _sync_pass_rows!(sh::PlanarShell)
-    rows = pass_rows(sh.wf.passes)
-    if length(rows) == length(sh.pass_rows)
-        for (i, r) in enumerate(rows)
-            new = PassRow(i, r.window, r.search, r.overlap, r.iterations)
-            old = sh.pass_rows[i]
-            (old.window, old.search, old.overlap, old.iterations) ==
-                (new.window, new.search, new.overlap, new.iterations) && continue
-            sh.pass_model[i] = new
+# Replace the rows of an item model: in place when the count is unchanged
+# (only changed rows are re-sent), otherwise with a full reset.
+function _sync_rows!(rows::Vector{R}, model::JuliaItemModel, new::Vector{R}, same) where {R}
+    if length(new) == length(rows)
+        for (i, r) in enumerate(new)
+            same(rows[i], r) && continue
+            model[i] = r
         end
     else
-        empty!(sh.pass_rows)
-        append!(sh.pass_rows, [PassRow(i, r.window, r.search, r.overlap, r.iterations)
-                               for (i, r) in enumerate(rows)])
-        QML.force_model_update(sh.pass_model)
+        empty!(rows)
+        append!(rows, new)
+        QML.force_model_update(model)
     end
+    return
+end
+
+function _sync_pass_rows!(sh::WorkflowShell)
+    new = [PassRow(i, r.window, r.search, r.overlap, r.iterations)
+           for (i, r) in enumerate(pass_rows(sh.wf.passes))]
+    _sync_rows!(sh.pass_rows, sh.pass_model, new,
+                (a, b) -> (a.window, a.search, a.overlap, a.iterations) ==
+                          (b.window, b.search, b.overlap, b.iterations))
     return
 end
 
@@ -258,21 +305,12 @@ function _prep_row(pp, i::Int, step::PreprocessStep)
                        join(last.(opts), "|"), pp.error_step[] == i ? pp.error[] : "")
 end
 
-function _sync_prep_rows!(sh::PlanarShell)
+function _sync_prep_rows!(sh::WorkflowShell)
     pp = sh.wf.prepare.preview
-    rows = [_prep_row(pp, i, s) for (i, s) in enumerate(pp.steps[])]
-    if length(rows) == length(sh.prep_rows)
-        for (i, new) in enumerate(rows)
-            old = sh.prep_rows[i]
-            (old.label, old.optionKeys, old.optionValues, old.error) ==
-                (new.label, new.optionKeys, new.optionValues, new.error) && continue
-            sh.prep_model[i] = new
-        end
-    else
-        empty!(sh.prep_rows)
-        append!(sh.prep_rows, rows)
-        QML.force_model_update(sh.prep_model)
-    end
+    new = [_prep_row(pp, i, s) for (i, s) in enumerate(pp.steps[])]
+    _sync_rows!(sh.prep_rows, sh.prep_model, new,
+                (a, b) -> (a.label, a.optionKeys, a.optionValues, a.error) ==
+                          (b.label, b.optionKeys, b.optionValues, b.error))
     return
 end
 
@@ -281,7 +319,7 @@ end
 _num(x::Real) = isinteger(x) && abs(x) < 1e15 ? string(Int(x)) : Controllers.display_number(x)
 
 # Prepare step fields of the property map.
-function _refresh_prepare!(sh::PlanarShell)
+function _refresh_prepare!(sh::WorkflowShell)
     wf = sh.wf
     ps = wf.prepare
     pp = ps.preview
@@ -289,6 +327,7 @@ function _refresh_prepare!(sh::PlanarShell)
     _set!(sh, "hasFrameSize", ps.mask[] !== nothing)
     _set!(sh, "prepareStatus", ps.status[])
     _set!(sh, "backgroundRunning", ps.background_running[])
+    _set!(sh, "backgroundNote", something(background_note(wf), ""))
     _set!(sh, "pipelineSummary", pipeline_summary(pp))
     _set!(sh, "previewStatus", pp.status[])
     _set!(sh, "showProcessed", ps.show_processed[])
@@ -296,13 +335,36 @@ function _refresh_prepare!(sh::PlanarShell)
     _set!(sh, "probeSummary", probe_summary(pp))
 
     me = ps.mask[]
-    _set!(sh, "maskStatus", me === nothing ? "add frames to draw a mask" :
+    _set!(sh, "maskStatus", me === nothing ? _no_mask_editor(wf) :
                             Controllers.status_text(me) * (me.raster[] === nothing ? "" : " · raster mask"))
     _set!(sh, "maskDrawing", me !== nothing && !isempty(me.active[]))
     _set!(sh, "maskSelected", me !== nothing && me.selected[] !== nothing)
     _set!(sh, "hasMask", wf.mask[] !== nothing)
 
-    ed = ps.roi[]
+    _refresh_region!(sh)
+
+    sc = wf.scale[]
+    st = ps.scale[]
+    _set!(sh, "hasScale", sc !== nothing)
+    _set!(sh, "scalePixelSize", sc === nothing ? "" : _num(sc.pixel_size))
+    _set!(sh, "scaleLengthUnit", sc === nothing ? "" : sc.length_unit)
+    _set!(sh, "scaleDt", sc === nothing ? "" : _num(sc.dt))
+    _set!(sh, "scaleTimeUnit", sc === nothing ? "" : sc.time_unit)
+    _set!(sh, "scaleSummary", _scale_summary(wf))
+    _set!(sh, "scaleSeparation", st === nothing ? "" : _num(st.separation[]))
+    _set!(sh, "scaleMeasureUnit", st === nothing ? "" : st.length_unit[])
+    _set!(sh, "scaleMeasure", st === nothing ? "" : Controllers.scale_summary(st))
+    _set!(sh, "scaleError", ps.scale_error[])
+    return
+end
+
+_no_mask_editor(::PlanarWorkflow) = "add frames to draw a mask"
+_scale_summary(wf::PlanarWorkflow) = scale_description(wf.scale[])
+
+# The planar Region page.
+function _refresh_region!(sh::PlanarShell)
+    wf = sh.wf
+    ed = wf.prepare.roi[]
     roi = wf.roi[]
     sz = ed === nothing ? nothing : ed.size
     rows = roi !== nothing ? roi.rows : sz === nothing ? (1:0) : 1:sz[1]
@@ -312,37 +374,15 @@ function _refresh_prepare!(sh::PlanarShell)
     _set!(sh, "roiColFirst", isempty(cols) ? "" : string(first(cols)))
     _set!(sh, "roiColLast", isempty(cols) ? "" : string(last(cols)))
     _set!(sh, "roiSummary", ed === nothing ? "add frames to select a region" : Controllers.roi_summary(ed))
-    _set!(sh, "roiError", ps.roi_error[])
+    _set!(sh, "roiError", wf.prepare.roi_error[])
     _set!(sh, "hasRoi", roi !== nothing)
-
-    sc = wf.scale[]
-    st = ps.scale[]
-    _set!(sh, "hasScale", sc !== nothing)
-    _set!(sh, "scalePixelSize", sc === nothing ? "" : _num(sc.pixel_size))
-    _set!(sh, "scaleLengthUnit", sc === nothing ? "" : sc.length_unit)
-    _set!(sh, "scaleDt", sc === nothing ? "" : _num(sc.dt))
-    _set!(sh, "scaleTimeUnit", sc === nothing ? "" : sc.time_unit)
-    _set!(sh, "scaleSummary", scale_description(sc))
-    _set!(sh, "scaleSeparation", st === nothing ? "" : _num(st.separation[]))
-    _set!(sh, "scaleMeasureUnit", st === nothing ? "" : st.length_unit[])
-    _set!(sh, "scaleMeasure", st === nothing ? "" : Controllers.scale_summary(st))
-    _set!(sh, "scaleError", ps.scale_error[])
     return
 end
 
-function _refresh!(sh::PlanarShell)
-    wf = sh.wf
-    fs, pe, t, r = wf.frames, wf.passes, wf.test, wf.run
-    name = isempty(wf.settings_path[]) ? "untitled settings" : basename(wf.settings_path[])
-    modified = try
-        settings_modified(wf)
-    catch
-        true
-    end
-    _set!(sh, "title", "Hammerhead — planar PIV — " * name * (modified ? " •" : ""))
-    _set!(sh, "step", String(wf.step[]))
-    _set!(sh, "status", wf.status[])
+_window_kind(::PlanarWorkflow) = "planar PIV"
 
+function _refresh_frames!(sh::PlanarShell)
+    fs = sh.wf.frames
     problem = frames_problem(fs)
     _set!(sh, "framesSummary", frames_summary(fs))
     _set!(sh, "framesProblem", problem === nothing ? "" : problem)
@@ -350,6 +390,27 @@ function _refresh!(sh::PlanarShell)
     _set!(sh, "pairCount", npairs(fs))
     _set!(sh, "pairMode", String(fs.pair_mode[]))
     _set!(sh, "shown", String(fs.shown[]))
+    return
+end
+
+_refresh_window!(::PlanarShell) = nothing
+
+function _refresh!(sh::WorkflowShell)
+    wf = sh.wf
+    pe, t, r = wf.passes, wf.test, wf.run
+    name = isempty(wf.settings_path[]) ? "untitled settings" : basename(wf.settings_path[])
+    modified = try
+        settings_modified(wf)
+    catch
+        true
+    end
+    _set!(sh, "title", "Hammerhead — $(_window_kind(wf)) — " * name * (modified ? " •" : ""))
+    _set!(sh, "step", String(wf.step[]))
+    _set!(sh, "status", wf.status[])
+
+    _refresh_frames!(sh)
+    problem = workflow_problem(wf)
+    _set!(sh, "analysisProblem", problem === nothing ? "" : problem)
 
     _refresh_prepare!(sh)
     _set!(sh, "preset", pe.preset[] === nothing ? "custom" : String(pe.preset[]))
@@ -381,26 +442,28 @@ function _refresh!(sh::PlanarShell)
     _set!(sh, "resultsLabel", step_status(wf, :results)[2])
     _set!(sh, "resultsFile", wf.results_path[] === nothing ? "" : wf.results_path[])
     if ex !== nothing
-        r = current_result(ex)
-        fields = available_fields(r)
+        res = current_result(ex)
+        fields = available_fields(res)
         _set!(sh, "resultFrame", ex.frame[])
         _set!(sh, "resultFrames", nframes(ex))
         _set!(sh, "resultFieldKeys", join(String.(fields), "|"))
-        _set!(sh, "resultFieldLabels", join([field_label(r, f) for f in fields], "|"))
+        _set!(sh, "resultFieldLabels", join([field_label(res, f) for f in fields], "|"))
         _set!(sh, "resultField", String(ex.field[]))
-        _set!(sh, "resultFieldLabel", field_label(r, ex.field[]))
+        _set!(sh, "resultFieldLabel", field_label(res, ex.field[]))
         _set!(sh, "resultColorMode", String(ex.color_mode[]))
         _set!(sh, "resultVectors", ex.show_vectors[])
         _set!(sh, "selectionText", describe_selection(ex))
         _set!(sh, "resultsStatus", ex.status[])
         _set!(sh, "resultTool", String(ex.tool[]))
-        _set!(sh, "resultToolsAvailable", r isa PIVResult)
+        _set!(sh, "resultToolsAvailable", res isa PIVResult)
         _set!(sh, "toolSummary", tool_summary(ex))
     end
     _set!(sh, "hasResults", ex !== nothing)
 
+    _refresh_window!(sh)
+
     changed = false
-    for (row, step) in zip(sh.step_rows, WORKFLOW_STEPS)
+    for (row, step) in zip(sh.step_rows, workflow_steps(wf))
         state, summary = step_status(wf, step)
         (row.status, row.summary) == (String(state), summary) && continue
         row.status = String(state); row.summary = summary
@@ -415,7 +478,7 @@ end
 
 # ---------------------------------------------------------------- QML callbacks
 
-const _SHELL = Ref{Union{Nothing,PlanarShell}}(nothing)
+const _SHELL = Ref{Union{Nothing,WorkflowShell}}(nothing)
 # `_TICK_HOOK[](shell)` runs on every tick (scripted smoke tests drive the
 # window through it); `request_close()` closes the window from Julia.
 const _TICK_HOOK = Ref{Any}(nothing)
@@ -484,15 +547,19 @@ function hh_tick()
     return redraw ? 1 : 0
 end
 
+# What the pair bar and pairing controls act on: the frame set, or both
+# cameras of a stereo workflow.
+_frames_target(wf::PlanarWorkflow) = wf.frames
+_frames_target(wf::StereoWorkflow) = wf
+
+_paths(urls) = sort([_url_to_path(u) for u in split(String(urls), '\n') if !isempty(u)])
+
 hh_set_step(name) = _with_shell(sh -> set_step!(sh.wf, Symbol(String(name))))
-hh_add_files(urls) = _with_shell(sh -> begin
-    paths = [_url_to_path(u) for u in split(String(urls), '\n') if !isempty(u)]
-    add_files!(sh.wf.frames, sort(paths))
-end)
-hh_clear_files() = _with_shell(sh -> clear_files!(sh.wf.frames))
-hh_set_pair_mode(mode) = _with_shell(sh -> set_pair_mode!(sh.wf.frames, Symbol(String(mode))))
-hh_select_pair(i) = _with_shell(sh -> select_pair!(sh.wf.frames, round(Int, i)))
-hh_show_frame(which) = _with_shell(sh -> show_frame!(sh.wf.frames, Symbol(String(which))))
+hh_add_files(urls) = _with_shell(sh -> add_files!(sh.wf.frames, _paths(urls)))
+hh_clear_files() = _with_shell(sh -> clear_files!(_frames_target(sh.wf)))
+hh_set_pair_mode(mode) = _with_shell(sh -> set_pair_mode!(_frames_target(sh.wf), Symbol(String(mode))))
+hh_select_pair(i) = _with_shell(sh -> select_pair!(_frames_target(sh.wf), round(Int, i)))
+hh_show_frame(which) = _with_shell(sh -> show_frame!(_frames_target(sh.wf), Symbol(String(which))))
 hh_fill_preset(level) = _with_shell(sh -> fill_preset!(sh.wf.passes, Symbol(String(level))))
 function hh_set_pass(i, field, value)
     _with_shell() do sh
@@ -606,10 +673,47 @@ function _register_qml_functions()
     @qmlfunction hh_estimate_background hh_show_processed hh_set_probe_window hh_clear_probe
     @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi
     @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points
+    _register_stereo_functions()
     return
 end
 
 # ---------------------------------------------------------------- launcher
+
+# Open `qml` for `wf` and block until the window closes. `setup()` runs once
+# background work goes to the window's queue (so frames added there load on a
+# worker); `make_shell(wf, queue)` builds the shell.
+function _run_window(setup, wf::AbstractWorkflow, qml::AbstractString, make_shell)
+    _SHELL[] === nothing || throw(ArgumentError("a HammerheadGUI window is already open"))
+    # From here on background work goes to the window's queue and nothing
+    # reads image files on this (the GUI) thread: the pair loads on a worker.
+    queue = Channel{Any}(Inf)
+    previous_deliver, previous_spawn = wf.deliver[], wf.spawn[]
+    wf.deliver[] = f -> put!(queue, f)
+    wf.spawn[] = true
+    try
+        setup()
+        _qt_init!()
+        _warm_glyph_atlas!()
+        sh = make_shell(wf, queue)
+        _SHELL[] = sh
+        _CLOSE_REQUESTED[] = false
+        _register_qml_functions()
+        loadqml(joinpath(QML_DIR, qml); app = sh.app,
+                stepModel = sh.step_model, passModel = sh.pass_model,
+                prepModel = sh.prep_model, (Symbol(k) => m for (k, m) in sh.models)...)
+        exec()
+    finally
+        cancel_run!(wf)
+        _SHELL[] = nothing
+        wf.deliver[] = previous_deliver
+        wf.spawn[] = previous_spawn
+        Controllers._abandon_jobs!(wf)
+        _release_qml_screens!()
+    end
+    return wf
+end
+
+_entry_list(x) = x isa AbstractString || x isa AbstractMatrix ? [x] : x
 
 """
     planar_window(wf = PlanarWorkflow(); files = nothing, settings = nothing) -> PlanarWorkflow
@@ -628,32 +732,8 @@ batch runs leave the window responsive. Closing the window cancels a batch
 in progress after its current pair; finished pairs are kept.
 """
 function planar_window(wf::PlanarWorkflow = PlanarWorkflow(); files = nothing, settings = nothing)
-    _SHELL[] === nothing || throw(ArgumentError("a HammerheadGUI window is already open"))
-    # From here on background work goes to the window's queue and nothing
-    # reads image files on this (the GUI) thread: the pair loads on a worker.
-    queue = Channel{Any}(Inf)
-    previous_deliver, previous_spawn = wf.deliver[], wf.spawn[]
-    wf.deliver[] = f -> put!(queue, f)
-    wf.spawn[] = true
-    try
-        files === nothing || add_files!(wf.frames, files isa AbstractString ? [files] : files)
+    return _run_window(wf, "PlanarWindow.qml", (w, q) -> PlanarShell(w; queue = q)) do
+        files === nothing || add_files!(wf.frames, _entry_list(files))
         settings === nothing || load_settings!(wf, settings)
-        _qt_init!()
-        sh = PlanarShell(wf; queue)
-        _SHELL[] = sh
-        _CLOSE_REQUESTED[] = false
-        _register_qml_functions()
-        loadqml(joinpath(QML_DIR, "PlanarWindow.qml"); app = sh.app,
-                stepModel = sh.step_model, passModel = sh.pass_model,
-                prepModel = sh.prep_model)
-        exec()
-    finally
-        cancel_run!(wf)
-        _SHELL[] = nothing
-        wf.deliver[] = previous_deliver
-        wf.spawn[] = previous_spawn
-        Controllers._abandon_jobs!(wf)
-        _release_qml_screens!()
     end
-    return wf
 end

@@ -513,10 +513,12 @@ cameras, and each camera has its own background. Sets
 `wf.prepare.status` and returns `wf`.
 """
 function estimate_background!(wf::StereoWorkflow; kwargs...)
-    wf.prepare.status[] = "background subtraction is not available for stereo " *
-                          "(the cameras need different backgrounds)"
+    wf.prepare.status[] = background_note(wf)
     return wf
 end
+
+background_note(::StereoWorkflow) =
+    "background subtraction is not available for stereo (the cameras need different backgrounds)"
 
 # A window closed with jobs in flight: forget them and catch up inline.
 function _abandon_jobs!(wf::StereoWorkflow)

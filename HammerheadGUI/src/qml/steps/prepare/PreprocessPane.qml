@@ -98,14 +98,18 @@ ColumnLayout {
             Layout.preferredWidth: 260
             textRole: "text"
             valueRole: "value"
-            model: [{ text: "Background subtraction", value: "subtract_background" },
-                    { text: "Intensity cap", value: "intensity_cap" },
-                    { text: "Highpass filter", value: "highpass_filter" },
-                    { text: "CLAHE (local contrast)", value: "clahe" },
-                    { text: "Percentile stretch", value: "percentile_stretch" },
-                    { text: "Invert", value: "invert_image" },
-                    { text: "Local variance normalization", value: "local_variance_normalize" }]
-            currentIndex: 2
+            readonly property var operations:
+                [{ text: "Intensity cap", value: "intensity_cap" },
+                 { text: "Highpass filter", value: "highpass_filter" },
+                 { text: "CLAHE (local contrast)", value: "clahe" },
+                 { text: "Percentile stretch", value: "percentile_stretch" },
+                 { text: "Invert", value: "invert_image" },
+                 { text: "Local variance normalization", value: "local_variance_normalize" }]
+            // background subtraction only where the workflow can estimate one
+            model: app.backgroundNote === ""
+                ? [{ text: "Background subtraction", value: "subtract_background" }].concat(operations)
+                : operations
+            currentIndex: app.backgroundNote === "" ? 2 : 1
         }
         Button {
             text: "Add step"
@@ -120,6 +124,7 @@ ColumnLayout {
     }
     RowLayout {
         spacing: 8
+        visible: app.backgroundNote === ""
         Button {
             text: "Estimate background"
             enabled: !app.backgroundRunning && app.pairCount > 0
@@ -140,6 +145,13 @@ ColumnLayout {
             implicitWidth: 28
             implicitHeight: 28
         }
+    }
+    Label {
+        text: app.backgroundNote
+        visible: text !== ""
+        wrapMode: Text.WordWrap
+        opacity: 0.75
+        Layout.fillWidth: true
     }
     Label {
         text: app.prepareStatus

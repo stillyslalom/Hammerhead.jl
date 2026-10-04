@@ -198,11 +198,13 @@ end
 # context crashes once GLFW/GLMakie has created a context in the same process,
 # which the offscreen tests above do.
 if get(ENV, "HAMMERHEADGUI_QT_TESTS", "") == "true"
-    @testset "planar_window (Qt, separate process)" begin
-        script = joinpath(@__DIR__, "qt_window.jl")
-        cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) -t 4 $script`
-        @test success(pipeline(cmd; stdout, stderr))
+    for (name, file) in (("planar_window", "qt_window.jl"), ("stereo_window", "qt_stereo_window.jl"))
+        @testset "$name (Qt, separate process)" begin
+            script = joinpath(@__DIR__, file)
+            cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) -t 4 $script`
+            @test success(pipeline(cmd; stdout, stderr))
+        end
     end
 else
-    @info "Skipping the Qt window test; set HAMMERHEADGUI_QT_TESTS=true on a machine with a display to run it."
+    @info "Skipping the Qt window tests; set HAMMERHEADGUI_QT_TESTS=true on a machine with a display to run them."
 end

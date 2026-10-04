@@ -150,13 +150,18 @@ function _draw_results!(rc::ResultsCanvas)
         _update!(rc.field, collect(Float64, r.x), collect(Float64, r.y), permutedims(data);
                       colorrange = (lo, hi))
         rc.colorbar.label = field_label(r, ex.field[])
-        unit = r.scale === nothing ? "px" : r.scale.length_unit
+        stereo = r isa StereoPIVResult
+        unit = r.scale !== nothing ? r.scale.length_unit : stereo ? "world units" : "px"
         rc.ax.xlabel = "x ($unit)"
         rc.ax.ylabel = "y ($unit)"
+        # image results keep rows growing downward; stereo results are on world
+        # axes (+Y up, as the dewarped images are displayed)
+        flip = rc.ax.yreversed[] == stereo
+        flip && (rc.ax.yreversed = !stereo)
         _update_arrows!(rc.shafts, rc.heads, ex.show_vectors[] ? r : nothing;
-                        valid_color = RGBf(0, 0, 0),
+                        valid_color = RGBf(0, 0, 0), yreversed = !stereo,
                         flagged_color = ex.highlight_outliers[] ? FLAGGED_COLOR : RGBf(0, 0, 0))
-        if size(data) != rc.grid_size[]
+        if size(data) != rc.grid_size[] || flip
             rc.grid_size[] = size(data)
             reset_limits!(rc.ax)
         end

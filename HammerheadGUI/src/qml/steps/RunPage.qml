@@ -33,7 +33,7 @@ StepPage {
         Button {
             text: "Run " + app.pairCount + " pairs"
             highlighted: true
-            enabled: !app.runRunning && app.framesProblem === ""
+            enabled: !app.runRunning && app.analysisProblem === ""
             onClicked: Julia.hh_start_run()
         }
         Button {

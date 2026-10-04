@@ -99,6 +99,25 @@ function plane_errors(cr::CalibrationReview, i::Integer = cr.plane[])
 end
 
 """
+    plane_residuals(cr::CalibrationReview, i = cr.plane[])
+
+Return `(; pixels, residuals)` for plane `i`: detected dot locations and
+their reprojection residual vectors in pixels (`world_to_pixel` of the dot's
+world point minus its detected location), as `(dx, dy)` tuples. Return
+`nothing` if no camera is fitted.
+"""
+function plane_residuals(cr::CalibrationReview, i::Integer = cr.plane[])
+    cam = cr.camera[]
+    cam === nothing && return nothing
+    px, wd = calibration_points(cr.grids[i], cr.zs[i])
+    residuals = map(px, wd) do p, w
+        q = world_to_pixel(cam, w)
+        (Float64(q[1] - p[1]), Float64(q[2] - p[2]))
+    end
+    return (; pixels = px, residuals)
+end
+
+"""
     plane_summary(cr::CalibrationReview, i = cr.plane[]) -> String
 
 One-line summary of plane `i`: z, dot count, markers, reprojection errors.

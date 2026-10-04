@@ -15,7 +15,7 @@ StepPage {
         Button {
             text: app.mode === "ensemble" ? "Test ensemble" : "Test pair " + app.pairIndex
             highlighted: true
-            enabled: !app.testRunning && app.framesProblem === ""
+            enabled: !app.testRunning && app.analysisProblem === ""
             onClicked: Julia.hh_test()
         }
         BusyIndicator {
@@ -24,6 +24,13 @@ StepPage {
             implicitWidth: 32
             implicitHeight: 32
         }
+    }
+    Label {
+        text: app.analysisProblem
+        visible: text !== "" && !app.testRunning
+        color: "#b06f00"
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
     }
     Label {
         text: app.testStatus

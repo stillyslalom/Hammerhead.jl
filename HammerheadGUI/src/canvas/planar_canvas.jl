@@ -110,9 +110,12 @@ end
 # Clicks become `canvas_click!`/`canvas_alt_click!` (consumed only when the
 # controller used them, so the Axis keeps its own click behaviour); a quick
 # second click arrives as a double click and counts as another click. Keys
-# go to `canvas_key!` while the canvas has focus.
-function _register_gestures!(c::PlanarCanvas, wf::PlanarWorkflow)
-    register_interaction!(c.ax, :workflow_gesture) do event::MouseEvent, _
+# go to `canvas_key!` while the canvas has focus. Shared by the workflow
+# canvases (planar and stereo).
+_register_gestures!(c::PlanarCanvas, wf::PlanarWorkflow) = (_register_workflow_gestures!(c.ax, c.fig, wf); c)
+
+function _register_workflow_gestures!(ax::Axis, fig::Figure, wf::AbstractWorkflow)
+    register_interaction!(ax, :workflow_gesture) do event::MouseEvent, _
         t = event.type
         used = if t === MouseEventTypes.leftclick || t === MouseEventTypes.leftdoubleclick
             _gesture(() -> canvas_click!(wf, event.data[1], event.data[2]), wf)
@@ -125,18 +128,18 @@ function _register_gestures!(c::PlanarCanvas, wf::PlanarWorkflow)
     end
     keys = Dict(Keyboard.backspace => :backspace, Keyboard.escape => :escape,
                 Keyboard.delete => :delete)
-    on(events(c.fig).keyboardbutton) do ev
+    on(events(fig).keyboardbutton) do ev
         (ev.action === Keyboard.press || ev.action === Keyboard.repeat) || return Consume(false)
         key = get(keys, ev.key, nothing)
         key === nothing && return Consume(false)
         return Consume(_gesture(() -> canvas_key!(wf, key), wf))
     end
-    return c
+    return ax
 end
 
 # A failing gesture reports in the status line instead of breaking Makie's
 # event handling.
-function _gesture(f, wf::PlanarWorkflow)
+function _gesture(f, wf::AbstractWorkflow)
     try
         return f()::Bool
     catch err
@@ -173,9 +176,11 @@ function _draw_frame!(c::PlanarCanvas, wf::PlanarWorkflow)
     else
         nr, nc = size(img)
         _update!(c.frame, 1:nc, 1:nr, Float32.(permutedims(img)))
-        # new frame dimensions: show the whole frame (keep the zoom otherwise)
+        # new frame dimensions: show the whole frame (keep the zoom otherwise);
+        # explicit limits, as the heatmap's new data applies only at render time
         if size(img) != c.frame_size[]
             c.frame_size[] = size(img)
+            c.ax.limits[] = ((0.5, nc + 0.5), (0.5, nr + 0.5))
             reset_limits!(c.ax)
         end
     end
@@ -195,25 +200,7 @@ end
 function _draw_prepare!(c::PlanarCanvas, wf::PlanarWorkflow)
     ps = wf.prepare
     page = wf.step[] === :prepare ? ps.page[] : :none
-    me = ps.mask[]
-    if page === :mask && me !== nothing
-        pts = Point2f[]; cols = RGBf[]
-        for (k, (p, hole)) in enumerate(zip(me.polygons[], me.holes[]))
-            ring = _closed_ring(p)
-            col = me.selected[] == k ? SELECTED_COLOR : hole ? HOLE_COLOR : MASK_COLOR
-            append!(pts, ring); append!(cols, fill(col, length(ring)))
-        end
-        isempty(pts) ? _update!(c.polygons, _NOPOINT; color = [MASK_COLOR]) :
-                       _update!(c.polygons, pts; color = cols)
-        act = [Point2f(v...) for v in me.active[]]
-        col = me.hole_mode[] ? HOLE_COLOR : MASK_COLOR
-        _update!(c.active_line, length(act) >= 2 ? act : _NOPOINT; color = col)
-        _update!(c.active_points, isempty(act) ? _NOPOINT : act; color = col)
-    else
-        _update!(c.polygons, _NOPOINT; color = [MASK_COLOR])
-        _update!(c.active_line, _NOPOINT)
-        _update!(c.active_points, _NOPOINT)
-    end
+    _draw_mask_editor!(c.polygons, c.active_line, c.active_points, page === :mask ? ps.mask[] : nothing)
 
     ed = ps.roi[]
     corner = page === :roi && ed !== nothing ? ed.anchor[] : nothing
@@ -232,30 +219,51 @@ function _draw_prepare!(c::PlanarCanvas, wf::PlanarWorkflow)
         _update!(c.scale_label, _NOPOINT; text = [""])
     end
 
-    pp = ps.preview
-    rect = page === :preprocess && pp.probe[] !== nothing && c.frame_size[] !== nothing ?
-           probe_rect(pp.probe[], pp.probe_window[], c.frame_size[]) : nothing
-    if rect === nothing
-        _update!(c.probe_box, _NOPOINT)
-    else
-        x0, y0 = rect.x0 - 0.5f0, rect.y0 - 0.5f0
-        x1, y1 = x0 + rect.window, y0 + rect.window
-        _update!(c.probe_box, Point2f[(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)])
-    end
+    _draw_probe!(c.probe_box, page === :preprocess ? ps.preview : nothing, c.frame_size[])
     c.dirty[] = true
     return c
 end
 
-function _draw_geometry!(c::PlanarCanvas, wf::PlanarWorkflow)
-    m = wf.mask[]
-    if m === nothing
-        _update!(c.mask, 1:2, 1:2, _EMPTY_IMAGE)
+# The mask editor's committed polygons and the polygon being drawn
+# (`me === nothing`: placeholders).
+function _draw_mask_editor!(polygons, active_line, active_points, me)
+    if me !== nothing
+        pts = Point2f[]; cols = RGBf[]
+        for (k, (p, hole)) in enumerate(zip(me.polygons[], me.holes[]))
+            ring = _closed_ring(p)
+            col = me.selected[] == k ? SELECTED_COLOR : hole ? HOLE_COLOR : MASK_COLOR
+            append!(pts, ring); append!(cols, fill(col, length(ring)))
+        end
+        isempty(pts) ? _update!(polygons, _NOPOINT; color = [MASK_COLOR]) :
+                       _update!(polygons, pts; color = cols)
+        act = [Point2f(v...) for v in me.active[]]
+        col = me.hole_mode[] ? HOLE_COLOR : MASK_COLOR
+        _update!(active_line, length(act) >= 2 ? act : _NOPOINT; color = col)
+        _update!(active_points, isempty(act) ? _NOPOINT : act; color = col)
     else
-        nr, nc = size(m)
-        shade = permutedims(Float32.(m))
-        shade[shade .== 0] .= NaN32
-        _update!(c.mask, 1:nc, 1:nr, shade)
+        _update!(polygons, _NOPOINT; color = [MASK_COLOR])
+        _update!(active_line, _NOPOINT)
+        _update!(active_points, _NOPOINT)
     end
+    return
+end
+
+# The correlation probe's window outline (`pp === nothing`: placeholder).
+function _draw_probe!(probe_box, pp, frame_size)
+    rect = pp !== nothing && pp.probe[] !== nothing && frame_size !== nothing ?
+           probe_rect(pp.probe[], pp.probe_window[], frame_size) : nothing
+    if rect === nothing
+        _update!(probe_box, _NOPOINT)
+    else
+        x0, y0 = rect.x0 - 0.5f0, rect.y0 - 0.5f0
+        x1, y1 = x0 + rect.window, y0 + rect.window
+        _update!(probe_box, Point2f[(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)])
+    end
+    return
+end
+
+function _draw_geometry!(c::PlanarCanvas, wf::PlanarWorkflow)
+    _draw_raster!(c.mask, wf.mask[])
     roi = wf.roi[]
     if roi === nothing
         _update!(c.roi, _NOPOINT)
@@ -268,37 +276,60 @@ function _draw_geometry!(c::PlanarCanvas, wf::PlanarWorkflow)
     return c
 end
 
+# A Bool raster as a shade over its `true` pixels (`nothing`: placeholder).
+function _draw_raster!(hm, m)
+    if m === nothing
+        _update!(hm, 1:2, 1:2, _EMPTY_IMAGE)
+    else
+        nr, nc = size(m)
+        shade = permutedims(Float32.(m))
+        shade[shade .== 0] .= NaN32
+        _update!(hm, 1:nc, 1:nr, shade)
+    end
+    return
+end
+
 # Interrogation-window outlines for each distinct pass size, centered on the
 # analysis region, so the user can judge them against the particle images.
 function _draw_boxes!(c::PlanarCanvas, wf::PlanarWorkflow)
     sz = c.frame_size[]
-    pts = Point2f[]; cols = RGBf[]; labels = String[]; label_pos = Point2f[]; label_cols = RGBf[]
+    center = nothing
     if wf.step[] === :passes && sz !== nothing
         roi = wf.roi[]
         cy = roi === nothing ? (sz[1] + 1) / 2 : (first(roi.rows) + last(roi.rows)) / 2
         cx = roi === nothing ? (sz[2] + 1) / 2 : (first(roi.cols) + last(roi.cols)) / 2
-        seen = Int[]
-        for p in wf.passes.passes[]
-            w = p.window_size[1]
-            w in seen && continue
-            push!(seen, w)
-            col = BOX_COLORS[mod1(length(seen), length(BOX_COLORS))]
-            h = w / 2
-            append!(pts, Point2f[(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h),
-                                 (cx - h, cy + h), (cx - h, cy - h), (NaN, NaN)])
-            append!(cols, fill(col, 6))
-            push!(labels, "$w px"); push!(label_pos, Point2f(cx - h, cy - h)); push!(label_cols, col)
-        end
+        center = (cx, cy)
     end
-    if isempty(pts)
-        _update!(c.boxes, _NOPOINT; color = [BOX_COLORS[1]])
-        _update!(c.box_labels, _NOPOINT; text = [""], color = [BOX_COLORS[1]])
-    else
-        _update!(c.boxes, pts; color = cols)
-        _update!(c.box_labels, label_pos; text = labels, color = label_cols)
-    end
+    _draw_window_boxes!(c.boxes, c.box_labels, center === nothing ? () : wf.passes.passes[], center)
     c.dirty[] = true
     return c
+end
+
+# One outline per distinct window size of `passes`, centered on `center`
+# (no passes: placeholders).
+function _draw_window_boxes!(boxes, box_labels, passes, center)
+    pts = Point2f[]; cols = RGBf[]; labels = String[]; label_pos = Point2f[]; label_cols = RGBf[]
+    seen = Int[]
+    for p in passes
+        cx, cy = center
+        w = p.window_size[1]
+        w in seen && continue
+        push!(seen, w)
+        col = BOX_COLORS[mod1(length(seen), length(BOX_COLORS))]
+        h = w / 2
+        append!(pts, Point2f[(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h),
+                             (cx - h, cy + h), (cx - h, cy - h), (NaN, NaN)])
+        append!(cols, fill(col, 6))
+        push!(labels, "$w px"); push!(label_pos, Point2f(cx - h, cy - h)); push!(label_cols, col)
+    end
+    if isempty(pts)
+        _update!(boxes, _NOPOINT; color = [BOX_COLORS[1]])
+        _update!(box_labels, _NOPOINT; text = [""], color = [BOX_COLORS[1]])
+    else
+        _update!(boxes, pts; color = cols)
+        _update!(box_labels, label_pos; text = labels, color = label_cols)
+    end
+    return
 end
 
 # Vectors of the test result (Test step) or the latest finished pair (Run).
@@ -312,15 +343,27 @@ end
 
 # Quiver-style arrows: linesegment shafts + rotated triangle heads, colored
 # by validity (static in data space, cheap to pan and zoom).
-function _update_arrows!(shafts, heads, r; lengthscale = nothing,
-                         valid_color = VALID_COLOR, flagged_color = FLAGGED_COLOR)
+function _update_arrows!(shafts, heads, r; lengthscale = nothing, kwargs...)
     d = r isa Controllers.GridResult ? vector_data(r) : nothing
+    if d === nothing || isempty(d.x)
+        _set_arrows!(shafts, heads, nothing, 1.0; kwargs...)
+        return
+    end
+    ls = lengthscale === nothing ? auto_lengthscale(r, d) : lengthscale
+    _set_arrows!(shafts, heads, d, ls; kwargs...)
+    return
+end
+
+# Arrows of `d = (; x, y, u, v, outlier)` scaled by `ls` (`nothing`:
+# placeholders). Head rotation is screen-space CCW; `yreversed` says whether
+# the axis's y grows downward.
+function _set_arrows!(shafts, heads, d, ls; valid_color = VALID_COLOR,
+                      flagged_color = FLAGGED_COLOR, yreversed::Bool = true)
     if d === nothing || isempty(d.x)
         _update!(shafts, [Point2f(NaN, NaN), Point2f(NaN, NaN)]; color = [valid_color, valid_color])
         _update!(heads, _NOPOINT; rotation = [0.0f0], color = [valid_color])
         return
     end
-    ls = lengthscale === nothing ? auto_lengthscale(r, d) : lengthscale
     n = length(d.x)
     segs = Vector{Point2f}(undef, 2n)
     tips = Vector{Point2f}(undef, n)
@@ -330,8 +373,8 @@ function _update_arrows!(shafts, heads, r; lengthscale = nothing,
         segs[2k - 1] = Point2f(d.x[k], d.y[k])
         segs[2k] = tip
         tips[k] = tip
-        # screen-space CCW rotation on a y-reversed axis; :utriangle points up
-        rots[k] = Float32(atan(-d.v[k], d.u[k]) - π / 2)
+        # :utriangle points up; on a y-reversed axis +v points down the screen
+        rots[k] = Float32(atan(yreversed ? -d.v[k] : d.v[k], d.u[k]) - π / 2)
     end
     cols = [o ? flagged_color : valid_color for o in d.outlier]
     _update!(shafts, segs; color = repeat(cols, inner = 2))

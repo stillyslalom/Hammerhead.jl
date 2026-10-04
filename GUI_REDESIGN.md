@@ -208,7 +208,13 @@ grid, and self-calibration) and has no ROI.
    the preview's `post` dewarps the processed pair), so the probe, mask, and
    viewer share coordinates; background subtraction is unavailable for
    stereo, because a recipe holds one preprocessing list for both cameras
-   (core gap: per-camera preprocessing in `PIVRecipe`). 3b: shell + QML.
+   (core gap: per-camera preprocessing in `PIVRecipe`). 3b ✅ shell + QML
+   (2026-10-04, overnight, unreviewed): one `WorkflowShell` for both windows,
+   `WorkflowWindow.qml` chrome shared by `PlanarWindow.qml`/`StereoWindow.qml`,
+   `StereoCanvas`, `stereo_window()`; the Test/Run viewer shows vectors on the
+   *shown* camera's dewarped frame (the camera switch applies on every step),
+   and plate images given as paths appear only after the fit (they load in
+   the fit job). Next: retire the GLMakie stereo views/`StereoBatchRunner`.
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.
 

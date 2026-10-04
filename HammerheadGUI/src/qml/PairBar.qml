@@ -1,16 +1,19 @@
-// Bottom bar: choose the representative pair and which frame the canvas shows.
+// Bottom bar: choose the representative pair and which frame the canvas shows
+// (in a stereo window also which camera).
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import jlqml
 
 ToolBar {
+    property bool stereo: false
+
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 12
         anchors.rightMargin: 12
         spacing: 8
-        enabled: app.pairCount > 0
+        enabled: app.pairCount > 0 || stereo  // the camera switch also serves Calibration
 
         Label { text: "Pair" }
         ToolButton {
@@ -55,9 +58,24 @@ ToolBar {
             ButtonGroup.group: frameGroup
             onClicked: Julia.hh_show_frame("b")
         }
+        ToolSeparator { visible: stereo }
+        ButtonGroup { id: cameraGroup }
+        Repeater {
+            model: stereo ? [1, 2] : []
+            Button {
+                text: "Camera " + modelData
+                flat: true
+                checkable: true
+                checked: stereo && app.camera === modelData
+                ButtonGroup.group: cameraGroup
+                onClicked: Julia.hh_set_camera(modelData)
+            }
+        }
         Item { Layout.fillWidth: true }
         Label {
             text: app.framesSummary
+            elide: Text.ElideRight
+            Layout.maximumWidth: 360
             opacity: 0.75
         }
     }

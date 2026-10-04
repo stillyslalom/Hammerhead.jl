@@ -18,8 +18,9 @@ Pages = ["gui.md"]
 
 ## Workflow window
 
-`planar_window` shows a [`PlanarWorkflow`](@ref Controllers.PlanarWorkflow);
-the same controller runs without a window. Its canvases create every plot
+`planar_window` shows a [`PlanarWorkflow`](@ref Controllers.PlanarWorkflow)
+and `stereo_window` a [`StereoWorkflow`](@ref Controllers.StereoWorkflow);
+the same controllers run without a window. Its canvases create every plot
 before they are first shown and afterwards only update plot data, because a
 Qt canvas has a current OpenGL context only while Qt renders it.
 `request_grab` saves an image of the open window for screenshots and render
@@ -28,7 +29,7 @@ checks.
 ```@autodocs
 Modules = [HammerheadGUI]
 Order = [:module, :type, :function, :constant, :macro]
-Pages = ["shell.jl", "planar_canvas.jl", "results_canvas.jl"]
+Pages = ["shell.jl", "planar_canvas.jl", "results_canvas.jl", "stereo_canvas.jl"]
 ```
 
 ## Workflow controllers

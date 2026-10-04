@@ -2,7 +2,8 @@
     HammerheadGUI
 
 Windows and controllers for setting up, running, and inspecting Hammerhead
-analyses: the planar workflow window (`planar_window`), plus GLMakie views
+analyses: the planar and stereo workflow windows (`planar_window`,
+`stereo_window`), plus GLMakie views
 for results, calibration, and stereo batches. Use `Controllers` to configure
 and inspect an analysis without opening a window. Controller state is
 exposed through `Observables`.
@@ -67,7 +68,7 @@ export BatchCancelled, parse_schedule, add_files!, clear_files!, frame_pairs,
 export ROIEditor, set_roi!, clear_roi!, cancel_corner!, roi_summary
 export ScaleTool, clear_points!, undo_point!, set_separation!, pixel_distance,
        pixel_size, physical_scale, scale_summary, scale_description
-export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
+export CalibrationReview, nplanes, set_plane!, refit!, plane_errors, plane_residuals,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
 export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair,
@@ -79,7 +80,7 @@ export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
        cancel_run!, run_eta
 export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
        canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
-       set_scale_field!, clear_scale!, load_mask_file!, save_mask_file
+       set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status
@@ -116,7 +117,8 @@ export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
 export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
        open_results!, set_step!, set_prepare_page!
-export StereoWorkflow, StereoCalibration, fit_calibration!, start_selfcal!, apply_selfcal!
+export StereoWorkflow, StereoCalibration, stereo_window, fit_calibration!, start_selfcal!,
+       apply_selfcal!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
@@ -124,7 +126,9 @@ include("views/calibration_review.jl")
 include("views/stereo_batch.jl")
 include("canvas/planar_canvas.jl")
 include("canvas/results_canvas.jl")
+include("canvas/stereo_canvas.jl")
 include("qt/shell.jl")
+include("qt/stereo_shell.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload
 
@@ -221,6 +225,14 @@ include_dependency(joinpath(@__DIR__, "qt", "precompile_statements.jl"))
         set_field!(wf.explorer[], :vorticity)
         set_frame!(wf.explorer[], 2)
         summary_lines(test_summary(wf.test))
+
+        # Stereo window canvas (Figure construction only; no dewarpers).
+        sw = StereoWorkflow(files1 = Any[imgA, imgB], files2 = Any[imgB, imgA])
+        stereo_canvas(sw)
+        for st in STEREO_WORKFLOW_STEPS
+            set_step!(sw, st)
+            step_status(sw, st)
+        end
 
         # First render of a Qt canvas (needs a GL context, so traced instead).
         _precompile_traced(joinpath(@__DIR__, "qt", "precompile_statements.jl"))

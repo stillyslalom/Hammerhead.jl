@@ -45,6 +45,16 @@ Added:
   dewarped grid, and test/run through the stereo `apply_recipe`. It shares
   the settings, test, run and results functions with `PlanarWorkflow`
   through `AbstractWorkflow`.
+- `stereo_window()`: the stereo PIV window — Images (two camera frame
+  lists), Calibration (plates with z per camera, detection settings and
+  model, fit, dewarp grid, self-calibration with apply; the viewer shows the
+  plate's dots coloured by reprojection error and magnified residual
+  arrows), Prepare (Preprocess, Mask on the dewarped grid with the cameras'
+  out-of-view area shaded, and a dt-only Scale), and the shared Passes, Test
+  pair, Run and Results pages. A camera switch in the pair bar chooses the
+  viewed camera; `dewarpers = (dw1, dw2)` starts from script-built
+  dewarpers. Results show stereo fields on world axes (+Y up). New
+  `plane_residuals` and `background_note`.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core

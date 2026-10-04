@@ -399,7 +399,19 @@ both cameras).
 `src/qt/shell.jl` bridges to QML (`src/qml/`, one page per step,
 `steps/prepare/*Pane.qml`) via one `JuliaPropertyMap` (`app`, written through
 an equality-guarded `_set!`) + item models (steps, passes, preprocessing
-rows), and `hh_*` callbacks that only change state and return.
+rows), and `hh_*` callbacks that only change state and return. One
+`WorkflowShell{W,C}` serves both windows (`PlanarShell`/`StereoShell`
+aliases); per-window hooks are `_connect_window!`, `_refresh_frames!`,
+`_refresh_region!`, `_refresh_window!` (stereo: calibration fields + the
+`plates1Model`/`plates2Model` lists, `qt/stereo_shell.jl`). QML shares
+`WorkflowWindow.qml` (chrome, rail, canvas, pop-out, tick, dialogs; its
+children are the page stack) — `PlanarWindow.qml`/`StereoWindow.qml` only
+list pages; shared pages take a `stereo` flag where they differ.
+`stereo_window()` uses `StereoCanvas` (`canvas/stereo_canvas.jl`): raw frame
+(Images), plate + dots + residual arrows ×gain in the title (Calibration),
+else the dewarped frame in dewarped px with the out-of-view union shaded;
+stereo vectors are mapped to grid coords via `grid_vector_data`. The results
+canvas flips `yreversed` off for `StereoPIVResult`s (world axes, +Y up).
 
 Gestures are controller functions: canvases register one Makie interaction
 that turns left/right clicks into `canvas_click!(wf, x, y)` /

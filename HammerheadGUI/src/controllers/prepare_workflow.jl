@@ -356,6 +356,16 @@ function estimate_background!(wf::PlanarWorkflow; frames::Integer = 10, method::
     return wf
 end
 
+"""
+    background_note(wf::AbstractWorkflow) -> Union{Nothing,String}
+
+`nothing` when [`estimate_background!`](@ref) can estimate a background for
+`wf`, otherwise the reason it cannot (a `StereoWorkflow`'s recipe holds one
+preprocessing list for both cameras). Windows show the note instead of the
+background controls.
+"""
+background_note(::AbstractWorkflow) = nothing
+
 # ---------------------------------------------------------------- page
 
 """

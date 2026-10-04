@@ -6,6 +6,8 @@ using HammerheadGUI.Hammerhead
 using HammerheadGUI.Hammerhead.SyntheticData: generate_synthetic_piv_pair, linear_flow
 using Statistics: median
 
+include("stereo_fixture.jl")               # stereo_rig(), add_fixture_plates!
+
 # Shared fixtures: a uniform-flow synthetic pair (realistic particle images,
 # so the Wieneke uncertainty estimates come out finite) analyzed with and
 # without uncertainty, plus a StereoPIVResult assembled from the 2C fields.
@@ -1021,6 +1023,7 @@ const r_track = TrackingResult(
     include("test_planar_workflow.jl")
     include("test_prepare.jl")
     include("test_stereo_workflow.jl")
+    include("test_stereo_window.jl")
     include("test_planar_window.jl")
 
     @testset "CalibrationReview controller (no GL)" begin

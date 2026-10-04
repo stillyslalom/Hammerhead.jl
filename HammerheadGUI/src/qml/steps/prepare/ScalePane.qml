@@ -1,16 +1,22 @@
 // Scale sub-page: pixel size and frame interval attached to the results
 // (display metadata; vectors are computed in pixels), typed in or measured
-// from two points of known separation on the viewer.
+// from two points of known separation on the viewer. In a stereo window
+// (`stereo`) lengths are the calibration's world units, so only the frame
+// interval and the unit names are set.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import jlqml
 
 ColumnLayout {
+    property bool stereo: false
     spacing: 10
 
     Label {
-        text: "Attach a physical scale so results show positions and velocities in " +
+        text: stereo
+            ? "Stereo vectors are in the calibration's world units (" + app.scaleWorldUnit +
+              ") per frame. Enter the time between exposures to show velocities."
+            : "Attach a physical scale so results show positions and velocities in " +
               "physical units. Without one they stay in pixels and frames."
         wrapMode: Text.WordWrap
         opacity: 0.75
@@ -21,14 +27,16 @@ ColumnLayout {
         columnSpacing: 8
         rowSpacing: 6
 
-        Label { text: "Pixel size" }
+        Label { text: "Pixel size"; visible: !stereo }
         TextField {
+            visible: !stereo
             text: app.scalePixelSize
             placeholderText: "e.g. 0.02"
             Layout.preferredWidth: 110
             onEditingFinished: if (text !== app.scalePixelSize) Julia.hh_set_scale("pixel_size", text)
         }
         RowLayout {
+            visible: !stereo
             TextField {
                 text: app.scaleLengthUnit
                 placeholderText: "mm"
@@ -51,14 +59,25 @@ ColumnLayout {
             Layout.preferredWidth: 70
             onEditingFinished: if (text !== app.scaleTimeUnit) Julia.hh_set_scale("time_unit", text)
         }
+
+        Label { text: "Length unit"; visible: stereo }
+        TextField {
+            visible: stereo
+            text: app.scaleLengthUnit
+            placeholderText: stereo ? app.scaleWorldUnit : ""
+            Layout.preferredWidth: 110
+            onEditingFinished: if (text !== app.scaleLengthUnit) Julia.hh_set_scale("length_unit", text)
+        }
+        Label { visible: stereo; text: "" }
     }
     RowLayout {
         Label { text: app.scaleSummary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Button { text: "Remove scale"; enabled: app.hasScale; onClicked: Julia.hh_clear_scale() }
     }
 
-    Label { text: "Measure the pixel size"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
+    Label { visible: !stereo; text: "Measure the pixel size"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
     Label {
+        visible: !stereo
         text: "Click two points of known separation on the image (a ruler or calibration " +
               "target), then enter their distance; the pixel size follows."
         wrapMode: Text.WordWrap
@@ -66,6 +85,7 @@ ColumnLayout {
         Layout.fillWidth: true
     }
     RowLayout {
+        visible: !stereo
         spacing: 8
         enabled: app.hasFrameSize
         Label { text: "Distance" }
@@ -78,6 +98,7 @@ ColumnLayout {
         Button { text: "Clear points"; onClicked: Julia.hh_clear_scale_points() }
     }
     Label {
+        visible: !stereo
         text: app.scaleMeasure
         wrapMode: Text.WordWrap
         Layout.fillWidth: true
