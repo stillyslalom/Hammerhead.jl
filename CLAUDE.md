@@ -382,6 +382,20 @@ current frame *size*, never an image copy), `PassesEditor`, `PairTest`/`RunState
 under a `syncing` guard (opened settings reseed the editors; a loaded mask
 becomes the editor's raster), and an unedited opened recipe round-trips `==`.
 Test pair and Run both call `apply_recipe` (Run is sequence-only for now).
+The settings/test/run/results/step-rail functions are `AbstractWorkflow`
+methods (`workflow.jl`) over per-workflow hooks (`workflow_steps`,
+`workflow_recipe`, `workflow_problem`, `_test_inputs`/`_run_inputs` = the
+`apply_recipe` positional args after the recipe, `_inputs_stale`,
+`_step_status`, …); `StereoWorkflow` (`stereo_workflow.jl`) reuses them with
+linked `frames1`/`frames2` (pair mode, pair index, shown frame copied both
+ways), a `camera` switch, and `StereoCalibration` (`stereo_calibration.jl`:
+plates → `CalibrationReview`s → `common_dewarp_grid` dewarpers →
+self-calibration, all through the runner with generation counters). Its
+Prepare viewer is on the dewarped grid on every page: the preview's `post`
+hook dewarps the processed pair (probe coordinates = grid), `wf.dewarped`
+is the raw pair dewarped, and the mask editor is sized to the grid. Stereo
+has no ROI and no background estimate (one recipe preprocessing list serves
+both cameras).
 `src/qt/shell.jl` bridges to QML (`src/qml/`, one page per step,
 `steps/prepare/*Pane.qml`) via one `JuliaPropertyMap` (`app`, written through
 an equality-guarded `_set!`) + item models (steps, passes, preprocessing

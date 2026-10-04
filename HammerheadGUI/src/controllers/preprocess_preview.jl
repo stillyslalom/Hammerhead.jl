@@ -68,7 +68,10 @@ recomputed as the steps change.
 `status` reports a failed preview; `error` and `error_step` hold the
 message and step index of an edit rejected through a window (see
 `edit_step_option!`). `runner` decides where previews and probes are
-computed (inline by default).
+computed (inline by default). `post[]` (`nothing` by default) is applied to
+each frame after the steps, as part of the preview; a stereo workflow sets
+it to the shown camera's dewarping, so `processed`, `processed2`, and the
+probe are on the dewarped grid.
 """
 struct PreprocessPreview
     steps::Observable{Vector{PreprocessStep}}
@@ -83,6 +86,7 @@ struct PreprocessPreview
     error::Observable{String}
     error_step::Observable{Int}
     runner::Base.RefValue{Any}
+    post::Base.RefValue{Any}
     generation::Base.RefValue{Int}
     probe_generation::Base.RefValue{Int}
 end
@@ -97,7 +101,7 @@ function PreprocessPreview(; steps = PreprocessStep[], image = nothing, pair = n
                            Observable{Union{Nothing,NTuple{2,Float64}}}(nothing),
                            Observable(64), Observable{Union{Nothing,NamedTuple}}(nothing),
                            Observable(""), Observable(""), Observable(0),
-                           Ref{Any}(runner), Ref(0), Ref(0))
+                           Ref{Any}(runner), Ref{Any}(nothing), Ref(0), Ref(0))
     for obs in (pp.steps, pp.image, pp.image2)
         on(_ -> _request_preview!(pp), obs)
     end
@@ -341,26 +345,41 @@ pipeline_summary(steps::AbstractVector{PreprocessStep}) =
 # ---------------------------------------------------------------- preview
 
 """
-    preview_frames(steps, a, b) -> (processed_a, processed_b)
+    preview_frames(steps, a, b; post = nothing) -> (processed_a, processed_b)
 
 Frames `a` and `b` (`b` may be `nothing`) after `steps`, with
-`recipe_preprocess`. Pure; a window runs it on a worker task.
+`recipe_preprocess`, then `post` (a function of one frame) when given.
+Pure; a window runs it on a worker task.
 """
-function preview_frames(steps::AbstractVector{PreprocessStep}, a::AbstractMatrix, b)
+function preview_frames(steps::AbstractVector{PreprocessStep}, a::AbstractMatrix, b; post = nothing)
     f = recipe_preprocess(steps)
-    f === nothing && return (a, b)
-    return (f(a), b === nothing ? nothing : f(b))
+    g = f === nothing ? post : post === nothing ? f : post ∘ f
+    g === nothing && return (a, b)
+    return (g(a), b === nothing ? nothing : g(b))
 end
 
 function _request_preview!(pp::PreprocessPreview)
     g = (pp.generation[] += 1)
-    a, b, steps = pp.image[], pp.image2[], pp.steps[]
-    if a === nothing || isempty(steps)
+    a, b, steps, post = pp.image[], pp.image2[], pp.steps[], pp.post[]
+    if a === nothing || (isempty(steps) && post === nothing)
         # nothing to compute: the raw frames are the preview
         _finish_preview!(pp, g, (; value = (a, b), err = nothing))
         return pp
     end
-    pp.runner[](() -> preview_frames(steps, a, b), out -> _finish_preview!(pp, g, out))
+    pp.runner[](() -> preview_frames(steps, a, b; post), out -> _finish_preview!(pp, g, out))
+    return pp
+end
+
+# Frames and post-processing together: one preview request for both.
+function _set_preview_input!(pp::PreprocessPreview, a, b, post)
+    changed = post !== pp.post[]
+    pp.post[] = post
+    a32, b32 = _frame32(a), _frame32(b)
+    if a32 !== pp.image[] || b32 !== pp.image2[]
+        set_frames!(pp, a32, b32)
+    elseif changed
+        _request_preview!(pp)
+    end
     return pp
 end
 
@@ -489,7 +508,7 @@ function probe_summary(pp::PreprocessPreview)
     pp.probe[] === nothing && return "click the image to place the probe"
     res = pp.probe_result[]
     if res === nothing
-        sz = size(pp.image[])
+        sz = size(something(pp.processed[], pp.image[]))
         return pp.probe_window[] > minimum(sz) ?
             "probe window ($(pp.probe_window[]) px) does not fit the frame" : "correlating…"
     end

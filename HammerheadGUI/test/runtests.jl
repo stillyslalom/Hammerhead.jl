@@ -1020,6 +1020,7 @@ const r_track = TrackingResult(
 
     include("test_planar_workflow.jl")
     include("test_prepare.jl")
+    include("test_stereo_workflow.jl")
     include("test_planar_window.jl")
 
     @testset "CalibrationReview controller (no GL)" begin

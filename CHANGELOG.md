@@ -38,6 +38,13 @@ Added:
 - Frames, previews, probes and background estimates load on worker tasks
   in the window; a newer request supersedes an older one, and the viewer
   keeps the previous pair until the next one arrives.
+- `StereoWorkflow` controller (the stereo window's state, usable from
+  scripts): two synchronized camera frame lists, a Calibration step
+  (`StereoCalibration`: plate images per camera, grid detection and camera
+  fits, the shared dewarp grid, self-calibration with apply), Prepare on the
+  dewarped grid, and test/run through the stereo `apply_recipe`. It shares
+  the settings, test, run and results functions with `PlanarWorkflow`
+  through `AbstractWorkflow`.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core

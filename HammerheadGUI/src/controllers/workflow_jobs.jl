@@ -10,54 +10,64 @@ _run_job(job, spawn::Bool) = spawn ? errormonitor(Threads.@spawn job()) : job()
     PairTest()
 
 The latest test of the current settings on the representative pair:
-`result` (a `PIVResult`), the `recipe` and `pair` it was computed with,
-`seconds` taken, the `previous` test's summary for comparison, and
-`running`/`status`.
+`result` (a `PIVResult`, or a `StereoPIVResult` in a stereo workflow), the
+`recipe` and `pair` it was computed with, `seconds` taken, the `previous`
+test's summary for comparison, and `running`/`status`. `inputs[]` holds the
+`apply_recipe` inputs after the recipe (pairs; for stereo also the
+dewarpers) of the last successful test.
 """
 struct PairTest
-    result::Observable{Union{Nothing,PIVResult}}
+    result::Observable{Union{Nothing,PIVResult,StereoPIVResult}}
     recipe::Observable{Union{Nothing,PIVRecipe}}
     pair::Observable{Int}
     seconds::Observable{Float64}
     previous::Observable{Union{Nothing,NamedTuple}}
     running::Observable{Bool}
     status::Observable{String}
+    inputs::Base.RefValue{Any}
 end
 
-PairTest() = PairTest(Observable{Union{Nothing,PIVResult}}(nothing),
+PairTest() = PairTest(Observable{Union{Nothing,PIVResult,StereoPIVResult}}(nothing),
                       Observable{Union{Nothing,PIVRecipe}}(nothing), Observable(0),
                       Observable(0.0), Observable{Union{Nothing,NamedTuple}}(nothing),
-                      Observable(false), Observable(""))
+                      Observable(false), Observable(""), Ref{Any}(nothing))
 
 """
     start_test!(pt::PairTest, recipe, pairs, label; deliver = f -> f(), spawn = true)
+    start_test!(pt::PairTest, recipe, inputs::Tuple, label; deliver, spawn)
 
 Run `apply_recipe(recipe, pairs)` (one pair, or several for an ensemble
 recipe) and store the result. `label` is the representative pair index.
+The tuple form runs `apply_recipe(recipe, inputs...)`, e.g. the stereo
+`(pairs1, pairs2, dw1, dw2)`.
 """
-function start_test!(pt::PairTest, recipe::PIVRecipe, pairs::AbstractVector, label::Integer;
+start_test!(pt::PairTest, recipe::PIVRecipe, pairs::AbstractVector, label::Integer; kwargs...) =
+    start_test!(pt, recipe, (pairs,), label; kwargs...)
+
+function start_test!(pt::PairTest, recipe::PIVRecipe, inputs::Tuple, label::Integer;
                      deliver = f -> f(), spawn::Bool = true)
     pt.running[] && return pt
     pt.running[] = true
     pt.status[] = recipe.mode === :ensemble ?
-        "testing ensemble of $(length(pairs)) pairs…" : "testing pair $label…"
+        "testing ensemble of $(length(first(inputs))) pairs…" : "testing pair $label…"
     job = function ()
         t0 = time()
         outcome = try
-            r = apply_recipe(recipe, pairs; progress = false)
+            r = apply_recipe(recipe, inputs...; progress = false)
             (; result = r isa AbstractVector ? first(r) : r, seconds = time() - t0, err = nothing)
         catch err
             (; result = nothing, seconds = time() - t0, err)
         end
-        deliver(() -> _finish_test!(pt, recipe, Int(label), outcome))
+        deliver(() -> _finish_test!(pt, recipe, Int(label), outcome, inputs))
     end
     _run_job(job, spawn)
     return pt
 end
 
-function _finish_test!(pt::PairTest, recipe, label, outcome)
+function _finish_test!(pt::PairTest, recipe, label, outcome, inputs = nothing)
     if outcome.err === nothing
         pt.result[] === nothing || (pt.previous[] = test_summary(pt.result[], pt.recipe[], pt.seconds[]))
+        pt.inputs[] = inputs
         pt.recipe[] = recipe
         pt.pair[] = label
         pt.seconds[] = outcome.seconds
@@ -75,25 +85,46 @@ end
     test_summary(pt::PairTest) -> Union{Nothing,NamedTuple}
 
 Quality figures for a test: vector counts (`vectors`, `valid`, `flagged`,
-`masked`), `valid_fraction`, median `peak_ratio`, median `sigma` (px, `NaN`
-without uncertainty), the largest valid displacement `max_displacement` and
-`quarter_window` (¼ of the final window; displacements beyond it are hard to
-correlate reliably), and `seconds`.
+`masked`), `valid_fraction`, median `peak_ratio`, median `sigma` (`NaN`
+without uncertainty) in `sigma_unit`, the largest valid displacement
+`max_displacement` (px) and `quarter_window` (¼ of the final window;
+displacements beyond it are hard to correlate reliably), and `seconds`.
+
+For a `StereoPIVResult` the peak ratio is the weaker camera's, `sigma` is
+the 3C uncertainty in world units (named by the recipe scale's length unit
+when there is one), and `max_displacement` is the larger camera
+displacement in dewarped pixels.
 """
 function test_summary(r::PIVResult, recipe::PIVRecipe, seconds::Real)
+    good = .!(r.mask .| r.outliers) .& isfinite.(r.u) .& isfinite.(r.v)
+    sig = hypot.(r.uncertainty_u[good], r.uncertainty_v[good])
+    disp = hypot.(r.u[good], r.v[good])
+    return _test_summary(r, good, r.peak_ratio[good], sig, disp, "px", recipe, seconds)
+end
+
+function test_summary(r::StereoPIVResult, recipe::PIVRecipe, seconds::Real)
+    good = .!(r.mask .| r.outliers) .& isfinite.(r.u) .& isfinite.(r.v) .& isfinite.(r.w)
+    c1, c2 = r.cam1, r.cam2
+    peak = min.(c1.peak_ratio[good], c2.peak_ratio[good])
+    sig = sqrt.(abs2.(r.uncertainty_u[good]) .+ abs2.(r.uncertainty_v[good]) .+
+                abs2.(r.uncertainty_w[good]))
+    disp = max.(hypot.(c1.u[good], c1.v[good]), hypot.(c2.u[good], c2.v[good]))
+    unit = recipe.scale === nothing ? "world units" : recipe.scale.length_unit
+    return _test_summary(r, good, peak, sig, disp, unit, recipe, seconds)
+end
+
+function _test_summary(r, good, peak, sig, disp, sigma_unit, recipe, seconds)
     n = length(r.u)
     masked = count(r.mask)
     flagged = count(r.outliers .& .!r.mask)
-    good = .!(r.mask .| r.outliers) .& isfinite.(r.u) .& isfinite.(r.v)
     valid = count(good)
     med(xs) = isempty(xs) ? NaN : _median(xs)
-    peak = med(filter(isfinite, Float64.(r.peak_ratio[good])))
-    sig = med(filter(isfinite, Float64.(hypot.(r.uncertainty_u[good], r.uncertainty_v[good]))))
-    dmax = valid == 0 ? NaN : maximum(Float64.(hypot.(r.u[good], r.v[good])))
     final = last(recipe.passes)
     return (; vectors = n, valid, flagged, masked,
             valid_fraction = n - masked == 0 ? NaN : valid / (n - masked),
-            peak_ratio = peak, sigma = sig, max_displacement = dmax,
+            peak_ratio = med(filter(isfinite, Float64.(peak))),
+            sigma = med(filter(isfinite, Float64.(sig))), sigma_unit = String(sigma_unit),
+            max_displacement = valid == 0 ? NaN : maximum(Float64.(disp)),
             quarter_window = minimum(final.window_size) / 4, seconds = Float64(seconds))
 end
 
@@ -122,7 +153,8 @@ function summary_lines(s::NamedTuple; previous = nothing)
                  delta(:valid_fraction, signed_pct),
              "Flagged: $(s.flagged) · masked: $(s.masked)",
              "Median peak ratio: $(num(s.peak_ratio))" * delta(:peak_ratio, signed)]
-    isfinite(s.sigma) && push!(lines, "Median uncertainty: $(num(s.sigma)) px" * delta(:sigma, signed))
+    isfinite(s.sigma) &&
+        push!(lines, "Median uncertainty: $(num(s.sigma)) $(get(s, :sigma_unit, "px"))" * delta(:sigma, signed))
     if isfinite(s.max_displacement)
         line = "Largest displacement: $(num(s.max_displacement)) px"
         s.max_displacement > s.quarter_window &&
@@ -159,15 +191,22 @@ RunState(; output_path::AbstractString = "") =
 
 """
     start_run!(rs::RunState, recipe, pairs; deliver = f -> f(), spawn = true)
+    start_run!(rs::RunState, recipe, inputs::Tuple; deliver, spawn)
 
 Run `apply_recipe(recipe, pairs)` as a batch, writing to `output_path` when
-set. Each finished pair is appended to `completed` as it arrives.
+set. Each finished pair is appended to `completed` as it arrives. The tuple
+form runs `apply_recipe(recipe, inputs...)`, e.g. the stereo
+`(pairs1, pairs2, dw1, dw2)`.
 """
-function start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector;
+start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector; kwargs...) =
+    start_run!(rs, recipe, (pairs,); kwargs...)
+
+function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
                     deliver = f -> f(), spawn::Bool = true)
     rs.running[] && return rs
     recipe.mode === :sequence ||
         (rs.status[] = "this window runs per-pair sequences; ensemble runs are not available yet"; return rs)
+    pairs = first(inputs)
     isempty(pairs) && (rs.status[] = "no pairs to process"; return rs)
     output = isempty(rs.output_path[]) ? nothing : rs.output_path[]
     rs.cancel[] = false
@@ -184,7 +223,7 @@ function start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector;
         end
         on_result = (i, r) -> deliver(() -> (push!(rs.completed[], r); notify(rs.completed)))
         outcome = try
-            apply_recipe(recipe, pairs; output, progress, on_result)
+            apply_recipe(recipe, inputs...; output, progress, on_result)
             :done
         catch err
             err isa BatchCancelled ? :cancelled : err

@@ -4,19 +4,23 @@
 # the editors and those fields in sync and routes canvas gestures.
 
 """
-Sub-pages of the Prepare step, in order.
+Sub-pages of the planar Prepare step, in order.
 """
 const PREPARE_PAGES = (:preprocess, :mask, :roi, :scale)
 
 """
     PrepareState(; runner = _inline_runner)
 
-The Prepare step of a `PlanarWorkflow` (`wf.prepare`). `page` is the open
-sub-page (one of `PREPARE_PAGES`). `preview` is a `PreprocessPreview` of
-the representative pair; `mask`, `roi`, and `scale` hold a `MaskEditor`,
+The Prepare step of a workflow (`wf.prepare`). `page` is the open sub-page
+(one of `prepare_pages(wf)`). `preview` is a `PreprocessPreview` of the
+representative pair; `mask`, `roi`, and `scale` hold a `MaskEditor`,
 `ROIEditor`, and `ScaleTool` built for the current frame size (`nothing`
 before a frame size is known). `show_processed` selects the processed
 frame in the viewer on the Preprocess page.
+
+In a `StereoWorkflow` the mask editor is sized to the dewarped grid
+(`nothing` until there are dewarpers), and `roi` and `scale` stay `nothing`
+(stereo has no ROI, and its scale has no measured line).
 
 `revision` changes whenever any editor changes (canvases redraw on it).
 `status` reports the background estimate (`background_running` while it

@@ -197,7 +197,18 @@ grid, and self-calibration) and has no ROI.
    runs in the Run step (slice 4; the Test step already tests ensembles);
    the narrow Repeats column in the pass table clips its value (seen in the
    screenshots; cosmetic).
-3. Stereo window.
+3. Stereo window. Design (proposed 2026-10-04, unreviewed): "Slice 3
+   design" below. 3a ✅ controllers (2026-10-04, overnight, unreviewed):
+   `AbstractWorkflow` (workflow.jl) holds the shared settings/test/run/
+   results functions with per-workflow hooks; `StereoWorkflow`
+   (stereo_workflow.jl) with linked `frames1`/`frames2`, `camera`, and
+   `StereoCalibration` (stereo_calibration.jl: plates, detection, fit,
+   grid, self-calibration). Found on the way: the Prepare viewer is on the
+   dewarped grid on every page (`wf.dewarped` is the raw pair dewarped,
+   the preview's `post` dewarps the processed pair), so the probe, mask, and
+   viewer share coordinates; background subtraction is unavailable for
+   stereo, because a recipe holds one preprocessing list for both cameras
+   (core gap: per-camera preprocessing in `PIVRecipe`). 3b: shell + QML.
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.
 
@@ -254,6 +265,52 @@ the GUI thread, computes from them alone, and `deliver`s the result; a
 generation counter drops stale results (latest edit wins). Until a pair
 lands, the canvas keeps the previous frame and the rail says "loading…".
 Without a window everything runs inline, as the tests expect.
+
+## Slice 3 design: the stereo window
+
+Proposed 2026-10-04 (overnight, unreviewed). `stereo_window()` follows the
+planar window and shares its machinery; only the steps that differ are new.
+
+**Steps:** Images → Calibration → Prepare → Passes → Test pair → Run →
+Results.
+
+- **Images:** two synchronized frame lists (camera 1, camera 2), one
+  pairing rule, one representative pair index for both cameras. The viewer
+  shows camera 1 or 2, frame A or B (the pair bar gains a camera switch).
+  Problems are reported per camera (different counts or sizes).
+- **Calibration:** per camera, plate images with one z each, the detection
+  settings `detect_calibration_grid` takes (spacing, two-level and level
+  separation, origin offset, invert, orientation) and the model
+  (Soloff/pinhole). Detection and fitting run on a worker and produce a
+  `CalibrationReview` (existing controller). The viewer shows the selected
+  camera and plane with detected dots and reprojection residual arrows
+  (overlays created up front). Below: the dewarp grid (`common_dewarp_grid`:
+  coverage, spacing `:auto` or a value, z), built on a worker into the two
+  `ImageDewarper`s, and **self-calibration** (`self_calibrate` on the first
+  pairs, on a worker; its `SelfCalibrationReport` summary per pass; **Apply**
+  replaces the dewarpers). Calibration inputs are session state: the core
+  has no file format for cameras or dewarpers, so they are not saved with
+  the settings (open question for the user). `stereo_window(;
+  dewarpers = (dw1, dw2))` accepts dewarpers built in a script.
+- **Prepare:** Preprocess (raw frames, applied before dewarping — the
+  probe correlates the dewarped pair of the shown camera), Mask (drawn on
+  the dewarped grid; the viewer shows the dewarped frame with the cameras'
+  out-of-view union shaded), Scale (dt and time unit only; lengths are the
+  calibration's world units). No ROI (`apply_recipe` rejects one for stereo).
+- **Passes, Test pair, Run, Results:** the planar pages and controllers,
+  sized to the dewarped grid; test and run call the stereo
+  `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`; the viewer shows in-plane
+  vectors on the dewarped camera-1 frame; Results browses `StereoPIVResult`s
+  (w and its uncertainty are fields; profile/circulation stay planar-only).
+
+**Sharing:** the step-independent parts of `PlanarWorkflow` (passes, test,
+run, explorer, preprocessing/mask/scale, settings, status, `deliver`/`spawn`)
+and of `PlanarShell` (queue, tick, canvas host, step and pass models, the
+Passes/Test/Run/Results callbacks) are factored so `StereoWorkflow` and its
+shell reuse them rather than copy them; QML shares the window chrome and the
+common pages. The GLMakie `stereo_batch_runner`/`stereo_calibration` views
+and the `StereoBatchRunner` controller retire once the window covers them;
+`calibration_review` and `selfcal_review` stay as standalone windows.
 
 ## Tests (proportionate)
 

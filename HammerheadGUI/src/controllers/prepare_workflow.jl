@@ -1,13 +1,17 @@
-# The Prepare step inside a PlanarWorkflow: keeps the editors and the
-# workflow's `preprocessing`/`mask`/`roi`/`scale` fields in sync (both
-# directions, with a guard against write-back loops), rebuilds the editors
-# when the frame size changes, and routes canvas gestures (clicks and keys)
-# to the controller of the current step and sub-page.
+# The Prepare step inside a workflow: keeps the editors and the workflow's
+# `preprocessing`/`mask`/`roi`/`scale` fields in sync (both directions, with
+# a guard against write-back loops), rebuilds the editors when the frame
+# size (planar) or the dewarped grid (stereo) changes, and routes canvas
+# gestures (clicks and keys) to the controller of the current step and
+# sub-page. Hooks per workflow type:
+#   _has_roi(wf), _has_scale_tool(wf)   which editors besides the mask exist
+#   _mask_target(wf)                    (size, what) the mask must match
+#   _current_scale(wf)                  the scale an edit starts from
+#   _scale_fields(wf)                   editable scale fields
 
-function _connect_prepare!(wf::PlanarWorkflow)
-    ps, fs, pp = wf.prepare, wf.frames, wf.prepare.preview
-    # representative pair → preview frames and editor sizes
-    onany((_...) -> _frames_changed!(wf), fs.files, fs.pair_mode, fs.pair, fs.loaded)
+# Settings ↔ editors for every workflow: preprocessing, mask, and scale.
+function _connect_settings!(wf::AbstractWorkflow)
+    ps, pp = wf.prepare, wf.prepare.preview
     # editors → workflow
     on(pp.steps) do steps
         _syncing(ps) do
@@ -17,16 +21,28 @@ function _connect_prepare!(wf::PlanarWorkflow)
     # workflow → editors (opening settings, or edits from outside)
     on(_ -> _syncing(() -> set_steps!(pp, wf.preprocessing[]), ps), wf.preprocessing)
     on(_ -> _syncing(() -> _seed_mask!(wf), ps), wf.mask)
-    on(_ -> _syncing(() -> _seed_roi!(wf), ps), wf.roi)
+    _has_roi(wf) && on(_ -> _syncing(() -> _seed_roi!(wf), ps), wf.roi)
     on(_ -> _syncing(() -> _seed_scale!(wf), ps), wf.scale)
     for obs in (ps.page, ps.show_processed, pp.steps, pp.probe, pp.probe_window, pp.probe_result,
                 pp.processed, pp.status, pp.error)
         on(_ -> _bump!(ps), obs)
     end
     _syncing(() -> set_steps!(pp, wf.preprocessing[]), ps)
+    return wf
+end
+
+function _connect_prepare!(wf::PlanarWorkflow)
+    fs = wf.frames
+    # representative pair → preview frames and editor sizes
+    onany((_...) -> _frames_changed!(wf), fs.files, fs.pair_mode, fs.pair, fs.loaded)
+    _connect_settings!(wf)
     _frames_changed!(wf)
     return wf
 end
+
+_has_roi(::PlanarWorkflow) = true
+_has_scale_tool(::PlanarWorkflow) = true
+_mask_target(wf::PlanarWorkflow) = (frame_size(wf.frames), "the frames are")
 
 # New representative pair (or its delivery): hand the frames to the preview
 # and rebuild the editors when the frame size changed. While a pair loads on
@@ -51,8 +67,8 @@ function _frames_changed!(wf::PlanarWorkflow)
     return wf
 end
 
-# Editors for a new frame size, seeded from the workflow's settings.
-function _set_editors!(wf::PlanarWorkflow, sz::Union{Nothing,Dims{2}})
+# Editors for a new size, seeded from the workflow's settings.
+function _set_editors!(wf::AbstractWorkflow, sz::Union{Nothing,Dims{2}})
     ps = wf.prepare
     if sz === nothing
         ps.mask[] = nothing
@@ -61,23 +77,32 @@ function _set_editors!(wf::PlanarWorkflow, sz::Union{Nothing,Dims{2}})
         _bump!(ps)
         return wf
     end
-    me, ed, st = MaskEditor(sz), ROIEditor(sz), ScaleTool(sz)
+    me = MaskEditor(sz)
+    ed = _has_roi(wf) ? ROIEditor(sz) : nothing
+    st = _has_scale_tool(wf) ? ScaleTool(sz) : nothing
     ps.mask[] = me
     ps.roi[] = ed
     ps.scale[] = st
     _syncing(ps) do
-        _seed_mask!(wf); _seed_roi!(wf); _seed_scale!(wf)
+        _seed_mask!(wf)
+        ed === nothing || _seed_roi!(wf)
+        _seed_scale!(wf)
     end
     for obs in (me.polygons, me.holes, me.raster)
         on(_ -> _syncing(() -> _write_mask!(wf, me), ps), obs)
     end
-    on(_ -> _syncing(() -> _write_roi!(wf, ed), ps), ed.roi)
-    for obs in (st.points, st.separation)
-        on(_ -> _syncing(() -> _write_measurement!(wf, st), ps), obs)
-    end
-    for obs in (me.polygons, me.holes, me.active, me.hole_mode, me.selected, me.raster,
-                ed.roi, ed.anchor, st.points, st.separation)
+    for obs in (me.polygons, me.holes, me.active, me.hole_mode, me.selected, me.raster)
         on(_ -> _bump!(ps), obs)
+    end
+    if ed !== nothing
+        on(_ -> _syncing(() -> _write_roi!(wf, ed), ps), ed.roi)
+        foreach(obs -> on(_ -> _bump!(ps), obs), (ed.roi, ed.anchor))
+    end
+    if st !== nothing
+        for obs in (st.points, st.separation)
+            on(_ -> _syncing(() -> _write_measurement!(wf, st), ps), obs)
+        end
+        foreach(obs -> on(_ -> _bump!(ps), obs), (st.points, st.separation))
     end
     _bump!(ps)
     return wf
@@ -85,7 +110,7 @@ end
 
 # ---------------------------------------------------------------- mask
 
-function _write_mask!(wf::PlanarWorkflow, me::MaskEditor)
+function _write_mask!(wf::AbstractWorkflow, me::MaskEditor)
     me === wf.prepare.mask[] || return
     m = has_mask(me) ? polygon_mask(me) : nothing
     isequal(m, wf.mask[]) || (wf.mask[] = m)
@@ -94,7 +119,7 @@ end
 
 # A mask from outside becomes the editor's raster (new polygons go on top).
 # A mask of another size stays in the settings but cannot be edited.
-function _seed_mask!(wf::PlanarWorkflow)
+function _seed_mask!(wf::AbstractWorkflow)
     me = wf.prepare.mask[]
     me === nothing && return
     m = wf.mask[]
@@ -107,26 +132,27 @@ function _seed_mask!(wf::PlanarWorkflow)
 end
 
 """
-    load_mask_file!(wf::PlanarWorkflow, path)
+    load_mask_file!(wf::AbstractWorkflow, path)
 
-Use a mask image (`Hammerhead.load_mask`: white = excluded) as the mask.
+Use a mask image (`Hammerhead.load_mask`: white = excluded) as the mask. It
+must match the frames (planar) or the dewarped grid (stereo).
 """
-function load_mask_file!(wf::PlanarWorkflow, path::AbstractString)
+function load_mask_file!(wf::AbstractWorkflow, path::AbstractString)
     m = load_mask(path)
-    sz = frame_size(wf.frames)
+    sz, what = _mask_target(wf)
     sz === nothing || size(m) == sz ||
-        throw(DimensionMismatch("the mask is $(size(m, 2))×$(size(m, 1)) px but the frames are $(sz[2])×$(sz[1]) px"))
+        throw(DimensionMismatch("the mask is $(size(m, 2))×$(size(m, 1)) px but $what $(sz[2])×$(sz[1]) px"))
     wf.mask[] = m
     wf.status[] = "mask: $(basename(path))"
     return wf
 end
 
 """
-    save_mask_file(wf::PlanarWorkflow, path) -> path
+    save_mask_file(wf::AbstractWorkflow, path) -> path
 
 Write the mask as an image (white = excluded), as `load_mask` reads it.
 """
-function save_mask_file(wf::PlanarWorkflow, path::AbstractString)
+function save_mask_file(wf::AbstractWorkflow, path::AbstractString)
     wf.mask[] === nothing && throw(ArgumentError("there is no mask to save"))
     FileIO.save(path, Gray.(wf.mask[]))
     wf.status[] = "saved mask to $(basename(path))"
@@ -180,7 +206,7 @@ _current_scale(wf::PlanarWorkflow) = something(wf.scale[], PhysicalScale())
 
 # The tool measures in the scale's length unit (a measurement in "px" would
 # be meaningless, so a new scale measures in the tool's unit, mm by default).
-function _seed_scale!(wf::PlanarWorkflow)
+function _seed_scale!(wf::AbstractWorkflow)
     st = wf.prepare.scale[]
     (st === nothing || wf.scale[] === nothing) && return
     sc = wf.scale[]
@@ -202,16 +228,21 @@ end
 
 const SCALE_FIELDS = (:pixel_size, :dt, :length_unit, :time_unit)
 
+_scale_fields(::PlanarWorkflow) = SCALE_FIELDS
+
 """
-    set_scale_field!(wf::PlanarWorkflow, field, value)
+    set_scale_field!(wf::AbstractWorkflow, field, value)
 
 Set one field of the physical scale (`:pixel_size`, `:dt`, `:length_unit`,
 or `:time_unit`) from a value or its text form; the other fields keep their
 values (unscaled defaults when there is no scale yet). Invalid values throw
-and leave the scale unchanged.
+and leave the scale unchanged. A stereo scale has no `:pixel_size`: its
+lengths are the calibration's world units.
 """
-function set_scale_field!(wf::PlanarWorkflow, field::Symbol, value)
+function set_scale_field!(wf::AbstractWorkflow, field::Symbol, value)
     field in SCALE_FIELDS || throw(ArgumentError("unknown scale field :$field"))
+    field in _scale_fields(wf) ||
+        throw(ArgumentError("a stereo scale has no $field: lengths are the calibration's world units"))
     cur = _current_scale(wf)
     f = Dict{Symbol,Any}(k => getfield(cur, k) for k in SCALE_FIELDS)
     if field in (:pixel_size, :dt)
@@ -232,16 +263,17 @@ function set_scale_field!(wf::PlanarWorkflow, field::Symbol, value)
 end
 
 """
-    edit_scale!(wf::PlanarWorkflow, field, value) -> Bool
+    edit_scale!(wf::AbstractWorkflow, field, value) -> Bool
 
 [`set_scale_field!`](@ref), or the measured line's `:separation` (see
-`set_separation!`), reporting a rejected entry in `wf.prepare.scale_error`
-(returns `false`) instead of throwing.
+`set_separation!`; planar only), reporting a rejected entry in
+`wf.prepare.scale_error` (returns `false`) instead of throwing.
 """
-function edit_scale!(wf::PlanarWorkflow, field::Symbol, value)
+function edit_scale!(wf::AbstractWorkflow, field::Symbol, value)
     ps = wf.prepare
     try
         if field === :separation
+            _has_scale_tool(wf) || throw(ArgumentError("a stereo scale has no measured line"))
             st = ps.scale[]
             st === nothing && throw(ArgumentError("add frames first"))
             set_separation!(st, value isa Real ? value : String(value))
@@ -257,12 +289,12 @@ function edit_scale!(wf::PlanarWorkflow, field::Symbol, value)
 end
 
 """
-    clear_scale!(wf::PlanarWorkflow)
+    clear_scale!(wf::AbstractWorkflow)
 
-Remove the physical scale (results stay in pixels and frames) and the
-measured line.
+Remove the physical scale (results stay in measured units and frames) and
+the measured line.
 """
-function clear_scale!(wf::PlanarWorkflow)
+function clear_scale!(wf::AbstractWorkflow)
     st = wf.prepare.scale[]
     st === nothing || isempty(st.points[]) || clear_points!(st)
     wf.scale[] === nothing || (wf.scale[] = nothing)
@@ -273,12 +305,12 @@ end
 # ---------------------------------------------------------------- preprocessing
 
 """
-    edit_step_option!(wf::PlanarWorkflow, i, key, value) -> Bool
+    edit_step_option!(wf::AbstractWorkflow, i, key, value) -> Bool
 
 `set_step_option!` on the preview, reporting a rejected value in the
 preview's `error`/`error_step` (returns `false`) instead of throwing.
 """
-function edit_step_option!(wf::PlanarWorkflow, i::Integer, key, value)
+function edit_step_option!(wf::AbstractWorkflow, i::Integer, key, value)
     pp = wf.prepare.preview
     try
         set_step_option!(pp, i, key, value)
@@ -296,7 +328,9 @@ end
 
 Estimate the background from the first `frames` frames (`compute_background`)
 and subtract it as the first preprocessing step. In a window this runs on a
-worker task; `wf.prepare.status` reports progress.
+worker task; `wf.prepare.status` reports progress. (A `StereoWorkflow`
+reports that background subtraction is unavailable: a recipe holds one
+preprocessing list for both cameras.)
 """
 function estimate_background!(wf::PlanarWorkflow; frames::Integer = 10, method::Symbol = :min)
     ps = wf.prepare
@@ -325,13 +359,14 @@ end
 # ---------------------------------------------------------------- page
 
 """
-    set_prepare_page!(wf::PlanarWorkflow, page)
+    set_prepare_page!(wf::AbstractWorkflow, page)
 
-Open a Prepare sub-page (one of `PREPARE_PAGES`). Leaving a page drops its
-unfinished gesture (a polygon being drawn, a pending ROI corner).
+Open a Prepare sub-page (one of [`prepare_pages`](@ref)`(wf)`). Leaving a
+page drops its unfinished gesture (a polygon being drawn, a pending ROI
+corner).
 """
-function set_prepare_page!(wf::PlanarWorkflow, page::Symbol)
-    page in PREPARE_PAGES || throw(ArgumentError("unknown Prepare page :$page"))
+function set_prepare_page!(wf::AbstractWorkflow, page::Symbol)
+    page in prepare_pages(wf) || throw(ArgumentError("unknown Prepare page :$page"))
     ps = wf.prepare
     ps.page[] == page && return wf
     me, ed = ps.mask[], ps.roi[]
@@ -344,14 +379,16 @@ end
 # ---------------------------------------------------------------- gestures
 
 """
-    canvas_click!(wf::PlanarWorkflow, x, y) -> Bool
+    canvas_click!(wf::AbstractWorkflow, x, y) -> Bool
 
 A primary click on the image canvas at data coordinates `(x, y)`
 (x = column, y = row). On the Prepare step it goes to the open sub-page —
 Preprocess: place the correlation probe; Mask, ROI, Scale: `click!` on the
-editor. Returns whether the click was used (otherwise the viewer keeps it).
+editor (a stereo workflow's canvas is the dewarped grid, and its Scale page
+has no editor). Returns whether the click was used (otherwise the viewer
+keeps it).
 """
-function canvas_click!(wf::PlanarWorkflow, x::Real, y::Real)
+function canvas_click!(wf::AbstractWorkflow, x::Real, y::Real)
     (wf.step[] === :prepare && isfinite(x) && isfinite(y)) || return false
     ps = wf.prepare
     page = ps.page[]
@@ -367,13 +404,13 @@ function canvas_click!(wf::PlanarWorkflow, x::Real, y::Real)
 end
 
 """
-    canvas_alt_click!(wf::PlanarWorkflow) -> Bool
+    canvas_alt_click!(wf::AbstractWorkflow) -> Bool
 
 A secondary (right) click on the image canvas. Mask: close the polygon
 being drawn, or drop the selection; ROI: drop a pending corner; Scale: drop
 the measured line; Preprocess: remove the probe. Returns whether it was used.
 """
-function canvas_alt_click!(wf::PlanarWorkflow)
+function canvas_alt_click!(wf::AbstractWorkflow)
     wf.step[] === :prepare || return false
     ps = wf.prepare
     page = ps.page[]
@@ -398,13 +435,13 @@ function canvas_alt_click!(wf::PlanarWorkflow)
 end
 
 """
-    canvas_key!(wf::PlanarWorkflow, key::Symbol) -> Bool
+    canvas_key!(wf::AbstractWorkflow, key::Symbol) -> Bool
 
 A key pressed on the image canvas: `:backspace` (undo the last vertex or
 point), `:escape` (cancel the polygon, pending corner, line, or probe), or
 `:delete` (delete the selected polygon). Returns whether it was used.
 """
-function canvas_key!(wf::PlanarWorkflow, key::Symbol)
+function canvas_key!(wf::AbstractWorkflow, key::Symbol)
     wf.step[] === :prepare || return false
     ps = wf.prepare
     page = ps.page[]
@@ -440,13 +477,20 @@ function canvas_key!(wf::PlanarWorkflow, key::Symbol)
     return false
 end
 
-# A window closed with jobs in flight: their results go to a queue nobody
-# drains any more. Forget them and bring the state up to date inline.
-function _abandon_jobs!(wf::PlanarWorkflow)
-    fs, ps = wf.frames, wf.prepare
+# A frame set's pending load is forgotten (its result would go to a queue
+# nobody drains any more).
+function _abandon_load!(fs::FrameSet)
     fs.generation[] += 1
     fs.request[] = nothing
     fs.loading[] && (fs.loading[] = false)
+    return fs
+end
+
+# A window closed with jobs in flight: their results go to a queue nobody
+# drains any more. Forget them and bring the state up to date inline.
+function _abandon_jobs!(wf::PlanarWorkflow)
+    ps = wf.prepare
+    _abandon_load!(wf.frames)
     if ps.background_running[]
         ps.background_generation[] += 1
         ps.background_running[] = false

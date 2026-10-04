@@ -52,8 +52,27 @@ run on worker tasks and hand their results to `wf.deliver[]`.
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
-Pages = ["planar_workflow.jl", "frame_set.jl", "controllers/prepare.jl", "prepare_workflow.jl",
-         "passes_editor.jl", "workflow_jobs.jl"]
+Pages = ["controllers/workflow.jl", "planar_workflow.jl", "frame_set.jl",
+         "controllers/prepare.jl", "prepare_workflow.jl", "passes_editor.jl",
+         "workflow_jobs.jl"]
+```
+
+## Stereo workflow controllers
+
+[`StereoWorkflow`](@ref Controllers.StereoWorkflow) is the stereo
+counterpart of `PlanarWorkflow`; both are
+[`AbstractWorkflow`](@ref Controllers.AbstractWorkflow)s and share the
+settings, test, run, and results functions above. It adds two synchronized
+camera frame sets and the Calibration step,
+[`StereoCalibration`](@ref Controllers.StereoCalibration): plate images
+per camera, grid detection and camera fits, the shared dewarp grid, and
+self-calibration. Its Prepare step works on the dewarped grid, and its
+test and run call the stereo `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`.
+
+```@autodocs
+Modules = [HammerheadGUI.Controllers]
+Order = [:module, :type, :function, :constant, :macro]
+Pages = ["controllers/stereo_workflow.jl", "controllers/stereo_calibration.jl"]
 ```
 
 ## Prepare editors

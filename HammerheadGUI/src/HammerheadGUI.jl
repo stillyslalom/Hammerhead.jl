@@ -39,8 +39,11 @@ include("controllers/stereo_batch.jl")         # after calibration_review (build
 include("controllers/frame_set.jl")            # workflow window controllers
 include("controllers/passes_editor.jl")
 include("controllers/workflow_jobs.jl")
-include("controllers/prepare.jl")              # before planar_workflow (field type)
+include("controllers/prepare.jl")              # before the workflows (field type)
+include("controllers/workflow.jl")             # AbstractWorkflow + shared steps
 include("controllers/planar_workflow.jl")
+include("controllers/stereo_calibration.jl")
+include("controllers/stereo_workflow.jl")
 include("controllers/prepare_workflow.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
@@ -77,8 +80,15 @@ export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
 export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
        canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file
+export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status
+export StereoCalibration, CALIBRATION_OPTIONS, add_plate!, remove_plate!, set_plate_z!,
+       clear_plates!, detect_options, set_calibration_option!, edit_calibration_option!,
+       fit_calibration!, fit_stale, build_dewarpers!, grid_summary, calibration_summary,
+       apply_selfcal!
+export StereoWorkflow, STEREO_WORKFLOW_STEPS, STEREO_PREPARE_PAGES, camera_frames,
+       shown_frames, set_camera!, out_of_view, grid_size, start_selfcal!
 
 end # module Controllers
 
@@ -106,6 +116,7 @@ export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
 export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
        open_results!, set_step!, set_prepare_page!
+export StereoWorkflow, StereoCalibration, fit_calibration!, start_selfcal!, apply_selfcal!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
