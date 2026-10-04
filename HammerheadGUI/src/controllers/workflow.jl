@@ -84,14 +84,15 @@ end
 
 # A finished batch becomes the Results step's data.
 function _connect_results!(wf::AbstractWorkflow)
+    _connect_result_images!(wf)
     on(wf.run.running) do running
         running && return
         out = wf.run.finished_output[]
         if out !== nothing
             open_results!(wf, out)
         elseif !isempty(wf.run.completed[])
-            wf.explorer[] = ResultExplorer(collect(wf.run.completed[]))
             wf.results_path[] = nothing
+            wf.explorer[] = ResultExplorer(collect(wf.run.completed[]))
         end
     end
     return wf
@@ -306,9 +307,108 @@ function open_results!(wf::AbstractWorkflow, path::AbstractString)
         wf.status[] = "cannot open results: " * _errmsg(err)
         return wf
     end
+    wf.results_path[] = String(path)        # before the explorer: its listeners read it
     wf.explorer[] = ex
-    wf.results_path[] = String(path)
     wf.status[] = "results: $(basename(path))"
+    return wf
+end
+
+"""
+    save_run_results!(wf::AbstractWorkflow, path) -> path
+
+Write the results of the last run kept in memory (no output file was set)
+to `path`, with the settings that produced them, the frame paths of each
+pair (when the frames are files), and for stereo the calibration, as a run
+with an output file would. The Results step then refers to the file.
+"""
+function save_run_results!(wf::AbstractWorkflow, path::AbstractString)
+    rs = wf.run
+    rs.running[] && throw(ArgumentError("wait for the run to finish"))
+    isempty(rs.completed[]) && throw(ArgumentError("there are no results in memory to save"))
+    results = collect(Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}, rs.completed[])
+    inputs = rs.inputs[]
+    calibration = inputs !== nothing && length(inputs) == 4 ? (inputs[3], inputs[4]) : nothing
+    save_results(path, results; recipe = rs.recipe[], calibration,
+                 sources = _run_sources(rs, inputs, length(results)))
+    rs.finished_output[] = String(path)
+    rs.output_path[] = String(path)
+    wf.results_path[] = String(path)
+    n = length(results)
+    wf.status[] = "saved $n result" * (n == 1 ? "" : "s") * " to $(basename(path))"
+    return path
+end
+
+# Frame labels per result of an in-memory run (pooled results have none).
+function _run_sources(rs::RunState, inputs, n::Int)
+    (inputs === nothing || !(rs.mode[] in (:sequence, :ptv))) && return nothing
+    return map(1:n) do i
+        entries = length(inputs) == 4 ? (inputs[1][i]..., inputs[2][i]...) : Tuple(inputs[1][i])
+        all(e -> e isa AbstractString, entries) ? String[e for e in entries] : String[]
+    end
+end
+
+"""
+    results_in_memory(wf::AbstractWorkflow) -> Bool
+
+Whether the last run's results exist only in memory (no output file), so
+[`save_run_results!`](@ref) can still write them.
+"""
+results_in_memory(wf::AbstractWorkflow) =
+    !wf.run.running[] && !isempty(wf.run.completed[]) && wf.run.finished_output[] === nothing
+
+# ---------------------------------------------------------------- particle images
+
+# The frame entries (A, B) behind each shown result, or `nothing` when the
+# workflow cannot tell (per workflow; stereo results have none).
+_result_frame_entries(::AbstractWorkflow) = nothing
+
+# The Results step's particle image: the explorer offers the `:image` field
+# when the results map to frame pairs, and the shown frame (A/B) of the
+# shown result loads on the runner.
+function _connect_result_images!(wf::AbstractWorkflow)
+    runner = _workflow_runner(wf.spawn, wf.deliver)
+    on(wf.explorer) do ex
+        ex === nothing && return
+        entries = try
+            _result_frame_entries(wf)
+        catch
+            nothing
+        end
+        ex.image_available[] = entries !== nothing && any(!isnothing, entries)
+        generation = Ref(0)
+        function load(_...)
+            (ex.field[] === :image && entries !== nothing) || return
+            i = ex.frame[]
+            e = i <= length(entries) ? entries[i] : nothing
+            g = (generation[] += 1)
+            if e === nothing
+                ex.image[] = nothing
+                return
+            end
+            entry = ex.image_frame[] === :a ? e[1] : e[2]
+            job = () -> entry isa AbstractString ? load_image(Float32, entry) : Float32.(entry)
+            runner(job, out -> (g == generation[] && (ex.image[] = out.err === nothing ? out.value : nothing)))
+        end
+        onany(load, ex.frame, ex.field, ex.image_frame)
+        load()
+    end
+    return wf
+end
+
+"""
+    switch_frame!(wf::AbstractWorkflow, which::Symbol)
+
+Show frame `:a` or `:b`: of the representative pair, or on the Results step
+of the particle image under the shown result.
+"""
+function switch_frame!(wf::AbstractWorkflow, which::Symbol)
+    which in (:a, :b) || throw(ArgumentError("frame must be :a or :b, got :$which"))
+    ex = wf.explorer[]
+    if wf.step[] === :results && ex !== nothing
+        ex.image_frame[] == which || (ex.image_frame[] = which)
+    else
+        show_frame!(_pair_target(wf), which)
+    end
     return wf
 end
 

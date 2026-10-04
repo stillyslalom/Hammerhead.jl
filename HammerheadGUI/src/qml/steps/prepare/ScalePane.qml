@@ -6,6 +6,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import jlqml
 
 ColumnLayout {
@@ -79,10 +80,27 @@ ColumnLayout {
     Label {
         visible: !stereo
         text: "Click two points of known separation on the image (a ruler or calibration " +
-              "target), then enter their distance; the pixel size follows."
+              "target), then enter their distance; the pixel size follows. A ruler " +
+              "photographed separately at the frames' magnification can be loaded instead."
         wrapMode: Text.WordWrap
         opacity: 0.75
         Layout.fillWidth: true
+    }
+    RowLayout {
+        visible: !stereo
+        spacing: 8
+        Button { text: "Load a ruler image…"; onClicked: rulerDialog.open() }
+        Button {
+            text: "Use the frames"
+            enabled: app.rulerName !== ""
+            onClicked: Julia.hh_clear_ruler()
+        }
+        Label {
+            text: app.rulerName !== "" ? "measuring on " + app.rulerName : "measuring on the frames"
+            opacity: 0.75
+            elide: Text.ElideMiddle
+            Layout.fillWidth: true
+        }
     }
     RowLayout {
         visible: !stereo
@@ -109,5 +127,11 @@ ColumnLayout {
         color: "#c42b1c"
         wrapMode: Text.WordWrap
         Layout.fillWidth: true
+    }
+    FileDialog {
+        id: rulerDialog
+        title: "Ruler image"
+        nameFilters: ["Images (*.tif *.tiff *.png *.bmp *.jpg *.jpeg)", "All files (*)"]
+        onAccepted: Julia.hh_load_ruler(selectedFile.toString())
     }
 }

@@ -91,6 +91,19 @@ end
 
 workflow_steps(::PlanarWorkflow) = WORKFLOW_STEPS
 _representative_pair(wf::PlanarWorkflow) = wf.frames.pair[]
+
+# Results map to frame pairs through the results file's stored frame paths,
+# or through the pairs of the in-memory run that produced them.
+function _result_frame_entries(wf::PlanarWorkflow)
+    path = wf.results_path[]
+    if path !== nothing
+        return [length(s) == 2 ? (s[1], s[2]) : nothing for s in load_sources(path)]
+    end
+    rs = wf.run
+    inp = rs.inputs[]
+    (inp === nothing || !(rs.mode[] in (:sequence, :ptv))) && return nothing
+    return Any[Tuple(p) for p in inp[1]]
+end
 _pair_target(wf::PlanarWorkflow) = wf.frames
 npairs(wf::PlanarWorkflow) = npairs(wf.frames)
 prepare_pages(::PlanarWorkflow) = PREPARE_PAGES

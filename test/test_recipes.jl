@@ -90,6 +90,34 @@ using JLD2
         @test_throws ArgumentError PIVRecipe(passes; mode = :stereo)
     end
 
+    @testset "save_results with settings and sources" begin
+        mktempdir() do dir
+            rs = apply_recipe(recipe, pairs; progress = false)
+            out = save_results(joinpath(dir, "later.jld2"), rs; recipe,
+                               sources = [["a$i.tif", "b$i.tif"] for i in 1:3])
+            @test load_recipe(out) == recipe
+            @test isequal(load_results(out)[3].u, rs[3].u)
+            @test load_sources(out) == [["a$i.tif", "b$i.tif"] for i in 1:3]
+            @test_throws DimensionMismatch save_results(joinpath(dir, "bad.jld2"), rs;
+                                                        sources = [["a"]])
+            # sequence drivers store frame paths; in-memory frames store none
+            paths = String[]
+            for (k, (a, b)) in enumerate(pairs[1:2])
+                for (img, tag) in ((a, "a"), (b, "b"))
+                    p = joinpath(dir, "f$(k)$(tag).png")
+                    Hammerhead.FileIO.save(p, Hammerhead.Gray.(img ./ maximum(img)))
+                    push!(paths, p)
+                end
+            end
+            seq = joinpath(dir, "seq.jld2")
+            run_piv_sequence(image_pairs(paths), passes; output = seq, progress = false)
+            @test load_sources(seq) == [paths[1:2], paths[3:4]]
+            mem = joinpath(dir, "mem.jld2")
+            run_piv_sequence(pairs[1:2], passes; output = mem, progress = false)
+            @test load_sources(mem) == [String[], String[]]
+        end
+    end
+
     @testset "PTV and tracking recipes" begin
         ptv = PTVParameters(search_radius = 4)
         pr = PIVRecipe(passes; mode = :ptv, ptv, mask)

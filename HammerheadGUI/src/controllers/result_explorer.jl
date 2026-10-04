@@ -11,8 +11,8 @@ const ScatteredResult = Union{PTVResult,TrackingResult}
 const AnyResult = Union{GridResult,ScatteredResult}
 const Selection = Union{Nothing,CartesianIndex{2},Int}
 
-# One physical/display payload, irrespective of recording length. Read/convert
-# before replacing the cache, so failed navigation preserves the prior frame.
+# One raw payload, irrespective of recording length. Read before replacing
+# the cache, so failed navigation preserves the prior frame.
 mutable struct _LazyDisplayResults <: AbstractVector{AnyResult}
     source::Hammerhead.ResultFile
     index::Int
@@ -23,7 +23,7 @@ Base.IndexStyle(::Type{_LazyDisplayResults}) = IndexLinear()
 function Base.getindex(results::_LazyDisplayResults, i::Int)
     checkbounds(results, i)
     if results.index != i
-        result = physical(results.source[i])
+        result = results.source[i]
         results.result = result
         results.index = i
     end
@@ -55,9 +55,16 @@ interactive-analysis state `tool` / `tool_points` / `profile_data` /
 `circulation_result` (see [`set_tool!`](@ref) and [`click!`](@ref);
 planar results only — tool state clears on frame switches).
 
-Results with a [`PhysicalScale`](@ref) are converted through
-[`physical`](@ref) for display in physical units. Unscaled results retain
-their original units.
+The explorer keeps the results as given and shows each through a display
+pipeline (see [`current_result`](@ref)): `revalidation` (`nothing`, or
+settings for [`set_revalidation!`](@ref)) re-checks and optionally replaces
+planar vectors, and `physical_units` (on by default) converts results with a
+[`PhysicalScale`](@ref) through [`physical`](@ref). `include_flagged`
+admits flagged vectors in derived fields, profiles, and circulation.
+`color_percentiles` is the percentile band of the automatic color range.
+`tool_selected` is the selected profile/circulation point.
+`image`/`image_frame`/`image_available` hold the particle image a workflow
+supplies for the `:image` field (see [`explorer_fields`](@ref)).
 
 The string form loads a saved sequence with `Hammerhead.load_results`.
 Use `lazy = true` or pass a [`ResultFile`](@ref) to browse a completed file
@@ -88,14 +95,22 @@ struct ResultExplorer
     circulation_result::Observable{Union{Nothing,NamedTuple}}
     derived_cache::Dict{Int,NamedTuple}
     status::Observable{String}
+    color_percentiles::Observable{NTuple{2,Float64}}
+    include_flagged::Observable{Bool}
+    revalidation::Observable{Union{Nothing,NamedTuple}}
+    physical_units::Observable{Bool}
+    tool_selected::Observable{Union{Nothing,Int}}
+    image::Observable{Union{Nothing,Matrix{Float32}}}
+    image_frame::Observable{Symbol}
+    image_available::Observable{Bool}
+    display_cache::Base.RefValue{Any}
 end
 
 function ResultExplorer(results::AbstractVector; path::Union{Nothing,AbstractString} = nothing)
     isempty(results) && throw(ArgumentError("no results to explore"))
     all(r -> r isa AnyResult, results) ||
         throw(ArgumentError("results must be PIVResult, StereoPIVResult, PTVResult, or TrackingResult entries"))
-    conv = AnyResult[physical(r) for r in results]
-    return _result_explorer(conv, path)
+    return _result_explorer(AnyResult[r for r in results], path)
 end
 
 function ResultExplorer(index::Hammerhead.ResultFile;
@@ -118,7 +133,12 @@ function _result_explorer(conv, path)
                         Observable(NTuple{2,Float64}[]),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
                         Observable{Union{Nothing,NamedTuple}}(nothing),
-                        Dict{Int,NamedTuple}(), Observable(""))
+                        Dict{Int,NamedTuple}(), Observable(""),
+                        Observable((2.0, 98.0)), Observable(false),
+                        Observable{Union{Nothing,NamedTuple}}(nothing), Observable(true),
+                        Observable{Union{Nothing,Int}}(nothing),
+                        Observable{Union{Nothing,Matrix{Float32}}}(nothing), Observable(:a),
+                        Observable(false), Ref{Any}(nothing))
     last_frame = Ref(1)
     # Read failures must occur before downstream view notifications. A direct
     # observable write has already changed its value: restore silently and
@@ -134,12 +154,25 @@ function _result_explorer(conv, path)
         i == last_frame[] || empty!(ex.derived_cache)
         last_frame[] = i
         ex.status[] = ""
-        ex.field[] in available_fields(r) || (ex.field[] = first(available_fields(r)))
+        ex.field[] in explorer_fields(ex) || (ex.field[] = first(available_fields(r)))
         ex.selection[] = _valid_selection(r, ex.selection[])
         # tool state describes one frame's flow: clear it on a frame switch,
         # and revert to :inspect when the new result has no derived analysis
         _reset_tool!(ex)
         r isa PIVResult || ex.tool[] === :inspect || (ex.tool[] = :inspect)
+    end
+    # display settings: derived fields and tool outputs follow; a change of
+    # units invalidates the tool's points (they are in display units)
+    on(ex.physical_units) do _
+        empty!(ex.derived_cache)
+        _reset_tool!(ex)
+        ex.selection[] = _valid_selection(current_result(ex), ex.selection[])
+    end
+    for obs in (ex.revalidation, ex.include_flagged)
+        on(_ -> (empty!(ex.derived_cache); _recompute_tool!(ex)), obs)
+    end
+    on(ex.image_available) do avail
+        avail || ex.field[] !== :image || (ex.field[] = first(available_fields(current_result(ex))))
     end
     return ex
 end
@@ -165,9 +198,134 @@ nframes(ex::ResultExplorer) = length(ex.results)
     current_result(ex::ResultExplorer)
 
 The result at the current frame (one of `PIVResult`, `StereoPIVResult`,
-`PTVResult`, `TrackingResult`).
+`PTVResult`, `TrackingResult`) as displayed: re-validated when
+`ex.revalidation` is set (planar results), then converted to physical units
+when `ex.physical_units` is on. [`stored_result`](@ref) is the result as
+given. The display form of the current frame is cached.
 """
-current_result(ex::ResultExplorer) = ex.results[ex.frame[]]
+function current_result(ex::ResultExplorer)
+    key = (ex.frame[], ex.physical_units[], ex.revalidation[])
+    c = ex.display_cache[]
+    c !== nothing && isequal(c[1], key) && return c[2]::AnyResult
+    r = stored_result(ex)
+    rv = ex.revalidation[]
+    rv !== nothing && r isa PIVResult && (r = _revalidate(r, rv))
+    # measured units drop the scale, so labels name pixels and frames
+    r = ex.physical_units[] ? physical(r) : r.scale === nothing ? r : with_scale(r, nothing)
+    ex.display_cache[] = (key, r)
+    return r
+end
+
+"""
+    stored_result(ex::ResultExplorer)
+
+The result at the current frame as given to the explorer (no display
+conversion).
+"""
+stored_result(ex::ResultExplorer) = ex.results[ex.frame[]]
+
+"""
+    has_scale(ex::ResultExplorer) -> Bool
+
+Whether the current result carries a [`PhysicalScale`](@ref), so the
+`physical_units` toggle changes the display.
+"""
+has_scale(ex::ResultExplorer) = stored_result(ex).scale !== nothing
+
+"""
+    set_physical_units!(ex::ResultExplorer, on::Bool)
+    set_include_flagged!(ex::ResultExplorer, on::Bool)
+
+Show results in physical units (with a scale attached) or in measured
+units (px, frames); admit flagged vectors in derived fields, profiles, and
+circulation (by default they leave gaps).
+"""
+set_physical_units!(ex::ResultExplorer, on::Bool) =
+    (ex.physical_units[] == on || (ex.physical_units[] = on); ex)
+set_include_flagged!(ex::ResultExplorer, on::Bool) =
+    (ex.include_flagged[] == on || (ex.include_flagged[] = on); ex)
+
+"""
+    set_revalidation!(ex::ResultExplorer, settings)
+    set_revalidation!(ex::ResultExplorer; uod_enable = true, uod_threshold = 2.0,
+                      uod_neighborhood = 2, min_peak_ratio = 1.0, replace = true)
+
+Re-check the shown planar results with these validation settings instead of
+the stored flags (`nothing` restores the stored flags). Nonfinite vectors
+stay flagged; flagged vectors are replaced from their valid neighbors when
+`replace` is set. The check runs on the stored vectors, which already hold
+replacement values where the run replaced outliers. The results themselves
+are unchanged.
+"""
+set_revalidation!(ex::ResultExplorer, ::Nothing) =
+    (ex.revalidation[] === nothing || (ex.revalidation[] = nothing); ex)
+
+function set_revalidation!(ex::ResultExplorer; uod_enable::Bool = true, uod_threshold::Real = 2.0,
+                           uod_neighborhood::Integer = 2, min_peak_ratio::Real = 1.0,
+                           replace::Bool = true)
+    uod_threshold > 0 || throw(ArgumentError("the outlier threshold must be positive"))
+    uod_neighborhood >= 1 || throw(ArgumentError("the neighborhood must be at least 1"))
+    min_peak_ratio >= 1 || throw(ArgumentError("the minimum peak ratio must be at least 1"))
+    v = (; uod_enable, uod_threshold = Float64(uod_threshold),
+         uod_neighborhood = Int(uod_neighborhood), min_peak_ratio = Float64(min_peak_ratio), replace)
+    isequal(ex.revalidation[], v) || (ex.revalidation[] = v)
+    return ex
+end
+
+set_revalidation!(ex::ResultExplorer, v::NamedTuple) = set_revalidation!(ex; v...)
+
+"""
+    revalidation_settings(ex::ResultExplorer) -> NamedTuple
+
+The re-validation settings in effect, or (with the stored flags shown) the
+settings the current result was validated with: `(; uod_enable,
+uod_threshold, uod_neighborhood, min_peak_ratio, replace)`.
+"""
+function revalidation_settings(ex::ResultExplorer)
+    v = ex.revalidation[]
+    v === nothing || return v
+    r = stored_result(ex)
+    p = r isa PIVResult ? r.parameters : PIVParameters()
+    return (; uod_enable = p.uod_enable, uod_threshold = p.uod_threshold,
+            uod_neighborhood = p.uod_neighborhood, min_peak_ratio = p.min_peak_ratio,
+            replace = p.replace_outliers)
+end
+
+"""
+    edit_revalidation!(ex::ResultExplorer, key::Symbol, value)
+
+Change one re-validation setting (a key of [`revalidation_settings`](@ref);
+numbers may be text) and re-validate with it. Invalid values throw and
+change nothing.
+"""
+function edit_revalidation!(ex::ResultExplorer, key::Symbol, value)
+    v = revalidation_settings(ex)
+    haskey(v, key) || throw(ArgumentError("unknown re-validation setting :$key"))
+    parsed = key in (:uod_enable, :replace) ? (value isa Bool ? value : _parse_bool_text(value)) :
+             key === :uod_neighborhood ? Int(_parse_number(value)) : _parse_number(value)
+    set_revalidation!(ex; merge(v, NamedTuple{(key,)}((parsed,)))...)
+    return ex
+end
+
+_parse_number(v::Real) = Float64(v)
+function _parse_number(v)
+    x = tryparse(Float64, strip(String(v)))
+    (x === nothing || !isfinite(x)) && throw(ArgumentError("expected a number, got \"$v\""))
+    return x
+end
+_parse_bool_text(v) = lowercase(strip(String(v))) in ("true", "1", "yes")
+
+function _revalidate(r::PIVResult, v::NamedTuple)
+    res = deepcopy(r)
+    res.outliers .= .!(isfinite.(res.u) .& isfinite.(res.v)) .& .!res.mask
+    validators = PIVValidator[]
+    v.uod_enable &&
+        push!(validators, UniversalOutlierValidator(v.uod_threshold; neighborhood_size = v.uod_neighborhood))
+    v.min_peak_ratio > 1 && push!(validators, PeakRatioValidator(v.min_peak_ratio))
+    isempty(validators) || validate_vectors!(res, Tuple(validators))
+    v.replace && replace_vectors!(res.u, res.v, res.outliers .& .!res.mask)
+    return res
+end
 
 """
     set_frame!(ex::ResultExplorer, i::Integer)
@@ -197,7 +355,7 @@ current frame is left unchanged. Lazy file-backed explorers reject appends.
 function push_result!(ex::ResultExplorer, r::AnyResult)
     ex.results isa _LazyDisplayResults &&
         throw(ArgumentError("cannot append to a lazy ResultFile explorer; use an in-memory explorer for a live batch"))
-    push!(ex.results, physical(r))
+    push!(ex.results, r)
     ex.count[] = length(ex.results)
     return ex
 end
@@ -253,6 +411,35 @@ end
 available_fields(::PTVResult) = [:magnitude, :u, :v, :match_residual]
 available_fields(::TrackingResult) = [:speed]
 
+"""
+    explorer_fields(ex::ResultExplorer) -> Vector{Symbol}
+
+The fields the explorer offers for the current result: its
+[`available_fields`](@ref), plus `:image` (the particle image of the
+result's frame pair, frame `ex.image_frame`) when a workflow supplies images
+for planar and particle results (`ex.image_available`).
+"""
+function explorer_fields(ex::ResultExplorer)
+    r = current_result(ex)
+    fields = available_fields(r)
+    ex.image_available[] && !(r isa StereoPIVResult) && push!(fields, :image)
+    return fields
+end
+
+"""
+Fields shown on a diverging, zero-centered color scale (signed quantities
+whose sign carries meaning).
+"""
+const DIVERGING_FIELDS = (:vorticity, :divergence, :q_criterion)
+
+"""
+    is_diverging(field::Symbol) -> Bool
+
+Whether `field` is shown on a diverging color scale centered on zero (see
+[`DIVERGING_FIELDS`](@ref)).
+"""
+is_diverging(field::Symbol) = field in DIVERGING_FIELDS
+
 # One derived scalar from a precomputed flow_derivatives NamedTuple.
 _derived_field(d::NamedTuple, field::Symbol) =
     field === :vorticity ? vorticity(d) :
@@ -264,7 +451,8 @@ _derived_field(d::NamedTuple, field::Symbol) =
 # Only the current frame's derivatives are cached; frame changes evict them,
 # including on eager explorers, so derived data cannot grow with a recording.
 _derived(ex::ResultExplorer) =
-    get!(() -> flow_derivatives(current_result(ex)), ex.derived_cache, ex.frame[])
+    get!(() -> flow_derivatives(current_result(ex); include_invalid = ex.include_flagged[]),
+         ex.derived_cache, ex.frame[])
 
 """
     field_values(result, field::Symbol)
@@ -290,9 +478,28 @@ end
 function current_field_values(ex::ResultExplorer)
     r = current_result(ex)
     field = ex.field[]
+    if field === :image
+        img = ex.image[]
+        return img === nothing ? fill(NaN32, 1, 1) : img
+    end
     r isa PIVResult && field in DERIVED_FIELDS &&
         return _derived_field(_derived(ex), field)
     return field_values(r, field)
+end
+
+"""
+    image_extent(ex::ResultExplorer) -> (xs, ys)
+
+Axis coordinates of the particle image's columns and rows in the current
+display units (pixels, or physical lengths when the result is shown in
+physical units).
+"""
+function image_extent(ex::ResultExplorer)
+    img = ex.image[]
+    img === nothing && return (1:1, 1:1)
+    nr, nc = size(img)
+    f = ex.physical_units[] && has_scale(ex) ? stored_result(ex).scale.pixel_size : 1.0
+    return (f .* (1:nc), f .* (1:nr))
 end
 
 function field_values(r::PTVResult, field::Symbol)
@@ -319,6 +526,7 @@ const FIELD_NAMES = Dict(
     :vorticity => "vorticity", :divergence => "divergence",
     :strain_rate => "strain rate |S|", :swirling_strength => "swirling strength",
     :q_criterion => "Q",
+    :image => "particle image",
 )
 
 """
@@ -363,6 +571,7 @@ unit; the derived gradient fields carry `1/time_unit` (`1/time_unit²` for Q,
 """
 function field_label(r::AnyResult, field::Symbol)
     name = field_name(r, field)
+    field === :image && return string(name, " (intensity)")
     field in (:peak_ratio, :correlation_moment) && return name
     field === :match_residual && return string(name, " (", _length_unit(r), ")")
     field === :q_criterion && return string(name, " (1/", _time_unit(r), "²)")
@@ -373,10 +582,10 @@ end
 """
     set_field!(ex::ResultExplorer, field::Symbol)
 
-Display `field` (must be in `available_fields(current_result(ex))`).
+Display `field` (must be in [`explorer_fields`](@ref)`(ex)`).
 """
 function set_field!(ex::ResultExplorer, field::Symbol)
-    field in available_fields(current_result(ex)) ||
+    field in explorer_fields(ex) ||
         throw(ArgumentError("field :$field is not available for the current result"))
     ex.field[] = field
     return ex
@@ -399,34 +608,41 @@ function _percentile_band(vals::Vector{Float64}, plo::Real, phi::Real)
 end
 
 """
-    color_limits(result, field::Symbol, mode::Symbol = :robust) -> (lo, hi)
+    color_limits(result, field::Symbol, mode::Symbol = :robust;
+                 percentiles = (2, 98)) -> (lo, hi)
 
 Automatic colorbar limits for a displayed field. `:full` is the extrema of
-all finite values. `:robust` (the default) is the 2–98% percentile band over
-finite values at *valid* items (non-masked, non-outlier grid cells;
-non-flagged PTV particles) so a few outliers cannot stretch the color range;
-when no valid values exist it falls back to all finite values. A degenerate
-range is padded by ±0.5.
+all finite values. `:robust` (the default) is the `percentiles` band (2–98 %
+by default) over finite values at *valid* items (non-masked, non-outlier
+grid cells; non-flagged PTV particles) so a few outliers cannot stretch the
+color range; when no valid values exist it falls back to all finite values.
+A degenerate range is padded by ±0.5.
 """
-color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust) =
-    _color_limits(r, field_values(r, field), mode)
+color_limits(r::AnyResult, field::Symbol, mode::Symbol = :robust; percentiles = (2.0, 98.0)) =
+    _color_limits(r, field_values(r, field), mode; percentiles)
 
-function _color_limits(r::AnyResult, data, mode::Symbol)
+function _color_limits(r::AnyResult, data, mode::Symbol; percentiles = (2.0, 98.0))
     mode in (:robust, :full) ||
         throw(ArgumentError("mode must be :robust or :full, got :$mode"))
     vals = Float64[]
     if mode === :robust
-        for i in eachindex(data)
-            (isfinite(data[i]) && !_flagged(r, i)) || continue
+        flags = size(data) == _item_size(r)        # images and other fields carry no flags
+    for i in eachindex(data)
+            (isfinite(data[i]) && !(flags && _flagged(r, i))) || continue
             push!(vals, Float64(data[i]))
         end
     end
     isempty(vals) && (vals = [Float64(v) for v in data if isfinite(v)])
     isempty(vals) && return (0.0, 1.0)
-    lo, hi = mode === :robust ? _percentile_band(vals, 0.02, 0.98) : extrema(vals)
+    lo, hi = mode === :robust ? _percentile_band(vals, percentiles[1] / 100, percentiles[2] / 100) :
+             extrema(vals)
     lo == hi && ((lo, hi) = (lo - 0.5, hi + 0.5))
     return (lo, hi)
 end
+
+_item_size(r::GridResult) = size(r.u)
+_item_size(r::PTVResult) = size(r.u)
+_item_size(r::TrackingResult) = (length(r.trajectories),)
 
 """
     set_color_mode!(ex::ResultExplorer, mode::Symbol)
@@ -479,7 +695,13 @@ The colorbar limits in effect for the current frame and field: the automatic
 degenerate manual pair is padded to a valid range).
 """
 function current_color_limits(ex::ResultExplorer)
-    lo, hi = _color_limits(current_result(ex), current_field_values(ex), ex.color_mode[])
+    lo, hi = _color_limits(current_result(ex), current_field_values(ex), ex.color_mode[];
+                           percentiles = ex.color_percentiles[])
+    # a signed field is centered on zero unless pinned by hand
+    if is_diverging(ex.field[]) && ex.color_min[] === nothing && ex.color_max[] === nothing
+        m = max(abs(lo), abs(hi))
+        lo, hi = -m, m
+    end
     ex.color_min[] === nothing || (lo = ex.color_min[])
     ex.color_max[] === nothing || (hi = ex.color_max[])
     if !(lo < hi)
@@ -487,6 +709,57 @@ function current_color_limits(ex::ResultExplorer)
         lo, hi = mid - 0.5, mid + 0.5
     end
     return (lo, hi)
+end
+
+"""
+    color_scale_mode(ex::ResultExplorer) -> Symbol
+
+`:absolute` when both color limits are pinned ([`set_color_limits!`](@ref)),
+otherwise `:percentile` (automatic limits from `ex.color_percentiles`).
+"""
+color_scale_mode(ex::ResultExplorer) =
+    ex.color_min[] !== nothing && ex.color_max[] !== nothing ? :absolute : :percentile
+
+"""
+    set_color_scale_mode!(ex::ResultExplorer, mode::Symbol)
+
+`:percentile`: automatic limits from the percentile band
+(`ex.color_percentiles`), clearing pinned limits. `:absolute`: pin both
+limits, starting from the limits currently shown; edit them with
+[`set_color_limits!`](@ref). Pinned limits persist across frames and fields.
+"""
+function set_color_scale_mode!(ex::ResultExplorer, mode::Symbol)
+    mode in (:percentile, :absolute) ||
+        throw(ArgumentError("mode must be :percentile or :absolute, got :$mode"))
+    mode === color_scale_mode(ex) && return ex
+    if mode === :percentile
+        ex.color_mode[] === :robust || (ex.color_mode[] = :robust)
+        set_color_limits!(ex; min = nothing, max = nothing)
+    else
+        lo, hi = current_color_limits(ex)
+        set_color_limits!(ex; min = lo, max = hi)
+    end
+    return ex
+end
+
+"""
+    set_color_percentiles!(ex::ResultExplorer, lo, hi)
+
+The percentile band (in %, `0 ≤ lo < hi ≤ 100`; numbers or their text) of
+the automatic color limits.
+"""
+function set_color_percentiles!(ex::ResultExplorer, lo, hi)
+    l, h = _parse_percent(lo), _parse_percent(hi)
+    l < h || throw(ArgumentError("the lower percentile must be below the upper one"))
+    isequal(ex.color_percentiles[], (l, h)) || (ex.color_percentiles[] = (l, h))
+    return ex
+end
+
+function _parse_percent(v)
+    p = v isa Real ? Float64(v) : tryparse(Float64, strip(String(v)))
+    (p === nothing || !(0 <= p <= 100)) &&
+        throw(ArgumentError("a percentile must be a number from 0 to 100, got \"$v\""))
+    return p
 end
 
 """
@@ -540,6 +813,20 @@ function _reset_tool!(ex::ResultExplorer)
     isempty(ex.tool_points[]) || (empty!(ex.tool_points[]); notify(ex.tool_points))
     ex.profile_data[] === nothing || (ex.profile_data[] = nothing)
     ex.circulation_result[] === nothing || (ex.circulation_result[] = nothing)
+    ex.tool_selected[] === nothing || (ex.tool_selected[] = nothing)
+    return ex
+end
+
+# Recompute a complete profile or closed contour from its points (after a
+# point moved or the display settings changed).
+function _recompute_tool!(ex::ResultExplorer)
+    current_result(ex) isa PIVResult || return ex
+    if ex.tool[] === :profile
+        length(ex.tool_points[]) == 2 ? _compute_profile!(ex) :
+            (ex.profile_data[] === nothing || (ex.profile_data[] = nothing))
+    elseif ex.tool[] === :circulation && ex.circulation_result[] !== nothing
+        length(ex.tool_points[]) >= 3 ? _compute_circulation!(ex) : (ex.circulation_result[] = nothing)
+    end
     return ex
 end
 
@@ -564,16 +851,25 @@ function set_tool!(ex::ResultExplorer, tool::Symbol)
 end
 
 """
-    click!(ex::ResultExplorer, x::Real, y::Real)
+    click!(ex::ResultExplorer, x::Real, y::Real; tol = 0)
 
 Route a click through the active tool: `:inspect` selects the nearest item
 ([`select_nearest!`](@ref)); `:profile` places a line endpoint (the profile
 is computed when the second point lands, a third click starts a new line);
-`:circulation` appends a contour vertex.
+`:circulation` appends a contour vertex. A click within `tol` (data units)
+of an existing profile or contour point selects that point instead
+([`delete_tool_point!`](@ref) removes it; [`move_tool_point!`](@ref) drags
+it).
 """
-function click!(ex::ResultExplorer, x::Real, y::Real)
+function click!(ex::ResultExplorer, x::Real, y::Real; tol::Real = 0)
     tool = ex.tool[]
     tool === :inspect && return select_nearest!(ex, x, y)
+    near = tool_point_near(ex, x, y, tol)
+    if near !== nothing
+        ex.tool_selected[] = near
+        return ex
+    end
+    ex.tool_selected[] === nothing || (ex.tool_selected[] = nothing)
     pts = ex.tool_points[]
     if tool === :profile
         length(pts) >= 2 && (empty!(pts); ex.profile_data[] = nothing)
@@ -607,14 +903,67 @@ function alt_click!(ex::ResultExplorer)
         _reset_tool!(ex)
         return ex
     end
+    _compute_circulation!(ex)
+    return ex
+end
+
+function _compute_circulation!(ex::ResultExplorer)
     r = current_result(ex)
-    contour = copy(pts)
-    area_report = circulation(r; region = contour, coverage = :report)
-    ex.circulation_result[] = (; line = circulation(r, contour),
+    contour = copy(ex.tool_points[])
+    inc = ex.include_flagged[]
+    area_report = circulation(r; region = contour, coverage = :report, include_invalid = inc)
+    ex.circulation_result[] = (; line = circulation(r, contour; include_invalid = inc),
                                area = area_report.value, contour,
                                area_report.valid_area, area_report.requested_area,
                                area_report.coverage_fraction, area_report.complete)
     return ex
+end
+
+"""
+    tool_point_near(ex::ResultExplorer, x, y, tol) -> Union{Nothing,Int}
+
+The index of the profile or contour point nearest `(x, y)` within `tol`
+(data units), or `nothing`.
+"""
+function tool_point_near(ex::ResultExplorer, x::Real, y::Real, tol::Real)
+    pts = ex.tool_points[]
+    (tol > 0 && !isempty(pts)) || return nothing
+    k = argmin(i -> hypot(pts[i][1] - x, pts[i][2] - y), eachindex(pts))
+    return hypot(pts[k][1] - x, pts[k][2] - y) <= tol ? k : nothing
+end
+
+"""
+    move_tool_point!(ex::ResultExplorer, i, x, y)
+
+Move profile or contour point `i` to `(x, y)` (a drag on the viewer); a
+complete profile or closed contour is recomputed.
+"""
+function move_tool_point!(ex::ResultExplorer, i::Integer, x::Real, y::Real)
+    pts = ex.tool_points[]
+    1 <= i <= length(pts) || throw(BoundsError(pts, i))
+    pts[i] = (Float64(x), Float64(y))
+    notify(ex.tool_points)
+    _recompute_tool!(ex)
+    return ex
+end
+
+"""
+    delete_tool_point!(ex::ResultExplorer) -> Bool
+
+Remove the selected profile or contour point (`ex.tool_selected`). A
+closed contour that keeps at least three points is recomputed; a profile
+that loses an endpoint waits for a new one. Returns whether a point was
+removed.
+"""
+function delete_tool_point!(ex::ResultExplorer)
+    i = ex.tool_selected[]
+    pts = ex.tool_points[]
+    (i === nothing || !(1 <= i <= length(pts))) && return false
+    deleteat!(pts, i)
+    ex.tool_selected[] = nothing
+    notify(ex.tool_points)
+    _recompute_tool!(ex)
+    return true
 end
 
 """
@@ -625,15 +974,61 @@ itself stays selected).
 """
 clear_tool!(ex::ResultExplorer) = _reset_tool!(ex)
 
-# Sample u/v along the two-point line. The panel always shows u, v, and |V|
-# (extract_profile samples the velocity components; the displayed scalar
-# field is not resampled — documented simplification).
+# Sample the displayed field along the two-point line (bilinear; a sample
+# with an invalid corner of positive weight is NaN).
 function _compute_profile!(ex::ResultExplorer)
     r = current_result(ex)
-    pts = ex.tool_points[]
-    prof = extract_profile(r, pts; n = 100)
-    ex.profile_data[] = prof
+    (a, b) = ex.tool_points[]
+    n = 100
+    xs = range(a[1], b[1]; length = n)
+    ys = range(a[2], b[2]; length = n)
+    s = collect(range(0, hypot(b[1] - a[1], b[2] - a[2]); length = n))
+    field = ex.field[]
+    values = if field === :image
+        gx, gy = image_extent(ex)
+        _sample_grid(collect(Float64, gx), collect(Float64, gy), current_field_values(ex), xs, ys)
+    else
+        F = Float64.(current_field_values(ex))
+        if !(field in DERIVED_FIELDS)        # derived fields carry their own gaps
+            bad = r.mask .| (r.outliers .& !ex.include_flagged[])
+            F[bad] .= NaN
+        end
+        _sample_grid(collect(Float64, r.x), collect(Float64, r.y), F, xs, ys)
+    end
+    ex.profile_data[] = (; s, x = collect(xs), y = collect(ys), values, field)
     return ex
+end
+
+# Bilinear samples of `F[iy, ix]` on axes `gx`, `gy` (monotone, either
+# direction); NaN outside the grid or next to a nonfinite corner of positive
+# weight.
+function _sample_grid(gx::Vector{Float64}, gy::Vector{Float64}, F, xs, ys)
+    out = fill(NaN, length(xs))
+    (length(gx) >= 2 && length(gy) >= 2) || return out
+    for k in eachindex(xs)
+        fx, ix = _axis_position(gx, xs[k])
+        fy, iy = _axis_position(gy, ys[k])
+        (ix === nothing || iy === nothing) && continue
+        acc = 0.0
+        ok = true
+        for (dj, wx) in ((0, 1 - fx), (1, fx)), (di, wy) in ((0, 1 - fy), (1, fy))
+            w = wx * wy
+            w > 0 || continue
+            v = Float64(F[iy + di, ix + dj])
+            isfinite(v) || (ok = false; break)
+            acc += w * v
+        end
+        ok && (out[k] = acc)
+    end
+    return out
+end
+
+# Fractional position of `q` between nodes `i` and `i + 1` of a regular axis.
+function _axis_position(g::Vector{Float64}, q::Real)
+    t = (q - g[1]) / (g[end] - g[1]) * (length(g) - 1)
+    (isfinite(t) && 0 <= t <= length(g) - 1) || return (0.0, nothing)
+    i = min(floor(Int, t) + 1, length(g) - 1)
+    return (t - (i - 1), i)
 end
 
 # Circulation carries length²/time: px²/frame unscaled, e.g. mm²/s scaled.
@@ -655,7 +1050,7 @@ function tool_summary(ex::ResultExplorer)
     if tool === :profile
         ex.profile_data[] === nothing &&
             return "profile: click two points to sample a line"
-        return "profile along the line: u (blue), v (orange), |V| (black)"
+        return "profile of " * field_name(r, ex.profile_data[].field) * " along the line"
     end
     res = ex.circulation_result[]
     if res === nothing
@@ -677,30 +1072,29 @@ end
 """
     profile_series(ex::ResultExplorer) -> Union{Nothing,NamedTuple}
 
-The profile panel's curves while the `:profile` tool has a line:
-`(; s, u, v, speed, xlabel, ylabel)`, with `s` the distance along the line
-and axis labels carrying units (displacement in pixels for unscaled
-results, velocity otherwise). `nothing` for the other tools or before the
-line is complete.
+The profile panel's curve while the `:profile` tool has a line:
+`(; s, values, xlabel, ylabel)`, with `s` the distance along the line,
+`values` the displayed field sampled along it, and axis labels carrying
+units. `nothing` for the other tools or before the line is complete.
 """
 function profile_series(ex::ResultExplorer)
     pd = ex.profile_data[]
     (ex.tool[] === :profile && pd !== nothing) || return nothing
     r = current_result(ex)
-    s, u, v = collect(Float64, pd.s), collect(Float64, pd.u), collect(Float64, pd.v)
-    quantity = r.scale === nothing ? "displacement" : "velocity"
-    return (; s, u, v, speed = hypot.(u, v),
+    return (; s = pd.s, values = pd.values,
             xlabel = string("distance along the line (", _length_unit(r), ")"),
-            ylabel = string(quantity, " (", _field_unit(r), ")"))
+            ylabel = field_label(r, pd.field))
 end
 
 """
     canvas_key!(ex::ResultExplorer, key::Symbol) -> Bool
 
 A key pressed on the results canvas: `:escape` clears the analysis tool's
-path and outputs ([`clear_tool!`](@ref)). Returns whether it was used.
+path and outputs ([`clear_tool!`](@ref)); `:delete`/`:backspace` remove the
+selected point ([`delete_tool_point!`](@ref)). Returns whether it was used.
 """
 function canvas_key!(ex::ResultExplorer, key::Symbol)
+    key in (:delete, :backspace) && return delete_tool_point!(ex)
     key === :escape || return false
     (isempty(ex.tool_points[]) && ex.profile_data[] === nothing &&
      ex.circulation_result[] === nothing) && return false

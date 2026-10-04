@@ -18,6 +18,19 @@
     @test finite(c.boxes[1][]) == 0              # boxes only on the Passes step
     set_step!(wf, :passes)
     @test finite(c.boxes[1][]) == 5              # one 32 px outline (closed polygon)
+    @test canvas_click!(wf, 64.0, 64.0)          # the probe on Passes
+    @test finite(c.probe_box[1][]) == 5
+    canvas_alt_click!(wf)
+    @test finite(c.probe_box[1][]) == 0
+    # view modes: pan drags with the left button, zoom and pan do not edit
+    active(name) = first(c.ax.interactions[name])
+    HammerheadGUI.set_view_mode!(c.ax, :pan, :workflow_gesture)
+    @test c.ax.panbutton[] == Mouse.left && !active(:rectanglezoom) && !active(:workflow_gesture)
+    HammerheadGUI.set_view_mode!(c.ax, :zoom, :workflow_gesture)
+    @test c.ax.panbutton[] == Mouse.right && active(:rectanglezoom) && !active(:workflow_gesture)
+    HammerheadGUI.set_view_mode!(c.ax, :edit, :workflow_gesture)
+    @test active(:rectanglezoom) && active(:workflow_gesture)
+    @test_throws ArgumentError HammerheadGUI.set_view_mode!(c.ax, :draw, :workflow_gesture)
     @test c.box_labels.text[] == ["32 px"]
     @test !isempty(colorbuffer(c.fig; px_per_unit = 1))
 
@@ -182,8 +195,8 @@ end
     mouse_click(x0 + 5, ym); mouse_click(x1 - 5, ym)
     @test length(ex.tool_points[]) == 2 && all(isapprox.(ex.tool_points[][2], (x1 - 5, ym); atol = 1))
     @test finite(rc.tool_line[1][]) == 2 && finite(rc.tool_points[1][]) == 2
-    @test rc.profile_shown[] && rc.profile_ax.scene.visible[] && rc.profile_legend.blockscene.visible[]
-    @test length(rc.profile_lines[1][1][]) == 100
+    @test rc.profile_shown[] && rc.profile_ax.scene.visible[]
+    @test length(rc.profile_line[1][]) == 100
     @test occursin("distance along the line", rc.profile_ax.xlabel[])
     @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
     @test rc.ax.scene.viewport[].widths[2] < h0       # the row takes space from the field
@@ -193,7 +206,7 @@ end
     # Escape clears the line and collapses the row
     key(Keyboard.escape)
     @test isempty(ex.tool_points[]) && finite(rc.tool_line[1][]) == 0
-    @test !rc.profile_shown[] && !rc.profile_ax.scene.visible[] && !rc.profile_legend.blockscene.visible[]
+    @test !rc.profile_shown[] && !rc.profile_ax.scene.visible[]
     @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
     @test rc.ax.scene.viewport[].widths[2] == h0
 

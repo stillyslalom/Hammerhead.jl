@@ -267,18 +267,22 @@ const r_track = TrackingResult(
         @test ex.selection[] == CartesianIndex(4, 3)
         set_tool!(ex, :profile)
         @test occursin("two points", tool_summary(ex))
+        set_field!(ex, :v)                                 # the profile samples the shown field
         C.click!(ex, 5.0, 10.0)
         @test ex.profile_data[] === nothing
         C.click!(ex, 15.0, 10.0)
         pd = ex.profile_data[]
-        @test pd !== nothing && length(pd.s) == 100
-        @test pd.u[1] ≈ 0.0 atol = 1e-12                   # u = -Ω(y-yc) = 0 on y = 10
-        @test pd.v[1] ≈ -5Ω atol = 1e-12                   # v = Ω(x-yc) at x = 5
-        @test pd.v[end] ≈ 5Ω atol = 1e-12
-        @test occursin("u (blue)", tool_summary(ex))
-        ps_ = profile_series(ex)                           # the profile panel's curves
-        @test ps_.s == pd.s && ps_.v == pd.v && ps_.speed ≈ hypot.(pd.u, pd.v)
-        @test ps_.xlabel == "distance along the line (px)" && ps_.ylabel == "displacement (px)"
+        @test pd !== nothing && length(pd.s) == 100 && pd.field === :v
+        @test pd.values[1] ≈ -5Ω atol = 1e-12              # v = Ω(x-yc) at x = 5
+        @test pd.values[end] ≈ 5Ω atol = 1e-12
+        @test occursin("profile of v", tool_summary(ex))
+        ps_ = profile_series(ex)                           # the profile panel's curve
+        @test ps_.s == pd.s && ps_.values == pd.values
+        @test ps_.xlabel == "distance along the line (px)" && ps_.ylabel == "v (px)"
+        set_field!(ex, :vorticity)                         # a derived field
+        C._recompute_tool!(ex)
+        @test all(isapprox.(filter(isfinite, ex.profile_data[].values), 2Ω; atol = 1e-12))
+        set_field!(ex, :magnitude)
         @test C.canvas_key!(ex, :escape)                   # Escape clears the line
         @test isempty(ex.tool_points[]) && profile_series(ex) === nothing && ex.tool[] === :profile
         @test !C.canvas_key!(ex, :escape) && !C.canvas_key!(ex, :delete)
@@ -312,7 +316,7 @@ const r_track = TrackingResult(
         @test profile_series(ex) === nothing               # not the profile tool
         exs_p = ResultExplorer(with_scale(rot, PhysicalScale(2.0, 0.5, "mm", "s")))
         set_tool!(exs_p, :profile); C.click!(exs_p, 10.0, 20.0); C.click!(exs_p, 30.0, 20.0)
-        @test profile_series(exs_p).ylabel == "velocity (mm/s)"
+        @test profile_series(exs_p).ylabel == "|velocity| (mm/s)"
         @test profile_series(exs_p).xlabel == "distance along the line (mm)"
 
         # scaled circulation carries length²/time
@@ -1026,6 +1030,7 @@ const r_track = TrackingResult(
     include("test_prepare.jl")
     include("test_stereo_workflow.jl")
     include("test_stereo_window.jl")
+    include("test_result_display.jl")
     include("test_planar_window.jl")
 
     @testset "CalibrationReview controller (no GL)" begin

@@ -25,13 +25,27 @@ Run → Results**. Each step shows a one-line summary, and a dot marks it as
 to do, done, needing attention, or busy. The viewer on the right follows the
 step: frames and overlays while you prepare, window outlines on **Passes**,
 vectors on **Test pair** and **Run**, and the result field on **Results**.
-Drag a box in the viewer to zoom, right-drag to pan, and scroll to zoom.
-**Pop out viewer** in the toolbar moves the viewer into its own window, for a second
-screen. Closing that window docks the viewer again.
+The toolbar at the viewer's right edge sets what a drag does: **Edit** (the
+default: clicks work on the open step, a left-drag zooms to a box, a
+right-drag pans), **Zoom** (drag a box; clicks do not edit) and **Pan**
+(drag to move). The wheel zooms in every mode; **Reset** (or ctrl+click)
+shows the whole image, and **Save…** writes the viewer as a PNG image.
+**Auto contrast** in the bar below stretches the displayed intensities;
+the analysis always uses the frames' values. **Pop out viewer** in the
+window's toolbar moves the viewer into its own window, for a second screen.
+Closing that window docks the viewer again.
+
+Keys: ← and → step through the pairs (on **Results**, through the
+results); A and B, or shift+← and shift+→, switch between frame A and B.
 
 ## Add the frames
 
-On **Images**, click **Add frames…** and select the frames. Then choose
+On **Images**, click **Add frames…** and select the frames, or give a
+**Folder** and a file-name **Pattern** (`*` matches any run of characters,
+`?` one character) and click **Add matching files**; matching files are
+added in natural order, so `frame_2` comes before `frame_10`. **From two
+frames…** derives the folder and pattern from two frames of the recording,
+for example the first pair. Then choose
 **Pairing**: **Paired** for separate A/B exposures (1–2, 3–4), **Chained** for a
 uniformly sampled sequence (1–2, 2–3). The bar at the bottom of the window selects the
 *representative pair* and switches between frame A and frame B. Previews,
@@ -42,6 +56,8 @@ flow features you care about; dim or fast regions are good checks.
 
 Frames load in the background. The step rail shows "loading…" until a new
 pair arrives, and the viewer keeps the previous one meanwhile.
+**Reuse settings…** takes the settings of a saved settings file or of an
+earlier run's results file.
 
 ## Prepare the images
 
@@ -97,7 +113,10 @@ themselves to the region.
 On **Scale**, type the pixel size with its length unit and the time between
 the paired exposures with its time unit. For example, 0.02 mm per pixel and
 0.001 s. To measure the pixel size, click two points of known separation on
-the image, such as ruler marks, and type their **Distance**. Without a scale,
+the image, such as ruler marks, and type their **Distance**. **Load a ruler
+image…** measures on a separate photograph of a ruler or target taken at the
+frames' magnification instead; **Use the frames** returns to the frames.
+Without a scale,
 results stay in pixels and frames. Vectors are always computed in pixels; the
 scale converts what the results show (see
 [Scale results to physical units](scaling.md)).
@@ -117,8 +136,13 @@ trade-off.
 
 Below the table:
 
-- **Correlation:** method, subpixel fit, **Padding and Gaussian weighting** (the
-  most accurate setting), and per-vector **Uncertainty on final pass**.
+- **Correlation:** method, subpixel fit, **Zero padding** and **Gaussian
+  weighting** (together the most accurate setting), and per-vector
+  **Uncertainty on final pass**.
+- **Validation:** the normalized median test (threshold and neighborhood),
+  a minimum peak ratio, and whether flagged vectors are replaced.
+- **Correlation probe:** click the viewer to correlate one window of the
+  final pass's size on the processed pair, as on **Preprocess**.
 - **Precision:** Float32 halves the memory of Float64.
 
 A **PIV ensemble** sums the correlation over all pairs into one mean field
@@ -187,6 +211,9 @@ results in memory), then click **Run**. Results are written as each pair
 finishes, together with the settings that produced them. The viewer shows
 the latest finished pair, with elapsed time and an estimate of the time left.
 **Cancel** stops after the pair in progress and keeps the finished ones.
+**Clear** empties the output path. Results kept in memory can still be
+written afterwards with **Save results…**, together with their settings and
+frame paths, without running again.
 Closing the window also cancels a run in this way.
 
 An ensemble run (**Run ensemble of N pairs**) pools every pair into one
@@ -203,15 +230,30 @@ its progress counts frame steps, and canceling keeps no result.
 When a run finishes, **Results** holds its output. **Open results…** browses
 another results file; entries load one at a time.
 
-- **Pair** steps through the results, **Field** chooses what is colored
-  (components, magnitude, diagnostics, and derived fields such as vorticity),
-  and **Color range** switches between a robust 2–98 % range and the full range.
+- The pair bar below the viewer (or ← / →) steps through the results,
+  independently of the representative pair of the earlier steps.
+- **Field** chooses what is colored: components, magnitude, diagnostics,
+  derived fields such as vorticity (signed fields use a diverging scale
+  centered on zero), and the **particle image** of the result's pair, whose
+  frame **Frame A** / **Frame B** (or A / B) switch.
+- **Color range:** **Percentile limits** take the given percentile band of
+  the valid values (2–98 % by default); **Absolute limits** pin both ends,
+  starting from the range shown, and keep them across results.
+- **Physical units** (with a scale attached) switches between physical and
+  measured units.
+- **Flagged vectors** sets whether derived fields, profiles and circulation
+  use flagged vectors (with their replacement values) or leave gaps.
+- **Validation › Re-validate the results** checks the shown vectors again
+  with other outlier-test settings and optional replacement. Only the
+  display changes; the results are unchanged.
 - **Inspect:** click a vector to read its position, components and status.
-- **Profile:** click two points to sample u, v and |V| along a line. A panel
-  under the field plots them.
+- **Profile:** click two points to sample the shown field along a line. A
+  panel under the field plots it.
 - **Circulation:** click contour vertices and right-click to close the contour.
   The summary gives Γ from the line integral and from the enclosed vorticity,
   and the covered fraction when masked or flagged cells leave gaps.
+- Drag a profile endpoint or contour vertex to move it; the profile or
+  circulation follows. Click a point and press Delete to remove it.
 - **Clear** (or Escape on the viewer) removes the line or contour.
 
 ![Results with the Profile tool: a line across the vortex and the velocity along it.](../assets/gui_window/results_profile.png)
@@ -227,9 +269,9 @@ errors.
 ## Save and reuse the settings
 
 **Save settings…** writes the passes, preprocessing, mask, region and scale to
-a recipe file. **Open settings…** reads a recipe file, or the settings stored
-in any results file. **Use these settings** on **Results** does the same for the
-open results file. A dot after the title in the window bar marks unsaved
+a recipe file. **Open settings…**, or **Reuse settings…** on **Images**, reads
+a recipe file or the settings stored in any results file. A dot after the
+title in the window bar marks unsaved
 changes. Settings files are core recipes, so a script can run them with
 `apply_recipe`. See [Save settings and reuse them](recipes.md).
 

@@ -82,7 +82,7 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
             Controllers.click!(ex, first(r.x) + 5, ym); Controllers.click!(ex, last(r.x) - 5, ym + 10)
             next!()
         elseif s == 9 && w.explorer[].profile_data[] !== nothing && time() - t_stage[] > 1
-            occursin("u (blue)", sh.shown["toolSummary"]) && push!(seen, :profile)  # bridged
+            occursin("profile of", sh.shown["toolSummary"]) && push!(seen, :profile)  # bridged
             HammerheadGUI.request_grab(profile_png); next!()
         elseif s == 10 && grabbed(profile_png)
             ex = w.explorer[]

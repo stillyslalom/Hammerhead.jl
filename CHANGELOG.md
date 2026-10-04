@@ -14,6 +14,10 @@ Added:
   function, called as `progress(done, total)` after each pair of each pass
   (stereo counts both cameras); throwing from it aborts the run, as in the
   sequence drivers. `progress = true/false` still toggles the meter.
+- `save_results(path, results; recipe, calibration, sources)` stores the
+  settings, stereo calibration and frame labels a run would store, and
+  `load_sources(path)` returns the stored frame labels per result.
+  `replace_vectors!` is exported.
 - `save_calibration(path, dw1, dw2)` / `load_calibration(path)` save a
   stereo rig (camera models including an applied self-calibration, image
   sizes, and the shared `DewarpGrid`) and rebuild its dewarpers bitwise.
@@ -104,6 +108,22 @@ Added:
   **Validation** section (normalized median test, threshold, neighborhood,
   minimum peak ratio, replacement); the Run step's output path has
   **Clear**. U.S. spelling throughout.
+- Results step: percentile or absolute color limits with editable values;
+  diverging zero-centered scale for vorticity, divergence and Q; a
+  physical-units toggle; flagged vectors optionally included in derived
+  fields, profiles and circulation; display-only re-validation with other
+  outlier-test settings (`set_revalidation!`); the profile follows the
+  shown field; profile and contour points can be dragged and deleted; the
+  particle image of the result's pair as a field (frames A/B). Run: results
+  kept in memory save afterwards (`save_run_results!`). Images: **Reuse
+  settings…**, replacing **Use these settings** on Results.
+- Images: add frames by folder and glob pattern (`matching_files`,
+  `set_frame_pattern!`, `add_matching!`), in natural order; **From two
+  frames…** infers the pattern from two frames (`infer_pattern`). Passes:
+  click the viewer for a correlation probe of the final window size.
+  Scale: measure the pixel size on a separate ruler image (`load_ruler!`).
+  A viewer toolbar sets the view mode (edit, zoom, pan; `set_view_mode!`),
+  resets the view, and saves it as an image.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run

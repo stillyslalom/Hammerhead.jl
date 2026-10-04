@@ -16,6 +16,10 @@ and handed to `deliver[]` (a window's GUI-thread queue): until it arrives,
 [`pair_images`](@ref) returns `nothing` and `loading` is `true`; `loaded`
 counts delivered pairs and `load_error` holds a read failure. Otherwise
 images load synchronously when first needed.
+
+`pattern_dir` and `pattern` describe frames by folder and file-name pattern
+(see [`set_frame_pattern!`](@ref)); `pattern_matches` lists the matching
+files and [`add_matching!`](@ref) appends them.
 """
 struct FrameSet
     files::Observable{Vector{Any}}
@@ -30,6 +34,10 @@ struct FrameSet
     deliver::Base.RefValue{Any}
     request::Base.RefValue{Any}           # entries of the pending or failed request
     generation::Base.RefValue{Int}
+    pattern_dir::Observable{String}
+    pattern::Observable{String}
+    pattern_matches::Observable{Vector{String}}
+    pattern_error::Observable{String}
 end
 
 function FrameSet(; files = Any[], pair_mode::Symbol = :paired,
@@ -40,7 +48,9 @@ function FrameSet(; files = Any[], pair_mode::Symbol = :paired,
     fs = FrameSet(Observable{Vector{Any}}(collect(Any, files)), Observable(pair_mode),
                   Observable(1), Observable(:a), Dict{Any,Matrix{Float32}}(),
                   Observable(false), Observable(0), Observable(""), spawn, deliver,
-                  Ref{Any}(nothing), Ref(0))
+                  Ref{Any}(nothing), Ref(0), Observable(""), Observable("*.tif"),
+                  Observable(String[]), Observable(""))
+    onany((_...) -> _update_matches!(fs), fs.pattern_dir, fs.pattern)
     onany((_...) -> _clamp_pair!(fs), fs.files, fs.pair_mode)
     onany((_...) -> _pair_changed!(fs), fs.files, fs.pair_mode, fs.pair)
     return fs
@@ -70,6 +80,125 @@ end
 Append frames (paths or matrices) in acquisition order.
 """
 add_files!(fs::FrameSet, entries) = (append!(fs.files[], entries); notify(fs.files); fs)
+
+"""
+    matching_files(dir, pattern) -> Vector{String}
+
+The files in `dir` whose names match the glob `pattern` (`*` matches any
+run of characters, `?` one character; case-insensitive on Windows), in
+natural order: numbers in the names compare by value, so `frame_2` precedes
+`frame_10`.
+"""
+function matching_files(dir::AbstractString, pattern::AbstractString)
+    isdir(dir) || throw(ArgumentError("there is no folder \"$dir\""))
+    rx = _glob_regex(pattern)
+    names = filter(n -> occursin(rx, n) && isfile(joinpath(dir, n)), readdir(dir))
+    return [joinpath(dir, n) for n in sort!(names; by = _natural_key)]
+end
+
+function _glob_regex(pattern::AbstractString)
+    io = IOBuffer()
+    print(io, '^')
+    for c in pattern
+        c == '*' ? print(io, ".*") : c == '?' ? print(io, '.') :
+        c in ".^\$+()[]{}|\\" ? print(io, '\\', c) : print(io, c)
+    end
+    print(io, '$')
+    return Regex(String(take!(io)), Sys.iswindows() ? "i" : "")
+end
+
+# Natural sort key: digit runs compare by value, other text case-insensitively.
+_natural_key(name::AbstractString) =
+    [isdigit(m.match[1]) ? (0, something(tryparse(Int, m.match), typemax(Int)), "") :
+                           (1, 0, lowercase(m.match)) for m in eachmatch(r"\d+|\D+", name)]
+
+"""
+    set_frame_pattern!(fs::FrameSet, dir, pattern)
+
+Describe frames by folder and glob pattern; `fs.pattern_matches` then lists
+the matching files (`fs.pattern_error` says why there are none).
+"""
+function set_frame_pattern!(fs::FrameSet, dir::AbstractString, pattern::AbstractString)
+    d, p = String(strip(dir)), String(strip(pattern))
+    fs.pattern_dir[] == d || (fs.pattern_dir[] = d)
+    fs.pattern[] == p || (fs.pattern[] = p)
+    return fs
+end
+
+function _update_matches!(fs::FrameSet)
+    d, p = fs.pattern_dir[], fs.pattern[]
+    files, err = if isempty(d)
+        String[], ""
+    elseif isempty(p)
+        String[], "enter a file-name pattern"
+    else
+        try
+            m = matching_files(d, p)
+            m, isempty(m) ? "no files in the folder match \"$p\"" : ""
+        catch e
+            String[], _errmsg(e)
+        end
+    end
+    fs.pattern_matches[] = files
+    fs.pattern_error[] == err || (fs.pattern_error[] = err)
+    return fs
+end
+
+"""
+    add_matching!(fs::FrameSet) -> Int
+
+Append the files matching the folder and pattern (in natural order);
+returns how many were added.
+"""
+function add_matching!(fs::FrameSet)
+    _update_matches!(fs)                       # the folder may have changed
+    files = fs.pattern_matches[]
+    isempty(files) && throw(ArgumentError(isempty(fs.pattern_error[]) ? "choose a folder" :
+                                          fs.pattern_error[]))
+    add_files!(fs, files)
+    return length(files)
+end
+
+"""
+    infer_pattern(path_a, path_b) -> (dir, pattern)
+
+A folder and glob pattern for a recording from two of its frames (for
+example the frames of the first pair): digit runs that differ between the
+two names, or that have at least three digits (frame counters), become `*`;
+differing text keeps its common beginning and end around a `*`; the rest is
+kept. `A001_1.tif`/`A001_2.tif` gives `A*_*.tif`,
+`cam1_00001.tif`/`cam1_00002.tif` gives `cam1_*.tif`, and
+`run_0001_a.tif`/`run_0001_b.tif` gives `run_*_*.tif`.
+"""
+function infer_pattern(a::AbstractString, b::AbstractString)
+    na, nb = basename(a), basename(b)
+    ra = [m.match for m in eachmatch(r"\d+|\D+", na)]
+    rb = [m.match for m in eachmatch(r"\d+|\D+", nb)]
+    pattern = if length(ra) == length(rb) &&
+                 all(((x, y),) -> isdigit(x[1]) == isdigit(y[1]), zip(ra, rb))
+        join(isdigit(x[1]) ? (x != y || length(x) >= 3 ? "*" : x) : _common_ends(x, y)
+             for (x, y) in zip(ra, rb))
+    else                                       # different structure
+        _common_ends(na, nb)
+    end
+    return (dirname(a), replace(pattern, r"\*+" => "*"))
+end
+
+# `x` when equal to `y`, otherwise their common beginning and end around `*`.
+function _common_ends(x::AbstractString, y::AbstractString)
+    x == y && return String(x)
+    cx, cy = collect(x), collect(y)
+    m = min(length(cx), length(cy))
+    p = 0
+    while p < m && cx[p+1] == cy[p+1]
+        p += 1
+    end
+    s = 0
+    while s < m - p && cx[end-s] == cy[end-s]
+        s += 1
+    end
+    return String(cx[1:p]) * "*" * String(cx[end-s+1:end])
+end
 
 """
     clear_files!(fs::FrameSet)

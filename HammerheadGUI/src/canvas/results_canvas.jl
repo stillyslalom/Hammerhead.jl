@@ -1,22 +1,24 @@
 # Results step canvas: a scalar field with vectors (gridded results), particles
 # colored by a field with their displacements (PTV), or trajectories colored
-# by mean speed (tracking); the selected node, and the
-# analysis tools of a ResultExplorer. Same rule as the image canvas: plots are
-# created once and only their inputs change. Frame, field, color and tool
-# choices are made with the window's controls; a click on the canvas goes to
-# the explorer's tool (inspect: select the nearest vector; profile: line
-# endpoints; circulation: contour vertices, right-click closes), Escape
-# clears the tool's path.
+# by mean speed (tracking); the particle image when that field is chosen; the
+# selected node, and the analysis tools of a ResultExplorer. Same rule as the
+# image canvas: plots are created once and only their inputs change. Frame,
+# field, color and tool choices are made with the window's controls; a click
+# on the canvas goes to the explorer's tool (inspect: select the nearest
+# vector; profile: line endpoints; circulation: contour vertices, right-click
+# closes). A press on a placed point drags it; Delete removes the selected
+# point; Escape clears the tool's path.
 #
 # The profile panel is an Axis in a second layout row, created with the
-# figure with its legend. Outside the profile tool the row collapses to zero
-# height and the Axis's and legend's scenes are hidden (`visible = false`,
-# which GLMakie skips when rendering), so showing or hiding the panel only
-# changes layout and visibility, never the plots.
+# figure. Outside the profile tool the row collapses to zero height and the
+# Axis's scene is hidden (`visible = false`, which GLMakie skips when
+# rendering), so showing or hiding the panel only changes layout and
+# visibility, never the plots.
 
 const TOOL_PATH_COLOR = RGBf(0.0, 0.95, 1.0)
-const PROFILE_COLORS = (RGBf(0.27, 0.51, 0.71), RGBf(1.0, 0.55, 0.0), RGBf(0, 0, 0))  # u, v, |V|
+const PROFILE_COLOR = RGBf(0.27, 0.51, 0.71)
 const PROFILE_HEIGHT = 170
+const POINT_GRAB_PX = 10                       # pick radius of a tool point
 
 """
     ResultsCanvas
@@ -38,12 +40,13 @@ struct ResultsCanvas
     tool_points::Any          # its vertices
     profile_box::GridLayout   # second layout row holding the profile Axis
     profile_ax::Axis
-    profile_lines::Vector{Any}  # u, v, |V|
-    profile_legend::Legend
+    profile_line::Any         # the displayed field along the line
     profile_shown::Base.RefValue{Bool}
     explorer::Base.RefValue{Union{Nothing,ResultExplorer}}
     listeners::Vector{Any}
     grid_size::Base.RefValue{Union{Nothing,Dims{2}}}
+    dragging::Base.RefValue{Union{Nothing,Int}}   # the tool point being dragged
+    view_mode::Base.RefValue{Symbol}
 end
 
 function results_canvas()
@@ -66,7 +69,7 @@ function results_canvas()
     sel = scatter!(ax, _NOPOINT; color = :transparent, strokecolor = :cyan,
                    strokewidth = 2.5, markersize = 16)
     tool_line = lines!(ax, _NOPOINT; color = TOOL_PATH_COLOR, linewidth = 2.5)
-    tool_points = scatter!(ax, _NOPOINT; color = TOOL_PATH_COLOR, markersize = 9,
+    tool_points = scatter!(ax, _NOPOINT; color = [TOOL_PATH_COLOR], markersize = [9],
                            strokecolor = :black, strokewidth = 1)
     translate!(field, 0, 0, -1)
     translate!(tool_line, 0, 0, 2)
@@ -76,16 +79,57 @@ function results_canvas()
     box = GridLayout(fig[2, 1:2]; alignmode = Outside())
     pax = Axis(box[1, 1]; height = PROFILE_HEIGHT, xlabel = "distance along the line",
                ylabel = "")
-    plines = Any[lines!(pax, [NaN, NaN], [NaN, NaN]; color = c, linewidth = 2,
-                        label = l) for (c, l) in zip(PROFILE_COLORS, ("u", "v", "|V|"))]
-    legend = Legend(box[1, 2], pax; framevisible = false, padding = (4, 4, 4, 4))
+    pline = lines!(pax, [NaN, NaN], [NaN, NaN]; color = PROFILE_COLOR, linewidth = 2)
     rc = ResultsCanvas(fig, ax, Ref(true), field, points, tracks, cb, shafts, heads, sel,
-                       tool_line, tool_points,
-                       box, pax, plines, legend, Ref(true),
+                       tool_line, tool_points, box, pax, pline, Ref(true),
                        Ref{Union{Nothing,ResultExplorer}}(nothing), Any[],
-                       Ref{Union{Nothing,Dims{2}}}(nothing))
+                       Ref{Union{Nothing,Dims{2}}}(nothing), Ref{Union{Nothing,Int}}(nothing),
+                       Ref(:edit))
     _show_profile!(rc, false)
     _register_gestures!(rc)
+    _register_point_drag!(rc)
+    return rc
+end
+
+# The pick radius of tool points in data units (POINT_GRAB_PX on screen).
+function _grab_tolerance(ax::Axis)
+    vp = widths(ax.scene.viewport[])
+    lim = widths(ax.finallimits[])
+    (vp[1] > 0 && vp[2] > 0) || return 0.0
+    return POINT_GRAB_PX * max(lim[1] / vp[1], lim[2] / vp[2])
+end
+
+# Dragging a profile or contour point: a left press on a point starts a drag
+# (consumed before the Axis's own zoom box sees it), mouse moves move the
+# point, the release ends it. Listeners run at high priority.
+function _register_point_drag!(rc::ResultsCanvas)
+    ev = events(rc.fig)
+    on(ev.mousebutton; priority = 100) do e
+        e.button === Mouse.left || return Consume(false)
+        ex = rc.explorer[]
+        if e.action === Mouse.press
+            (ex === nothing || ex.tool[] === :inspect || rc.view_mode[] !== :edit ||
+             _modifier_held(rc.fig) || !is_mouseinside(rc.ax.scene)) && return Consume(false)
+            x, y = mouseposition(rc.ax.scene)
+            i = tool_point_near(ex, x, y, _grab_tolerance(rc.ax))
+            i === nothing && return Consume(false)
+            rc.dragging[] = i
+            ex.tool_selected[] = i
+            return Consume(true)
+        elseif e.action === Mouse.release && rc.dragging[] !== nothing
+            rc.dragging[] = nothing
+            return Consume(true)
+        end
+        return Consume(false)
+    end
+    on(ev.mouseposition; priority = 100) do _
+        i = rc.dragging[]
+        ex = rc.explorer[]
+        (i === nothing || ex === nothing) && return Consume(false)
+        x, y = mouseposition(rc.ax.scene)
+        _results_gesture(() -> (move_tool_point!(ex, i, x, y); true), rc)
+        return Consume(true)
+    end
     return rc
 end
 
@@ -97,18 +141,22 @@ function _register_gestures!(rc::ResultsCanvas)
         (ex === nothing || _modifier_held(rc.fig)) && return Consume(false)
         t = event.type
         if t === MouseEventTypes.leftclick || t === MouseEventTypes.leftdoubleclick
-            return Consume(_results_gesture(() -> (click!(ex, event.data[1], event.data[2]); true), rc))
+            tol = _grab_tolerance(rc.ax)
+            return Consume(_results_gesture(() -> (click!(ex, event.data[1], event.data[2]; tol); true), rc))
         elseif t === MouseEventTypes.rightclick || t === MouseEventTypes.rightdoubleclick
             ex.tool[] === :circulation || return Consume(false)
             return Consume(_results_gesture(() -> (alt_click!(ex); true), rc))
         end
         return Consume(false)
     end
+    keys = Dict(Keyboard.escape => :escape, Keyboard.delete => :delete,
+                Keyboard.backspace => :backspace)
     on(events(rc.fig).keyboardbutton) do ev
-        (ev.action === Keyboard.press && ev.key === Keyboard.escape) || return Consume(false)
+        ev.action === Keyboard.press || return Consume(false)
+        key = get(keys, ev.key, nothing)
         ex = rc.explorer[]
-        ex === nothing && return Consume(false)
-        return Consume(_results_gesture(() -> canvas_key!(ex, :escape), rc))
+        (key === nothing || ex === nothing) && return Consume(false)
+        return Consume(_results_gesture(() -> canvas_key!(ex, key), rc))
     end
     return rc
 end
@@ -137,12 +185,14 @@ function set_explorer!(rc::ResultsCanvas, ex::Union{Nothing,ResultExplorer})
     rc.explorer[] = ex
     rc.grid_size[] = nothing
     if ex !== nothing
-        for obs in (ex.frame, ex.field, ex.color_mode, ex.color_min, ex.color_max,
-                    ex.show_vectors, ex.highlight_outliers)
+        for obs in (ex.frame, ex.field, ex.color_mode, ex.color_min, ex.color_max, ex.image_available,
+                    ex.show_vectors, ex.highlight_outliers, ex.color_percentiles,
+                    ex.physical_units, ex.revalidation, ex.include_flagged, ex.image)
             push!(rc.listeners, on(_ -> _draw_results!(rc), obs))
         end
         push!(rc.listeners, on(_ -> _draw_selection!(rc), ex.selection))
-        for obs in (ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
+        for obs in (ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result,
+                    ex.tool_selected)
             push!(rc.listeners, on(_ -> _draw_tool!(rc), obs))
         end
     end
@@ -152,14 +202,38 @@ function set_explorer!(rc::ResultsCanvas, ex::Union{Nothing,ResultExplorer})
     return rc
 end
 
+# The field's colormap: grays for the particle image, a diverging map
+# centered on zero for signed fields (red positive), otherwise viridis.
+_field_colormap(field::Symbol) =
+    field === :image ? :grays : is_diverging(field) ? Reverse(:RdBu) : :viridis
+
 function _draw_results!(rc::ResultsCanvas)
     ex = rc.explorer[]
     r = ex === nothing ? nothing : current_result(ex)
-    if r isa Controllers.GridResult
+    image = ex !== nothing && ex.field[] === :image
+    if image && r isa Union{PIVResult,PTVResult}
+        img = Float32.(current_field_values(ex))
+        lo, hi = current_color_limits(ex)
+        gx, gy = image_extent(ex)
+        _update!(rc.field, collect(Float64, gx), collect(Float64, gy), permutedims(img);
+                 colorrange = (lo, hi), colormap = :grays)
+        rc.colorbar.label = field_label(r, :image)
+        rc.ax.xlabel, rc.ax.ylabel = Hammerhead.plot_axis_labels(r.scale)
+        rc.ax.yreversed[] || (rc.ax.yreversed = true)
+        _update_arrows!(rc.shafts, rc.heads, ex.show_vectors[] ? r : nothing;
+                        valid_color = VALID_COLOR,
+                        flagged_color = ex.highlight_outliers[] ? FLAGGED_COLOR : VALID_COLOR)
+        _update!(rc.points, _NOPOINT; color = [0.0f0])
+        _update!(rc.tracks, _NOPOINT; color = [0.0f0])
+        if size(img) != rc.grid_size[]
+            rc.grid_size[] = size(img)
+            reset_limits!(rc.ax)
+        end
+    elseif r isa Controllers.GridResult
         data = Float32.(current_field_values(ex))
         lo, hi = current_color_limits(ex)
         _update!(rc.field, collect(Float64, r.x), collect(Float64, r.y), permutedims(data);
-                      colorrange = (lo, hi))
+                      colorrange = (lo, hi), colormap = _field_colormap(ex.field[]))
         rc.colorbar.label = field_label(r, ex.field[])
         stereo = r isa StereoPIVResult
         unit = r.scale !== nothing ? r.scale.length_unit : stereo ? "world units" : "px"
@@ -181,7 +255,7 @@ function _draw_results!(rc::ResultsCanvas)
     elseif r isa Union{PTVResult,TrackingResult}
         lo, hi = current_color_limits(ex)
         hi > lo || (hi = lo + 1)
-        _update!(rc.field, 1:2, 1:2, _EMPTY_IMAGE; colorrange = (lo, hi))
+        _update!(rc.field, 1:2, 1:2, _EMPTY_IMAGE; colorrange = (lo, hi), colormap = :viridis)
         rc.colorbar.label = field_label(r, ex.field[])
         rc.ax.xlabel, rc.ax.ylabel = Hammerhead.plot_axis_labels(r.scale)
         rc.ax.yreversed[] || (rc.ax.yreversed = true)
@@ -237,17 +311,18 @@ function _draw_tool!(rc::ResultsCanvas)
              ex.circulation_result[] !== nothing && length(pts) >= 3
     path = closed ? push!(copy(pts), pts[1]) : pts
     _update!(rc.tool_line, length(path) >= 2 ? path : _NOPOINT)
-    _update!(rc.tool_points, isempty(pts) ? _NOPOINT : pts)
+    sel = ex === nothing ? nothing : ex.tool_selected[]
+    cols = [k == sel ? SELECTED_COLOR : TOOL_PATH_COLOR for k in eachindex(pts)]
+    isempty(pts) ? _update!(rc.tool_points, _NOPOINT; color = [TOOL_PATH_COLOR],
+                            markersize = [9]) :
+                   _update!(rc.tool_points, pts; color = cols,
+                            markersize = [k == sel ? 13 : 9 for k in eachindex(pts)])
 
     prof = ex === nothing ? nothing : profile_series(ex)
     if prof === nothing
-        for l in rc.profile_lines
-            _update!(l, [NaN, NaN], [NaN, NaN])
-        end
+        _update!(rc.profile_line, [NaN, NaN], [NaN, NaN])
     else
-        for (l, y) in zip(rc.profile_lines, (prof.u, prof.v, prof.speed))
-            _update!(l, prof.s, y)
-        end
+        _update!(rc.profile_line, prof.s, prof.values)
         rc.profile_ax.xlabel = prof.xlabel
         rc.profile_ax.ylabel = prof.ylabel
         _profile_limits!(rc.profile_ax, prof)
@@ -259,7 +334,7 @@ end
 
 function _profile_limits!(pax::Axis, prof)
     s = filter(isfinite, prof.s)
-    vals = filter(isfinite, vcat(prof.u, prof.v, prof.speed))
+    vals = filter(isfinite, prof.values)
     (isempty(s) || isempty(vals)) && return
     s0, s1 = extrema(s)
     lo, hi = extrema(vals)
@@ -281,7 +356,6 @@ function _show_profile!(rc::ResultsCanvas, show::Bool)
     rc.profile_shown[] == show && return rc
     rc.profile_shown[] = show
     _set_visible!(rc.profile_ax.blockscene, show)
-    _set_visible!(rc.profile_legend.blockscene, show)
     rc.profile_box.tellheight[] = show
     rowsize!(rc.fig.layout, 2, show ? Auto() : Fixed(0))
     rowgap!(rc.fig.layout, 1, Fixed(show ? 10 : 0))

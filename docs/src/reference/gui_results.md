@@ -40,6 +40,6 @@ Pages = ["result_explorer.jl"]
 
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
-Order = [:type, :function]
+Order = [:type, :function, :constant]
 Pages = ["result_explorer.jl"]
 ```

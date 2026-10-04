@@ -25,6 +25,9 @@ In a `StereoWorkflow` the mask editor is sized to the dewarped grid
 `revision` changes whenever any editor changes (canvases redraw on it).
 `status` reports the background estimate (`background_running` while it
 runs); `roi_error`/`scale_error` hold the last rejected ROI or scale edit.
+`ruler` is an optional separate image (with `ruler_name`) on which the Scale
+page measures the pixel size instead of the frames (see
+[`load_ruler!`](@ref)).
 """
 struct PrepareState
     page::Observable{Symbol}
@@ -40,6 +43,8 @@ struct PrepareState
     scale_error::Observable{String}
     background_generation::Base.RefValue{Int}
     syncing::Base.RefValue{Bool}           # set while one side writes the other
+    ruler::Observable{Union{Nothing,Matrix{Float32}}}
+    ruler_name::Observable{String}
 end
 
 PrepareState(; runner = _inline_runner) =
@@ -48,7 +53,8 @@ PrepareState(; runner = _inline_runner) =
                  Observable{Union{Nothing,ROIEditor}}(nothing),
                  Observable{Union{Nothing,ScaleTool}}(nothing),
                  Observable(false), Observable(0), Observable(""), Observable(false),
-                 Observable(""), Observable(""), Ref(0), Ref(false))
+                 Observable(""), Observable(""), Ref(0), Ref(false),
+                 Observable{Union{Nothing,Matrix{Float32}}}(nothing), Observable(""))
 
 function Base.show(io::IO, ps::PrepareState)
     me = ps.mask[]

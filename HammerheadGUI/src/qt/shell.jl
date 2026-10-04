@@ -279,10 +279,11 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
     for obs in (wf.step, wf.preprocessing, wf.mask, wf.scale, wf.saved, wf.settings_path,
                 wf.explorer, wf.results_path, wf.status,
                 ps.revision, ps.status, ps.background_running, ps.roi_error, ps.scale_error,
+                ps.ruler_name,
                 pp.error_step, pp.status, pp.processed2,
                 pe.passes, pe.preset, pe.mode, pe.image_type, pe.error,
                 t.result, t.running, t.status, r.output_path, r.running, r.progress, r.status,
-                r.completed)
+                r.completed, r.finished_output)
         on(mark, obs)
     end
     _connect_window!(sh, mark)
@@ -294,15 +295,30 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
         set_explorer!(results, ex)
         ex === nothing && return
         for obs in (ex.frame, ex.field, ex.selection, ex.color_mode, ex.show_vectors, ex.status,
-                    ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
+                    ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result,
+                    ex.color_min, ex.color_max, ex.color_percentiles, ex.physical_units,
+                    ex.include_flagged, ex.revalidation, ex.image_frame, ex.image_available,
+                    ex.tool_selected)
             on(mark, obs)
         end
     end
     on(watch_explorer, wf.explorer)
     watch_explorer(wf.explorer[])
     # Every key QML binds to exists from the start (bindings read them at once).
-    for (k, v) in ("grabPath" => "", "resultFrame" => 1, "resultFrames" => 1, "resultFieldKeys" => "",
+    for (k, v) in ("grabPath" => "", "viewMode" => "edit", "resultFrame" => 1, "resultFrames" => 1, "resultFieldKeys" => "",
                    "resultFieldLabels" => "", "resultField" => "", "resultFieldLabel" => "", "resultColorMode" => "robust",
+                   "resultColorScale" => "percentile", "resultColorLow" => "2", "resultColorHigh" => "98",
+                   "resultHasScale" => false, "resultPhysical" => true, "resultIncludeFlagged" => false,
+                   "resultIsPlanar" => false, "resultRevalidate" => false, "rvUodEnable" => true,
+                   "rvUodThreshold" => "2", "rvUodNeighborhood" => 2, "rvMinPeakRatio" => "1",
+                   "rvReplace" => true,
+                   # the Particles page's keys (planar particle modes; other windows keep these)
+                   "particleMode" => false, "ptvThreshold" => "auto", "ptvThresholdK" => "",
+                   "ptvMinSeparation" => "", "ptvMinDiameter" => "", "ptvMaxDiameter" => "",
+                   "ptvSearchRadius" => "", "ptvIntensityWeight" => "", "ptvDiameterWeight" => "",
+                   "ptvUodThreshold" => "", "ptvUodEpsilon" => "", "ptvUodNeighbors" => "",
+                   "ptvUodEnable" => true, "ptvPredictor" => "piv", "ptvMinTrackLength" => 3,
+                   "ptvMaxGap" => 0, "ptvError" => "", "ptvDetectStatus" => "", "frameCount" => 0,
                    "resultVectors" => true, "selectionText" => "", "resultsStatus" => "",
                    "resultTool" => "inspect", "resultToolsAvailable" => false, "toolSummary" => "")
         _set!(sh, k, v)
@@ -317,7 +333,8 @@ end
 function _connect_window!(sh::PlanarShell, mark)
     wf = sh.wf
     fs = wf.frames
-    for obs in (wf.roi, fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error)
+    for obs in (wf.roi, fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error,
+                fs.pattern_dir, fs.pattern, fs.pattern_matches, fs.pattern_error)
         on(mark, obs)
     end
     pt = wf.particles
@@ -417,6 +434,8 @@ function _refresh_prepare!(sh::WorkflowShell)
     _set!(sh, "scaleMeasureUnit", st === nothing ? "" : st.length_unit[])
     _set!(sh, "scaleMeasure", st === nothing ? "" : Controllers.scale_summary(st))
     _set!(sh, "scaleError", ps.scale_error[])
+    _set!(sh, "rulerName", ps.ruler_name[])
+    _set!(sh, "probeOnPasses", passes_probe_available(wf))
     return
 end
 
@@ -449,7 +468,22 @@ function _refresh_frames!(sh::PlanarShell)
     _set!(sh, "framesSummary", frames_summary(fs))
     _set!(sh, "framesProblem", problem === nothing ? "" : problem)
     _set!(sh, "pairMode", String(fs.pair_mode[]))
+    _refresh_pattern!(sh, 0, fs)
     _set!(sh, "shown", String(fs.shown[]))
+    return
+end
+
+# The folder-and-pattern row of camera `k` (0: the planar frame set).
+function _refresh_pattern!(sh::WorkflowShell, k::Int, fs::FrameSet)
+    n = length(fs.pattern_matches[])
+    _set!(sh, "patternDir$k", fs.pattern_dir[])
+    _set!(sh, "pattern$k", fs.pattern[])
+    _set!(sh, "patternCount$k", n)
+    _set!(sh, "patternInfo$k", !isempty(fs.pattern_error[]) ? fs.pattern_error[] :
+                               n == 0 ? "" :
+                               "$n matching file" * (n == 1 ? "" : "s") * ": " *
+                               basename(first(fs.pattern_matches[])) *
+                               (n > 1 ? " … " * basename(last(fs.pattern_matches[])) : ""))
     return
 end
 
@@ -545,6 +579,26 @@ function _refresh!(sh::WorkflowShell)
         _set!(sh, "resultField", String(ex.field[]))
         _set!(sh, "resultFieldLabel", field_label(res, ex.field[]))
         _set!(sh, "resultColorMode", String(ex.color_mode[]))
+        scale_mode = color_scale_mode(ex)
+        _set!(sh, "resultColorScale", String(scale_mode))
+        if scale_mode === :absolute
+            _set!(sh, "resultColorLow", _num(round(ex.color_min[]; sigdigits = 4)))
+            _set!(sh, "resultColorHigh", _num(round(ex.color_max[]; sigdigits = 4)))
+        else
+            _set!(sh, "resultColorLow", _num(ex.color_percentiles[][1]))
+            _set!(sh, "resultColorHigh", _num(ex.color_percentiles[][2]))
+        end
+        _set!(sh, "resultHasScale", has_scale(ex))
+        _set!(sh, "resultPhysical", ex.physical_units[])
+        _set!(sh, "resultIncludeFlagged", ex.include_flagged[])
+        _set!(sh, "resultIsPlanar", res isa PIVResult)
+        rv = revalidation_settings(ex)
+        _set!(sh, "resultRevalidate", ex.revalidation[] !== nothing)
+        _set!(sh, "rvUodEnable", rv.uod_enable)
+        _set!(sh, "rvUodThreshold", _num(rv.uod_threshold))
+        _set!(sh, "rvUodNeighborhood", rv.uod_neighborhood)
+        _set!(sh, "rvMinPeakRatio", _num(rv.min_peak_ratio))
+        _set!(sh, "rvReplace", rv.replace)
         _set!(sh, "resultVectors", ex.show_vectors[])
         _set!(sh, "selectionText", describe_selection(ex))
         _set!(sh, "resultsStatus", ex.status[])
@@ -553,6 +607,9 @@ function _refresh!(sh::WorkflowShell)
         _set!(sh, "toolSummary", tool_summary(ex))
     end
     _set!(sh, "hasResults", ex !== nothing)
+    _set!(sh, "resultsInMemory", results_in_memory(wf))
+    # the frame toggles: of the representative pair, or of the result's image
+    wf.step[] === :results && ex !== nothing && _set!(sh, "shown", String(ex.image_frame[]))
 
     _refresh_window!(sh)
 
@@ -656,7 +713,24 @@ hh_set_pair_mode(mode) = _with_shell(sh -> set_pair_mode!(_frames_target(sh.wf),
 hh_select_pair(i) = _with_shell(sh -> go_to_pair!(sh.wf, round(Int, i)))
 hh_step_pair(delta) = _with_shell(sh -> step_pair!(sh.wf, round(Int, delta)))
 hh_set_contrast(on) = _with_shell(sh -> set_contrast!(sh.canvas, sh.wf, Bool(on)))
-hh_show_frame(which) = _with_shell(sh -> show_frame!(_frames_target(sh.wf), Symbol(String(which))))
+function hh_set_view_mode(mode)
+    _with_shell() do sh
+        m = Symbol(String(mode))
+        set_view_mode!(sh.canvas.ax, m, :workflow_gesture)
+        set_view_mode!(sh.results.ax, m, :results_gesture)
+        sh.results.view_mode[] = m
+        _set!(sh, "viewMode", String(m))
+    end
+end
+# Show the whole image or field again (ctrl-click does the same).
+function hh_reset_view()
+    _with_shell() do sh
+        results = sh.wf.step[] === :results && sh.wf.explorer[] !== nothing
+        reset_limits!(results ? sh.results.ax : sh.canvas.ax)
+        (results ? sh.results : sh.canvas).dirty[] = true
+    end
+end
+hh_show_frame(which) = _with_shell(sh -> switch_frame!(sh.wf, Symbol(String(which))))
 hh_fill_preset(level) = _with_shell(sh -> fill_preset!(sh.wf.passes, Symbol(String(level))))
 function hh_set_pass(i, field, value)
     _with_shell() do sh
@@ -694,11 +768,13 @@ hh_open_results(url) = _with_shell(sh -> begin
     open_results!(sh.wf, _url_to_path(String(url)))
     set_step!(sh.wf, :results)
 end)
-hh_use_result_settings() = _with_shell(sh -> begin
-    path = sh.wf.results_path[]
-    path === nothing && throw(ArgumentError("open a results file first"))
-    load_settings!(sh.wf, path)
-end)
+function hh_save_run_results(url)
+    _with_shell() do sh
+        path = isempty(String(url)) ? sh.wf.run.output_path[] : _url_to_path(String(url))
+        isempty(path) && throw(ArgumentError("choose a results file"))
+        save_run_results!(sh.wf, path)
+    end
+end
 hh_toggle_popout() = _with_shell(sh -> toggle_popout!(sh.host))
 
 # Prepare step
@@ -748,6 +824,23 @@ hh_clear_roi() = _with_shell(sh -> begin
 end)
 hh_set_scale(field, value) = _with_shell(sh -> edit_scale!(sh.wf, Symbol(String(field)), string(value)))
 hh_clear_scale() = _with_shell(sh -> clear_scale!(sh.wf))
+hh_load_ruler(url) = _with_shell(sh -> load_ruler!(sh.wf, _url_to_path(String(url))))
+hh_clear_ruler() = _with_shell(sh -> clear_ruler!(sh.wf))
+# Frames by folder and pattern; camera 0 is the planar window's frame set.
+_pattern_frames(sh, k) = k == 0 ? sh.wf.frames : camera_frames(sh.wf, k)
+hh_set_frame_pattern(k, dir, pattern) =
+    _with_shell(sh -> set_frame_pattern!(_pattern_frames(sh, round(Int, k)), _url_to_path(String(dir)),
+                                         String(pattern)))
+hh_add_matching(k) = _with_shell(sh -> (n = add_matching!(_pattern_frames(sh, round(Int, k)));
+                                        sh.wf.status[] = "added $n frame" * (n == 1 ? "" : "s")))
+function hh_pattern_from_frames(k, urls)
+    _with_shell() do sh
+        paths = _paths(urls)
+        length(paths) == 2 || throw(ArgumentError("choose two frames, e.g. the first pair"))
+        dir, pattern = infer_pattern(paths...)
+        set_frame_pattern!(_pattern_frames(sh, round(Int, k)), dir, pattern)
+    end
+end
 hh_clear_scale_points() = _with_shell(sh -> begin
     st = sh.wf.prepare.scale[]
     st === nothing || clear_points!(st)
@@ -762,6 +855,24 @@ end
 hh_result_frame(i) = _with_explorer(ex -> set_frame!(ex, round(Int, i)))
 hh_result_field(key) = _with_explorer(ex -> set_field!(ex, Symbol(String(key))))
 hh_result_color_mode(mode) = _with_explorer(ex -> set_color_mode!(ex, Symbol(String(mode))))
+hh_result_color_scale(mode) = _with_explorer(ex -> set_color_scale_mode!(ex, Symbol(String(mode))))
+function hh_result_color_bounds(lo, hi)
+    _with_explorer() do ex
+        if color_scale_mode(ex) === :absolute
+            set_color_limits!(ex; min = string(lo), max = string(hi))
+        else
+            set_color_percentiles!(ex, string(lo), string(hi))
+        end
+    end
+end
+hh_result_physical(on) = _with_explorer(ex -> set_physical_units!(ex, Bool(on)))
+hh_result_include_flagged(on) = _with_explorer(ex -> set_include_flagged!(ex, Bool(on)))
+hh_result_revalidate(on) =
+    _with_explorer(ex -> Bool(on) ? set_revalidation!(ex, revalidation_settings(ex)) :
+                                    set_revalidation!(ex, nothing))
+hh_result_revalidation(key, value) =
+    _with_explorer(ex -> edit_revalidation!(ex, Symbol(String(key)),
+                                            value isa Bool ? value : string(value)))
 hh_result_vectors(on) = _with_explorer(ex -> (ex.show_vectors[] = Bool(on)))
 hh_result_tool(name) = _with_explorer(ex -> set_tool!(ex, Symbol(String(name))))
 hh_result_clear_tool() = _with_explorer(clear_tool!)
@@ -770,14 +881,17 @@ function _register_qml_functions()
     @qmlfunction hh_tick hh_grab_started hh_set_step hh_add_files hh_clear_files hh_set_pair_mode hh_select_pair
     @qmlfunction hh_show_frame hh_fill_preset hh_set_pass hh_add_pass hh_remove_pass hh_set_option
     @qmlfunction hh_set_mode hh_set_precision hh_test hh_set_output hh_start_run hh_cancel_run
-    @qmlfunction hh_particle_option hh_step_pair hh_set_contrast
-    @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_use_result_settings
+    @qmlfunction hh_particle_option hh_step_pair hh_set_contrast hh_set_view_mode hh_reset_view
+    @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_save_run_results
+    @qmlfunction hh_result_color_scale hh_result_color_bounds hh_result_physical
+    @qmlfunction hh_result_include_flagged hh_result_revalidate hh_result_revalidation
     @qmlfunction hh_toggle_popout hh_result_frame hh_result_field hh_result_color_mode
     @qmlfunction hh_result_vectors hh_result_tool hh_result_clear_tool
     @qmlfunction hh_set_prepare_page hh_add_step hh_remove_step hh_move_step hh_set_step_option
     @qmlfunction hh_estimate_background hh_show_processed hh_set_probe_window hh_clear_probe
     @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi
-    @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points
+    @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points hh_load_ruler hh_clear_ruler
+    @qmlfunction hh_set_frame_pattern hh_add_matching hh_pattern_from_frames
     _register_stereo_functions()
     return
 end

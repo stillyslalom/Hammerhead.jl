@@ -18,7 +18,8 @@ StereoShell(wf::StereoWorkflow; queue::Channel{Any} = Channel{Any}(Inf)) =
 function _connect_window!(sh::StereoShell, mark)
     wf = sh.wf
     for fs in (wf.frames1, wf.frames2)
-        for obs in (fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error)
+        for obs in (fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error,
+                    fs.pattern_dir, fs.pattern, fs.pattern_matches, fs.pattern_error)
             on(mark, obs)
         end
     end
@@ -80,6 +81,7 @@ function _refresh_frames!(sh::StereoShell)
         _set!(sh, "camera$(k)Frames", length(fs.files[]))
         _set!(sh, "camera$(k)Summary", frames_summary(fs))
         _set!(sh, "camera$(k)Problem", p === nothing ? "" : p)
+        _refresh_pattern!(sh, k, fs)
     end
     return
 end

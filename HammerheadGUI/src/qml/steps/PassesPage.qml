@@ -448,6 +448,32 @@ StepPage {
         Label { text: "" }
     }
 
+    Label {
+        text: "Correlation probe"
+        font.weight: Font.DemiBold
+        Layout.topMargin: 12
+        visible: !particles
+    }
+    Label {
+        visible: !particles
+        text: app.probeOnPasses
+            ? "Click the image to correlate one final-pass window of the processed pair there; " +
+              "right-click removes the probe."
+            : "Add frames to probe the correlation."
+        wrapMode: Text.WordWrap
+        opacity: 0.75
+        Layout.fillWidth: true
+    }
+    RowLayout {
+        visible: !particles && app.probeSummary !== ""
+        Label {
+            text: app.probeSummary
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        Button { text: "Remove probe"; onClicked: Julia.hh_clear_probe() }
+    }
+
     Label { text: "Evaluation"; font.weight: Font.DemiBold; Layout.topMargin: 12 }
     GridLayout {
         columns: 2

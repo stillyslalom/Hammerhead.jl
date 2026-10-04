@@ -24,6 +24,9 @@ StepPage {
         }
     }
 
+    Label { text: "Or by folder and file-name pattern"; opacity: 0.75; Layout.topMargin: 4 }
+    FramePatternRow { camera: 0 }
+
     Label { text: "Pairing"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
     ComboBox {
         Layout.preferredWidth: 280
@@ -42,6 +45,29 @@ StepPage {
         color: "#c42b1c"
         wrapMode: Text.WordWrap
         Layout.fillWidth: true
+    }
+
+    Label { text: "Settings"; font.weight: Font.DemiBold; Layout.topMargin: 12 }
+    RowLayout {
+        spacing: 8
+        Button {
+            text: "Reuse settings…"
+            onClicked: reuseSettingsDialog.open()
+            ToolTip.visible: hovered
+            ToolTip.text: "Take the settings of a saved settings file, or of an earlier run's results file"
+        }
+        Label {
+            text: "Preprocessing, mask, passes and scale from a saved file or earlier results"
+            opacity: 0.75
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+    }
+    FileDialog {
+        id: reuseSettingsDialog
+        title: "Reuse settings"
+        nameFilters: ["Settings or results (*.jld2 *.toml)", "All files (*)"]
+        onAccepted: Julia.hh_open_settings(selectedFile.toString())
     }
 
     FileDialog {

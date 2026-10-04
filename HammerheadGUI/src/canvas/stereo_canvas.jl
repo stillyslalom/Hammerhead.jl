@@ -323,7 +323,8 @@ function _draw_prepare!(c::StereoCanvas, wf::StereoWorkflow)
     me = ps.mask[]
     show_mask = page === :mask && me !== nothing && c.space[] === :grid && me.size == c.frame_size[]
     _draw_mask_editor!(c.polygons, c.active_line, c.active_points, show_mask ? me : nothing)
-    _draw_probe!(c.probe_box, page === :preprocess ? ps.preview : nothing, c.frame_size[])
+    probe = page === :preprocess || (wf.step[] === :passes && passes_probe_available(wf))
+    _draw_probe!(c.probe_box, probe ? ps.preview : nothing, c.frame_size[])
     c.dirty[] = true
     return c
 end

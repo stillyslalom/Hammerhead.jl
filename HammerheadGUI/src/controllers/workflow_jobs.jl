@@ -278,13 +278,15 @@ struct RunState
     pairs::Observable{Int}
     cameras::Observable{Int}
     cancel::Threads.Atomic{Bool}
+    recipe::Base.RefValue{Any}               # the last run's recipe and inputs
+    inputs::Base.RefValue{Any}
 end
 
 RunState(; output_path::AbstractString = "") =
     RunState(Observable(String(output_path)), Observable(false), Observable((0, 0)),
              Observable(""), Observable(Any[]), Observable(0.0),
              Observable{Union{Nothing,String}}(nothing), Observable(:sequence), Observable(0),
-             Observable(1), Threads.Atomic{Bool}(false))
+             Observable(1), Threads.Atomic{Bool}(false), Ref{Any}(nothing), Ref{Any}(nothing))
 
 """
     start_run!(rs::RunState, recipe, pairs; deliver = f -> f(), spawn = true)
@@ -310,6 +312,8 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
     cameras = length(inputs) > 1 ? 2 : 1
     rs.cancel[] = false
     rs.completed[] = Any[]
+    rs.recipe[] = recipe
+    rs.inputs[] = inputs
     rs.mode[] = recipe.mode
     rs.pairs[] = length(pairs)
     rs.cameras[] = cameras

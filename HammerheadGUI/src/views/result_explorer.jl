@@ -207,9 +207,8 @@ function result_explorer!(target, ex::ResultExplorer)
             end
             ax2 = profile_ax[]
             empty!(ax2)
-            lines!(ax2, pd.s, pd.u; color = :steelblue)
-            lines!(ax2, pd.s, pd.v; color = :darkorange)
-            lines!(ax2, pd.s, hypot.(pd.u, pd.v); color = :black)
+            lines!(ax2, pd.s, pd.values; color = :steelblue)
+            ax2.ylabel = field_label(current_result(ex), pd.field)
             autolimits!(ax2)
         end
         return

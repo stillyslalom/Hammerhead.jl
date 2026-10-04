@@ -142,7 +142,8 @@ result_key(i::Integer) = "results/" * lpad(i, 6, '0')
 source_key(i::Integer) = "sources/" * lpad(i, 6, '0')
 
 """
-    save_results(path, results) -> path
+    save_results(path, results; recipe = nothing, calibration = nothing,
+                 sources = nothing) -> path
 
 Write one result or a vector of results to a JLD2 file at `path`, replacing
 an existing file. The vector may mix [`PIVResult`](@ref),
@@ -150,24 +151,58 @@ an existing file. The vector may mix [`PIVResult`](@ref),
 [`TrackingResult`](@ref). Read it with [`load_results`](@ref).
 Copying a [`ResultFile`](@ref) or its views to a different path streams the
 entries; overwriting that lazy source file is rejected before opening output.
+
+The optional keywords store what the sequence drivers and
+[`apply_recipe`](@ref) store with a run: the [`PIVRecipe`](@ref) that
+produced the results ([`load_recipe`](@ref) reads it back), a stereo
+`calibration` as a tuple of [`ImageDewarper`](@ref)s
+([`load_calibration`](@ref)), and `sources`, one vector of frame labels
+(e.g. file paths) per result ([`load_sources`](@ref)).
 """
 function save_results(path::AbstractString,
-                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}})
+                      results::AbstractVector{<:Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}};
+                      recipe = nothing, calibration = nothing, sources = nothing)
     source = _result_file_source(results)
     if source !== nothing && isfile(path) && Base.samefile(path, source.path)
         throw(ArgumentError("cannot save lazy results over their source file: $(source.path); save to a different path or load eagerly first"))
     end
+    sources === nothing || length(sources) == length(results) ||
+        throw(DimensionMismatch("sources has $(length(sources)) entries for $(length(results)) results"))
     jldopen(path, "w") do f
         f["format_version"] = RESULTS_FORMAT_VERSION
         for (i, r) in enumerate(results)
             f[result_key(i)] = r
         end
+        if sources !== nothing
+            for (i, labels) in enumerate(sources)
+                isempty(labels) || (f[source_key(i)] = String[String(x) for x in labels])
+            end
+        end
+        recipe === nothing || _write_recipe(f, recipe)
+        calibration === nothing || _write_calibration(f, calibration)
     end
     return path
 end
 
-save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult}) =
-    save_results(path, [result])
+save_results(path::AbstractString, result::Union{PIVResult,StereoPIVResult,PTVResult,TrackingResult};
+             kwargs...) = save_results(path, [result]; kwargs...)
+
+"""
+    load_sources(path) -> Vector{Vector{String}}
+
+The frame labels stored with each result of a results file, in order: for
+results from file paths, the paths of the frames that produced the result
+(two for a planar pair, four for a stereo acquisition). An entry is empty
+when no labels were stored (in-memory frames, or a pooled ensemble result).
+"""
+function load_sources(path::AbstractString)
+    jldopen(path, "r") do f
+        _check_results_format(f, path)
+        n = haskey(f, "results") ? length(keys(f["results"])) : 0
+        return [haskey(f, source_key(i)) ? String[String(x) for x in f[source_key(i)]] : String[]
+                for i in 1:n]
+    end
+end
 
 function _check_results_format(f, path)
     haskey(f, "format_version") ||
@@ -260,8 +295,7 @@ file, loading one entry per access without retaining payloads or a file handle.
 It has O(number of results) key metadata and does not follow live writes.
 
 Sequence drivers also save source labels when available; this function
-returns result objects only. To inspect the first saved pair's labels, load
-`"sources/000001"` from the same file with JLD2.
+returns result objects only, and [`load_sources`](@ref) returns the labels.
 """
 function load_results(path::AbstractString; lazy::Bool = false)
     lazy && return ResultFile(path)

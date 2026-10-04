@@ -91,6 +91,54 @@
         @test occursin("custom", passes_summary(pe))
     end
 
+    @testset "frames by folder and pattern" begin
+        mktempdir() do dir
+            for name in ("run_2.tif", "run_10.tif", "run_1.tif", "other.png")
+                touch(joinpath(dir, name))
+            end
+            @test basename.(matching_files(dir, "run_*.tif")) == ["run_1.tif", "run_2.tif", "run_10.tif"]
+            @test basename.(matching_files(dir, "run_?.tif")) == ["run_1.tif", "run_2.tif"]
+            @test_throws ArgumentError matching_files(joinpath(dir, "missing"), "*")
+            fs = FrameSet()
+            set_frame_pattern!(fs, dir, "*.png")
+            @test basename.(fs.pattern_matches[]) == ["other.png"] && isempty(fs.pattern_error[])
+            set_frame_pattern!(fs, dir, "*.jpg")
+            @test isempty(fs.pattern_matches[]) && occursin("no files", fs.pattern_error[])
+            @test_throws ArgumentError add_matching!(fs)
+            set_frame_pattern!(fs, joinpath(dir, "missing"), "*.tif")
+            @test occursin("no folder", fs.pattern_error[])
+            set_frame_pattern!(fs, dir, "run_*.tif")
+            @test add_matching!(fs) == 3 && basename.(fs.files[]) == ["run_1.tif", "run_2.tif", "run_10.tif"]
+        end
+        @test infer_pattern(joinpath("d", "A001_1.tif"), joinpath("d", "A001_2.tif")) == ("d", "A*_*.tif")
+        @test infer_pattern("cam1_00001.tif", "cam1_00002.tif")[2] == "cam1_*.tif"
+        @test infer_pattern("run_0001_a.tif", "run_0001_b.tif")[2] == "run_*_*.tif"
+        @test infer_pattern("x.tif", "longer.tif")[2] == "*.tif"
+    end
+
+    @testset "correlation probe on Passes; ruler image" begin
+        wf = PlanarWorkflow(; files = frames)
+        set_step!(wf, :passes)
+        pp = wf.prepare.preview
+        @test passes_probe_available(wf)
+        @test canvas_click!(wf, 64.0, 64.0)
+        @test pp.probe[] !== nothing && pp.probe_window[] == last(wf.passes.passes[]).window_size[1]
+        @test pp.probe_result[] !== nothing
+        @test canvas_alt_click!(wf) && pp.probe[] === nothing
+        set_mode!(wf.passes, :ptv)
+        @test !passes_probe_available(wf) && !canvas_click!(wf, 64.0, 64.0)
+        # the scale measured on a separate ruler image
+        set_step!(wf, :prepare); set_prepare_page!(wf, :scale)
+        ruler = zeros(50, 80)
+        load_ruler!(wf, ruler)
+        @test wf.prepare.ruler[] == Float32.(ruler) && wf.prepare.ruler_name[] == "image"
+        canvas_click!(wf, 10.0, 10.0); canvas_click!(wf, 70.0, 10.0)
+        @test edit_scale!(wf, :separation, "30") && wf.scale[].pixel_size ≈ 0.5
+        clear_ruler!(wf)
+        @test wf.prepare.ruler[] === nothing && isempty(wf.prepare.scale[].points[])
+        @test wf.scale[].pixel_size ≈ 0.5                       # the measured scale stays
+    end
+
     @testset "pair bar: representative pair and shown result" begin
         wf = PlanarWorkflow(; files = frames)
         @test pair_position(wf) == (1, 3)

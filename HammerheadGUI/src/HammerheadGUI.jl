@@ -53,7 +53,11 @@ export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        vector_data, auto_lengthscale, selection_point,
        trajectory_points, trajectory_gap_count,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits,
-       current_field_values, set_tool!, clear_tool!, tool_summary, profile_series
+       current_field_values, set_tool!, clear_tool!, tool_summary, profile_series,
+       stored_result, has_scale, set_physical_units!, set_include_flagged!, set_revalidation!,
+       explorer_fields, DIVERGING_FIELDS, is_diverging, image_extent, color_scale_mode,
+       set_color_scale_mode!, set_color_percentiles!, tool_point_near, move_tool_point!,
+       delete_tool_point!, revalidation_settings, edit_revalidation!
 export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, set_raster!, has_mask, save_mask, status_text
@@ -69,6 +73,7 @@ export ScaleTool, clear_points!, undo_point!, set_separation!, pixel_distance,
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors, plane_residuals,
        plane_summary, fit_summary, selfcal_summary, build_dewarpers, set_dewarpers!
 export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair,
+       matching_files, set_frame_pattern!, add_matching!, infer_pattern,
        pair_images, shown_image, frames_problem, frames_summary, frame_size, pair_loading
 export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type!,
        load_passes!, set_pass!, set_option!, add_pass!, remove_pass!, pass_rows,
@@ -79,11 +84,13 @@ export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
        cancel_run!, run_eta, run_progress
 export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
        canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
-       set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note
+       set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note,
+       load_ruler!, clear_ruler!, passes_probe_available
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
-       pair_position, go_to_pair!, step_pair!,
+       pair_position, go_to_pair!, step_pair!, save_run_results!, results_in_memory,
+       switch_frame!,
        TRACKING_TEST_FRAMES
 export StereoCalibration, CALIBRATION_OPTIONS, add_plate!, remove_plate!, set_plate_z!,
        clear_plates!, detect_options, set_calibration_option!, edit_calibration_option!,
@@ -98,7 +105,7 @@ end # module Controllers
 
 using .Controllers
 
-export ResultExplorer, result_explorer, result_explorer!,
+export ResultExplorer, result_explorer, result_explorer!, set_view_mode!, VIEW_MODES,
        nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, set_field!,
        select_nearest!, clear_selection!, describe_selection,

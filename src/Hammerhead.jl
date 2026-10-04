@@ -18,7 +18,7 @@ export PIVParameters, PIVResult, run_piv, multipass_parameters, effort_schedule,
 export benchmark_piv_configurations
 export PhysicalScale, physical, with_scale
 export load_image, image_pairs, save_results, load_results, run_piv_sequence, frame_index_strings
-export ResultFile
+export ResultFile, load_sources
 export PreprocessStep, PIVRecipe, save_recipe, load_recipe, apply_recipe
 export recipe_preprocess, recipe_diff
 export ROI, AbstractFrameSource, FrameSource, FrameRef, FramePair, TIFFStack
@@ -46,7 +46,7 @@ export Trajectory, TrackingResult, track_particles, trajectory_velocities
 export calculate_peak_ratio, calculate_correlation_moment, universal_outlier_detection
 export PIVValidator, LocalValidator, NeighborhoodValidator
 export PeakRatioValidator, CorrelationMomentValidator, VelocityMagnitudeValidator, UniversalOutlierValidator
-export validate_vectors!, apply_validator!
+export validate_vectors!, apply_validator!, replace_vectors!
 export plot_vector_field, plot_vector_field!
 export compute_background, subtract_background, intensity_cap, highpass_filter, clahe
 export subtract_background!, intensity_cap!, highpass_filter!, clahe!

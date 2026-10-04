@@ -69,6 +69,23 @@ StepPage {
         Layout.fillWidth: true
     }
 
+    RowLayout {
+        visible: app.resultsInMemory
+        spacing: 8
+        Button {
+            text: app.outputPath !== "" ? "Save results to the output file" : "Save results…"
+            onClicked: app.outputPath !== "" ? Julia.hh_save_run_results("") : saveResultsDialog.open()
+            ToolTip.visible: hovered
+            ToolTip.text: "Write the results kept in memory, with their settings, without running again"
+        }
+        Label {
+            text: "The last run's results are in memory only."
+            opacity: 0.75
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+    }
+
     ProgressBar {
         Layout.fillWidth: true
         from: 0
@@ -84,6 +101,14 @@ StepPage {
         Layout.fillWidth: true
     }
 
+    FileDialog {
+        id: saveResultsDialog
+        title: "Save results"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "jld2"
+        nameFilters: ["Results (*.jld2)"]
+        onAccepted: Julia.hh_save_run_results(selectedFile.toString())
+    }
     FileDialog {
         id: outputDialog
         title: "Results file"

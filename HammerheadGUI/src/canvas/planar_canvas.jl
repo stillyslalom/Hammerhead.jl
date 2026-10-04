@@ -103,7 +103,7 @@ function planar_canvas(wf::PlanarWorkflow)
     fs, ps = wf.frames, wf.prepare
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loaded,
-          wf.step, ps.page, ps.show_processed, pp.processed)
+          wf.step, ps.page, ps.show_processed, pp.processed, ps.ruler)
     onany((_...) -> _draw_geometry!(c, wf), wf.mask, wf.roi)
     onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes, wf.passes.mode,
           wf.particles.predictor, fs.files, fs.pair, wf.roi)
@@ -163,6 +163,33 @@ function _register_workflow_gestures!(ax::Axis, fig::Figure, wf::AbstractWorkflo
         key === nothing && return Consume(false)
         return Consume(_gesture(() -> canvas_key!(wf, key), wf))
     end
+    return ax
+end
+
+"""
+View modes of the window's viewers, chosen in the viewer toolbar: `:edit`
+(clicks work on the open step — probe, mask, profile …; left-drag zooms to a
+box, right-drag pans), `:zoom` (drag a box to zoom; clicks do not edit), and
+`:pan` (left-drag pans).
+"""
+const VIEW_MODES = (:edit, :zoom, :pan)
+
+"""
+    set_view_mode!(ax::Axis, mode::Symbol, gesture::Symbol)
+
+Apply a [`VIEW_MODES`](@ref) mode to a viewer axis whose click gestures are
+the interaction named `gesture`.
+"""
+function set_view_mode!(ax::Axis, mode::Symbol, gesture::Symbol)
+    mode in VIEW_MODES || throw(ArgumentError("view mode must be one of $(VIEW_MODES), got :$mode"))
+    if mode === :pan
+        deactivate_interaction!(ax, :rectanglezoom)
+        ax.panbutton = Mouse.left
+    else
+        activate_interaction!(ax, :rectanglezoom)
+        ax.panbutton = Mouse.right
+    end
+    mode === :edit ? activate_interaction!(ax, gesture) : deactivate_interaction!(ax, gesture)
     return ax
 end
 
@@ -228,6 +255,7 @@ function _canvas_image(wf::PlanarWorkflow)
         img = fs.shown[] === :a ? pp.processed[] : pp.processed2[]
         img === nothing || return img
     end
+    wf.step[] === :prepare && ps.page[] === :scale && ps.ruler[] !== nothing && return ps.ruler[]
     return try
         shown_image(fs)
     catch
@@ -291,7 +319,8 @@ function _draw_prepare!(c::PlanarCanvas, wf::PlanarWorkflow)
         _update!(c.scale_label, _NOPOINT; text = [""])
     end
 
-    _draw_probe!(c.probe_box, page === :preprocess ? ps.preview : nothing, c.frame_size[])
+    probe = page === :preprocess || (wf.step[] === :passes && passes_probe_available(wf))
+    _draw_probe!(c.probe_box, probe ? ps.preview : nothing, c.frame_size[])
     c.dirty[] = true
     return c
 end

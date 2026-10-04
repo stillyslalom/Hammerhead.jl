@@ -45,6 +45,7 @@ StepPage {
                     Layout.leftMargin: 4
                 }
             }
+            FramePatternRow { camera: parent.camera }
             Label {
                 text: app["camera" + camera + "Problem"]
                 visible: text !== "" && app["camera" + camera + "Frames"] > 0

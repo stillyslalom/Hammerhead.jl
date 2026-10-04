@@ -112,9 +112,20 @@ ApplicationWindow {
             SplitView.minimumWidth: 400
             MakieArea {
                 id: mainCanvas
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: mainTools.left
                 scene: app.main
                 visible: !app.popped
+            }
+            ViewerToolbar {
+                id: mainTools
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                visible: !app.popped
+                onSaveView: saveViewDialog.open()
             }
             Label {
                 anchors.centerIn: parent
@@ -141,8 +152,31 @@ ApplicationWindow {
         }
         MakieArea {
             id: popCanvas
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: popTools.left
             scene: app.pop
+        }
+        ViewerToolbar {
+            id: popTools
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            onSaveView: saveViewDialog.open()
+        }
+    }
+
+    FileDialog {
+        id: saveViewDialog
+        title: "Save the viewer as an image"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        nameFilters: ["PNG image (*.png)"]
+        onAccepted: {
+            const target = selectedFile
+            const canvas = app.popped ? popCanvas : mainCanvas
+            canvas.grabToImage(function (img) { img.saveToFile(target) })
         }
     }
 

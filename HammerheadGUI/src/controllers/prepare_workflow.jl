@@ -365,6 +365,47 @@ background controls.
 """
 background_note(::AbstractWorkflow) = nothing
 
+# ---------------------------------------------------------------- ruler image
+
+"""
+    load_ruler!(wf::AbstractWorkflow, path_or_image)
+    clear_ruler!(wf::AbstractWorkflow)
+
+Measure the pixel size on a separate image (a ruler or target photographed
+at the frames' magnification): the Scale page's viewer shows it and the
+clicked points refer to it. In a window the file loads on a worker.
+`clear_ruler!` returns to the frames. Either drops the measured points.
+"""
+function load_ruler!(wf::AbstractWorkflow, src)
+    ps = wf.prepare
+    name = src isa AbstractString ? basename(src) : "image"
+    job = () -> src isa AbstractString ? load_image(Float32, src) : Float32.(src)
+    ps.preview.runner[](job, function (out)
+        if out.err === nothing
+            st = ps.scale[]
+            st === nothing || isempty(st.points[]) || clear_points!(st)
+            ps.ruler[] = out.value
+            ps.ruler_name[] = name
+            isempty(ps.scale_error[]) || (ps.scale_error[] = "")
+        else
+            ps.scale_error[] = "cannot read the ruler image: " * _errmsg(out.err)
+        end
+        _bump!(ps)
+    end)
+    return wf
+end
+
+function clear_ruler!(wf::AbstractWorkflow)
+    ps = wf.prepare
+    ps.ruler[] === nothing && return wf
+    st = ps.scale[]
+    st === nothing || isempty(st.points[]) || clear_points!(st)
+    ps.ruler[] = nothing
+    ps.ruler_name[] = ""
+    _bump!(ps)
+    return wf
+end
+
 # ---------------------------------------------------------------- page
 
 """
@@ -398,7 +439,9 @@ has no editor). Returns whether the click was used (otherwise the viewer
 keeps it).
 """
 function canvas_click!(wf::AbstractWorkflow, x::Real, y::Real)
-    (wf.step[] === :prepare && isfinite(x) && isfinite(y)) || return false
+    (isfinite(x) && isfinite(y)) || return false
+    wf.step[] === :passes && return _passes_probe!(wf, x, y)
+    wf.step[] === :prepare || return false
     ps = wf.prepare
     page = ps.page[]
     if page === :preprocess
@@ -420,6 +463,11 @@ being drawn, or drop the selection; ROI: drop a pending corner; Scale: drop
 the measured line; Preprocess: remove the probe. Returns whether it was used.
 """
 function canvas_alt_click!(wf::AbstractWorkflow)
+    if wf.step[] === :passes && passes_probe_available(wf)
+        wf.prepare.preview.probe[] === nothing && return false
+        clear_probe!(wf.prepare.preview)
+        return true
+    end
     wf.step[] === :prepare || return false
     ps = wf.prepare
     page = ps.page[]
@@ -451,6 +499,10 @@ point), `:escape` (cancel the polygon, pending corner, line, or probe), or
 `:delete` (delete the selected polygon). Returns whether it was used.
 """
 function canvas_key!(wf::AbstractWorkflow, key::Symbol)
+    if wf.step[] === :passes && key in (:escape, :delete) && wf.prepare.preview.probe[] !== nothing
+        clear_probe!(wf.prepare.preview)
+        return true
+    end
     wf.step[] === :prepare || return false
     ps = wf.prepare
     page = ps.page[]
@@ -484,6 +536,26 @@ function canvas_key!(wf::AbstractWorkflow, key::Symbol)
         return true
     end
     return false
+end
+
+"""
+    passes_probe_available(wf::AbstractWorkflow) -> Bool
+
+Whether a click on the Passes step's viewer places the correlation probe
+(PIV analysis modes, frames loaded).
+"""
+passes_probe_available(wf::AbstractWorkflow) =
+    !_particle_mode(wf.passes.mode[]) && wf.prepare.preview.image[] !== nothing
+
+# On the Passes step a click correlates one window of the final pass's size
+# (the Preprocess page's probe, on the processed pair).
+function _passes_probe!(wf::AbstractWorkflow, x::Real, y::Real)
+    passes_probe_available(wf) || return false
+    pp = wf.prepare.preview
+    w = last(wf.passes.passes[]).window_size[1]
+    w >= 8 && iseven(w) && pp.probe_window[] != w && set_probe_window!(pp, w)
+    click!(pp, x, y)
+    return true
 end
 
 # A frame set's pending load is forgotten (its result would go to a queue
