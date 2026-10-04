@@ -1,5 +1,16 @@
 # Release notes
 
+## Unreleased
+
+### Core
+
+Added:
+
+- `effort_schedule` is exported: it returns the pass schedule behind
+  `effort = :low/:medium/:high` for inspection or as a starting point.
+- `recipe_preprocess(steps)` builds the preprocessing function from a vector
+  of `PreprocessStep`s, so previews apply exactly what `apply_recipe` runs.
+
 ## Hammerhead 0.2.0 and HammerheadGUI 0.2.0 (2026-10-03)
 
 Changes since core v0.1.0 (2026-07-14) and HammerheadGUI v0.1.1 (2026-07-22).

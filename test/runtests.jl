@@ -129,6 +129,7 @@ end
 end
 
 @testset "effort schedules" begin
+    @test Base.isexported(Hammerhead, :effort_schedule)
     low = Hammerhead.effort_schedule(:low)
     medium = Hammerhead.effort_schedule(:medium)
     high = Hammerhead.effort_schedule(:high)

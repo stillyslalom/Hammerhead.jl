@@ -28,6 +28,15 @@ using JLD2
         img = Float32.(pairs[1][1])
         @test recipe_preprocess(recipe)(img) ≈ highpass_filter(subtract_background(img, background); sigma = 4)
         @test recipe_preprocess(PIVRecipe(passes)) === nothing
+        # the steps form applies exactly the recipe's preprocessing, on a snapshot
+        @test recipe_preprocess(recipe.preprocessing)(img) == recipe_preprocess(recipe)(img)
+        @test recipe_preprocess(PreprocessStep[]) === nothing
+        editable = [PreprocessStep(:highpass_filter; sigma = 2)]
+        preview = recipe_preprocess(editable)
+        editable[1].options["sigma"] = 8.0
+        original = copy(img)
+        @test preview(img) == highpass_filter(img; sigma = 2)
+        @test img == original
     end
 
     @testset "save and load" begin

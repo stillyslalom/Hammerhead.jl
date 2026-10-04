@@ -85,7 +85,7 @@ with [`load_recipe`](@ref), and run on any recording with
 [`apply_recipe`](@ref).
 
 - `passes`: one [`PIVParameters`](@ref) or a pass schedule, for example from
-  [`multipass_parameters`](@ref) or `Hammerhead.effort_schedule(:medium)`.
+  [`multipass_parameters`](@ref) or [`effort_schedule`](@ref).
 - `preprocessing`: ordered [`PreprocessStep`](@ref)s applied to every frame.
 - `mask`: a static Bool mask the size of the full image (`true` = excluded).
   For stereo, it is on the dewarped grid.
@@ -135,14 +135,23 @@ Base.:(==)(a::PIVRecipe, b::PIVRecipe) = _recipe_data(a) == _recipe_data(b)
 
 """
     recipe_preprocess(recipe) -> function or nothing
+    recipe_preprocess(steps) -> function or nothing
 
-Return the recipe's preprocessing as a single-image function, suitable for
-the `preprocess` keyword of the sequence drivers, or `nothing` when the
-recipe has no preprocessing steps.
+Return the preprocessing of a recipe, or of an ordered vector of
+[`PreprocessStep`](@ref)s, as a single-image function suitable for the
+`preprocess` keyword of the sequence drivers. Return `nothing` when there are
+no steps. The function returns a new image and leaves its input unchanged.
+
+Use the `steps` form to preview preprocessing before building a recipe: it
+applies exactly what [`apply_recipe`](@ref) will. The steps are copied, so
+later changes to `steps` do not affect the returned function.
 """
-function recipe_preprocess(recipe::PIVRecipe)
-    isempty(recipe.preprocessing) && return nothing
-    steps = recipe.preprocessing
+recipe_preprocess(recipe::PIVRecipe) = _preprocess_function(recipe.preprocessing)
+recipe_preprocess(steps::AbstractVector{PreprocessStep}) =
+    _preprocess_function(deepcopy(collect(steps)))
+
+function _preprocess_function(steps::Vector{PreprocessStep})
+    isempty(steps) && return nothing
     return image -> foldl(_apply_step, steps; init = image)
 end
 

@@ -70,6 +70,8 @@ For example, compare 32 px and 16 px on the same pair: look at rejected
 vectors and a profile across the feature of interest. Choose 16 px only if
 it adds useful spatial detail without losing reliable coverage.
 
+To see what a preset runs, call [`effort_schedule`](@ref) with the same
+arguments; it returns the pass vector, which you can edit and pass explicitly.
 Use an explicit `multipass_parameters(...)` schedule when you need per-pass
 control beyond those overrides. `effort` and an explicit `PIVParameters` or
 pass vector cannot be combined in one call.

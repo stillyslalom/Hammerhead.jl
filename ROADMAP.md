@@ -100,21 +100,20 @@ window to open next and carry settings between them by hand.
 
 ### Framework choice
 
-GLMakie is the shipping shell. A Qt 6 / QML.jl + QMLMakie prototype was built
-and removed (2026-10-03): embedded GL teardown failed on Windows, and
-subprocess ownership for responsiveness cost more than the GUI itself. The
-controllers transferred unchanged.
+**Decided 2026-10-03: Qt Quick via QML.jl + QMLMakie**, with the Makie
+canvas embedded in the main window and an optional pop-out window. On-screen
+Windows probes with a 2048² image and 16k vectors measured ~120 fps embedded,
+both idle and under background compute. They showed native window decorations
+and FluentWinUI3 controls. GTK4 + Gtk4Makie also worked, at ~62 fps, but looks
+like GNOME on Windows. The earlier Codex QML prototype ran Qt offscreen, which
+has no GL context on Windows, so its embedding failure was an artifact. The
+real Qt issues and their workarounds (a teardown crash after a pop-out, a
+render-thread `sleep` in QMLMakie, a missing style DLL, callbacks that must not
+block) are in [GUI_REDESIGN.md](GUI_REDESIGN.md). That file is the
+implementation plan.
 
-| Candidate | Fit | Main questions |
-|---|---|---|
-| **GLMakie (current)** | Released, in-process, reuses all views. | Form/table ergonomics, keyboard focus, window management. |
-| **GTK4 via Gtk4.jl + Gtk4Makie** | Desktop shell retaining GLMakie plots. | Embedded `GtkMakieWidget` is experimental. |
-| **Bonito + WGLMakie** | Browser-based; suits remote access. | Local file workflows, large-image transfer, offline packaging. |
-
-- [ ] Build the redesign in GLMakie first. Evaluate another shell only if a
-  specific requirement (forms, keyboard navigation, HiDPI) blocks it, by
-  porting the smallest end-to-end slice and comparing look, startup time, and
-  responsiveness.
+- [ ] Report the teardown crash to QML.jl, and the `disconnect_screen` sleep
+  to QMLMakie, with the captured backtrace.
 - [ ] Validate the shell on Windows, macOS, and Linux (startup, memory,
   input/HiDPI, responsiveness during CPU/GPU work).
 - [ ] Evaluate a PackageCompiler desktop bundle (relocatable assets, installer

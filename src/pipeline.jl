@@ -152,7 +152,9 @@ end
 """
     effort_schedule(level::Symbol; ensemble = false, image_size = nothing, kwargs...) -> Vector{PIVParameters}
 
-Build the schedule used by `effort = :low`, `:medium`, or `:high`. Keyword
+Build the pass schedule used by `effort = :low`, `:medium`, or `:high`, for
+inspecting a preset or using it as the starting point for a custom schedule
+or a [`PIVRecipe`](@ref). Keyword
 arguments matching [`PIVParameters`](@ref) fields override the preset;
 `window_size` rescales the pyramid so the final pass has that size,
 `search_area_size` likewise sets the final search size and rescales its pyramid,
