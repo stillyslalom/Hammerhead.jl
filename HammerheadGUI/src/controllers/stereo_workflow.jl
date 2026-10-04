@@ -399,6 +399,8 @@ _test_label(wf::StereoWorkflow) = wf.frames1.pair[]
 
 function _inputs_stale(wf::StereoWorkflow)
     wf.passes.mode[] === :sequence && wf.test.pair[] != wf.frames1.pair[] && return true
+    (_test_pairs_changed(wf, 1, wf.frames1) || _test_pairs_changed(wf, 2, wf.frames2)) &&
+        return true
     inp, dws = wf.test.inputs[], wf.calibration.dewarpers[]
     return inp === nothing || dws === nothing || length(inp) != 4 ||
            inp[3] !== dws[1] || inp[4] !== dws[2]

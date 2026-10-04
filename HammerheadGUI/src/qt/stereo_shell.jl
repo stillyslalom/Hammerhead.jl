@@ -252,7 +252,10 @@ fit; `settings` opens a recipe or results file. Calibration inputs are
 session state: they are not saved with the settings.
 
 The call blocks while the window is open, as [`planar_window`](@ref) does;
-start Julia with several threads (`julia -t auto`).
+start Julia with several threads (`julia -t auto`). Like `planar_window`, it
+throws an `ArgumentError` when this Julia session already has a GLMakie
+screen (e.g. a [`calibration_review`](@ref) window): review calibrations in
+the Calibration step, or in a separate Julia session.
 """
 function stereo_window(wf::StereoWorkflow = StereoWorkflow(); files1 = nothing, files2 = nothing,
                        settings = nothing, dewarpers = nothing)

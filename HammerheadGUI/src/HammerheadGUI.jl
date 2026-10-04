@@ -73,7 +73,7 @@ export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type
        load_passes!, set_pass!, set_option!, add_pass!, remove_pass!, pass_rows,
        option_value, passes_summary
 export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
-       cancel_run!, run_eta
+       cancel_run!, run_eta, run_progress
 export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
        canvas_key!, edit_step_option!, estimate_background!, edit_roi!, edit_scale!,
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note

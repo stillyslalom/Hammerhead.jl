@@ -78,7 +78,13 @@ end
 
 workflow_steps(::PlanarWorkflow) = WORKFLOW_STEPS
 prepare_pages(::PlanarWorkflow) = PREPARE_PAGES
-workflow_problem(wf::PlanarWorkflow) = frames_problem(wf.frames)
+function workflow_problem(wf::PlanarWorkflow)
+    msg = frames_problem(wf.frames)
+    msg === nothing || return msg
+    wf.passes.mode[] === :ensemble && wf.roi[] !== nothing &&
+        return "an ensemble analyzes whole frames: clear the region (Prepare › Region) or use a mask"
+    return nothing
+end
 
 # Presets are sized to the analyzed region: the ROI, else the frame.
 function _sync_analysis_size!(wf::PlanarWorkflow)
@@ -106,7 +112,8 @@ _test_inputs(wf::PlanarWorkflow) = (_test_pairs(wf.frames, wf.passes.mode[]),)
 _run_inputs(wf::PlanarWorkflow) = (frame_pairs(wf.frames),)
 _test_label(wf::PlanarWorkflow) = wf.frames.pair[]
 _inputs_stale(wf::PlanarWorkflow) =
-    wf.passes.mode[] === :sequence && wf.test.pair[] != wf.frames.pair[]
+    (wf.passes.mode[] === :sequence && wf.test.pair[] != wf.frames.pair[]) ||
+    _test_pairs_changed(wf, 1, wf.frames)
 
 function _step_status(wf::PlanarWorkflow, step::Symbol)
     if step === :images

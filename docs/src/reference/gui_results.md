@@ -14,8 +14,9 @@ example, see the [GUI tour](../tutorials/gui_tour.md).
 browses a completed results file while holding one display result in memory.
 Only the current frame's derived fields are retained; a failed read sets
 `status` and keeps the prior frame on screen. Field labels carry the result's
-units: with a `PhysicalScale`, displacement fields read in length per time
-(for example `|displacement| (mm/s)`), otherwise in the measured units (pixels
+units: with a `PhysicalScale`, displacement fields are velocities and read in
+length per time (for example `|velocity| (mm/s)`), otherwise they are
+displacements in the measured units (for example `|displacement| (px)`, pixels
 per frame for planar PIV).
 
 The tools (`set_tool!`: `:inspect`, `:profile`, `:circulation`) take their

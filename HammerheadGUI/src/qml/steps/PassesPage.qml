@@ -93,6 +93,9 @@ StepPage {
                 Layout.column: 4
                 Layout.preferredWidth: 100
                 from: 1; to: 10; editable: true
+                enabled: app.mode !== "ensemble"
+                ToolTip.visible: hovered && app.mode === "ensemble"
+                ToolTip.text: "An ensemble runs each pass once; add a pass to repeat a window size"
                 value: model.iterations
                 onValueModified: Julia.hh_set_pass(model.number, "iterations", value)
             }
@@ -177,6 +180,16 @@ StepPage {
                     { text: "Ensemble (one mean field)", value: "ensemble" }]
             currentIndex: app.mode === "ensemble" ? 1 : 0
             onActivated: Julia.hh_set_mode(currentValue)
+        }
+        Item { width: 1; height: 1; visible: app.mode === "ensemble" }
+        Label {
+            text: "Sums each window's correlation over all pairs and finds one peak: for " +
+                  "steady flow whose single pairs are too noisy. Each pass runs once " +
+                  "(repeats are ignored; add a pass to repeat a window size)."
+            visible: app.mode === "ensemble"
+            opacity: 0.75
+            wrapMode: Text.WordWrap
+            Layout.preferredWidth: 300
         }
         Label { text: "Precision" }
         ComboBox {

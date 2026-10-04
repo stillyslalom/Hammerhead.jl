@@ -38,6 +38,17 @@ using Statistics
         @test isequal(e_ser.u, e_thr.u)
         @test isequal(e_ser.peak_ratio, e_thr.peak_ratio)
 
+        # A progress function counts every pair of every pass; throwing from
+        # it aborts the run.
+        seen = Tuple{Int,Int}[]
+        counted = run_piv_ensemble(pairs[1:3], multipass_parameters([64, 32]);
+                                   progress = (i, n) -> push!(seen, (i, n)))
+        @test seen == [(i, 6) for i in 1:6]
+        @test isequal(counted.u, run_piv_ensemble(pairs[1:3], multipass_parameters([64, 32]);
+                                                  progress = false).u)
+        @test_throws ErrorException run_piv_ensemble(pairs[1:3], params;
+                                                     progress = (i, n) -> i == 2 && error("stop"))
+
         # Multi-pass ensemble with a mask: masked windows stay NaN, and the
         # symmetric deformation cancels the circular-correlation bias.
         mask = falses(n, n)

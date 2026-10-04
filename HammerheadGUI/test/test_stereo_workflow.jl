@@ -249,6 +249,34 @@
             @test occursin("cancelled after", sw.run.status[]) && length(sw.run.completed[]) < 3
             @test nframes(sw.explorer[]) == length(sw.run.completed[])
             @test length(load_results(joinpath(dir, "cancel.jld2"))) == length(sw.run.completed[])
+
+            # an ensemble: one pooled stereo result, saved with its recipe
+            set_mode!(sw.passes, :ensemble)
+            npass = length(sw.passes.passes[])
+            empty!(sw.run.completed.listeners)
+            texts = String[]
+            on(_ -> push!(texts, run_progress(sw.run)), sw.run.progress)
+            ens = joinpath(dir, "ensemble.jld2")
+            sw.run.output_path[] = ens
+            start_run!(sw; spawn = false)
+            @test sw.run.status[] == "done: ensemble of 3 pairs → ensemble.jld2"
+            @test sw.run.progress[] == (6npass, 6npass)          # both cameras
+            @test "ensemble of 3 pairs · camera 2 · pass 1 of $npass · 1 of 3 pairs" in texts
+            @test sw.results_path[] == ens && nframes(sw.explorer[]) == 1
+            saved = only(load_results(ens))
+            @test saved isa StereoPIVResult && load_recipe(ens) == workflow_recipe(sw)
+            direct = apply_recipe(workflow_recipe(sw), frame_pairs(sw.frames1),
+                                  frame_pairs(sw.frames2), dws...; progress = false)
+            @test isequal(saved.w, direct.w)
+            good = .!(saved.mask .| saved.outliers)
+            @test median(saved.u[good]) ≈ disp[1] atol = 0.1
+
+            empty!(sw.run.progress.listeners)
+            on(p -> p[1] == 2 && cancel_run!(sw), sw.run.progress)
+            sw.run.output_path[] = joinpath(dir, "ensemble_cancel.jld2")
+            start_run!(sw; spawn = false)
+            @test sw.run.status[] == "cancelled; an ensemble keeps no partial result"
+            @test isempty(sw.run.completed[]) && !isfile(joinpath(dir, "ensemble_cancel.jld2"))
         end
     end
 

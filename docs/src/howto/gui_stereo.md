@@ -179,7 +179,8 @@ same passes, and their two-component fields combine into three components
 at every node. **Test pair** runs the call the batch will run, and the
 viewer shows the in-plane vectors on the shown camera's dewarped frame.
 **Run** writes one stereo result per pair, with the settings, as each pair
-finishes.
+finishes; an ensemble writes one pooled stereo result when both cameras'
+correlations have been summed over every pair.
 
 ![Test pair: the summary and the in-plane vectors on camera 1's dewarped frame.](../assets/gui_window/stereo_test_pair.png)
 
@@ -224,4 +225,6 @@ The window then starts at a calibrated rig: self-calibrate on the
 recording's frames, or go straight to **Prepare**. To review one camera's
 fit first, run `calibration_review(cr1)` in a separate Julia session: it is
 a GLMakie window, and some graphics drivers fail when GLMakie and Qt windows
-share a process.
+share a process. Once a GLMakie window exists, `stereo_window` throws an
+error asking you to restart Julia; `calibration_review`, `selfcal_review`,
+and `result_explorer` warn when a workflow window was already open.

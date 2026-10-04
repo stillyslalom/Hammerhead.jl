@@ -22,12 +22,19 @@ colored particle scatter with optional displacement arrows, and a
 `TrackingResult` as trajectory polylines colored by mean speed (breaks at
 frame gaps). A frame slider scrubs a sequence, and a click-to-inspect panel
 summarizes the selected item in physical units when a scale is attached.
+
+The figure displays in a GLMakie window, which cannot share a Julia session
+with the Qt workflow windows ([`planar_window`](@ref),
+[`stereo_window`](@ref)): once a GLMakie screen exists they refuse to open,
+and after a Qt window was opened this function warns. Browse a run's
+results in the window's Results step instead.
 """
 result_explorer(source; kwargs...) = result_explorer(ResultExplorer(source); kwargs...)
 result_explorer(path::AbstractString; lazy::Bool = false, kwargs...) =
     result_explorer(ResultExplorer(path; lazy); kwargs...)
 
 function result_explorer(ex::ResultExplorer; size = (1000, 700))
+    _warn_if_qt_opened("result_explorer")
     fig = Figure(; size)
     result_explorer!(fig[1, 1], ex)
     return fig
@@ -211,8 +218,9 @@ function result_explorer!(target, ex::ResultExplorer)
           ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
 
     function refresh_menu!()
-        fields = available_fields(current_result(ex))
-        opts = [(field_name(f), f) for f in fields]
+        res = current_result(ex)
+        fields = available_fields(res)
+        opts = [(field_name(res, f), f) for f in fields]
         opts == menu.options[] || (menu.options[] = opts)
         i = something(findfirst(==(ex.field[]), fields), 1)
         i == menu.i_selected[] || (menu.i_selected[] = i)

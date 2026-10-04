@@ -197,6 +197,29 @@ end
 # a separate Julia process: on some drivers (seen with AMD on Windows) a Qt GL
 # context crashes once GLFW/GLMakie has created a context in the same process,
 # which the offscreen tests above do.
+@testset "GLMakie screens and Qt windows do not share a process" begin
+    @test !isempty(colorbuffer(Figure(); px_per_unit = 1))   # a GLFW screen exists
+    @test HammerheadGUI._glfw_screen_count() > 0
+    wf = PlanarWorkflow()
+    err = try
+        planar_window(wf)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("Restart Julia", err.msg)
+    @test !wf.spawn[] && HammerheadGUI._SHELL[] === nothing      # nothing was touched
+    @test_throws ArgumentError stereo_window(StereoWorkflow())
+    # the GLMakie views warn once a Qt window was opened in the session
+    opened = HammerheadGUI._QT_OPENED[]
+    HammerheadGUI._QT_OPENED[] = true
+    try
+        @test_logs (:warn, r"Qt workflow window") result_explorer(r_plain)
+    finally
+        HammerheadGUI._QT_OPENED[] = opened
+    end
+end
+
 if get(ENV, "HAMMERHEADGUI_QT_TESTS", "") == "true"
     for (name, file) in (("planar_window", "qt_window.jl"), ("stereo_window", "qt_stereo_window.jl"))
         @testset "$name (Qt, separate process)" begin

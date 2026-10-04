@@ -147,7 +147,7 @@ end
                 Hammerhead.ensemble_pass(pairs, p, pred; threaded = false,
                     mask = nothing, mask_threshold = 0.5, preprocess = nothing,
                     image_type = T, force_replace = false,
-                    meter = Hammerhead.Progress(length(pairs); enabled = false),
+                    tick = () -> nothing,
                     workspace = piv_workspace(; backend), backend = Hammerhead._resolve_backend(backend))
             end
             empty = analyze([(Z, Z), (Z, Z)])

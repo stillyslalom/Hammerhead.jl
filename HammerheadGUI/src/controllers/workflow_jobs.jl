@@ -170,8 +170,13 @@ end
 
 Batch-run state: `output_path` (empty keeps results in memory), `running`,
 `progress` `(done, total)`, `status`, `completed` (finished results, in
-order), and `started` (`time()` at start). Cancelling keeps finished pairs,
-in memory and in the output file.
+order), and `started` (`time()` at start). `mode` is the running (or last)
+batch's recipe mode, `pairs` its pair count, and `cameras` 1 (planar) or 2
+(stereo). A `:sequence` batch counts `progress` in pairs; an `:ensemble`
+batch counts pair correlations accumulated over every pass (and both cameras
+for stereo) and finishes with one result. Cancelling a sequence keeps
+finished pairs, in memory and in the output file; cancelling an ensemble
+stops after the pair in flight and keeps no result.
 """
 struct RunState
     output_path::Observable{String}
@@ -181,22 +186,27 @@ struct RunState
     completed::Observable{Vector{Any}}
     started::Observable{Float64}
     finished_output::Observable{Union{Nothing,String}}
+    mode::Observable{Symbol}
+    pairs::Observable{Int}
+    cameras::Observable{Int}
     cancel::Threads.Atomic{Bool}
 end
 
 RunState(; output_path::AbstractString = "") =
     RunState(Observable(String(output_path)), Observable(false), Observable((0, 0)),
              Observable(""), Observable(Any[]), Observable(0.0),
-             Observable{Union{Nothing,String}}(nothing), Threads.Atomic{Bool}(false))
+             Observable{Union{Nothing,String}}(nothing), Observable(:sequence), Observable(0),
+             Observable(1), Threads.Atomic{Bool}(false))
 
 """
     start_run!(rs::RunState, recipe, pairs; deliver = f -> f(), spawn = true)
     start_run!(rs::RunState, recipe, inputs::Tuple; deliver, spawn)
 
 Run `apply_recipe(recipe, pairs)` as a batch, writing to `output_path` when
-set. Each finished pair is appended to `completed` as it arrives. The tuple
-form runs `apply_recipe(recipe, inputs...)`, e.g. the stereo
-`(pairs1, pairs2, dw1, dw2)`.
+set (the file also stores the recipe). A `:sequence` recipe appends each
+finished pair to `completed` as it arrives; an `:ensemble` recipe appends its
+one pooled result when the run finishes. The tuple form runs
+`apply_recipe(recipe, inputs...)`, e.g. the stereo `(pairs1, pairs2, dw1, dw2)`.
 """
 start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector; kwargs...) =
     start_run!(rs, recipe, (pairs,); kwargs...)
@@ -204,14 +214,17 @@ start_run!(rs::RunState, recipe::PIVRecipe, pairs::AbstractVector; kwargs...) =
 function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
                     deliver = f -> f(), spawn::Bool = true)
     rs.running[] && return rs
-    recipe.mode === :sequence ||
-        (rs.status[] = "this window runs per-pair sequences; ensemble runs are not available yet"; return rs)
     pairs = first(inputs)
     isempty(pairs) && (rs.status[] = "no pairs to process"; return rs)
     output = isempty(rs.output_path[]) ? nothing : rs.output_path[]
+    ensemble = recipe.mode === :ensemble
+    cameras = length(inputs) > 1 ? 2 : 1
     rs.cancel[] = false
     rs.completed[] = Any[]
-    rs.progress[] = (0, length(pairs))
+    rs.mode[] = recipe.mode
+    rs.pairs[] = length(pairs)
+    rs.cameras[] = cameras
+    rs.progress[] = (0, ensemble ? length(recipe.passes) * length(pairs) * cameras : length(pairs))
     rs.started[] = time()
     rs.finished_output[] = nothing
     rs.status[] = "running…"
@@ -221,9 +234,13 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
             deliver(() -> (rs.progress[] = (i, n)))
             rs.cancel[] && throw(BatchCancelled())
         end
-        on_result = (i, r) -> deliver(() -> (push!(rs.completed[], r); notify(rs.completed)))
+        keep = r -> deliver(() -> (push!(rs.completed[], r); notify(rs.completed)))
         outcome = try
-            apply_recipe(recipe, inputs...; output, progress, on_result)
+            if ensemble
+                keep(apply_recipe(recipe, inputs...; output, progress))
+            else
+                apply_recipe(recipe, inputs...; output, progress, on_result = (i, r) -> keep(r))
+            end
             :done
         catch err
             err isa BatchCancelled ? :cancelled : err
@@ -237,18 +254,45 @@ end
 function _finish_run!(rs::RunState, output, outcome)
     done, total = rs.progress[]
     n = length(rs.completed[])
-    rs.status[] = outcome === :done ? "done: $n pairs" * (output === nothing ? "" : " → $(basename(output))") :
-                  outcome === :cancelled ? "cancelled after $n of $total pairs" :
-                  "failed: " * _errmsg(outcome)
+    to = output === nothing ? "" : " → $(basename(output))"
+    rs.status[] = if outcome === :done
+        rs.mode[] === :ensemble ? "done: ensemble of $(rs.pairs[]) pairs" * to : "done: $n pairs" * to
+    elseif outcome === :cancelled
+        rs.mode[] === :ensemble ? "cancelled; an ensemble keeps no partial result" :
+                                  "cancelled after $n of $total pairs"
+    else
+        "failed: " * _errmsg(outcome)
+    end
     rs.finished_output[] = output === nothing || n == 0 ? nothing : output
     rs.running[] = false
     return rs
 end
 
 """
+    run_progress(rs::RunState) -> String
+
+The batch's progress in words: `"3 of 10 pairs"` for a sequence;
+`"ensemble of 10 pairs · pass 2 of 3 · 4 of 10 pairs"` for an ensemble (with
+the camera for stereo).
+"""
+function run_progress(rs::RunState)
+    done, total = rs.progress[]
+    rs.mode[] === :ensemble || return "$done of $total pairs"
+    n = rs.pairs[]
+    (n > 0 && total >= n) || return "ensemble of $n pairs"
+    rounds = total ÷ n
+    r = min(done ÷ n + 1, rounds)
+    passes = max(rounds ÷ rs.cameras[], 1)
+    txt = "ensemble of $n pairs · "
+    rs.cameras[] > 1 && (txt *= "camera $((r - 1) ÷ passes + 1) · ")
+    return txt * "pass $((r - 1) % passes + 1) of $passes · $(done - (r - 1) * n) of $n pairs"
+end
+
+"""
     cancel_run!(rs::RunState)
 
-Stop after the pair in flight; finished pairs are kept.
+Stop after the pair in flight. A sequence keeps its finished pairs; an
+ensemble keeps no result.
 """
 cancel_run!(rs::RunState) = (rs.cancel[] = true; rs)
 

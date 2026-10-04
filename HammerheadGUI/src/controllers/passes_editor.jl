@@ -237,14 +237,16 @@ end
 """
     passes_summary(pe::PassesEditor) -> String
 
-One line, e.g. `"128→64→32 px ×2 · medium preset"`.
+One line, e.g. `"128→64→32 px ×2 · medium preset"`. An ensemble runs each
+pass once (the core ensemble driver ignores repeats), so its summary shows
+no repeat counts.
 """
 function passes_summary(pe::PassesEditor)
     ps = pe.passes[]
     parts = String[]
     for p in ps
         s = string(p.window_size[1])
-        p.max_iterations > 1 && (s *= " ×$(p.max_iterations)")
+        p.max_iterations > 1 && pe.mode[] === :sequence && (s *= " ×$(p.max_iterations)")
         push!(parts, s)
     end
     txt = join(parts, "→") * " px"

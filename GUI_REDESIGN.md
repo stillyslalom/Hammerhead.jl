@@ -1,8 +1,8 @@
 # HammerheadGUI redesign: workflow-first Qt Quick application
 
 Plan for ROADMAP §2. Status: framework chosen (Qt Quick via QML.jl + QMLMakie,
-2026-10-03); slices 0–2 done (planar window with Prepare and Results tools),
-stereo window next. Delete this file once the redesign has
+2026-10-03); slices 0–3 done (planar and stereo windows) and slice 4's
+ensemble runs done; the lab-user session is next. Delete this file once the redesign has
 landed and CLAUDE.md describes the result.
 
 ## Goal
@@ -137,6 +137,18 @@ Measured warm on this machine: `using GLMakie` 4.7 s, `using QML, QMLMakie`
 - A PackageCompiler app bundle stays the ROADMAP §2 evaluation item for
   near-instant start.
 
+Measured 2026-10-04 (slice 4, warm, `julia -t 4` launch to the first
+`hh_tick`, a window opened on four 256² frames): before, planar 20.6 s and
+stereo 21.7 s (10.8 s package load; the slice-1 figure was 16.7 s, the
+windows grew since). Of the 10 s after loading, 3.2 s rendered ~220 canvas
+glyphs into Makie's atlas on every start and 4.6 s was compilation. After
+caching the warmed atlas on disk (0.03 s to load) and re-tracing the
+precompile statements over both windows' startup and the Qt test scripts
+(merged with the old file; 650 lines, a trace omits what is already
+precompiled): planar 16.5 s, stereo 16.8 s. The remaining ~4.6 s of
+compilation sits behind CxxWrap/QML methods defined at init and closures,
+which traced statements do not cache.
+
 ## Steps
 
 The full interaction design is in the 2026-10-03 design discussion; summary:
@@ -227,7 +239,21 @@ grid, and self-calibration) and has no ROI.
    cameras/dewarpers; saving a calibration needs a core format first;
    (b) per-camera preprocessing and background subtraction need a core
    `PIVRecipe` change (one preprocessing list serves both cameras today).
-4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
+4. Ensemble mode in both windows ✅ (2026-10-04; overnight, unreviewed);
+   session with a lab user (ROADMAP §2) — open. Run executes `:ensemble`
+   recipes: `apply_recipe` returns one pooled result (saved with its recipe),
+   which Results then shows. Core addition: `run_piv_ensemble` /
+   `run_piv_stereo_ensemble` take a `progress(done, total)` function ticked
+   per pair per pass (stereo counts both cameras), and throwing from it
+   aborts — so the Run page reports "pass k of P · j of N pairs" and Cancel
+   stops after the pair in flight, keeping no result (said beside the
+   button). An ensemble test goes stale when the frames change (not the
+   representative pair); the Passes page disables Repeats for ensembles
+   (the driver runs each pass once); a planar ensemble with an ROI is
+   refused up front. Polish from slices 2–3: the magnitude reads
+   `|velocity|` with a scale attached; Qt windows refuse to open next to a
+   GLFW screen (and the GLMakie views warn after a Qt window); startup
+   re-traced (numbers under Startup).
 5. PTV window, after a core PTV recipe design.
 
 ## Slice 2 design: canvas gestures and the Prepare step

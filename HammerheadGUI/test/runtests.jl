@@ -144,7 +144,9 @@ const r_track = TrackingResult(
         rs = current_result(exs)
         @test rs.scale !== nothing
         @test C.field_label(rs, :u) == "u (mm/s)"
-        @test C.field_label(rs, :magnitude) == "|displacement| (mm/s)"
+        @test C.field_label(rs, :magnitude) == "|velocity| (mm/s)"
+        @test C.field_label(r_plain, :magnitude) == "|displacement| (px)"
+        @test C.field_name(rs, :magnitude) == "|velocity|" && C.field_name(rs, :u) == "u"
         @test C.field_label(rs, :uncertainty_u) == "σu (mm/s)"
         @test C.field_label(rs, :peak_ratio) == "peak ratio"
         select_nearest!(exs, rs.x[3], rs.y[3])

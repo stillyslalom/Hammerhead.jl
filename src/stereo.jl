@@ -540,6 +540,9 @@ dewarped as needed on each ensemble pass. `preprocess` may be one function
 or a two-function tuple for separate cameras. The shared dewarp overlap and
 optional world-grid `mask` apply to both cameras; other keywords follow
 [`run_piv_ensemble`](@ref), including `effort`, `backend`, and `image_type`.
+A `progress` function counts both cameras' ensemble runs: it is called as
+`progress(done, total)` with `total` twice the planar count (camera 1's
+passes over all pairs, then camera 2's).
 
 Exposure timestamps and pair delays are checked before loading either
 camera using the `sync_atol`, `sync_rtol`, and `missing_timestamps` options
@@ -558,7 +561,7 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                                  effort::Union{Nothing,Symbol} = nothing,
                                  backend::Symbol = :cpu, preprocess = nothing,
                                  image_type::Type{<:AbstractFloat} = Float64,
-                                 progress::Bool = true,
+                                 progress::Union{Bool,Function} = true,
                                  mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                                  scale::Union{Nothing,PhysicalScale} = nothing,
                                  sync_atol::Real = 0.0, sync_rtol::Real = 0.0,
@@ -576,10 +579,13 @@ function run_piv_stereo_ensemble(pairs1::AbstractVector, pairs2::AbstractVector,
                  (preprocess, preprocess)
     wrap(pairs, dw, pre) = [(_DewarpedFrame(p[1], dw, pre, image_type),
                              _DewarpedFrame(p[2], dw, pre, image_type)) for p in pairs]
+    # A progress callback sees one count over both cameras' runs.
+    prog1, prog2 = progress isa Function ?
+        (((i, n) -> progress(i, 2n)), ((i, n) -> progress(n + i, 2n))) : (progress, progress)
     r1 = run_piv_ensemble(wrap(pairs1, dw1, pre1), params; backend, mask = node_mask,
-                          image_type, progress, kwargs...)
+                          image_type, progress = prog1, kwargs...)
     r2 = run_piv_ensemble(wrap(pairs2, dw2, pre2), params; backend, mask = node_mask,
-                          image_type, progress, kwargs...)
+                          image_type, progress = prog2, kwargs...)
     result = reconstruct_stereo(r1, r2, dw1.cam, dw2.cam, dw1.grid)
     return scale === nothing ? result : with_scale(result, scale)
 end

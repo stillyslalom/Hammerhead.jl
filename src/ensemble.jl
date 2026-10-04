@@ -36,8 +36,11 @@ displacement across pairs and does not quantify flow fluctuations. Use
 Keyword arguments `threaded`, `predictor_smoothing`, `mask`,
 `mask_threshold`, `backend`, and `scale` follow [`run_piv`](@ref).
 `preprocess` is applied to each loaded frame before analysis; `image_type`
-sets the loaded image precision, and `progress` controls the progress display,
-as in [`run_piv_sequence`](@ref). `subpixel_method = :gauss2d` and
+sets the loaded image precision. `progress` shows a progress meter
+(`true`/`false`), or is a function called as `progress(done, total)` on the
+calling task after each pair of each pass is accumulated (`total` is the number
+of passes times the number of pairs); throwing from it aborts the run, which
+then returns no result. `subpixel_method = :gauss2d` and
 `keep_correlation_planes = true` require `backend = :cpu`.
 """
 function run_piv_ensemble(pairs::AbstractVector,
@@ -50,7 +53,7 @@ function run_piv_ensemble(pairs::AbstractVector,
                           mask_threshold::Real = 0.5,
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
-                          progress::Bool = true,
+                          progress::Union{Bool,Function} = true,
                           scale::Union{Nothing,PhysicalScale} = nothing)
     effort === nothing ||
         throw(ArgumentError("effort cannot be combined with explicit PIVParameters or pass schedules"))
@@ -62,8 +65,10 @@ function run_piv_ensemble(pairs::AbstractVector,
     0 < mask_threshold <= 1 ||
         throw(ArgumentError("mask_threshold must be in (0, 1], got $mask_threshold"))
 
-    meter = Progress(length(passes) * length(pairs);
-                     desc = "Ensemble PIV: ", enabled = progress)
+    total = length(passes) * length(pairs)
+    meter = Progress(total; desc = "Ensemble PIV: ", enabled = progress === true)
+    done = Ref(0)
+    tick = progress isa Function ? () -> progress(done[] += 1, total) : () -> next!(meter)
     # Reuse the image-interpolant and deformation buffers across every pair and
     # pass (the pairs share one image size). The ensemble path already reuses
     # its correlators per pass, so only the interpolant/warp scratch is routed
@@ -75,7 +80,7 @@ function run_piv_ensemble(pairs::AbstractVector,
                     build_predictor(result, predictor_smoothing)
         result = ensemble_pass(pairs, p, predictor; threaded, mask, mask_threshold,
                                preprocess, image_type,
-                               force_replace = k < length(passes), meter, workspace,
+                               force_replace = k < length(passes), tick, workspace,
                                backend = be)
     end
     return scale === nothing ? result : with_scale(result, scale)
@@ -89,7 +94,7 @@ function run_piv_ensemble(pairs::AbstractVector; effort::Union{Nothing,Symbol} =
                           mask_threshold::Real = 0.5,
                           preprocess = nothing,
                           image_type::Type{<:AbstractFloat} = Float64,
-                          progress::Bool = true,
+                          progress::Union{Bool,Function} = true,
                           scale::Union{Nothing,PhysicalScale} = nothing,
                           kwargs...)
     if effort === nothing
@@ -128,7 +133,7 @@ end
 # window's correlation planes across pairs, then peak-find and validate once.
 function ensemble_pass(pairs, params::PIVParameters, predictor;
                        threaded::Bool, mask, mask_threshold, preprocess,
-                       image_type, force_replace::Bool, meter, workspace = nothing,
+                       image_type, force_replace::Bool, tick, workspace = nothing,
                        backend::_AbstractHammerheadBackend = _DEFAULT_BACKEND)
     local T, grid, accum, chunks, engines, u, v, imgsize, uacc, uscratch
     first_pair = true
@@ -233,7 +238,7 @@ function ensemble_pass(pairs, params::PIVParameters, predictor;
                                                   uscratch === nothing ? nothing : uscratch[ci]; source_gate)
             end
         end
-        next!(meter)
+        tick()
     end
 
     ny, nx = length(grid.y), length(grid.x)

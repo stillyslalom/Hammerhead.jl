@@ -10,6 +10,10 @@ Added:
   `effort = :low/:medium/:high` for inspection or as a starting point.
 - `recipe_preprocess(steps)` builds the preprocessing function from a vector
   of `PreprocessStep`s, so previews apply exactly what `apply_recipe` runs.
+- `run_piv_ensemble` and `run_piv_stereo_ensemble` accept a `progress`
+  function, called as `progress(done, total)` after each pair of each pass
+  (stereo counts both cameras); throwing from it aborts the run, as in the
+  sequence drivers. `progress = true/false` still toggles the meter.
 
 ### HammerheadGUI
 
@@ -57,8 +61,30 @@ Added:
   `plane_residuals` and `background_note`.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
+- Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run
+  pools all pairs into one result (written with its recipe), reports
+  progress per pass and pair (`run_progress`), and can be cancelled after
+  the pair in flight (no partial result is kept). Results then shows the
+  ensemble result. An ensemble test goes stale when the frames change.
+- The Qt windows refuse to open (`ArgumentError`) in a Julia session that
+  already has a GLMakie screen, and `result_explorer`, `calibration_review`
+  and `selfcal_review` warn after a Qt window was opened: GLFW and Qt GL
+  contexts sharing a process crashed the AMD driver.
 - New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core
-  release that exports `effort_schedule`.
+  release that exports `effort_schedule` and takes an ensemble `progress`
+  function.
+
+Changed:
+
+- With a `PhysicalScale` attached, the magnitude field reads `|velocity|`
+  (e.g. `|velocity| (mm/s)`); unscaled results keep `|displacement| (px)`.
+  New `field_name(result, field)`.
+- An ensemble's pass summary shows no repeat counts and the Passes page
+  disables the Repeats column (the ensemble driver runs each pass once).
+- The windows open about 4 s faster (≈16.5 s warm from launch on the
+  development machine, from ≈21 s): the canvas glyph atlas is cached on
+  disk beside Makie's own atlas cache, and the traced precompile statements
+  cover both windows.
 
 Breaking:
 

@@ -16,6 +16,35 @@ const QML_DIR = joinpath(@__DIR__, "..", "qml")
 
 const _QT_READY = Ref(false)
 
+# GLFW contexts (GLMakie windows and offscreen `colorbuffer` screens) and the
+# Qt windows' GL contexts must not share a process: once a GLFW context had
+# existed, Qt's render thread crashed in the AMD driver. A Qt window refuses
+# to open next to a GLFW screen; `_QT_OPENED` lets the standalone GLMakie
+# views warn after a Qt window was opened.
+const _QT_OPENED = Ref(false)
+
+_glfw_screen_count() = count(s -> !(s isa GLMakie.Screen{QMLMakie.QMLWindow}), GLMakie.ALL_SCREENS)
+
+function _check_no_glfw_screens()
+    n = _glfw_screen_count()
+    n == 0 && return
+    throw(ArgumentError(
+        "this Julia session has created $n GLMakie screen" * (n == 1 ? "" : "s") *
+        " (a result_explorer, calibration_review, or selfcal_review window, or an " *
+        "offscreen render), and GLMakie windows and the Qt workflow windows cannot " *
+        "share a process (the graphics driver can crash). Restart Julia to open " *
+        "this window; browse results in its Results step instead of a GLMakie window."))
+end
+
+function _warn_if_qt_opened(view::AbstractString)
+    _QT_OPENED[] || return
+    @warn "$view opens a GLMakie window, and a Qt workflow window was opened in this " *
+          "Julia session: planar_window and stereo_window cannot open again in this " *
+          "session once a GLMakie window exists (the graphics driver can crash). " *
+          "Use the window's Results step, or a separate Julia session." maxlog = 1
+    return
+end
+
 function _qt_init!()
     _QT_READY[] && return
     if Sys.iswindows()
@@ -42,13 +71,42 @@ end
 # the first render upload with it.
 const _CANVAS_GLYPHS = vcat(Char(32):Char(126), collect("°±²³·¼×÷ΓΔεπσωµ–—−…›→↔∘≤≥≈|"))
 
+# Rendering these glyphs takes ~3 s, so the warmed atlas is cached on disk
+# next to Makie's own atlas cache and loaded on the next start, provided no
+# screen uses the session's atlas yet and the cache holds every glyph it has.
+const _ATLAS_KEY = (2048, 64)                        # GLMakie's atlas
+_atlas_cache_path() = Makie.get_cache_path(_ATLAS_KEY...) * ".hammerheadgui"
+
+function _load_cached_atlas!(atlas)
+    path = _atlas_cache_path()
+    (isempty(atlas.font_render_callback) && isfile(path)) || return atlas
+    cached = try
+        Makie.load_texture_atlas(path)
+    catch
+        return atlas
+    end
+    all(k -> haskey(cached.mapping, k), keys(atlas.mapping)) || return atlas
+    Makie.TEXTURE_ATLASES[_ATLAS_KEY] = cached
+    return cached
+end
+
 function _warm_glyph_atlas!()
-    atlas = Makie.get_texture_atlas()
+    atlas = _load_cached_atlas!(Makie.get_texture_atlas(_ATLAS_KEY...))
+    n = length(atlas.mapping)
     fonts = Makie.theme(:fonts)
     for key in keys(fonts)
         font = Makie.to_font(fonts[key][])
         for c in _CANVAS_GLYPHS
             Makie.insert_glyph!(atlas, c, font)
+        end
+    end
+    if length(atlas.mapping) > n
+        path = _atlas_cache_path()
+        try
+            tmp = path * ".$(getpid()).tmp"
+            Makie.store_texture_atlas(tmp, atlas)
+            mv(tmp, path; force = true)
+        catch
         end
     end
     return
@@ -437,6 +495,7 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "runTotal", r.progress[][2])
     _set!(sh, "runStatus", r.status[])
     _set!(sh, "runEta", run_eta(r))
+    _set!(sh, "runProgress", run_progress(r))
 
     ex = wf.explorer[]
     _set!(sh, "resultsLabel", step_status(wf, :results)[2])
@@ -684,6 +743,7 @@ end
 # worker); `make_shell(wf, queue)` builds the shell.
 function _run_window(setup, wf::AbstractWorkflow, qml::AbstractString, make_shell)
     _SHELL[] === nothing || throw(ArgumentError("a HammerheadGUI window is already open"))
+    _check_no_glfw_screens()
     # From here on background work goes to the window's queue and nothing
     # reads image files on this (the GUI) thread: the pair loads on a worker.
     queue = Channel{Any}(Inf)
@@ -693,6 +753,7 @@ function _run_window(setup, wf::AbstractWorkflow, qml::AbstractString, make_shel
     try
         setup()
         _qt_init!()
+        _QT_OPENED[] = true
         _warm_glyph_atlas!()
         sh = make_shell(wf, queue)
         _SHELL[] = sh
@@ -730,6 +791,12 @@ The call blocks while the window is open (Qt runs its event loop on this
 thread). Start Julia with several threads (`julia -t auto`) so tests and
 batch runs leave the window responsive. Closing the window cancels a batch
 in progress after its current pair; finished pairs are kept.
+
+The window throws an `ArgumentError` when this Julia session already has a
+GLMakie screen (a [`result_explorer`](@ref), [`calibration_review`](@ref), or
+[`selfcal_review`](@ref) window, or an offscreen `colorbuffer`): GLMakie's
+windows and the Qt window cannot share a process. Restart Julia, and browse
+results in the window's Results step.
 """
 function planar_window(wf::PlanarWorkflow = PlanarWorkflow(); files = nothing, settings = nothing)
     return _run_window(wf, "PlanarWindow.qml", (w, q) -> PlanarShell(w; queue = q)) do

@@ -136,11 +136,33 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     @info "window images" mask_png scale_png profile_png circulation_png
     @test isempty(filter(s -> s isa GLMakie.Screen{HammerheadGUI.QMLMakie.QMLWindow},
                          GLMakie.ALL_SCREENS))
-    # the window can be opened again in the same session
-    HammerheadGUI._TICK_HOOK[] = sh -> HammerheadGUI.request_close()
+    # the window can be opened again in the same session; this time it runs
+    # an ensemble through the bridge
+    wf.roi[] = nothing                                 # ensembles take no ROI
+    ens_stage = Ref(0)
+    ens_text = String[]
+    t_start = time()
+    HammerheadGUI._TICK_HOOK[] = function (sh)
+        w = sh.wf
+        time() - t_start > 120 && return HammerheadGUI.request_close()
+        if ens_stage[] == 0
+            HammerheadGUI.hh_set_mode("ensemble")
+            HammerheadGUI.hh_set_output("")
+            set_step!(w, :run)
+            HammerheadGUI.hh_start_run()
+            ens_stage[] = 1
+        elseif ens_stage[] == 1 && !w.run.running[]
+            push!(ens_text, sh.shown["runStatus"], sh.shown["resultsLabel"])
+            ens_stage[] = 2
+            HammerheadGUI.request_close()
+        end
+    end
     try
         @test planar_window(wf) === wf
     finally
         HammerheadGUI._TICK_HOOK[] = nothing
     end
+    @test ens_stage[] == 2
+    @test ens_text == ["done: ensemble of 2 pairs", "1 result in memory"]
+    @test wf.passes.mode[] === :ensemble && only(wf.run.completed[]) isa PIVResult
 end

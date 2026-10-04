@@ -188,11 +188,31 @@ function test_pair!(wf::AbstractWorkflow; spawn::Bool = true)
     return wf
 end
 
+# Whether a test's pairs differ from the pairs a test would analyze now
+# (frames are compared by identity, paths by value).
+function _pairs_changed(tested, current)
+    length(tested) == length(current) || return true
+    return !all(((p, q),) -> _same_entry(p[1], q[1]) && _same_entry(p[2], q[2]),
+                zip(tested, current))
+end
+
+function _test_pairs_changed(wf::AbstractWorkflow, k::Int, fs::FrameSet)
+    inp = wf.test.inputs[]
+    inp === nothing && return true
+    current = try
+        _test_pairs(fs, wf.passes.mode[])
+    catch
+        return true
+    end
+    return _pairs_changed(inp[k], current)
+end
+
 """
     test_stale(wf::AbstractWorkflow) -> Bool
 
-Whether the settings or the test's inputs (the representative pair; for a
-stereo workflow also the dewarpers) changed since the last test.
+Whether the settings or the test's inputs (the representative pair, or for
+an ensemble the leading pairs; for a stereo workflow also the dewarpers)
+changed since the last test.
 """
 test_stale(wf::AbstractWorkflow) =
     wf.test.recipe[] === nothing || wf.test.recipe[] != workflow_recipe(wf) || _inputs_stale(wf)
@@ -200,7 +220,9 @@ test_stale(wf::AbstractWorkflow) =
 """
     start_run!(wf::AbstractWorkflow; spawn = true)
 
-Run the batch on all pairs with a snapshot of the current settings.
+Run the batch on all pairs with a snapshot of the current settings: one
+result per pair for a `:sequence` recipe, one pooled result for an
+`:ensemble` recipe (see [`RunState`](@ref)).
 """
 function start_run!(wf::AbstractWorkflow; spawn::Bool = true)
     msg = workflow_problem(wf)
@@ -253,14 +275,18 @@ function step_status(wf::AbstractWorkflow, step::Symbol)
         s = test_summary(wf.test)
         s === nothing && return (:todo, "not tested")
         txt = @sprintf("%.0f %% valid · %.2f s", 100 * s.valid_fraction, s.seconds)
+        inp = wf.test.inputs[]
+        wf.test.recipe[].mode === :ensemble && inp !== nothing &&
+            (txt = "ensemble of $(length(first(inp))) pairs: " * txt)
         return test_stale(wf) ? (:attention, "settings changed since: " * txt) : (:ok, txt)
     elseif step === :run
-        wf.run.running[] && return (:busy, "$(wf.run.progress[][1]) of $(wf.run.progress[][2]) pairs")
+        wf.run.running[] && return (:busy, run_progress(wf.run))
         return isempty(wf.run.status[]) ? (:todo, "not run") : (:ok, wf.run.status[])
     elseif step === :results
         ex = wf.explorer[]
         ex === nothing && return (:todo, "no results yet")
-        return (:ok, wf.results_path[] === nothing ? "$(nframes(ex)) results in memory" :
+        n = nframes(ex)
+        return (:ok, wf.results_path[] === nothing ? "$n result" * (n == 1 ? "" : "s") * " in memory" :
                      basename(wf.results_path[]))
     end
     return _step_status(wf, step)

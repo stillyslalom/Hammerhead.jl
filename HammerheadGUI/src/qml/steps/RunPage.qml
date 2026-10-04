@@ -6,9 +6,13 @@ import jlqml
 
 StepPage {
     title: "Run"
-    guidance: "Process every pair with the current settings. Results are written to the output " +
-              "file as they finish, together with the settings that produced them; the viewer " +
-              "shows the latest pair. Cancelling keeps the pairs already finished."
+    guidance: app.mode === "ensemble"
+        ? "Pool the correlations of every pair into one result with the current settings. " +
+          "The result is written to the output file when the run finishes, together with the " +
+          "settings that produced it."
+        : "Process every pair with the current settings. Results are written to the output " +
+          "file as they finish, together with the settings that produced them; the viewer " +
+          "shows the latest pair. Cancelling keeps the pairs already finished."
 
     Label { text: "Output file"; font.weight: Font.DemiBold }
     RowLayout {
@@ -31,7 +35,8 @@ StepPage {
         spacing: 8
         Layout.topMargin: 8
         Button {
-            text: "Run " + app.pairCount + " pairs"
+            text: app.mode === "ensemble" ? "Run ensemble of " + app.pairCount + " pairs"
+                                           : "Run " + app.pairCount + " pairs"
             highlighted: true
             enabled: !app.runRunning && app.analysisProblem === ""
             onClicked: Julia.hh_start_run()
@@ -42,6 +47,13 @@ StepPage {
             onClicked: Julia.hh_cancel_run()
         }
     }
+    Label {
+        text: "Cancelling an ensemble stops after the pair in flight and keeps no result."
+        visible: app.mode === "ensemble"
+        opacity: 0.75
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
 
     ProgressBar {
         Layout.fillWidth: true
@@ -51,7 +63,7 @@ StepPage {
         visible: app.runRunning || app.runDone > 0
     }
     Label {
-        text: app.runRunning ? app.runDone + " of " + app.runTotal + " pairs · " + app.runEta
+        text: app.runRunning ? app.runProgress + (app.runEta === "" ? "" : " · " + app.runEta)
                              : app.runStatus
         visible: text !== ""
         wrapMode: Text.WordWrap

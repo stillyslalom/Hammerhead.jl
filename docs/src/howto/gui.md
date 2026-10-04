@@ -120,8 +120,9 @@ Below the table:
 - **Evaluation:** **Per pair** gives a time series; **Ensemble** sums the
   correlation over all pairs into one mean field
   (see [Measure one field from many pairs](ensemble.md)). The window tests an
-  ensemble on the first ten pairs; its **Run** step processes per-pair
-  sequences, so run a full ensemble from saved settings with `apply_recipe`.
+  ensemble on the first ten pairs and runs it on all pairs. An ensemble runs
+  each pass once, so the **Repeats** column is unavailable; add a pass to
+  repeat a window size.
 - **Precision:** Float32 halves the memory of Float64.
 
 ![Passes: the medium preset and its window sizes outlined on the particles.](../assets/gui_window/passes.png)
@@ -149,6 +150,11 @@ finishes, together with the settings that produced them. The viewer shows
 the latest finished pair, with elapsed time and an estimate of the time left.
 **Cancel** stops after the pair in progress and keeps the finished ones.
 Closing the window also cancels a run in this way.
+
+An ensemble run (**Run ensemble of N pairs**) pools every pair into one
+result, which is written with the settings when the run finishes. Its
+progress counts the pairs of each pass. Cancelling an ensemble stops after
+the pair in progress and keeps no result.
 
 ## Inspect the results
 
@@ -195,6 +201,13 @@ result_explorer("vectors.jld2"; lazy = true)
 It browses planar and stereo PIV, PTV particles and trajectories. The
 [result explorer reference](../reference/gui_results.md) lists its fields
 and tools.
+
+Open it in its own Julia session. The explorer is a GLMakie window, and
+GLMakie windows and the workflow windows cannot share a session (some
+graphics drivers crash): once a GLMakie window exists, `planar_window` throws
+an error asking you to restart Julia, and `result_explorer` warns when a
+workflow window was already open. Within the workflow window, browse results
+on **Results**.
 
 ## Work with two cameras
 

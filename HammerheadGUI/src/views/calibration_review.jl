@@ -11,11 +11,18 @@ The plane slider selects an image; dots are colored by error in pixels and
 fiducial markers are outlined in cyan. Changing the camera model between
 `soloff` and `pinhole` refits the camera. `detect_kwargs` are passed to
 `Hammerhead.detect_calibration_grid`.
+
+Like [`result_explorer`](@ref), this is a GLMakie window: it warns after a Qt
+workflow window was opened in this Julia session, and once it is displayed
+[`planar_window`](@ref)/[`stereo_window`](@ref) refuse to open in the same
+session. The stereo window's Calibration step shows the detected dots and
+reprojection errors too.
 """
 calibration_review(images, zs; model = :soloff, size = (1000, 720), detect_kwargs...) =
     calibration_review(CalibrationReview(images, zs; model, detect_kwargs...); size)
 
 function calibration_review(cr::CalibrationReview; size = (1000, 720))
+    _warn_if_qt_opened("calibration_review")
     fig = Figure(; size)
     calibration_review!(fig[1, 1], cr)
     return fig
@@ -107,8 +114,12 @@ Inspect RMS and the spatial pattern of both disparity components when the
 report has not converged. Pass `keep_disparity_maps = true` to
 `self_calibrate` to retain the maps; the explorer's frame slider then steps
 through the passes.
+
+A GLMakie window, with the same Qt restriction as [`result_explorer`](@ref);
+the stereo window's Calibration step summarizes the same report.
 """
 function selfcal_review(report::SelfCalibrationReport; size = (1150, 650))
+    _warn_if_qt_opened("selfcal_review")
     fig = Figure(; size)
     left = GridLayout(fig[1, 1]; tellheight = false, valign = :top)
     Label(left[1, 1], "self-calibration"; halign = :left, font = :bold)

@@ -361,6 +361,11 @@ end
     @test median(ens.u) ≈ truth[1] atol = 0.05
     @test median(ens.v) ≈ truth[2] atol = 0.05
     @test median(ens.w) ≈ truth[3] atol = 0.07
+    # A progress function counts both cameras' ensemble runs.
+    seen = Tuple{Int,Int}[]
+    run_piv_stereo_ensemble([(A1, B1), (A1, B1)], [(A2, B2), (A2, B2)], dws[1], dws[2], params;
+                            progress = (i, n) -> push!(seen, (i, n)))
+    @test seen == [(i, 4) for i in 1:4]
 
     # A recipe applies the same settings to stereo sequences and ensembles.
     @test isequal(apply_recipe(PIVRecipe(params), [(A1, B1)], [(A2, B2)], dws[1], dws[2];

@@ -323,10 +323,15 @@ const FIELD_NAMES = Dict(
 
 """
     field_name(field::Symbol) -> String
+    field_name(result, field::Symbol) -> String
 
-Short display name of a scalar field (menu entries).
+Short display name of a scalar field (menu entries). With a result, the
+magnitude reads `|velocity|` when a `PhysicalScale` is attached (its values
+are then length per time) and `|displacement|` otherwise.
 """
 field_name(field::Symbol) = FIELD_NAMES[field]
+field_name(r::AnyResult, field::Symbol) =
+    field === :magnitude && r.scale !== nothing ? "|velocity|" : field_name(field)
 
 # Fallback units when no PhysicalScale is attached: pixels for planar / PTV /
 # tracking, "world units" for stereo (world coordinates are already physical).
@@ -349,18 +354,20 @@ _time_unit(r::AnyResult) = r.scale === nothing ? "frame" : r.scale.time_unit
     field_label(result, field::Symbol) -> String
 
 Display name of a scalar field with the result's units appended (colorbar
-label). Displacement/velocity fields and their uncertainties carry the
-velocity unit (`length_unit/time_unit`, e.g. `mm/s`, or the `px`/`world units`
+label). The magnitude is named `|velocity|` with a scale attached and
+`|displacement|` without (see [`field_name`](@ref)). Displacement/velocity
+fields and their uncertainties carry the velocity unit (`length_unit/time_unit`, e.g. `mm/s`, or the `px`/`world units`
 fallback when unscaled); a `PTVResult`'s `match_residual` carries the length
 unit; the derived gradient fields carry `1/time_unit` (`1/time_unit²` for Q,
 `1/frame` when unscaled); dimensionless diagnostics carry no unit.
 """
 function field_label(r::AnyResult, field::Symbol)
-    field in (:peak_ratio, :correlation_moment) && return field_name(field)
-    field === :match_residual && return string(field_name(field), " (", _length_unit(r), ")")
-    field === :q_criterion && return string(field_name(field), " (1/", _time_unit(r), "²)")
-    field in DERIVED_FIELDS && return string(field_name(field), " (1/", _time_unit(r), ")")
-    return string(field_name(field), " (", _field_unit(r), ")")
+    name = field_name(r, field)
+    field in (:peak_ratio, :correlation_moment) && return name
+    field === :match_residual && return string(name, " (", _length_unit(r), ")")
+    field === :q_criterion && return string(name, " (1/", _time_unit(r), "²)")
+    field in DERIVED_FIELDS && return string(name, " (1/", _time_unit(r), ")")
+    return string(name, " (", _field_unit(r), ")")
 end
 
 """

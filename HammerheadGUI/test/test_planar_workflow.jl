@@ -175,16 +175,84 @@
         empty!(wf.run.completed.listeners)
         start_run!(wf; spawn = false)
         @test wf.results_path[] === nothing && nframes(wf.explorer[]) == 3
-        wf.passes.mode[] = :ensemble
-        start_run!(wf; spawn = false)
-        @test occursin("ensemble", wf.run.status[])
         # threaded test with an immediate deliver still completes
-        wf.passes.mode[] = :sequence
         test_pair!(wf)
         t0 = time()
         while wf.test.running[] && time() - t0 < 120
             sleep(0.05)
         end
         @test wf.test.result[] isa PIVResult
+    end
+
+    @testset "ensemble: test, run, progress, cancellation" begin
+        wf = PlanarWorkflow(files = frames)
+        fill_preset!(wf.passes, :low)
+        set_mode!(wf.passes, :ensemble)
+        npass = length(wf.passes.passes[])
+        # an ensemble runs each pass once: the summary shows no repeats
+        set_pass!(wf.passes, 1, :iterations, 3)
+        @test !occursin("×", passes_summary(wf.passes)) && occursin("ensemble", passes_summary(wf.passes))
+        test_pair!(wf; spawn = false)
+        @test wf.test.result[] isa PIVResult
+        @test startswith(step_status(wf, :test)[2], "ensemble of 3 pairs: ")
+        select_pair!(wf.frames, 2)                     # the ensemble ignores the pair
+        @test !test_stale(wf)
+        add_files!(wf.frames, Any[imgA, imgB])         # but not the frames
+        @test test_stale(wf)
+        clear_files!(wf.frames)
+        add_files!(wf.frames, frames)
+        wf.roi[] = ROI(1:64, 1:64)                    # an ensemble takes no ROI
+        @test occursin("clear the region", workflow_problem(wf))
+        start_run!(wf; spawn = false)
+        @test occursin("clear the region", wf.run.status[]) && isempty(wf.run.completed[])
+        wf.roi[] = nothing
+        fill_preset!(wf.passes, :low)
+        mktempdir() do dir
+            out = joinpath(dir, "ensemble.jld2")
+            wf.run.output_path[] = out
+            texts = String[]
+            on(_ -> push!(texts, run_progress(wf.run)), wf.run.progress)
+            start_run!(wf; spawn = false)
+            @test !wf.run.running[] && length(wf.run.completed[]) == 1
+            @test wf.run.status[] == "done: ensemble of 3 pairs → ensemble.jld2"
+            @test wf.run.progress[] == (3npass, 3npass)
+            @test "ensemble of 3 pairs · pass 1 of $npass · 1 of 3 pairs" in texts
+            @test last(texts) == "ensemble of 3 pairs · pass $npass of $npass · 3 of 3 pairs"
+            @test wf.results_path[] == out && nframes(wf.explorer[]) == 1
+            @test step_status(wf, :results) == (:ok, "ensemble.jld2")
+            @test load_recipe(out) == workflow_recipe(wf)
+            direct = apply_recipe(workflow_recipe(wf), frame_pairs(wf.frames); progress = false)
+            saved = only(load_results(out))
+            @test saved isa PIVResult && isequal(saved.u, direct.u) && isequal(saved.v, direct.v)
+            @test median(filter(!isnan, saved.u)) ≈ 3.0 atol = 0.3
+
+            # cancelling stops after the pair in flight and keeps no result
+            empty!(wf.run.progress.listeners)
+            cancelled = joinpath(dir, "cancelled.jld2")
+            wf.run.output_path[] = cancelled
+            on(p -> p[1] == 1 && cancel_run!(wf), wf.run.progress)
+            start_run!(wf; spawn = false)
+            @test wf.run.status[] == "cancelled; an ensemble keeps no partial result"
+            @test isempty(wf.run.completed[]) && !isfile(cancelled)
+            @test wf.run.progress[][1] == 1
+            @test wf.results_path[] == out              # the previous results stay
+        end
+        # in memory: the explorer holds the one result
+        empty!(wf.run.progress.listeners)
+        wf.run.output_path[] = ""
+        start_run!(wf; spawn = false)
+        @test wf.results_path[] === nothing && nframes(wf.explorer[]) == 1
+        @test step_status(wf, :results) == (:ok, "1 result in memory")
+        @test wf.run.status[] == "done: ensemble of 3 pairs"
+
+        # progress text for a stereo ensemble (two cameras, three passes)
+        rs = RunState()
+        rs.mode[] = :ensemble; rs.pairs[] = 10; rs.cameras[] = 2
+        rs.progress[] = (25, 60)
+        @test run_progress(rs) == "ensemble of 10 pairs · camera 1 · pass 3 of 3 · 5 of 10 pairs"
+        rs.progress[] = (35, 60)
+        @test run_progress(rs) == "ensemble of 10 pairs · camera 2 · pass 1 of 3 · 5 of 10 pairs"
+        rs.mode[] = :sequence; rs.progress[] = (4, 10)
+        @test run_progress(rs) == "4 of 10 pairs"
     end
 end

@@ -214,7 +214,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   avoid double conversion
 - `ensemble.jl` — `run_piv_ensemble` (sum-of-correlation; per-chunk
   correlators reused across pairs; multi-pass via shared predictor; one
-  `PIVWorkspace` reuses the interpolant/deform buffers across pairs)
+  `PIVWorkspace` reuses the interpolant/deform buffers across pairs;
+  `progress` may be a `(done, total)` function ticked per pair per pass —
+  stereo ensembles count both cameras — and throwing from it aborts)
 - `selfcal.jl` — `self_calibrate` (Wieneke 2005 disparity self-calibration:
   ensemble cam1↔cam2 disparity map → triangulation → sheet-plane fit →
   rigid world transform of both cameras) + `SelfCalibrationReport`
@@ -383,7 +385,10 @@ current frame *size*, never an image copy), `PassesEditor`, `PairTest`/`RunState
 `workflow_recipe`; `prepare_workflow.jl` syncs editors ↔ workflow both ways
 under a `syncing` guard (opened settings reseed the editors; a loaded mask
 becomes the editor's raster), and an unedited opened recipe round-trips `==`.
-Test pair and Run both call `apply_recipe` (Run is sequence-only for now).
+Test pair and Run both call `apply_recipe`; an ensemble Run returns one
+result (no `on_result`; `RunState.mode/pairs/cameras` + `run_progress` turn
+the core's per-pair-per-pass ticks into "pass k of P" text; cancel throws
+from `progress` and keeps nothing).
 The settings/test/run/results/step-rail functions are `AbstractWorkflow`
 methods (`workflow.jl`) over per-workflow hooks (`workflow_steps`,
 `workflow_recipe`, `workflow_problem`, `_test_inputs`/`_run_inputs` = the
@@ -462,14 +467,21 @@ asserts figure-wide plot counts never change. (3) GLFW/GLMakie contexts and
 Qt canvases must not share a process (AMD driver crash on Qt's render thread
 after a GLFW context existed), so the Qt window test (`test/qt_window.jl`,
 opt-in via `HAMMERHEADGUI_QT_TESTS=true`) and the screenshot script run in
-their own processes. (4) On Windows, Qt reads msvcrt's environment copy:
+their own processes; `_run_window` throws if `GLMakie.ALL_SCREENS` holds a
+non-QML screen, and the standalone GLMakie views warn once a Qt window was
+opened (`_QT_OPENED`). (4) On Windows, Qt reads msvcrt's environment copy:
 style selection sets `QT_QUICK_CONTROLS_STYLE` through `_putenv_s`, after
 preloading the FluentWinUI3 impl DLL. After `exec()` returns, QML screens are
 dropped from `GLMakie.ALL_SCREENS` and the atlas cache, so the REPL survives
 and the window can reopen; workers must not block in plain ccalls (they stall
-every GC). Startup is ~10 s package load + ~6 s to a live window;
-`qt/precompile_statements.jl` holds traced first-render methods (regenerate
-with `--trace-compile` after GLMakie/QMLMakie upgrades). CI loads QML with
+every GC). Startup (warm, to the first `hh_tick`) is ~16.5 s: ~10.8 s package
+load + ~5.8 s, of which ~4.6 s is still compilation (CxxWrap/QML methods
+are defined at init, so their callers do not cache; closures are not
+traced). The canvas glyph atlas (~3 s to render) is cached on disk beside
+Makie's atlas (`*.hammerheadgui`) and loaded while no screen uses the
+session's atlas. `qt/precompile_statements.jl` holds traced methods
+(regenerate with `--trace-compile` around both windows' startup and the Qt
+scripts, merged with the old file, after GLMakie/QMLMakie upgrades). CI loads QML with
 `QT_QPA_PLATFORM=offscreen`.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
