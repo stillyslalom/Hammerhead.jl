@@ -265,7 +265,7 @@ PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)) =
 function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Channel{Any}(Inf))
     app = JuliaPropertyMap()
     host = CanvasHost(app, canvas.fig)
-    step_rows = [StepRow(String(s), Controllers.STEP_LABELS[s], "todo", "") for s in workflow_steps(wf)]
+    step_rows = [StepRow(String(s), step_label(wf, s), "todo", "") for s in workflow_steps(wf)]
     pass_rows = PassRow[]
     prep_rows = PrepStepRow[]
     results = results_canvas()
@@ -318,6 +318,10 @@ function _connect_window!(sh::PlanarShell, mark)
     wf = sh.wf
     fs = wf.frames
     for obs in (wf.roi, fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loading, fs.loaded, fs.load_error)
+        on(mark, obs)
+    end
+    pt = wf.particles
+    for obs in (pt.ptv, pt.predictor, pt.min_track_length, pt.max_gap, pt.error, pt.detect_status)
         on(mark, obs)
     end
     return sh
@@ -451,7 +455,28 @@ function _refresh_frames!(sh::PlanarShell)
     return
 end
 
-_refresh_window!(::PlanarShell) = nothing
+# The Particles page (planar particle modes): every option as text.
+function _refresh_window!(sh::PlanarShell)
+    pt = sh.wf.particles
+    p = pt.ptv[]
+    _set!(sh, "particleMode", Controllers._particle_mode(sh.wf.passes.mode[]))
+    _set!(sh, "ptvThreshold", p.threshold === :auto ? "auto" : _num(p.threshold))
+    for (key, f) in (("ptvThresholdK", :threshold_k), ("ptvMinSeparation", :min_separation),
+                     ("ptvMinDiameter", :min_diameter), ("ptvMaxDiameter", :max_diameter),
+                     ("ptvSearchRadius", :search_radius), ("ptvIntensityWeight", :intensity_weight),
+                     ("ptvDiameterWeight", :diameter_weight), ("ptvUodThreshold", :uod_threshold),
+                     ("ptvUodEpsilon", :uod_epsilon), ("ptvUodNeighbors", :uod_neighbors))
+        _set!(sh, key, _num(getfield(p, f)))
+    end
+    _set!(sh, "ptvUodEnable", p.uod_enable)
+    _set!(sh, "ptvPredictor", String(pt.predictor[]))
+    _set!(sh, "ptvMinTrackLength", pt.min_track_length[])
+    _set!(sh, "ptvMaxGap", pt.max_gap[])
+    _set!(sh, "ptvError", pt.error[])
+    _set!(sh, "ptvDetectStatus", pt.detect_status[])
+    _set!(sh, "frameCount", length(sh.wf.frames.files[]))
+    return
+end
 
 function _refresh!(sh::WorkflowShell)
     wf = sh.wf
@@ -524,8 +549,9 @@ function _refresh!(sh::WorkflowShell)
     changed = false
     for (row, step) in zip(sh.step_rows, workflow_steps(wf))
         state, summary = step_status(wf, step)
-        (row.status, row.summary) == (String(state), summary) && continue
-        row.status = String(state); row.summary = summary
+        label = step_label(wf, step)
+        (row.label, row.status, row.summary) == (label, String(state), summary) && continue
+        row.label = label; row.status = String(state); row.summary = summary
         changed = true
     end
     changed && QML.force_model_update(sh.step_model)
@@ -638,6 +664,13 @@ function hh_set_option(option, value)
     end
 end
 hh_set_mode(mode) = _with_shell(sh -> set_mode!(sh.wf.passes, Symbol(String(mode))))
+function hh_particle_option(option, value)
+    _with_shell() do sh
+        sh.wf isa PlanarWorkflow || throw(ArgumentError("not a planar window"))
+        v = value isa Bool ? value : value isa Real ? _num(value) : string(value)
+        edit_particle_option!(sh.wf.particles, Symbol(String(option)), v)
+    end
+end
 hh_set_precision(p) = _with_shell(sh -> set_image_type!(sh.wf.passes, String(p) == "Float32" ? Float32 : Float64))
 hh_test() = _with_shell(sh -> test_pair!(sh.wf))
 hh_set_output(url) = _with_shell(sh -> (sh.wf.run.output_path[] = _url_to_path(String(url))))
@@ -725,6 +758,7 @@ function _register_qml_functions()
     @qmlfunction hh_tick hh_grab_started hh_set_step hh_add_files hh_clear_files hh_set_pair_mode hh_select_pair
     @qmlfunction hh_show_frame hh_fill_preset hh_set_pass hh_add_pass hh_remove_pass hh_set_option
     @qmlfunction hh_set_mode hh_set_precision hh_test hh_set_output hh_start_run hh_cancel_run
+    @qmlfunction hh_particle_option
     @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_use_result_settings
     @qmlfunction hh_toggle_popout hh_result_frame hh_result_field hh_result_color_mode
     @qmlfunction hh_result_vectors hh_result_tool hh_result_clear_tool

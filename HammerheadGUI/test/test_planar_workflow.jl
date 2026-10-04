@@ -255,4 +255,104 @@
         rs.mode[] = :sequence; rs.progress[] = (4, 10)
         @test run_progress(rs) == "4 of 10 pairs"
     end
+
+    @testset "particle modes: PTV" begin
+        wf = PlanarWorkflow(; files = frames)
+        pt = wf.particles
+        set_step!(wf, :passes)
+        @test step_label(wf, :passes) == "Passes" && pt.detected[] === nothing
+        set_mode!(wf.passes, :ptv)
+        @test step_label(wf, :passes) == "Particles"
+        # the detection preview follows the settings
+        @test pt.detected[] isa Particles && length(pt.detected[]) > 100
+        @test occursin("detected on frame A", pt.detect_status[])
+        n0 = length(pt.detected[])
+        @test edit_particle_option!(pt, :threshold, string(0.6 * maximum(imgA)))
+        @test 0 < length(pt.detected[]) < n0
+        @test !edit_particle_option!(pt, :min_diameter, "20") && !isempty(pt.error[])
+        @test !edit_particle_option!(pt, :predictor, "field")
+        @test step_status(wf, :passes)[1] === :attention
+        @test edit_particle_option!(pt, :threshold_k, 5) && isempty(pt.error[])
+        @test edit_particle_option!(pt, :search_radius, "3") && edit_particle_option!(pt, :threshold, "auto")
+        @test step_status(wf, :passes) == (:ok, particles_summary(pt, :ptv))
+        @test particle_option(pt, :search_radius) == 3
+        set_step!(wf, :images)
+        @test pt.detected[] === nothing                       # only on the Passes step
+        r = workflow_recipe(wf)
+        @test r.mode === :ptv && r.ptv.search_radius == 3 && r.ptv_predictor === :piv
+        # the test matches the pair exactly as the batch will
+        test_pair!(wf; spawn = false)
+        res = wf.test.result[]
+        @test res isa PTVResult
+        @test isequal(res.u, only(apply_recipe(r, [current_pair(wf.frames)]; progress = false)).u)
+        s = test_summary(wf.test)
+        @test s.kind === :ptv && s.matches > 50 && s.valid_fraction > 0.8
+        @test median(res.u[.!res.outliers]) ≈ 3.0 atol = 0.2
+        @test startswith(test_brief(s), "$(s.matches) matches")
+        @test any(l -> startswith(l, "Matches:"), summary_lines(s))
+        # the hint about the search radius depends on the predictor
+        @test !any(l -> occursin("approach the search radius", l),
+                   summary_lines(merge(s, (; displacement = 3.9, search_radius = 4.0))))
+        @test any(l -> occursin("approach the search radius", l),
+                  summary_lines(merge(s, (; predictor = :none, displacement = 3.9, search_radius = 4.0))))
+        @test any(l -> occursin("far from the PIV prediction", l),
+                  summary_lines(merge(s, (; residual = 2.5, search_radius = 4.0))))
+        @test !test_stale(wf)
+        edit_particle_option!(pt, :search_radius, 4)
+        @test test_stale(wf)
+        # a region blocks particle runs; the recipe never carries one
+        wf.roi[] = ROI(1:64, 1:64)
+        @test occursin("whole frames", workflow_problem(wf)) && workflow_recipe(wf).roi === nothing
+        wf.roi[] = nothing
+        mktempdir() do dir
+            out = joinpath(dir, "ptv.jld2")
+            wf.run.output_path[] = out
+            start_run!(wf; spawn = false)
+            @test length(wf.run.completed[]) == 3 && all(x -> x isa PTVResult, wf.run.completed[])
+            @test wf.run.status[] == "done: 3 pairs → ptv.jld2"
+            @test load_recipe(out) == workflow_recipe(wf)
+            @test current_result(wf.explorer[]) isa PTVResult
+            # settings round trip keeps the particle settings
+            p = save_settings(wf, joinpath(dir, "settings.jld2"))
+            w2 = PlanarWorkflow()
+            load_settings!(w2, p)
+            @test workflow_recipe(w2) == workflow_recipe(wf) && w2.particles.ptv[].search_radius == 4
+            @test_throws ArgumentError load_settings!(StereoWorkflow(), p)
+        end
+    end
+
+    @testset "particle modes: tracking" begin
+        # a time-resolved recording: particles moving (1.0, 0.5) px per frame
+        lcg = Ref(0x9e3779b97f4a7c15)
+        uniform() = (lcg[] = lcg[] * 0x5851f42d4c957f2d + 0x14057b7ef767814f; (lcg[] >> 11) / 2.0^53)
+        pts = [(8 + 112 * uniform(), 8 + 112 * uniform()) for _ in 1:150]
+        gauss! = Hammerhead.SyntheticData.generate_gaussian_particle!
+        seq = map(0:11) do k
+            img = zeros(128, 128)
+            foreach(p -> gauss!(img, (p[1] + 1.0k, p[2] + 0.5k), 3.0), pts)
+            img
+        end
+        tw = PlanarWorkflow(; files = seq, pair_mode = :chained)
+        set_mode!(tw.passes, :tracking)
+        set_particle_option!(tw.particles, :min_track_length, 4)
+        set_particle_option!(tw.particles, :predictor, :none)
+        @test occursin("tracks ≥ 4", step_status(tw, :passes)[2])
+        test_pair!(tw; spawn = false)
+        tr = tw.test.result[]
+        @test tr isa TrackingResult && tr.n_frames == TRACKING_TEST_FRAMES
+        @test length(tr.trajectories) > 50
+        s = test_summary(tw.test)
+        @test s.kind === :tracking && s.longest == TRACKING_TEST_FRAMES
+        @test occursin("tracks through $(TRACKING_TEST_FRAMES) frames", test_brief(s))
+        @test !test_stale(tw)
+        select_pair!(tw.frames, 2)                # the test follows the representative pair
+        @test test_stale(tw)
+        start_run!(tw; spawn = false)
+        full = only(tw.run.completed[])
+        @test full isa TrackingResult && full.n_frames == 12
+        @test occursin("tracks through 12 frames", tw.run.status[])
+        @test run_progress(tw.run) == "tracking: frame step 11 of 11"
+        @test current_result(tw.explorer[]) isa TrackingResult
+        @test_throws ArgumentError load_settings!(StereoWorkflow(), workflow_recipe(tw))
+    end
 end

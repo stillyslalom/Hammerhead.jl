@@ -39,6 +39,30 @@
     @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
     HammerheadGUI.set_explorer!(rc, nothing)
     @test finite(rc.shafts[1][]) == 0
+
+    # particle modes: detected particles on Passes, matches on Test, and
+    # particle results on the results canvas
+    nplots = length(c.ax.scene.plots)
+    set_mode!(wf.passes, :ptv)
+    wf.roi[] = nothing
+    set_step!(wf, :passes)
+    @test finite(c.particles[1][]) == length(wf.particles.detected[]) > 0
+    set_particle_option!(wf.particles, :predictor, :none)
+    @test finite(c.boxes[1][]) == 0                  # no predictor windows
+    set_particle_option!(wf.particles, :predictor, :piv)
+    test_pair!(wf; spawn = false)
+    set_step!(wf, :test)
+    @test finite(c.particles[1][]) == 0
+    @test finite(c.shafts[1][]) == 2 * length(HammerheadGUI.vector_data(wf.test.result[]).x) > 0
+    HammerheadGUI.set_explorer!(rc, ResultExplorer([wf.test.result[]]))
+    @test finite(rc.points[1][]) == length(wf.test.result[].x) && finite(rc.shafts[1][]) > 0
+    @test occursin("px", rc.colorbar.label[])
+    tracks = track_particles([imgA, imgB, imgA], PTVParameters(search_radius = 6); min_track_length = 2,
+                             progress = false)
+    HammerheadGUI.set_explorer!(rc, ResultExplorer([tracks]))
+    @test finite(rc.tracks[1][]) > 0 && finite(rc.points[1][]) == 0 && finite(rc.shafts[1][]) == 0
+    @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
+    @test length(c.ax.scene.plots) == nplots
 end
 
 @testset "Prepare overlays and gestures (offscreen)" begin

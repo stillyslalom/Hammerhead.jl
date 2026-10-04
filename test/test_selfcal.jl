@@ -207,6 +207,11 @@ end
     @test rep0.R == [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     @test rep0.t == zeros(3)
     @test isempty(rep0.disparity_maps)
+    # Per-camera preprocessing: each function sees only its camera's frames.
+    seen = [0, 0]
+    b1, b2, rep1 = self_calibrate(J1, J2, dws[1], dws[2];
+                                  preprocess = (img -> (seen[1] += 1; img), img -> (seen[2] += 1; img)))
+    @test seen == [1, 1] && rep1.passes[1].disparity_rms == rep0.passes[1].disparity_rms
 
     # Argument validation.
     grid2 = DewarpGrid(x = -20.0:0.25:20.0, y = -20.0:0.25:19.75)

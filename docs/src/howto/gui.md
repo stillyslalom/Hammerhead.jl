@@ -106,7 +106,9 @@ scale converts what the results show (see
 
 ## Choose the passes
 
-On **Passes**, click a preset: **Low**, **Medium** or **High**. The preset fills
+**Analysis** at the top of **Passes** chooses what the window measures: PIV
+per pair, a PIV ensemble, particle matches per pair (PTV), or particle tracks
+through the frames. For PIV, click a preset: **Low**, **Medium** or **High**. The preset fills
 the pass table for the frame or region size; edit any cell to make the
 schedule your own. The first window should be at least four times the largest
 displacement. The viewer outlines each window size against the particles
@@ -117,15 +119,43 @@ Below the table:
 
 - **Correlation:** method, subpixel fit, **Padding and Gaussian weighting** (the
   most accurate setting), and per-vector **Uncertainty on final pass**.
-- **Evaluation:** **Per pair** gives a time series; **Ensemble** sums the
-  correlation over all pairs into one mean field
-  (see [Measure one field from many pairs](ensemble.md)). The window tests an
-  ensemble on the first ten pairs and runs it on all pairs. An ensemble runs
-  each pass once, so the **Repeats** column is unavailable; add a pass to
-  repeat a window size.
 - **Precision:** Float32 halves the memory of Float64.
 
+A **PIV ensemble** sums the correlation over all pairs into one mean field
+(see [Measure one field from many pairs](ensemble.md)). The window tests an
+ensemble on the first ten pairs and runs it on all pairs. An ensemble runs
+each pass once, so the **Repeats** column is unavailable; add a pass to
+repeat a window size.
+
 ![Passes: the medium preset and its window sizes outlined on the particles.](../assets/gui_window/passes.png)
+
+### Match or track particles
+
+Choose **PTV** or **Particle tracking** under **Analysis** to follow
+individual particles instead of correlating windows. The step is then called
+**Particles**, and the viewer circles the particles detected on the shown
+frame, after preprocessing and inside the mask, as you change the settings:
+
+- **Detection:** an **auto** threshold (median plus k times the frame's noise)
+  or an intensity, the minimum separation between particles, and the range of
+  particle diameters. The count under the settings follows each change.
+- **Matching:** the **Search radius** around each particle's predicted
+  position in the second frame. With **PIV predictor** on, the pass table
+  below runs first and centres each search on the local flow, so the radius
+  only has to cover the prediction's error; turn it off for displacements
+  smaller than the radius. Intensity and diameter weights make matching
+  prefer particles that look alike.
+- **Validation:** a normalized median test against neighbouring matches flags
+  outliers; flagged matches stay in the result, marked.
+- **Tracks** (tracking only): the shortest track kept and how many missed
+  frames a track may bridge.
+
+![Particles: the detection preview circles each particle on a zoomed part of the frame.](../assets/gui_window/particles.png)
+
+Tracking follows every frame in the order listed on **Images**, so it needs a
+time-resolved recording; the pairing there only picks the representative
+pair. Particle analysis covers whole frames: use a mask rather than a region.
+See [Track particles](../tutorials/ptv.md) for the method.
 
 ## Test one pair
 
@@ -142,6 +172,14 @@ Many red vectors usually mean the first window is too small for the
 displacement, or that a region needs a mask or preprocessing.
 [Tune validation](validation.md) covers the outlier test.
 
+In PTV mode the test matches the particles of the representative pair and
+reports the particle counts, the share of frame-A particles matched, the
+valid matches, and the median displacement and match residual; the viewer
+shows each match as an arrow. A tracking test follows up to ten frames from
+the representative pair and draws the tracks.
+
+![PTV test pair: matches on the zoomed frame, flagged ones in red.](../assets/gui_window/ptv_test_pair.png)
+
 ## Run the recording
 
 On **Run**, choose an output file with **Browse…** (leave it empty to keep
@@ -155,6 +193,10 @@ An ensemble run (**Run ensemble of N pairs**) pools every pair into one
 result, which is written with the settings when the run finishes. Its
 progress counts the pairs of each pass. Cancelling an ensemble stops after
 the pair in progress and keeps no result.
+
+A PTV run writes one particle result per pair, like a PIV run. A tracking
+run (**Track through N frames**) writes one set of tracks when it finishes;
+its progress counts frame steps, and cancelling keeps no result.
 
 ## Inspect the results
 
@@ -174,7 +216,10 @@ another results file; entries load one at a time.
 
 ![Results with the Profile tool: a line across the vortex and the velocity along it.](../assets/gui_window/results_profile.png)
 
-With a scale attached, axes, colour bars and summaries use its units.
+PTV results show each particle coloured by the chosen field with its
+displacement; tracks are drawn as lines coloured by mean speed, broken where
+a track bridged missed frames. With a scale attached, axes, colour bars and
+summaries use its units.
 Profile and circulation need a planar PIV result. Check flagged vectors and the mask
 before you interpret derived quantities, because derivatives amplify local
 errors.

@@ -1,4 +1,6 @@
-# Results step canvas: a scalar field with vectors, the selected node, and the
+# Results step canvas: a scalar field with vectors (gridded results), particles
+# coloured by a field with their displacements (PTV), or trajectories coloured
+# by mean speed (tracking); the selected node, and the
 # analysis tools of a ResultExplorer. Same rule as the image canvas: plots are
 # created once and only their inputs change. Frame, field, colour and tool
 # choices are made with the window's controls; a click on the canvas goes to
@@ -26,6 +28,8 @@ struct ResultsCanvas
     ax::Axis
     dirty::Base.RefValue{Bool}
     field::Any
+    points::Any               # PTV particles, coloured by the field
+    tracks::Any               # trajectories, coloured by mean speed
     colorbar::Colorbar
     shafts::Any
     heads::Any
@@ -48,6 +52,12 @@ function results_canvas()
               xlabel = "x (px)", ylabel = "y (px)")
     field = heatmap!(ax, 1:2, 1:2, _EMPTY_IMAGE; colormap = :viridis, colorrange = (0, 1),
                      nan_color = :transparent)
+    # scattered results colour with the heatmap's colormap and range (the
+    # heatmap then holds no data), so the colorbar serves every result type
+    points = scatter!(ax, _NOPOINT; color = [0.0f0], colormap = :viridis, colorrange = (0, 1),
+                      markersize = 8)
+    tracks = lines!(ax, _NOPOINT; color = [0.0f0], colormap = :viridis, colorrange = (0, 1),
+                    linewidth = 1.5)
     cb = Colorbar(fig[1, 2], field; label = "")
     shafts = linesegments!(ax, [Point2f(NaN, NaN), Point2f(NaN, NaN)];
                            color = [:black, :black], linewidth = 1.4)
@@ -69,7 +79,8 @@ function results_canvas()
     plines = Any[lines!(pax, [NaN, NaN], [NaN, NaN]; color = c, linewidth = 2,
                         label = l) for (c, l) in zip(PROFILE_COLORS, ("u", "v", "|V|"))]
     legend = Legend(box[1, 2], pax; framevisible = false, padding = (4, 4, 4, 4))
-    rc = ResultsCanvas(fig, ax, Ref(true), field, cb, shafts, heads, sel, tool_line, tool_points,
+    rc = ResultsCanvas(fig, ax, Ref(true), field, points, tracks, cb, shafts, heads, sel,
+                       tool_line, tool_points,
                        box, pax, plines, legend, Ref(true),
                        Ref{Union{Nothing,ResultExplorer}}(nothing), Any[],
                        Ref{Union{Nothing,Dims{2}}}(nothing))
@@ -165,8 +176,43 @@ function _draw_results!(rc::ResultsCanvas)
             rc.grid_size[] = size(data)
             reset_limits!(rc.ax)
         end
+        _update!(rc.points, _NOPOINT; color = [0.0f0])
+        _update!(rc.tracks, _NOPOINT; color = [0.0f0])
+    elseif r isa Union{PTVResult,TrackingResult}
+        lo, hi = current_color_limits(ex)
+        hi > lo || (hi = lo + 1)
+        _update!(rc.field, 1:2, 1:2, _EMPTY_IMAGE; colorrange = (lo, hi))
+        rc.colorbar.label = field_label(r, ex.field[])
+        rc.ax.xlabel, rc.ax.ylabel = Hammerhead.plot_axis_labels(r.scale)
+        rc.ax.yreversed[] || (rc.ax.yreversed = true)
+        if r isa PTVResult
+            vals = Float32.(current_field_values(ex))
+            isempty(r.x) ? _update!(rc.points, _NOPOINT; color = [0.0f0]) :
+                _update!(rc.points, Point2f.(r.x, r.y); color = vals, colorrange = (lo, hi))
+            _update!(rc.tracks, _NOPOINT; color = [0.0f0])
+            _update_arrows!(rc.shafts, rc.heads, ex.show_vectors[] ? r : nothing;
+                            valid_color = RGBf(0, 0, 0),
+                            flagged_color = ex.highlight_outliers[] ? FLAGGED_COLOR : RGBf(0, 0, 0))
+        else
+            speeds = current_field_values(ex)
+            pts = Point2f[]; cols = Float32[]
+            for (k, t) in pairs(r.trajectories)
+                xs, ys = trajectory_points(t)
+                length(xs) >= 2 || continue
+                c = isfinite(speeds[k]) ? Float32(speeds[k]) : Float32(lo)
+                append!(pts, Point2f.(xs, ys)); push!(pts, Point2f(NaN, NaN))
+                append!(cols, fill(c, length(xs) + 1))
+            end
+            isempty(pts) ? _update!(rc.tracks, _NOPOINT; color = [0.0f0]) :
+                _update!(rc.tracks, pts; color = cols, colorrange = (lo, hi))
+            _update!(rc.points, _NOPOINT; color = [0.0f0])
+            _update_arrows!(rc.shafts, rc.heads, nothing)
+        end
+        rc.grid_size[] === nothing || (rc.grid_size[] = nothing; reset_limits!(rc.ax))
     else
         _update!(rc.field, 1:2, 1:2, _EMPTY_IMAGE)
+        _update!(rc.points, _NOPOINT; color = [0.0f0])
+        _update!(rc.tracks, _NOPOINT; color = [0.0f0])
         rc.colorbar.label = ""
         _update_arrows!(rc.shafts, rc.heads, nothing)
     end

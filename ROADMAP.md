@@ -78,7 +78,8 @@ The current GUI is a set of separate tool windows. Users have to know which
 window to open next and carry settings between them by hand.
 
 - [ ] **One main window per modality** (planar ✅ `planar_window`, stereo ✅
-  `stereo_window`, PTV pending), organized as
+  `stereo_window`; PTV ✅ as the planar window's particle analysis modes,
+  2026-10-04, by user decision), organized as
   steps: Images → Prepare (preprocessing, mask, ROI, and scale as embedded
   panels) → Passes → Test pair → Run → Results. Each step shows its effect on
   a representative pair before the batch runs.
@@ -93,10 +94,9 @@ window to open next and carry settings between them by hand.
   - Supersedes the parked stash `Shared recipe workbench WIP parked for
     experimental QML integration` (built on the removed revision editors);
     drop the stash once the redesign starts.
-- [ ] Ensemble runs in the GUI windows. `apply_recipe` already supports
-  them; the windows test ensembles but run sequences only (GUI_REDESIGN
-  slice 4). Stereo save/open settings landed with `stereo_window`
-  (2026-10-04).
+- [x] Ensemble runs in the GUI windows (GUI_REDESIGN slice 4, 2026-10-04).
+  Stereo save/open settings and calibration files landed with
+  `stereo_window` (2026-10-04).
 - [ ] Exercise the redesigned workflow with a lab user and record concrete
   friction before adding further features.
 

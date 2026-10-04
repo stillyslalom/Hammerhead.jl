@@ -89,8 +89,9 @@ with [`polygon_mask`](@ref), using the `true` = excluded convention of
 [`detect_calibration_grid`](@ref), [`calibrate_camera`](@ref),
 [`common_dewarp_grid`](@ref) and [`self_calibrate`](@ref), and a stereo test
 or run calls the stereo `apply_recipe` with the two cameras' dewarpers. A
-recipe holds processing settings only, so the calibration stays with the
-window session.
+recipe holds processing settings only; the calibration saves and opens
+separately with [`save_calibration`](@ref) and [`load_calibration`](@ref),
+and a stereo results file carries both.
 
 HammerheadGUI is a separate package that depends on Hammerhead. The core
 package does not depend on Qt or GLMakie, so it runs without a display.

@@ -4,12 +4,214 @@ import QtQuick.Layouts
 import jlqml
 
 StepPage {
-    title: "Passes"
-    guidance: "Start from a preset, then adjust. Each pass refines the previous one; the first " +
-              "window should be at least four times the largest displacement. The viewer " +
-              "outlines each window size against the particles."
+    id: passesPage
+    // the window's planar analysis modes; the stereo window has PIV only
+    property bool particleModes: false
+    readonly property bool particles: app.particleMode === true
+
+    title: particles ? "Particles" : "Passes"
+    guidance: particles
+        ? "Detect particles, match them between the frames of a pair, and validate the " +
+          "matches. The viewer circles the particles detected on the shown frame with these " +
+          "settings. The PIV predictor below centres each particle's search on the local flow."
+        : "Start from a preset, then adjust. Each pass refines the previous one; the first " +
+          "window should be at least four times the largest displacement. The viewer " +
+          "outlines each window size against the particles."
+
+    Label { text: "Analysis"; font.weight: Font.DemiBold; visible: passesPage.particleModes }
+    ComboBox {
+        visible: passesPage.particleModes
+        Layout.preferredWidth: 340
+        textRole: "text"; valueRole: "value"
+        model: [{ text: "PIV, per pair (time series)", value: "sequence" },
+                { text: "PIV ensemble (one mean field)", value: "ensemble" },
+                { text: "PTV: particle matches per pair", value: "ptv" },
+                { text: "Particle tracking through the frames", value: "tracking" }]
+        currentIndex: Math.max(0, ["sequence", "ensemble", "ptv", "tracking"].indexOf(app.mode))
+        onActivated: Julia.hh_set_mode(currentValue)
+    }
+    Label {
+        visible: passesPage.particleModes && app.mode === "tracking"
+        text: "Tracking follows every frame in the order listed on the Images step (a " +
+              "time-resolved recording); the pairing there sets only the representative pair."
+        opacity: 0.75
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
+
+    // ---------------------------------------------------------------- particles
+    Label { text: "Detection"; font.weight: Font.DemiBold; visible: particles; Layout.topMargin: 8 }
+    GridLayout {
+        visible: particles
+        columns: 3
+        columnSpacing: 10
+        rowSpacing: 6
+        Label { text: "Threshold" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.ptvThreshold
+            onEditingFinished: if (text !== app.ptvThreshold) Julia.hh_particle_option("threshold", text)
+            ToolTip.visible: hovered
+            ToolTip.text: "\"auto\": median + k × noise of the frame; or an intensity"
+        }
+        Label { text: "intensity, or auto"; opacity: 0.75 }
+        Label { text: "Auto threshold k" }
+        TextField {
+            Layout.preferredWidth: 100
+            enabled: app.ptvThreshold === "auto"
+            text: app.ptvThresholdK
+            onEditingFinished: if (text !== app.ptvThresholdK) Julia.hh_particle_option("threshold_k", text)
+        }
+        Label { text: "× noise"; opacity: 0.75 }
+        Label { text: "Minimum separation" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.ptvMinSeparation
+            onEditingFinished: if (text !== app.ptvMinSeparation) Julia.hh_particle_option("min_separation", text)
+        }
+        Label { text: "px"; opacity: 0.75 }
+        Label { text: "Diameter" }
+        RowLayout {
+            TextField {
+                Layout.preferredWidth: 60
+                text: app.ptvMinDiameter
+                onEditingFinished: if (text !== app.ptvMinDiameter) Julia.hh_particle_option("min_diameter", text)
+            }
+            Label { text: "to" }
+            TextField {
+                Layout.preferredWidth: 60
+                text: app.ptvMaxDiameter
+                onEditingFinished: if (text !== app.ptvMaxDiameter) Julia.hh_particle_option("max_diameter", text)
+            }
+        }
+        Label { text: "px"; opacity: 0.75 }
+    }
+    Label {
+        visible: particles && app.ptvDetectStatus !== ""
+        text: app.ptvDetectStatus
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
+
+    Label { text: "Matching"; font.weight: Font.DemiBold; visible: particles; Layout.topMargin: 8 }
+    GridLayout {
+        visible: particles
+        columns: 3
+        columnSpacing: 10
+        rowSpacing: 6
+        Label { text: "Search radius" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.ptvSearchRadius
+            onEditingFinished: if (text !== app.ptvSearchRadius) Julia.hh_particle_option("search_radius", text)
+            ToolTip.visible: hovered
+            ToolTip.text: "Around each particle's predicted position in frame B"
+        }
+        Label { text: "px"; opacity: 0.75 }
+        Label { text: "PIV predictor" }
+        Switch {
+            checked: app.ptvPredictor === "piv"
+            onToggled: Julia.hh_particle_option("predictor", checked ? "piv" : "none")
+            ToolTip.visible: hovered
+            ToolTip.text: "Off: search around each particle's own position (small displacements)"
+        }
+        Label { text: "" }
+        Label { text: "Intensity weight" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.ptvIntensityWeight
+            onEditingFinished: if (text !== app.ptvIntensityWeight) Julia.hh_particle_option("intensity_weight", text)
+        }
+        Label { text: "0 = distance only"; opacity: 0.75 }
+        Label { text: "Diameter weight" }
+        TextField {
+            Layout.preferredWidth: 100
+            text: app.ptvDiameterWeight
+            onEditingFinished: if (text !== app.ptvDiameterWeight) Julia.hh_particle_option("diameter_weight", text)
+        }
+        Label { text: "" }
+    }
+
+    Label { text: "Validation"; font.weight: Font.DemiBold; visible: particles; Layout.topMargin: 8 }
+    GridLayout {
+        visible: particles
+        columns: 3
+        columnSpacing: 10
+        rowSpacing: 6
+        Label { text: "Flag outlier matches" }
+        Switch {
+            checked: app.ptvUodEnable
+            onToggled: Julia.hh_particle_option("uod_enable", checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Normalized median test against neighbouring matches; flagged, never replaced"
+        }
+        Label { text: "" }
+        Label { text: "Threshold"; enabled: app.ptvUodEnable }
+        TextField {
+            Layout.preferredWidth: 100
+            enabled: app.ptvUodEnable
+            text: app.ptvUodThreshold
+            onEditingFinished: if (text !== app.ptvUodThreshold) Julia.hh_particle_option("uod_threshold", text)
+        }
+        Label { text: "" }
+        Label { text: "Neighbours"; enabled: app.ptvUodEnable }
+        TextField {
+            Layout.preferredWidth: 100
+            enabled: app.ptvUodEnable
+            text: app.ptvUodNeighbors
+            onEditingFinished: if (text !== app.ptvUodNeighbors) Julia.hh_particle_option("uod_neighbors", text)
+        }
+        Label { text: "" }
+        Label { text: "Noise floor ε"; enabled: app.ptvUodEnable }
+        TextField {
+            Layout.preferredWidth: 100
+            enabled: app.ptvUodEnable
+            text: app.ptvUodEpsilon
+            onEditingFinished: if (text !== app.ptvUodEpsilon) Julia.hh_particle_option("uod_epsilon", text)
+        }
+        Label { text: "px"; opacity: 0.75 }
+    }
+
+    Label { text: "Tracks"; font.weight: Font.DemiBold; visible: particles && app.mode === "tracking"; Layout.topMargin: 8 }
+    GridLayout {
+        visible: particles && app.mode === "tracking"
+        columns: 3
+        columnSpacing: 10
+        rowSpacing: 6
+        Label { text: "Shortest track kept" }
+        SpinBox {
+            from: 2; to: 1000; editable: true
+            value: app.ptvMinTrackLength
+            Layout.preferredWidth: 110
+            onValueModified: Julia.hh_particle_option("min_track_length", value)
+        }
+        Label { text: "frames"; opacity: 0.75 }
+        Label { text: "Bridge gaps of up to" }
+        SpinBox {
+            from: 0; to: 100; editable: true
+            value: app.ptvMaxGap
+            Layout.preferredWidth: 110
+            onValueModified: Julia.hh_particle_option("max_gap", value)
+        }
+        Label { text: "missed frames"; opacity: 0.75 }
+    }
+    Label {
+        text: app.ptvError
+        visible: particles && text !== ""
+        color: "#c42b1c"
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
+
+    Label {
+        text: "PIV predictor passes"
+        font.weight: Font.DemiBold
+        visible: particles && app.ptvPredictor === "piv"
+        Layout.topMargin: 12
+    }
 
     RowLayout {
+        visible: !particles || app.ptvPredictor === "piv"
         spacing: 0
         Label { text: "Preset"; Layout.preferredWidth: 90 }
         ButtonGroup { id: presetGroup }
@@ -33,6 +235,7 @@ StepPage {
 
     // pass table
     GridLayout {
+        visible: !particles || app.ptvPredictor === "piv"
         columns: 6
         columnSpacing: 8
         rowSpacing: 6
@@ -115,6 +318,7 @@ StepPage {
     }
 
     RowLayout {
+        visible: !particles || app.ptvPredictor === "piv"
         Button { text: "Add pass"; onClicked: Julia.hh_add_pass() }
         Label { text: app.passesSummary; opacity: 0.75; Layout.leftMargin: 8 }
     }
@@ -126,8 +330,14 @@ StepPage {
         Layout.fillWidth: true
     }
 
-    Label { text: "Correlation"; font.weight: Font.DemiBold; Layout.topMargin: 12 }
+    Label {
+        text: "Correlation"
+        font.weight: Font.DemiBold
+        Layout.topMargin: 12
+        visible: !particles || app.ptvPredictor === "piv"
+    }
     GridLayout {
+        visible: !particles || app.ptvPredictor === "piv"
         columns: 2
         columnSpacing: 16
         rowSpacing: 8
@@ -158,8 +368,9 @@ StepPage {
             ToolTip.visible: hovered
             ToolTip.text: "Most accurate (about 0.03 px RMS); slower"
         }
-        Label { text: "Uncertainty on final pass" }
+        Label { text: "Uncertainty on final pass"; visible: !particles }
         Switch {
+            visible: !particles
             checked: app.uncertainty
             onToggled: Julia.hh_set_option("uncertainty", checked)
             ToolTip.visible: hovered
@@ -172,8 +383,9 @@ StepPage {
         columns: 2
         columnSpacing: 16
         rowSpacing: 8
-        Label { text: "Mode" }
+        Label { text: "Mode"; visible: !passesPage.particleModes }
         ComboBox {
+            visible: !passesPage.particleModes
             Layout.preferredWidth: 300
             textRole: "text"; valueRole: "value"
             model: [{ text: "Per pair (time series)", value: "sequence" },

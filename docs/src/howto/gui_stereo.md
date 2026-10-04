@@ -46,11 +46,10 @@ for.
 
 **Calibration** has four pages: **Plates**, **Detection**, **Dewarp grid**
 and **Self-calibration**. The viewer shows the selected plate image of the
-shown camera. The calibration belongs to the window session: **Save
-settings…** stores the processing settings, and the plates, fits and
-dewarpers stay with the open window. To reuse a calibration in a later
-session, build the dewarpers in a script and pass them in (see
-[Reuse a calibration](#Reuse-a-calibration)).
+shown camera. **Save calibration…** above the pages writes both cameras,
+an applied self-calibration and the dewarp grid to a file; **Open
+calibration…** reads one, or the calibration stored with stereo results,
+instead of fitting plates (see [Reuse a calibration](#Reuse-a-calibration)).
 
 ### Add the plate images
 
@@ -132,10 +131,14 @@ pairs to use (every frame of those pairs, camera 1 against camera 2), then
 click **Self-calibrate**. It uses the current preprocessing and mask. The
 report lists, per pass, the disparity between the cameras and the fitted
 sheet plane z = a + b·X + c·Y, and ends with the total correction. A pass
-without a plane only measured the result. Click **Apply correction** to use
+without a plane only measured the result. The viewer shows the shown
+camera's dewarped frame under the disparity map of the pass chosen beside
+**Viewer: disparity of pass**: arrows point from camera 1's view of the
+particles to camera 2's, drawn at the first pass's scale for every pass, so
+the correction shows as shorter arrows. Click **Apply correction** to use
 the corrected dewarpers.
 
-![Calibration, Self-calibration page: the report after the correction is applied.](../assets/gui_window/stereo_calibration_selfcal.png)
+![Calibration, Self-calibration page: the report after the correction is applied, and the first pass's disparity map, a uniform shift from the 0.8 mm sheet offset.](../assets/gui_window/stereo_calibration_selfcal.png)
 
 In this example the light sheet lies 0.8 mm from the plate's z = 0. The
 first pass measures a disparity of about 1.9 px and fits a = 0.79 mm with
@@ -146,9 +149,10 @@ converge, or a large triangulation RMS, calls for the disparity checks in
 
 Apply the correction last. A new fit or grid option rebuilds the dewarpers
 from the plates and drops the correction; self-calibrate again afterwards.
-With **Keep disparity maps**, the returned workflow's
-`wf.calibration.selfcal[].report` also holds the disparity fields, for the
-checks in [Calibrate a real stereo rig](stereo_rig.md).
+**Keep disparity maps** (on by default) keeps the maps for the viewer; the
+returned workflow's `wf.calibration.selfcal[].report` holds them too, for
+the checks in [Calibrate a real stereo rig](stereo_rig.md). Once the
+correction is applied, **Save calibration…** keeps it for later sessions.
 
 ## Prepare the dewarped images
 
@@ -157,11 +161,12 @@ grid, in grid nodes. The shaded border is where at least one camera has no
 view; it is excluded from every analysis.
 
 - **Preprocess**: the operations and the correlation probe of the planar
-  window. The steps run on both cameras' raw frames before dewarping, and
-  the probe correlates the shown camera's dewarped pair. One list serves both
-  cameras, so background subtraction, which differs per camera, is not
-  offered here: subtract each camera's background from its frames before
-  adding them when the recording needs it.
+  window. The steps run on the raw frames before dewarping, and the probe
+  correlates the shown camera's dewarped pair. One list serves both cameras
+  until you switch on **Separate steps per camera**; the list then shows the
+  shown camera's steps. **Estimate background** subtracts each camera's own
+  background, estimated from its first frames, and switches to separate
+  lists.
 - **Mask**: draw polygons on the dewarped grid, as in the planar window. One
   mask applies to both cameras. Stereo analysis has no region page; mask the
   part of the grid you do not want instead.
@@ -195,8 +200,8 @@ tools work on planar results.
 
 ## Save and reuse the settings
 
-**Save settings…** writes the passes, preprocessing, mask and scale as a
-core recipe; **Open settings…** reads one, or the settings stored in a
+**Save settings…** writes the passes, preprocessing (per camera when the
+lists are separate), mask and scale as a core recipe; **Open settings…** reads one, or the settings stored in a
 results file. Planar settings with an analysis region do not open here:
 remove the region, or mask the grid instead. A script runs the same
 settings with `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`; see
@@ -204,9 +209,15 @@ settings with `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`; see
 
 ### Reuse a calibration
 
-When the window closes, `wf.calibration.dewarpers[]` holds the dewarper
-pair. Pass it to the next window in the same Julia session, or build a
-pair in a script from the plate images:
+**Save calibration…** on the Calibration step writes the rig with
+`save_calibration`; open it with **Open calibration…**, or start a window
+with it: `stereo_window(calibration = "rig.jld2")`. A run's results file
+stores the calibration that produced it, so **Open calibration…** on a
+results file reproduces that rig. Changing a dewarp grid option rebuilds
+the grid for the opened cameras.
+
+In a script, `load_calibration("rig.jld2")` returns the dewarper pair, and
+a pair can also be built from the plate images:
 
 ```julia
 using Hammerhead, HammerheadGUI

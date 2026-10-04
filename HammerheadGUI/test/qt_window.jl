@@ -165,4 +165,47 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     @test ens_stage[] == 2
     @test ens_text == ["done: ensemble of 2 pairs", "1 result in memory"]
     @test wf.passes.mode[] === :ensemble && only(wf.run.completed[]) isa PIVResult
+
+    # a third session in PTV mode: the Particles page with the detection
+    # preview, then a test pair, through the bridge
+    particles_png, ptv_test_png = joinpath(shots, "particles.png"), joinpath(shots, "ptv_test.png")
+    # inverted frames have dark particles: drop the invert step
+    wf.preprocessing[] = filter(s -> s.operation !== :invert_image, wf.preprocessing[])
+    ptv_stage = Ref(0)
+    ptv_text = String[]
+    t_start = time()
+    HammerheadGUI._TICK_HOOK[] = function (sh)
+        w = sh.wf
+        time() - t_start > 120 && return HammerheadGUI.request_close()
+        s = ptv_stage[]
+        if s == 0
+            HammerheadGUI.hh_set_mode("ptv")
+            HammerheadGUI.hh_particle_option("search_radius", "4")
+            set_step!(w, :passes)
+            ptv_stage[] = 1; t_stage[] = time()
+        elseif s == 1 && w.particles.detected[] !== nothing && time() - t_stage[] > 1
+            push!(ptv_text, sh.step_rows[3].label, sh.shown["ptvSearchRadius"])
+            HammerheadGUI.request_grab(particles_png); ptv_stage[] = 2; t_stage[] = time()
+        elseif s == 2 && grabbed(particles_png)
+            set_step!(w, :test); HammerheadGUI.hh_test(); ptv_stage[] = 3; t_stage[] = time()
+        elseif s == 3 && !w.test.running[] && w.test.result[] !== nothing && time() - t_stage[] > 1
+            push!(ptv_text, first(split(sh.shown["testLines"], '\n')))
+            HammerheadGUI.request_grab(ptv_test_png); ptv_stage[] = 4; t_stage[] = time()
+        elseif s == 4 && grabbed(ptv_test_png)
+            ptv_stage[] = 5
+            HammerheadGUI.request_close()
+        end
+    end
+    try
+        @test planar_window(wf) === wf
+    finally
+        HammerheadGUI._TICK_HOOK[] = nothing
+    end
+    @test ptv_stage[] == 5
+    @test ptv_text[1:2] == ["Particles", "4"] && startswith(ptv_text[3], "Particles:")
+    @test wf.test.result[] isa PTVResult && length(wf.test.result[].u) > 50
+    for path in (particles_png, ptv_test_png)
+        img = HammerheadGUI.Controllers.FileIO.load(path)
+        @test minimum(size(img)) > 100 && length(unique(img)) > 50
+    end
 end

@@ -44,6 +44,9 @@ struct PinholeCamera <: CameraCalibration
             throw(ArgumentError("degenerate projection matrix: third-row rotation part is zero"))
         new(SMatrix{3,4,Float64}(P) / n)
     end
+    # Already-normalized matrix (calibration files): skip renormalizing so a
+    # saved camera reloads bitwise.
+    PinholeCamera(P::SMatrix{3,4,Float64,12}, ::Val{:normalized}) = new(P)
 end
 
 function PinholeCamera(K::AbstractMatrix{<:Real}, R::AbstractMatrix{<:Real},

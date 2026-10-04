@@ -14,6 +14,21 @@ Added:
   function, called as `progress(done, total)` after each pair of each pass
   (stereo counts both cameras); throwing from it aborts the run, as in the
   sequence drivers. `progress = true/false` still toggles the meter.
+- `save_calibration(path, dw1, dw2)` / `load_calibration(path)` save a
+  stereo rig (camera models including an applied self-calibration, image
+  sizes, and the shared `DewarpGrid`) and rebuild its dewarpers bitwise.
+  Stereo `apply_recipe` results files store the calibration as well, so
+  `load_calibration(results)` works like `load_recipe(results)`.
+- `PIVRecipe(...; preprocessing = (steps1, steps2))` gives each stereo
+  camera its own preprocessing (e.g. per-camera background subtraction);
+  `recipe_preprocess` then returns a function per camera. Recipe files are
+  now format version 2; version 1 files still load.
+- Particle recipes: `PIVRecipe(passes; mode = :ptv | :tracking, ptv,
+  ptv_predictor = :piv | :none, min_track_length, max_gap)`. `apply_recipe`
+  runs `run_ptv_sequence` on pairs (the passes are the PIV predictor) or
+  `track_particles` on a frame sequence, and stores the recipe with the
+  results. `track_particles` gained a `preprocess` keyword. `self_calibrate` accepts
+  a per-camera `preprocess = (f1, f2)` tuple, like the stereo drivers.
 
 ### HammerheadGUI
 
@@ -59,6 +74,26 @@ Added:
   viewed camera; `dewarpers = (dw1, dw2)` starts from script-built
   dewarpers. Results show stereo fields on world axes (+Y up). New
   `plane_residuals` and `background_note`.
+- Stereo calibrations save and open: **Save calibration…** /
+  **Open calibration…** on the Calibration step (`save_calibration_file`,
+  `open_calibration!`; a stereo results file opens the calibration that
+  produced it), and `stereo_window(; calibration = path)`. Dewarp grid
+  options rebuild the grid for opened cameras too (`can_build_grid`).
+- Per-camera preprocessing in the stereo window: **Separate steps per
+  camera** (`set_separate_preprocessing!`) gives each camera its own list,
+  edited for the shown camera; **Estimate background** subtracts each
+  camera's own background (`set_backgrounds!`). Self-calibration uses each
+  camera's steps.
+- Particle analysis in the planar window: **Analysis** on the Passes step
+  adds **PTV** (particle matches per pair) and **Particle tracking**
+  (tracks through the frames) to the PIV modes. In these modes the step is
+  **Particles**: detection, matching, validation and track settings
+  (`ParticleSettings`, `set_particle_option!`), the pass table as the
+  optional PIV predictor, and a live preview circling the particles
+  detected on the shown frame. Test pair matches the representative pair
+  (or tracks up to ten frames from it), Run writes per-pair PTV results or
+  one set of tracks, and Results draw particles and tracks. Settings save
+  as particle recipes.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run

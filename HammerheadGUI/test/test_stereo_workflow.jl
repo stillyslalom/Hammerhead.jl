@@ -330,8 +330,6 @@
         @test !edit_scale!(sw, :separation, "2")
         clear_scale!(sw)
         @test sw.scale[] === nothing
-        estimate_background!(sw)
-        @test occursin("not available for stereo", ps.status[])
         # another grid: the mask editor follows, the old mask is flagged
         coarse = (ImageDewarper(dws[1].cam, DewarpGrid(x = -20.0:0.5:20.0, y = 20.0:-0.5:-20.0), (512, 512)),
                   ImageDewarper(dws[2].cam, DewarpGrid(x = -20.0:0.5:20.0, y = 20.0:-0.5:-20.0), (512, 512)))
@@ -339,6 +337,73 @@
         @test ps.mask[].size == (81, 81) && !has_mask(ps.mask[])
         @test step_status(sw, :prepare)[1] === :attention
         @test size(pp.processed[]) == (81, 81)
+    end
+
+    @testset "per-camera preprocessing and backgrounds" begin
+        sw = StereoWorkflow(; files1, files2, dewarpers = dws)
+        pp = sw.prepare.preview
+        @test background_note(sw) === nothing && !separate_preprocessing(sw)
+        add_step!(pp, :highpass_filter)
+        estimate_background!(sw; frames = 2)
+        @test separate_preprocessing(sw) && occursin("per camera", sw.prepare.status[])
+        pre = sw.preprocessing[]
+        @test [s.operation for s in pre[1]] == [:subtract_background, :highpass_filter]
+        @test [s.operation for s in pre[2]] == [:subtract_background, :highpass_filter]
+        @test pre[1][1].options["background"] == C.estimate_background(files1[1:2])
+        @test pre[2][1].options["background"] == C.estimate_background(files2[1:2])
+        # the preview edits the shown camera's list
+        @test pp.steps[] == pre[1]
+        set_camera!(sw, 2)
+        @test pp.steps[] == pre[2]
+        @test pp.processed[] == dewarp(dws[2], recipe_preprocess(pre[2])(Float32.(files2[1])))
+        remove_step!(pp, 2)
+        @test length(sw.preprocessing[][1]) == 2 && length(sw.preprocessing[][2]) == 1
+        @test step_status(sw, :prepare) == (:ok, "preprocessing per camera (2 + 1 steps)")
+        r = workflow_recipe(sw)
+        @test r.preprocessing == sw.preprocessing[]
+        mktempdir() do dir
+            path = save_settings(sw, joinpath(dir, "per_camera.jld2"))
+            sw2 = StereoWorkflow(; dewarpers = dws)
+            load_settings!(sw2, path)
+            @test workflow_recipe(sw2) == r && separate_preprocessing(sw2)
+            @test sw2.prepare.preview.steps[] == r.preprocessing[1]
+            pw = PlanarWorkflow()
+            @test_throws ArgumentError load_settings!(pw, path)
+            @test isempty(pw.preprocessing[])
+        end
+        # one list again: camera 1's steps without its background
+        set_separate_preprocessing!(sw, false)
+        @test [s.operation for s in sw.preprocessing[]] == [:highpass_filter]
+        @test pp.steps[] == sw.preprocessing[]
+        set_separate_preprocessing!(sw, true)
+        @test sw.preprocessing[][1] == sw.preprocessing[][2] == pp.steps[]
+    end
+
+    @testset "calibration files" begin
+        sw = StereoWorkflow(; files1, files2)
+        scal = sw.calibration
+        @test_throws ArgumentError save_calibration_file(sw, "unused.jld2")
+        mktempdir() do dir
+            path = save_calibration_file(StereoWorkflow(; dewarpers = dws), joinpath(dir, "rig.jld2"))
+            add_plates!(scal)                                  # listed, not fitted
+            @test !can_build_grid(scal)
+            open_calibration!(sw, path)
+            d = scal.dewarpers[]
+            @test d[1].rows == dws[1].rows && d[2].mask == dws[2].mask && d[1].grid == dws[1].grid
+            @test workflow_problem(sw) === nothing && step_status(sw, :calibration)[1] === :ok
+            @test length(scal.plates[1][]) == 3 && scal.reviews[1][] === nothing && !fit_stale(scal)
+            @test scal.grid_z[] == dws[1].grid.z
+            @test scal.grid_spacing[] ≈ abs(step(dws[1].grid.x)) rtol = 0.01
+            @test sw.passes.image_size[] == size(dws[1].grid)
+            # grid options rebuild the grid for the opened cameras
+            @test can_build_grid(scal)
+            set_calibration_option!(scal, :grid_spacing, 0.5)
+            @test abs(step(scal.dewarpers[][1].grid.x)) ≈ 0.5 rtol = 0.01
+            @test scal.dewarpers[][2].cam == dws[2].cam
+            save_settings(sw, joinpath(dir, "settings.jld2"))
+            @test_throws ArgumentError open_calibration!(sw, joinpath(dir, "settings.jld2"))
+            @test abs(step(scal.dewarpers[][1].grid.x)) ≈ 0.5 rtol = 0.01
+        end
     end
 
     @testset "self-calibration finds the offset sheet" begin

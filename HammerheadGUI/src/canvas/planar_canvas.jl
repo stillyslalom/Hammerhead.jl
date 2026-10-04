@@ -18,6 +18,7 @@ const MASK_COLOR = RGBf(1.0, 0.45, 0.25)          # exclusion polygons
 const HOLE_COLOR = RGBf(0.30, 0.85, 1.0)          # polygons restoring an area
 const SELECTED_COLOR = RGBf(1.0, 0.92, 0.25)
 const TOOL_COLOR = RGBf(1.0, 0.92, 0.25)          # ROI corner, scale line, probe
+const PARTICLE_COLOR = RGBf(1.0, 0.85, 0.25)      # detected particles
 const _NOPOINT = [Point2f(NaN, NaN)]
 
 # Atomic update of a plot's positional arguments and attributes (positional
@@ -51,6 +52,8 @@ struct PlanarCanvas
     scale_points::Any
     scale_label::Any
     probe_box::Any
+    particles::Any           # detection preview (particle modes, Passes step)
+    tracks::Any              # tracking test/run trajectories
     frame_size::Base.RefValue{Union{Nothing,Dims{2}}}
     shown::Base.RefValue{Any}  # the matrix the frame heatmap shows
 end
@@ -86,24 +89,47 @@ function planar_canvas(wf::PlanarWorkflow)
     scale_label = text!(ax, _NOPOINT; text = [""], color = TOOL_COLOR, fontsize = 14,
                         align = (:left, :bottom), offset = (6, 6))
     probe_box = lines!(ax, _NOPOINT; color = TOOL_COLOR, linewidth = 2)
+    # circles the size of each detected particle (data-space marker size)
+    particles = scatter!(ax, _NOPOINT; marker = Circle, markerspace = :data, markersize = [1.0f0],
+                         color = :transparent, strokecolor = PARTICLE_COLOR, strokewidth = 1.2)
+    tracks = lines!(ax, _NOPOINT; color = VALID_COLOR, linewidth = 1.2)
     translate!(frame, 0, 0, -10)
     translate!(mask, 0, 0, -5)
     c = PlanarCanvas(fig, ax, Ref(true), frame, mask, roi, boxes, box_labels, shafts, heads,
                      polygons, active_line, active_points, roi_corner, scale_line, scale_points,
-                     scale_label, probe_box, Ref{Union{Nothing,Dims{2}}}(nothing), Ref{Any}(nothing))
+                     scale_label, probe_box, particles, tracks, Ref{Union{Nothing,Dims{2}}}(nothing),
+                     Ref{Any}(nothing))
     fs, ps = wf.frames, wf.prepare
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs.files, fs.pair_mode, fs.pair, fs.shown, fs.loaded,
           wf.step, ps.page, ps.show_processed, pp.processed)
     onany((_...) -> _draw_geometry!(c, wf), wf.mask, wf.roi)
-    onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes, fs.files, fs.pair, wf.roi)
+    onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes, wf.passes.mode,
+          wf.particles.predictor, fs.files, fs.pair, wf.roi)
     onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed)
     onany((_...) -> _draw_prepare!(c, wf), wf.step, ps.revision)
+    onany((_...) -> _draw_particles!(c, wf), wf.step, wf.passes.mode, wf.particles.detected)
     _register_gestures!(c, wf)
     _draw_frame!(c, wf)
     _draw_geometry!(c, wf)
     _draw_vectors!(c, wf)
     _draw_prepare!(c, wf)
+    _draw_particles!(c, wf)
+    return c
+end
+
+# The detection preview: on the Passes step of a particle mode, a circle the
+# size of each particle detected on the shown frame.
+function _draw_particles!(c::PlanarCanvas, wf::PlanarWorkflow)
+    p = wf.step[] === :passes && Controllers._particle_mode(wf.passes.mode[]) ?
+        wf.particles.detected[] : nothing
+    if p === nothing || length(p) == 0
+        _update!(c.particles, _NOPOINT; markersize = [1.0f0])
+    else
+        _update!(c.particles, [Point2f(p.x[k], p.y[k]) for k in 1:length(p)];
+                 markersize = [Float32(max(d, 2)) for d in p.diameter])
+    end
+    c.dirty[] = true
     return c
 end
 
@@ -294,7 +320,8 @@ end
 function _draw_boxes!(c::PlanarCanvas, wf::PlanarWorkflow)
     sz = c.frame_size[]
     center = nothing
-    if wf.step[] === :passes && sz !== nothing
+    piv_windows = !Controllers._particle_mode(wf.passes.mode[]) || wf.particles.predictor[] === :piv
+    if wf.step[] === :passes && sz !== nothing && piv_windows
         roi = wf.roi[]
         cy = roi === nothing ? (sz[1] + 1) / 2 : (first(roi.rows) + last(roi.rows)) / 2
         cx = roi === nothing ? (sz[2] + 1) / 2 : (first(roi.cols) + last(roi.cols)) / 2
@@ -332,11 +359,23 @@ function _draw_window_boxes!(boxes, box_labels, passes, center)
     return
 end
 
-# Vectors of the test result (Test step) or the latest finished pair (Run).
+# Vectors of the test result (Test step) or the latest finished pair (Run):
+# arrows for PIV and PTV results, polylines for tracks.
 function _draw_vectors!(c::PlanarCanvas, wf::PlanarWorkflow)
     r = wf.step[] === :test ? wf.test.result[] :
         wf.step[] === :run && !isempty(wf.run.completed[]) ? last(wf.run.completed[]) : nothing
     _update_arrows!(c.shafts, c.heads, r)
+    if r isa TrackingResult && !isempty(r.trajectories)
+        pts = Point2f[]
+        for t in r.trajectories
+            xs, ys = trajectory_points(t)
+            append!(pts, Point2f.(xs, ys))
+            push!(pts, Point2f(NaN, NaN))
+        end
+        _update!(c.tracks, pts)
+    else
+        _update!(c.tracks, _NOPOINT)
+    end
     c.dirty[] = true
     return c
 end
@@ -344,7 +383,7 @@ end
 # Quiver-style arrows: linesegment shafts + rotated triangle heads, colored
 # by validity (static in data space, cheap to pan and zoom).
 function _update_arrows!(shafts, heads, r; lengthscale = nothing, kwargs...)
-    d = r isa Controllers.GridResult ? vector_data(r) : nothing
+    d = r isa Union{Controllers.GridResult,PTVResult} ? vector_data(r) : nothing
     if d === nothing || isempty(d.x)
         _set_arrows!(shafts, heads, nothing, 1.0; kwargs...)
         return

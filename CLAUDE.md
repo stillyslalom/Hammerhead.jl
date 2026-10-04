@@ -129,7 +129,10 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   `ImageDewarper` (per-camera precomputed source-coordinate map), `dewarp[!]`
   cubic B-spline resampling onto the common plane, `common_dewarp_grid`
   (auto grid from camera footprints: intersection/union, `:auto` spacing,
-  descending `y`)
+  descending `y`), `save_calibration`/`load_calibration` (plain-dict JLD2,
+  `CALIBRATION_FORMAT_VERSION = 1`: pinhole/Soloff/`TransformedCamera`
+  models + image sizes + the shared grid; dewarpers rebuild bitwise — the
+  pinhole reload skips renormalization via `PinholeCamera(P, Val(:normalized))`)
 - `quality.jl` — UOD, peak ratio, correlation moment, validator pipeline,
   `replace_vectors!`, `smooth_field`
 - `masking.jl` — `polygon_mask`, intensity/contrast/edge `automatic_mask`,
@@ -243,16 +246,23 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   vector basis share one map; outputs carry contributor/availability flags,
   so masked or unsupported samples stay distinct from measured zeros.
 - `recipes.jl` — saved processing settings. `PIVRecipe(passes;
-  preprocessing, mask, roi, scale, mode = :sequence | :ensemble, image_type,
-  predictor_smoothing, mask_threshold)` with ordered built-in
+  preprocessing, mask, roi, scale, mode = :sequence | :ensemble | :ptv |
+  :tracking, image_type, predictor_smoothing, mask_threshold, ptv,
+  ptv_predictor, min_track_length, max_gap)` (particle modes: passes = PIV
+  predictor, planar/CPU only, no ROI; `:tracking` takes the frame sequence
+  and returns one `TrackingResult`) with ordered built-in
   `PreprocessStep`s (backgrounds copied in); `save_recipe`/`load_recipe`
-  (JLD2, `RECIPE_FORMAT_VERSION = 1`, unknown versions rejected);
+  (JLD2, `RECIPE_FORMAT_VERSION = 2` — v2 added per-camera preprocessing;
+  v1 still loads, unknown versions rejected);
   `apply_recipe(recipe, pairs; output, backend, ...)` and the stereo method
   `apply_recipe(recipe, pairs1, pairs2, dw1, dw2; ...)` dispatch to the
   sequence/ensemble drivers and store the recipe in the results file, so
-  `load_recipe(results_path)` recovers it; `recipe_preprocess`,
+  `load_recipe(results_path)` recovers it (stereo results also store the
+  calibration: `load_calibration(results_path)`); `recipe_preprocess`,
   `recipe_diff` (`(; path, before, after)` entries). ROI is planar-sequence
-  only; saveable preprocessing is a list of `PreprocessStep`s.
+  only; saveable preprocessing is a list of `PreprocessStep`s, or for stereo
+  a 2-tuple of lists (per camera; `recipe_preprocess` then returns `(f1, f2)`,
+  which the stereo drivers and `self_calibrate` accept as `preprocess`).
 - `ext/HammerheadMakieExt.jl` — `plot_vector_field[!]` (weakdep Makie; grid
   methods take `stride`, auto `lengthscale = :auto`, and
   `show_replaced`/`replaced_color`; scale via the core `arrow_lengthscale`
@@ -388,7 +398,14 @@ becomes the editor's raster), and an unedited opened recipe round-trips `==`.
 Test pair and Run both call `apply_recipe`; an ensemble Run returns one
 result (no `on_result`; `RunState.mode/pairs/cameras` + `run_progress` turn
 the core's per-pair-per-pass ticks into "pass k of P" text; cancel throws
-from `progress` and keeps nothing).
+from `progress` and keeps nothing). Particle analysis is a set of planar
+modes, not a window: `passes.mode` ∈ `ANALYSIS_MODES` (`:sequence`,
+`:ensemble`, `:ptv`, `:tracking`); `ParticleSettings` (`wf.particles`,
+`particle_settings.jl`) holds `PTVParameters`/predictor/track options and
+the Passes-step detection preview; the recipe omits the ROI in particle
+modes (`workflow_problem` reports one); a tracking test follows
+`TRACKING_TEST_FRAMES` frames from the representative pair and a tracking
+run all listed frames (one pooled result, like an ensemble).
 The settings/test/run/results/step-rail functions are `AbstractWorkflow`
 methods (`workflow.jl`) over per-workflow hooks (`workflow_steps`,
 `workflow_recipe`, `workflow_problem`, `_test_inputs`/`_run_inputs` = the
@@ -401,8 +418,13 @@ self-calibration, all through the runner with generation counters). Its
 Prepare viewer is on the dewarped grid on every page: the preview's `post`
 hook dewarps the processed pair (probe coordinates = grid), `wf.dewarped`
 is the raw pair dewarped, and the mask editor is sized to the grid. Stereo
-has no ROI and no background estimate (one recipe preprocessing list serves
-both cameras).
+has no ROI. `wf.preprocessing` is one list or a per-camera tuple (as in the
+recipe); the preview edits the shown camera's list via the
+`_edited_steps`/`_set_edited_steps!` hooks, and the background estimate
+subtracts each camera's own background (switching to per-camera lists).
+The Calibration sub-page lives in the controller (`cal.page`); on
+`:selfcal` the canvas shows the dewarped frame under the selected pass's
+disparity map, with pass 1's arrow scale for every pass.
 `src/qt/shell.jl` bridges to QML (`src/qml/`, one page per step,
 `steps/prepare/*Pane.qml`) via one `JuliaPropertyMap` (`app`, written through
 an equality-guarded `_set!`) + item models (steps, passes, preprocessing
@@ -537,11 +559,11 @@ should use); `build_dewarpers(cr1, cr2)` (in `calibration_review.jl`) builds a
 dewarper pair from two fitted reviews for `stereo_window(; dewarpers)`, sharing
 `_dewarper_pair` with the window's grid build. The stereo window replaced the
 GLMakie stereo batch/calibration views (2026-10-04). Stereo window
-conventions: calibration inputs (plates, detection, grid, self-calibration)
-are session state — no core file format holds cameras/dewarpers, so they are
-not in the recipe; plate images given as paths load in the fit job; one
-recipe preprocessing list serves both cameras, so stereo has no background
-estimate. The Prepare editors' controllers also work
+conventions: the calibration saves/opens separately from the recipe
+(`save_calibration_file`/`open_calibration!` over the core
+`save_calibration`/`load_calibration`; opening clears the plate fits and
+grid options then rebuild for the opened cameras); plate images given as
+paths load in the fit job. The Prepare editors' controllers also work
 alone: `PreprocessPreview` holds core `PreprocessStep`s and previews with
 `recipe_preprocess`, so it is exactly the batch; `MaskEditor` exports via
 `Hammerhead.polygon_mask(::MaskEditor)` and `save_mask` writes the

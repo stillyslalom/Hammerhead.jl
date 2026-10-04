@@ -294,12 +294,16 @@ function set_background!(pp::PreprocessPreview, ::Nothing)
     return _set_steps!(pp, filter(s -> s.operation !== :subtract_background, pp.steps[]))
 end
 
-function set_background!(pp::PreprocessPreview, bg::AbstractMatrix{<:Real})
+set_background!(pp::PreprocessPreview, bg::AbstractMatrix{<:Real}) =
+    _set_steps!(pp, _with_background(pp.steps[], bg))
+
+# `steps` subtracting `bg`: replaces an existing background, or goes first.
+function _with_background(steps::Vector{PreprocessStep}, bg::AbstractMatrix{<:Real})
     step = PreprocessStep(:subtract_background; background = bg)
-    steps = copy(pp.steps[])
+    steps = copy(steps)
     i = findfirst(s -> s.operation === :subtract_background, steps)
     i === nothing ? pushfirst!(steps, step) : (steps[i] = step)
-    return _set_steps!(pp, steps)
+    return steps
 end
 
 set_background!(pp::PreprocessPreview, frames; method::Symbol = :min) =

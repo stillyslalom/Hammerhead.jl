@@ -91,7 +91,8 @@ end
     track_particles(frames, params = PTVParameters();
                     predictor = :piv, piv_passes = multipass_parameters([64, 32]),
                     min_track_length = 3, max_gap = 0, mask = nothing, scale = nothing,
-                    image_type = Float64, progress = true) -> TrackingResult
+                    image_type = Float64, preprocess = nothing,
+                    progress = true) -> TrackingResult
 
 Link detections across at least two frames, supplied as file paths or
 real-valued matrices. Each frame is detected once. Tracks with two or more
@@ -108,6 +109,8 @@ sorted by starting frame and first position. `scale` attaches physical-unit
 metadata without converting stored pixel positions. Use [`physical`](@ref)
 and [`trajectory_velocities`](@ref) for velocities. `image_type` selects the
 precision used when loading file paths; in-memory matrix types are promoted.
+`preprocess` is applied to each frame after loading, as in
+[`run_ptv_sequence`](@ref).
 `progress` is a Boolean meter setting or an `(i, n)` callback after each
 transition. Frames are loaded and detected one at a time. For lazy
 [`FrameRef`](@ref) sources whose later element types cannot be inspected
@@ -122,13 +125,15 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
                          mask::Union{Nothing,AbstractMatrix{Bool}} = nothing,
                          scale::Union{Nothing,PhysicalScale} = nothing,
                          image_type::Type{<:AbstractFloat} = Float64,
+                         preprocess = nothing,
                          progress::Union{Bool,Function} = true)
     n_frames = length(frames)
     n_frames >= 2 || throw(ArgumentError("track_particles needs at least 2 frames, got $n_frames"))
     min_track_length >= 2 ||
         throw(ArgumentError("min_track_length must be at least 2, got $min_track_length"))
     max_gap >= 0 || throw(ArgumentError("max_gap must be nonnegative, got $max_gap"))
-    img_first = load_frame(frames[1], image_type)
+    load(f) = (img = load_frame(f, image_type); preprocess === nothing ? img : preprocess(img))
+    img_first = load(frames[1])
     image_size = size(img_first)
     # In-memory matrices retain their element type. Inspect their metadata
     # for a common precision without materializing any later lazy frames.
@@ -151,7 +156,7 @@ function track_particles(frames::AbstractVector, params::PTVParameters = PTVPara
     n_trans = n_frames - 1
     meter = Progress(n_trans; desc = "Tracking: ", enabled = progress === true)
     for k in 1:n_trans
-        img_next = load_frame(frames[k + 1], image_type)
+        img_next = load(frames[k + 1])
         size(img_next) == image_size ||
             throw(DimensionMismatch("all frames must have the same size"))
         pb = convert_particles(T, detect_particles(img_next, params; mask))

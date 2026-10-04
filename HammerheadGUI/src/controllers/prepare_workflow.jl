@@ -15,11 +15,11 @@ function _connect_settings!(wf::AbstractWorkflow)
     # editors → workflow
     on(pp.steps) do steps
         _syncing(ps) do
-            steps == wf.preprocessing[] || (wf.preprocessing[] = copy(steps))
+            steps == _edited_steps(wf) || _set_edited_steps!(wf, copy(steps))
         end
     end
     # workflow → editors (opening settings, or edits from outside)
-    on(_ -> _syncing(() -> set_steps!(pp, wf.preprocessing[]), ps), wf.preprocessing)
+    on(_ -> _syncing(() -> set_steps!(pp, _edited_steps(wf)), ps), wf.preprocessing)
     on(_ -> _syncing(() -> _seed_mask!(wf), ps), wf.mask)
     _has_roi(wf) && on(_ -> _syncing(() -> _seed_roi!(wf), ps), wf.roi)
     on(_ -> _syncing(() -> _seed_scale!(wf), ps), wf.scale)
@@ -27,7 +27,7 @@ function _connect_settings!(wf::AbstractWorkflow)
                 pp.processed, pp.status, pp.error)
         on(_ -> _bump!(ps), obs)
     end
-    _syncing(() -> set_steps!(pp, wf.preprocessing[]), ps)
+    _syncing(() -> set_steps!(pp, _edited_steps(wf)), ps)
     return wf
 end
 
@@ -328,9 +328,9 @@ end
 
 Estimate the background from the first `frames` frames (`compute_background`)
 and subtract it as the first preprocessing step. In a window this runs on a
-worker task; `wf.prepare.status` reports progress. (A `StereoWorkflow`
-reports that background subtraction is unavailable: a recipe holds one
-preprocessing list for both cameras.)
+worker task; `wf.prepare.status` reports progress. A `StereoWorkflow`
+estimates each camera's background from its own frames (see
+[`set_backgrounds!`](@ref)).
 """
 function estimate_background!(wf::PlanarWorkflow; frames::Integer = 10, method::Symbol = :min)
     ps = wf.prepare
@@ -360,8 +360,7 @@ end
     background_note(wf::AbstractWorkflow) -> Union{Nothing,String}
 
 `nothing` when [`estimate_background!`](@ref) can estimate a background for
-`wf`, otherwise the reason it cannot (a `StereoWorkflow`'s recipe holds one
-preprocessing list for both cameras). Windows show the note instead of the
+`wf`, otherwise the reason it cannot. Windows show the note instead of the
 background controls.
 """
 background_note(::AbstractWorkflow) = nothing

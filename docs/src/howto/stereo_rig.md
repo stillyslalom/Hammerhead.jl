@@ -130,6 +130,22 @@ The corrected dewarpers then drop into stereo processing of the recording:
 stereo = run_piv_stereo(A1, B1, A2, B2, dw1c, dw2c, passes)
 ```
 
+## Save the calibration
+
+Save the corrected rig once and reopen it for every later analysis of the
+experiment. The file holds both camera models (with the self-calibration
+correction), their image sizes, and the grid; loading rebuilds the
+dewarpers exactly:
+
+```julia
+save_calibration("rig.jld2", dw1c, dw2c)
+dw1c, dw2c = load_calibration("rig.jld2")
+```
+
+A stereo [`apply_recipe`](@ref) run stores the calibration in its results
+file too, so `load_calibration(results_path)` recovers the dewarpers that
+produced those results.
+
 ## Check exposure synchronization
 
 Both cameras must record the same A instant and the same B instant. Equal

@@ -109,7 +109,39 @@ round(sum(u) / length(u); digits = 2)   # mean u in px
 
 For two cameras, pass both cameras' pairs and their dewarpers:
 `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`. A stereo recipe's mask is on
-the dewarped grid.
+the dewarped grid. Its preprocessing runs on the raw frames before dewarping;
+give each camera its own list with a tuple, for example to subtract each
+camera's background:
+
+```julia
+recipe = PIVRecipe(passes; preprocessing = (
+    [PreprocessStep(:subtract_background; background = bg1)],
+    [PreprocessStep(:subtract_background; background = bg2)]))
+```
+
+A stereo results file also stores the cameras and grid:
+[`load_calibration`](@ref)`(output)` returns the dewarpers that produced it.
+
+## Match or track particles
+
+Set `mode = :ptv` to match individual particles in each pair, as
+[`run_ptv_sequence`](@ref) does. The recipe's passes become the PIV
+predictor that centres each particle search, and `ptv` holds the detection
+and matching settings:
+
+```@example recipes
+ptv = PIVRecipe(multipass_parameters([64, 32]); mode = :ptv,
+                ptv = PTVParameters(search_radius = 3))
+m = first(apply_recipe(ptv, pairs; progress = false))
+u = m.u[.!m.outliers]
+(length(u), round(sum(u) / length(u); digits = 2))   # matches, mean u in px
+```
+
+`ptv_predictor = :none` searches around each particle's own position
+instead. `mode = :tracking` links particles through a frame sequence with
+[`track_particles`](@ref): pass the frames, not pairs, and set
+`min_track_length` and `max_gap` in the recipe. Particle recipes run planar
+recordings on the CPU and use a mask instead of an ROI.
 
 ## In the GUI
 

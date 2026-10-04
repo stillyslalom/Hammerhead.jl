@@ -12,7 +12,9 @@ const SHARED_OPTIONS = (:correlation, :subpixel, :accuracy, :uod_threshold,
 The pass schedule of a workflow. `passes` always holds explicit
 `PIVParameters`; `preset` names the effort level the schedule came from
 while it is unedited (`nothing` once edited or loaded from a recipe).
-`mode` is `:sequence` or `:ensemble`, `image_type` the processing precision,
+`mode` is the analysis mode (one of [`ANALYSIS_MODES`](@ref): `:sequence`,
+`:ensemble`, or the particle modes `:ptv`/`:tracking`, where the schedule is
+the PIV predictor), `image_type` the processing precision,
 and `error` the message from the last rejected edit (empty when none).
 """
 struct PassesEditor
@@ -26,8 +28,7 @@ end
 
 function PassesEditor(; image_size = nothing, mode::Symbol = :sequence,
                       image_type::DataType = Float64, preset::Symbol = :medium)
-    mode in (:sequence, :ensemble) ||
-        throw(ArgumentError("mode must be :sequence or :ensemble, got :$mode"))
+    _check_mode(mode)
     image_type in (Float32, Float64) ||
         throw(ArgumentError("image_type must be Float32 or Float64, got $image_type"))
     pe = PassesEditor(Observable(PIVParameters[]), Observable{Union{Nothing,Symbol}}(nothing),
@@ -73,13 +74,13 @@ end
 """
     set_mode!(pe::PassesEditor, mode)
 
-Choose `:sequence` (one field per pair) or `:ensemble` (one field from all
-pairs). A schedule linked to a preset is refilled, since the ensemble
-presets differ.
+Choose the analysis mode: `:sequence` (one field per pair), `:ensemble`
+(one field from all pairs), `:ptv` (particle matches per pair), or
+`:tracking` (particle tracks through the frames). A schedule linked to a
+preset is refilled, since the ensemble presets differ.
 """
 function set_mode!(pe::PassesEditor, mode::Symbol)
-    mode in (:sequence, :ensemble) ||
-        throw(ArgumentError("mode must be :sequence or :ensemble, got :$mode"))
+    _check_mode(mode)
     mode == pe.mode[] && return pe
     pe.mode[] = mode
     pe.preset[] === nothing || fill_preset!(pe, pe.preset[])
@@ -109,6 +110,9 @@ function load_passes!(pe::PassesEditor, passes::AbstractVector{PIVParameters})
     pe.passes[] = collect(PIVParameters, passes)
     return pe
 end
+
+_check_mode(mode::Symbol) = mode in ANALYSIS_MODES ||
+    throw(ArgumentError("mode must be one of $(join((":$m" for m in ANALYSIS_MODES), ", ")), got :$mode"))
 
 # PIVParameters field names are its keyword names: copy with overrides.
 function _with(p::PIVParameters; kwargs...)
@@ -246,11 +250,12 @@ function passes_summary(pe::PassesEditor)
     parts = String[]
     for p in ps
         s = string(p.window_size[1])
-        p.max_iterations > 1 && pe.mode[] === :sequence && (s *= " ×$(p.max_iterations)")
+        p.max_iterations > 1 && pe.mode[] !== :ensemble && (s *= " ×$(p.max_iterations)")
         push!(parts, s)
     end
     txt = join(parts, "→") * " px"
     pe.mode[] === :ensemble && (txt *= " · ensemble")
+    _particle_mode(pe.mode[]) && (txt = "PIV predictor " * txt)
     txt *= pe.preset[] === nothing ? " · custom" : " · $(pe.preset[]) preset"
     return txt
 end

@@ -47,6 +47,12 @@ using JLD2
             @test loaded.passes == recipe.passes
             @test loaded.mask == mask && loaded.roi == recipe.roi && loaded.scale == recipe.scale
             @test loaded.image_type === Float32
+            # format version 1 (before per-camera preprocessing) still loads
+            jldopen(joinpath(dir, "v1.jld2"), "w") do f
+                f["recipe_format_version"] = 1
+                f["recipe"] = Hammerhead._recipe_data(recipe)
+            end
+            @test load_recipe(joinpath(dir, "v1.jld2")) == recipe
             save_results(joinpath(dir, "r.jld2"), run_piv(pairs[1]...))
             @test_throws ArgumentError load_recipe(joinpath(dir, "r.jld2"))
         end
@@ -82,6 +88,53 @@ using JLD2
         end
         @test_throws ArgumentError apply_recipe(PIVRecipe(passes; mode = :ensemble, roi = ROI(1:64, 1:64)), pairs)
         @test_throws ArgumentError PIVRecipe(passes; mode = :stereo)
+    end
+
+    @testset "PTV and tracking recipes" begin
+        ptv = PTVParameters(search_radius = 4)
+        pr = PIVRecipe(passes; mode = :ptv, ptv, mask)
+        mktempdir() do dir
+            out = joinpath(dir, "ptv.jld2")
+            res = apply_recipe(pr, pairs; output = out, progress = false)
+            direct = run_ptv_sequence(pairs, ptv; mask, piv_passes = passes, progress = false)
+            @test length(res) == 3 && all(isequal(a.u, b.u) && isequal(a.x, b.x) for (a, b) in zip(res, direct))
+            @test count(!, res[1].outliers) > 50
+            @test load_recipe(out) == pr && load_recipe(out).ptv == ptv
+            @test isequal(load_results(out)[2].v, res[2].v)
+        end
+        # tracking takes the frame sequence; preprocessing applies to each frame
+        trng = MersenneTwister(3)
+        positions = [(8 + 80 * rand(trng), 8 + 80 * rand(trng)) for _ in 1:80]
+        frames = map(0:3) do k
+            img = zeros(n, n)
+            foreach(p -> add_particle!(img, (p[1] + 1.0k, p[2] - 1.5k), 3.0), positions)
+            img
+        end
+        tr = PIVRecipe(passes; mode = :tracking, ptv, min_track_length = 4, max_gap = 1,
+                       preprocessing = [PreprocessStep(:intensity_cap)])
+        mktempdir() do dir
+            out = joinpath(dir, "tracks.jld2")
+            result = apply_recipe(tr, frames; output = out, progress = false)
+            direct = track_particles(frames, ptv; piv_passes = passes, min_track_length = 4,
+                                     max_gap = 1, preprocess = recipe_preprocess(tr), progress = false)
+            @test length(result.trajectories) == length(direct.trajectories) > 5
+            @test result.trajectories[1].x == direct.trajectories[1].x
+            @test load_recipe(out) == tr && load_recipe(out).max_gap == 1
+            @test only(load_results(out)) isa TrackingResult
+            @test_throws ArgumentError apply_recipe(tr, frames; output = i -> "$i.jld2", progress = false)
+        end
+        # no predictor: a pure nearest-neighbour search
+        nopred = PIVRecipe(passes; mode = :ptv, ptv = PTVParameters(search_radius = 3), ptv_predictor = :none)
+        @test isequal(only(apply_recipe(nopred, pairs[1:1]; progress = false)).u,
+                      run_ptv(pairs[1]..., nopred.ptv; predictor = nothing).u)
+        paths = [c.path for c in recipe_diff(pr, PIVRecipe(passes; mode = :ptv, mask,
+                                                              ptv = PTVParameters(search_radius = 5)))]
+        @test paths == ["ptv.search_radius"]
+        @test_throws ArgumentError PIVRecipe(passes; mode = :ptv, roi = ROI(1:50, 1:50))
+        @test_throws ArgumentError PIVRecipe(passes; ptv_predictor = :field)
+        @test_throws ArgumentError PIVRecipe(passes; min_track_length = 1)
+        @test_throws ArgumentError PIVRecipe(passes; max_gap = -1)
+        @test_throws ArgumentError apply_recipe(pr, pairs; backend = :ka)
     end
 
     @testset "recipe_diff" begin

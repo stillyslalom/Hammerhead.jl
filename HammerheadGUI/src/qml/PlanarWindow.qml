@@ -8,7 +8,7 @@ WorkflowWindow {
 
     ImagesPage {}
     PreparePage {}
-    PassesPage {}
+    PassesPage { particleModes: true }
     TestPage {}
     RunPage {}
     ResultsPage {}

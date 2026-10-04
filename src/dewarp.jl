@@ -245,3 +245,92 @@ See [`dewarp!`](@ref) to reuse an output buffer across frames.
 """
 dewarp(dw::ImageDewarper, img::AbstractMatrix{<:Real}) =
     dewarp!(Matrix{float(eltype(img))}(undef, size(dw.grid)), dw, img)
+
+# --- saved calibrations ------------------------------------------------------
+# A calibration file stores each camera model, its raw image size, and the
+# shared grid as plain JLD2 dictionaries (like recipes); the dewarpers'
+# coordinate maps are rebuilt on load, which reproduces them bitwise.
+const CALIBRATION_FORMAT_VERSION = 1
+
+_camera_data(cam::PinholeCamera) = Dict{String,Any}("model" => "pinhole", "P" => Matrix(cam.P))
+_camera_data(cam::SoloffCamera) =
+    Dict{String,Any}("model" => "soloff", "ax" => collect(cam.ax), "ay" => collect(cam.ay),
+                     "center" => collect(cam.center), "scale" => collect(cam.scale))
+_camera_data(cam::TransformedCamera) =
+    Dict{String,Any}("model" => "transformed", "camera" => _camera_data(cam.cam),
+                     "R" => Matrix(cam.R), "t" => collect(cam.t))
+_camera_data(cam::CameraCalibration) =
+    throw(ArgumentError("a $(nameof(typeof(cam))) camera cannot be saved in a calibration file"))
+
+function _camera_from_data(d)
+    model = d["model"]
+    model == "pinhole" && return PinholeCamera(SMatrix{3,4,Float64}(d["P"]), Val(:normalized))
+    model == "soloff" && return SoloffCamera(SVector{19,Float64}(d["ax"]), SVector{19,Float64}(d["ay"]),
+                                             SVector{3,Float64}(d["center"]), SVector{3,Float64}(d["scale"]))
+    model == "transformed" && return TransformedCamera(_camera_from_data(d["camera"]), d["R"], d["t"])
+    throw(ArgumentError("unknown camera model \"$model\" in calibration"))
+end
+
+_range_data(r::LinRange) = Dict{String,Any}("first" => first(r), "last" => last(r), "length" => length(r))
+_range_from_data(d) = LinRange{Float64,Int}(d["first"], d["last"], d["length"])
+
+function _calibration_data(dewarpers)
+    isempty(dewarpers) && throw(ArgumentError("a calibration needs at least one dewarper"))
+    grid = first(dewarpers).grid
+    all(dw -> dw.grid == grid, dewarpers) ||
+        throw(ArgumentError("the dewarpers must share one DewarpGrid"))
+    Dict{String,Any}(
+        "grid" => Dict{String,Any}("x" => _range_data(grid.x), "y" => _range_data(grid.y),
+                                   "z" => grid.z),
+        "cameras" => [merge(_camera_data(dw.cam),
+                            Dict{String,Any}("image_size" => collect(dw.image_size)))
+                      for dw in dewarpers])
+end
+
+function _write_calibration(file, dewarpers)
+    file["calibration_format_version"] = CALIBRATION_FORMAT_VERSION
+    file["calibration"] = _calibration_data(dewarpers)
+    nothing
+end
+
+"""
+    save_calibration(path, dw1, dw2, ...) -> path
+
+Save a camera rig to a JLD2 file: each [`ImageDewarper`](@ref)'s camera model
+and raw image size, and the [`DewarpGrid`](@ref) they share. A
+self-calibration applied with [`self_calibrate`](@ref) is part of the
+cameras, so it is saved too. [`load_calibration`](@ref) rebuilds the
+dewarpers.
+
+Pinhole, Soloff, and [`TransformedCamera`](@ref) models can be saved.
+"""
+function save_calibration(path::AbstractString, dewarpers::ImageDewarper...)
+    data = _calibration_data(dewarpers)   # validate before creating the file
+    jldopen(path, "w") do file
+        file["calibration_format_version"] = CALIBRATION_FORMAT_VERSION
+        file["calibration"] = data
+    end
+    path
+end
+
+"""
+    load_calibration(path) -> Tuple of ImageDewarper
+
+Load the dewarpers saved with [`save_calibration`](@ref), in the order they
+were saved, or the calibration a stereo [`apply_recipe`](@ref) stored with
+its results.
+"""
+function load_calibration(path::AbstractString)
+    jldopen(path, "r") do file
+        haskey(file, "calibration") ||
+            throw(ArgumentError("$path contains no Hammerhead calibration"))
+        version = file["calibration_format_version"]
+        version == CALIBRATION_FORMAT_VERSION ||
+            throw(ArgumentError("$path has unsupported calibration_format_version $version"))
+        d = file["calibration"]
+        g = d["grid"]
+        grid = DewarpGrid(; x = _range_from_data(g["x"]), y = _range_from_data(g["y"]), z = g["z"])
+        Tuple(ImageDewarper(_camera_from_data(c), grid, Tuple(c["image_size"]))
+              for c in d["cameras"])
+    end
+end

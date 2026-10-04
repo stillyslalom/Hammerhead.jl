@@ -1,8 +1,11 @@
 # HammerheadGUI redesign: workflow-first Qt Quick application
 
 Plan for ROADMAP §2. Status: framework chosen (Qt Quick via QML.jl + QMLMakie,
-2026-10-03); slices 0–3 done (planar and stereo windows) and slice 4's
-ensemble runs done; the lab-user session is next. Delete this file once the redesign has
+2026-10-03); slices 0–3 done (planar and stereo windows), slice 4's
+ensemble runs done, the slice 2/3 designs reviewed and accepted by the user
+(2026-10-04), and the stereo core gaps closed (calibration files,
+per-camera preprocessing), and slice 5 (PTV, as particle modes of the planar
+window) is done; the lab-user session is open. Delete this file once the redesign has
 landed and CLAUDE.md describes the result.
 
 ## Goal
@@ -191,8 +194,7 @@ grid, and self-calibration) and has no ROI.
    10 s / 15 s targets; only a sysimage/app bundle removes the load time.
    Moved to slice 2: Prepare editing, the profile and circulation tools in
    Results, async image loading.
-2. ✅ Prepare, Results tools, docs (2026-10-04; implemented overnight,
-   unreviewed). Prepare sub-pages (Preprocess with probe and background
+2. ✅ Prepare, Results tools, docs (2026-10-04; design accepted). Prepare sub-pages (Preprocess with probe and background
    estimate, Mask, Region, Scale) edit the workflow through `PrepareState`,
    synced both ways with opened settings (design below). Canvas gestures are
    controller functions (`canvas_click!`/`canvas_alt_click!`/`canvas_key!`).
@@ -209,7 +211,7 @@ grid, and self-calibration) and has no ROI.
    runs in the Run step (slice 4; the Test step already tests ensembles);
    the narrow Repeats column in the pass table clips its value (seen in the
    screenshots; cosmetic).
-3. ✅ Stereo window (2026-10-04; overnight, unreviewed). Design: "Slice 3
+3. ✅ Stereo window (2026-10-04; design accepted). Design: "Slice 3
    design" below. 3a ✅ controllers (2026-10-04, overnight, unreviewed):
    `AbstractWorkflow` (workflow.jl) holds the shared settings/test/run/
    results functions with per-workflow hooks; `StereoWorkflow`
@@ -234,11 +236,16 @@ grid, and self-calibration) and has no ROI.
    `calibration_review!` and `selfcal_review` stay standalone. New how-to
    `howto/gui_stereo.md` with `stereo_*` window screenshots from
    `docs/gui_screenshots.jl` (the synthetic rig of `test/stereo_fixture.jl`).
-   Open questions for the user: (a) calibration persistence — plates, fits
-   and dewarpers are session state because the core has no file format for
-   cameras/dewarpers; saving a calibration needs a core format first;
-   (b) per-camera preprocessing and background subtraction need a core
-   `PIVRecipe` change (one preprocessing list serves both cameras today).
+   Follow-ups (2026-10-04, after review): (a) calibration files — core
+   `save_calibration`/`load_calibration` (cameras incl. an applied
+   self-calibration, image sizes, grid; stereo results files carry theirs);
+   the Calibration step has Open/Save calibration, and opened cameras
+   replace the plate fits; (b) per-camera preprocessing — `PIVRecipe`
+   preprocessing may be a per-camera tuple (recipe format v2), the Preprocess
+   page has **Separate steps per camera** and edits the shown camera's list,
+   and **Estimate background** subtracts each camera's own background;
+   (c) the Self-calibration page's viewer shows the disparity map of a
+   chosen pass (maps are kept by default) on the dewarped frame.
 4. Ensemble mode in both windows ✅ (2026-10-04; overnight, unreviewed);
    session with a lab user (ROADMAP §2) — open. Run executes `:ensemble`
    recipes: `apply_recipe` returns one pooled result (saved with its recipe),
@@ -254,7 +261,26 @@ grid, and self-calibration) and has no ROI.
    `|velocity|` with a scale attached; Qt windows refuse to open next to a
    GLFW screen (and the GLMakie views warn after a Qt window); startup
    re-traced (numbers under Startup).
-5. PTV window, after a core PTV recipe design.
+5. ✅ PTV (2026-10-04). Core first: `PIVRecipe` gained `mode = :ptv |
+   :tracking` with `ptv::PTVParameters`, `ptv_predictor` (`:piv` uses the
+   recipe's passes as the PIV predictor, `:none`), `min_track_length` and
+   `max_gap`; `apply_recipe` runs `run_ptv_sequence` on pairs or
+   `track_particles` (new `preprocess` keyword) on a frame sequence — one
+   recipe API, no parallel format. The user chose particle *modes of the
+   planar window* over a separate `ptv_window()` (same images, preparation
+   and scale; one window to compare PIV and PTV). The Passes step's
+   **Analysis** choice lists the four modes; in particle modes the rail
+   names it **Particles** (`step_label`), the page edits `ParticleSettings`
+   (detection, matching, validation, tracks) with the pass table as the
+   optional PIV predictor, and the viewer circles the particles detected on
+   the processed shown frame (a worker job, `particles.detected`). Test pair:
+   PTV matches the representative pair (arrows); tracking follows up to
+   `TRACKING_TEST_FRAMES` = 10 frames from it (track polylines). Run: PTV per
+   pair like a sequence; tracking follows every listed frame and keeps one
+   `TrackingResult` (progress per frame step; cancel keeps nothing). The Qt
+   results canvas draws PTV particles (coloured by field, with arrows) and
+   tracks (coloured by mean speed). Particle modes take no ROI: the recipe
+   omits it and `workflow_problem` blocks test/run while one is set.
 
 ## Slice 2 design: canvas gestures and the Prepare step
 
@@ -374,8 +400,3 @@ and the `StereoBatchRunner` controller retire once the window covers them;
   someone tests it.
 - Whether the standalone `result_explorer` and `calibration_review` stay as
   separate entry points (proposed: yes) once their pages exist in the windows.
-- Stereo calibration persistence: a core file format for cameras/dewarpers
-  (or a calibration recipe) so the stereo window can save and reopen a
-  calibration (slice 3).
-- Per-camera preprocessing (and so background subtraction) in stereo: needs
-  `PIVRecipe` to hold one preprocessing list per camera (slice 3).

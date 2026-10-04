@@ -163,6 +163,25 @@ end
         end
         dws_fit = map(fit -> ImageDewarper(fit, grid, (512, 512)), fits)
         stereo = run_piv_stereo(A1, B1, A2, B2, dws_fit[1], dws_fit[2], params)
+        # A saved rig reloads bitwise for every camera model, including a
+        # self-calibration wrapper.
+        mktempdir() do dir
+            moved = Hammerhead.apply_world_transform(fits[2], [cosd(3) 0 sind(3); 0 1 0; -sind(3) 0 cosd(3)],
+                                          [0.1, -0.2, 0.3])
+            rig = (dws[1], dws_fit[1], ImageDewarper(moved, grid, (512, 400)))
+            loaded = load_calibration(save_calibration(joinpath(dir, "rig.jld2"), rig...))
+            @test length(loaded) == 3
+            for (a, b) in zip(rig, loaded)
+                @test typeof(a) == typeof(b) && a.grid == b.grid && a.image_size == b.image_size
+                @test a.rows == b.rows && a.cols == b.cols && a.mask == b.mask
+            end
+            @test loaded[1].cam.P == dws[1].cam.P
+            other = ImageDewarper(cams[1], DewarpGrid(x = -1.0:0.5:1.0, y = -1.0:0.5:1.0), (512, 512))
+            @test_throws ArgumentError save_calibration(joinpath(dir, "bad.jld2"), dws[1], other)
+            @test !isfile(joinpath(dir, "bad.jld2"))
+            save_recipe(joinpath(dir, "recipe.jld2"), PIVRecipe(params))
+            @test_throws ArgumentError load_calibration(joinpath(dir, "recipe.jld2"))
+        end
         @test median(stereo.u) ≈ truth[1] atol = 0.03
         @test median(stereo.v) ≈ truth[2] atol = 0.03
         @test median(stereo.w) ≈ truth[3] atol = 0.05
@@ -372,6 +391,35 @@ end
                                progress = false)[1].w, seq[1].w)
     @test isequal(apply_recipe(PIVRecipe(params; mode = :ensemble), [(A1, B1)], [(A2, B2)],
                                dws[1], dws[2]; progress = false).w, ens.w)
+    # Per-camera preprocessing reaches each camera's frames, and a results file
+    # carries the calibration next to the recipe.
+    per_camera = PIVRecipe(params; preprocessing = (
+        [PreprocessStep(:subtract_background; background = fill(0.02, size(A1)))],
+        [PreprocessStep(:highpass_filter; sigma = 5)]))
+    f1, f2 = recipe_preprocess(per_camera)
+    @test f1(A2) == subtract_background(A2, fill(0.02, size(A1))) && f2(A2) == highpass_filter(A2; sigma = 5)
+    @test recipe_preprocess(PIVRecipe(params; preprocessing = (PreprocessStep[], PreprocessStep[]))) ===
+          (nothing, nothing)
+    @test_throws ArgumentError apply_recipe(per_camera, [(A1, B1)])
+    @test_throws ArgumentError apply_recipe(PIVRecipe(params; mode = :ptv), [(A1, B1)], [(A2, B2)],
+                                            dws[1], dws[2])
+    mktempdir() do dir
+        out = joinpath(dir, "stereo.jld2")
+        r = apply_recipe(per_camera, [(A1, B1)], [(A2, B2)], dws[1], dws[2];
+                         output = out, progress = false)
+        direct = run_piv_stereo_sequence([(A1, B1)], [(A2, B2)], dws[1], dws[2], params;
+                                         preprocess = (f1, f2), progress = false)
+        @test isequal(r[1].w, direct[1].w)
+        @test load_recipe(out) == per_camera
+        @test load_recipe(out).preprocessing isa NTuple{2,Vector{PreprocessStep}}
+        dw1, dw2 = load_calibration(out)
+        @test dw1.rows == dws[1].rows && dw2.cols == dws[2].cols
+        ens_out = joinpath(dir, "ensemble.jld2")
+        apply_recipe(PIVRecipe(params; mode = :ensemble), [(A1, B1)], [(A2, B2)], dws[1], dws[2];
+                     output = ens_out, progress = false)
+        @test load_calibration(ens_out)[2].mask == dws[2].mask
+        @test !isempty(recipe_diff(per_camera, PIVRecipe(params)))
+    end
 
     # JLD2 roundtrip, including a mixed PIVResult/StereoPIVResult file.
     mktempdir() do dir

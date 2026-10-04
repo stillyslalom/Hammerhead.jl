@@ -6,13 +6,35 @@ import QtQuick.Layouts
 import jlqml
 
 ColumnLayout {
+    id: pane
     spacing: 10
+    // stereo: the steps may be per camera (the shown camera's are listed)
+    property bool stereo: false
 
     Label {
         text: "Steps run in order on every frame before correlation, exactly as listed."
         wrapMode: Text.WordWrap
         opacity: 0.75
         Layout.fillWidth: true
+    }
+    RowLayout {
+        visible: pane.stereo
+        spacing: 12
+        Switch {
+            text: "Separate steps per camera"
+            checked: app.separatePreprocessing === true
+            onToggled: Julia.hh_set_separate_preprocessing(checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "Turning this off keeps camera 1's steps, without its background"
+        }
+        Label {
+            text: app.separatePreprocessing === true
+                ? "Camera " + app.camera + "'s steps (switch cameras below the viewer)"
+                : "One list for both cameras"
+            opacity: 0.75
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
     }
 
     Repeater {
@@ -130,7 +152,9 @@ ColumnLayout {
             enabled: !app.backgroundRunning && app.pairCount > 0
             onClicked: Julia.hh_estimate_background(bgFrames.value)
             ToolTip.visible: hovered
-            ToolTip.text: "Pixel-wise minimum of the first frames, subtracted as the first step"
+            ToolTip.text: pane.stereo
+                ? "Each camera's pixel-wise minimum over its own first frames, subtracted first"
+                : "Pixel-wise minimum of the first frames, subtracted as the first step"
         }
         Label { text: "from the first" }
         SpinBox {

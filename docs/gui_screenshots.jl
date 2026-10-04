@@ -144,7 +144,20 @@ function planar_shots()
     end)
     st!(w, sh -> wf.explorer[].profile_data[] !== nothing && waited(w, 1.5),
         sh -> grab!("results_profile"))
-    st!(w, sh -> grabbed(w, "results_profile"), sh -> HammerheadGUI.request_close())
+    st!(w, sh -> grabbed(w, "results_profile"), sh -> begin
+        # particle tracking velocimetry: the Particles page's detection preview
+        set_mode!(wf.passes, :ptv)
+        set_particle_option!(wf.particles, :search_radius, 3)
+        set_step!(wf, :passes)
+        # zoom into one quadrant, so particles and matches are visible
+        sh.canvas.ax.limits[] = ((150, 250), (150, 250))
+        HammerheadGUI.reset_limits!(sh.canvas.ax)
+    end)
+    st!(w, sh -> wf.particles.detected[] !== nothing && waited(w, 1.5), sh -> grab!("particles"))
+    st!(w, sh -> grabbed(w, "particles"), sh -> (set_step!(wf, :test); test_pair!(wf)))
+    st!(w, sh -> !wf.test.running[] && wf.test.result[] isa PTVResult && waited(w, 1.5),
+        sh -> grab!("ptv_test_pair"))
+    st!(w, sh -> grabbed(w, "ptv_test_pair"), sh -> HammerheadGUI.request_close())
     walk!(() -> planar_window(wf; files = paths), w; timeout = 300)
 end
 

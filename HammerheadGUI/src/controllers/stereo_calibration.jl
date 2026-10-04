@@ -10,6 +10,11 @@
 const CALIBRATION_MODELS = (:soloff, :pinhole)
 
 """
+Sub-pages of the stereo Calibration step, in order.
+"""
+const CALIBRATION_PAGES = (:plates, :detection, :grid, :selfcal)
+
+"""
 Options of a `StereoCalibration`, as accepted by
 [`set_calibration_option!`](@ref).
 """
@@ -35,7 +40,12 @@ Inputs (all `Observable`s):
 - dewarp grid (`common_dewarp_grid`): `coverage` (`:intersection`/`:union`),
   `grid_spacing` (`:auto` or a length), `grid_z`, `margin`.
 - self-calibration: `selfcal_pairs` (how many leading pairs' frames it
-  uses) and `keep_disparity_maps`.
+  uses) and `keep_disparity_maps` (on by default: the Self-calibration page
+  shows the maps).
+- `page`: the open sub-page ([`CALIBRATION_PAGES`](@ref)), set with
+  [`set_calibration_page!`](@ref); the viewer shows plates, or on
+  `:selfcal` the disparity map of pass `disparity_pass`
+  ([`disparity_map`](@ref)).
 
 Edit options with [`set_calibration_option!`](@ref) or
 [`edit_calibration_option!`](@ref) (`error` holds the last rejected edit).
@@ -76,6 +86,8 @@ struct StereoCalibration
     selfcal::Observable{Union{Nothing,NamedTuple}}
     selfcal_applied::Observable{Bool}
     error::Observable{String}
+    page::Observable{Symbol}
+    disparity_pass::Observable{Int}
     fitted::Base.RefValue{Any}             # detection inputs of the current reviews
     runner::Base.RefValue{Any}
     fit_generation::Base.RefValue{Int}
@@ -96,9 +108,9 @@ function StereoCalibration(; runner = _inline_runner)
                             Observable(:intersection), Observable{Union{Symbol,Float64}}(:auto),
                             Observable(0.0), Observable(0.0), Observable(false), Observable(""),
                             Observable{Union{Nothing,Tuple{ImageDewarper,ImageDewarper}}}(nothing),
-                            Observable(5), Observable(false), Observable(false), Observable(""),
+                            Observable(5), Observable(true), Observable(false), Observable(""),
                             Observable{Union{Nothing,NamedTuple}}(nothing), Observable(false),
-                            Observable(""), Ref{Any}(nothing), Ref{Any}(runner),
+                            Observable(""), Observable(:plates), Observable(1), Ref{Any}(nothing), Ref{Any}(runner),
                             Ref(0), Ref(0), Ref(0), Ref(0))
     return cal
 end
@@ -267,7 +279,7 @@ function set_calibration_option!(cal::StereoCalibration, option::Symbol, value)
               option === :grid_z ? cal.grid_z : cal.margin
         isequal(obs[], new) && return cal
         obs[] = new
-        _fitted(cal) && build_dewarpers!(cal)
+        can_build_grid(cal) && build_dewarpers!(cal)
     end
     return cal
 end
@@ -416,10 +428,9 @@ Runs on the `runner`; `building` and `grid_status` report it. The result
 replaces `dewarpers`.
 """
 function build_dewarpers!(cal::StereoCalibration)
-    _fitted(cal) || (cal.grid_status[] = "fit both cameras first"; return cal)
-    cr1, cr2 = cal.reviews[1][], cal.reviews[2][]
-    cams = (cr1.camera[], cr2.camera[])
-    sizes = (size(cr1.images[1]), size(cr2.images[1]))
+    cams_sizes = _grid_cameras(cal)
+    cams_sizes === nothing && (cal.grid_status[] = "fit both cameras first"; return cal)
+    cams, sizes = cams_sizes
     z, spacing, coverage, margin = cal.grid_z[], cal.grid_spacing[], cal.coverage[], cal.margin[]
     g = (cal.grid_generation[] += 1)
     cal.building[] = true
@@ -436,6 +447,74 @@ function build_dewarpers!(cal::StereoCalibration)
     end
     cal.runner[](job, apply)
     return cal
+end
+
+# The cameras a grid is built for, with their frame sizes: the fitted
+# reviews, or else the cameras of the current dewarpers (opened from a file
+# or set from a script).
+function _grid_cameras(cal::StereoCalibration)
+    if _fitted(cal)
+        cr1, cr2 = cal.reviews[1][], cal.reviews[2][]
+        return (cr1.camera[], cr2.camera[]), (size(cr1.images[1]), size(cr2.images[1]))
+    end
+    dws = cal.dewarpers[]
+    dws === nothing && return nothing
+    return (dws[1].cam, dws[2].cam), (dws[1].image_size, dws[2].image_size)
+end
+
+"""
+    can_build_grid(cal::StereoCalibration) -> Bool
+
+Whether [`build_dewarpers!`](@ref) has cameras to build a grid for: both
+cameras fitted, or dewarpers opened from a file or set from a script.
+"""
+can_build_grid(cal::StereoCalibration) = _grid_cameras(cal) !== nothing
+
+"""
+    open_calibration!(cal::StereoCalibration, path)
+
+Use the camera rig saved in `path` (`Hammerhead.save_calibration`, or a
+stereo results file, which stores the calibration that produced it). The
+opened cameras replace the plate fits (the plates stay listed), and the
+grid options show the opened grid's z and spacing; changing a grid option
+rebuilds the grid for the opened cameras. Throws when the file holds no
+two-camera calibration.
+"""
+function open_calibration!(cal::StereoCalibration, path::AbstractString)
+    dws = load_calibration(path)
+    length(dws) == 2 ||
+        throw(ArgumentError("$(basename(path)) holds $(length(dws)) cameras; a stereo rig has 2"))
+    cal.fit_generation[] += 1
+    cal.fitting[] && (cal.fitting[] = false)
+    for k in (1, 2)
+        cal.reviews[k][] === nothing || (cal.reviews[k][] = nothing)
+    end
+    cal.fitted[] = nothing
+    grid = dws[1].grid
+    _setobs!(cal.grid_z, grid.z)
+    sx, sy = abs(step(grid.x)), abs(step(grid.y))
+    # common_dewarp_grid fits whole nodes to the extent, so the axis steps
+    # differ slightly from the requested spacing
+    isapprox(sx, sy; rtol = 0.01) && _setobs!(cal.grid_spacing, round((sx + sy) / 2; sigdigits = 4))
+    _setobs!(cal.margin, 0.0)
+    set_dewarpers!(cal, dws...)
+    cal.fit_status[] = "opened $(basename(path))"
+    return cal
+end
+
+"""
+    save_calibration_file(cal::StereoCalibration, path) -> path
+
+Save the current dewarpers' camera rig (`Hammerhead.save_calibration`:
+both cameras, an applied self-calibration, and the grid) so
+[`open_calibration!`](@ref) or `Hammerhead.load_calibration` can reuse it.
+"""
+function save_calibration_file(cal::StereoCalibration, path::AbstractString)
+    dws = cal.dewarpers[]
+    dws === nothing && throw(ArgumentError("there is no calibration to save: build the dewarp grid first"))
+    save_calibration(path, dws...)
+    cal.grid_status[] = grid_summary(cal) * " · saved to $(basename(path))"
+    return path
 end
 
 """
@@ -508,4 +587,45 @@ function apply_selfcal!(cal::StereoCalibration)
     _set_dewarpers!(cal, s.dewarpers, true)
     cal.selfcal_status[] = "applied the self-calibration"
     return true
+end
+
+# ---------------------------------------------------------------- page and disparity view
+
+"""
+    set_calibration_page!(cal::StereoCalibration, page)
+
+Open a Calibration sub-page (one of [`CALIBRATION_PAGES`](@ref), or its
+name as text).
+"""
+function set_calibration_page!(cal::StereoCalibration, page)
+    _setobs!(cal.page, _parse_choice(page, CALIBRATION_PAGES, "the calibration page"))
+    return cal
+end
+
+"""
+    disparity_map(cal::StereoCalibration) -> Union{Nothing,PIVResult}
+
+The last self-calibration's disparity map of pass `cal.disparity_pass[]`
+(camera 1 against camera 2 on the dewarp grid it measured, in dewarped
+pixels), or `nothing` without a result or when its maps were not kept.
+"""
+function disparity_map(cal::StereoCalibration)
+    s = cal.selfcal[]
+    s === nothing && return nothing
+    maps = s.report.disparity_maps
+    i = cal.disparity_pass[]
+    return 1 <= i <= length(maps) ? maps[i] : nothing
+end
+
+"""
+    set_disparity_pass!(cal::StereoCalibration, i)
+
+Show the disparity map of self-calibration pass `i` (clamped to the
+report's passes).
+"""
+function set_disparity_pass!(cal::StereoCalibration, i::Integer)
+    s = cal.selfcal[]
+    n = s === nothing ? 1 : max(length(s.report.passes), 1)
+    _setobs!(cal.disparity_pass, clamp(Int(i), 1, n))
+    return cal
 end

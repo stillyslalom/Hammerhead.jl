@@ -14,7 +14,24 @@ StepPage {
     guidance: "Fit each camera from its calibration plate images, build the common dewarp " +
               "grid, then self-calibrate onto the light sheet. Click a plate to show it: dots " +
               "are coloured by reprojection error, and the residual arrows are magnified by " +
-              "the factor in the viewer's title."
+              "the factor in the viewer's title. A saved calibration opens instead of fitting."
+
+    RowLayout {
+        spacing: 8
+        Button {
+            text: "Open calibration…"
+            onClicked: openCalibrationDialog.open()
+            ToolTip.visible: hovered
+            ToolTip.text: "A saved calibration, or the one stored with stereo results"
+        }
+        Button {
+            text: "Save calibration…"
+            enabled: app.hasDewarpers
+            onClicked: saveCalibrationDialog.open()
+            ToolTip.visible: hovered
+            ToolTip.text: "Both cameras (with an applied self-calibration) and the dewarp grid"
+        }
+    }
 
     readonly property var plateModel: app.camera === 2 ? plates2Model : plates1Model
     readonly property string sub: app.calibrationPage
@@ -270,7 +287,7 @@ StepPage {
             columns: 3
             columnSpacing: 10
             rowSpacing: 6
-            enabled: app.calFitted
+            enabled: app.calCanBuild
 
             Label { text: "Coverage" }
             ComboBox {
@@ -313,7 +330,7 @@ StepPage {
             spacing: 12
             Button {
                 text: "Build grid"
-                enabled: app.calFitted && !app.calBuilding
+                enabled: app.calCanBuild && !app.calBuilding
                 onClicked: Julia.hh_build_dewarpers()
             }
             BusyIndicator {
@@ -338,7 +355,8 @@ StepPage {
         Label {
             text: "Correlates the two cameras' dewarped images of the same instant and moves the " +
                   "world frame onto the light sheet (Wieneke 2005). Needs the dewarp grid and the " +
-                  "particle frames of both cameras."
+                  "particle frames of both cameras. The viewer shows the disparity map: arrows from " +
+                  "camera 1 to camera 2, which shrink once the correction is applied."
             wrapMode: Text.WordWrap
             opacity: 0.75
             Layout.fillWidth: true
@@ -389,6 +407,21 @@ StepPage {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
+        RowLayout {
+            spacing: 8
+            visible: app.calHasMaps
+            Label { text: "Viewer: disparity of pass" }
+            SpinBox {
+                from: 1; to: Math.max(app.calSelfcalPasses, 1); editable: true
+                value: app.calDisparityPass
+                Layout.preferredWidth: 110
+                onValueModified: Julia.hh_set_disparity_pass(value)
+            }
+            Label {
+                text: "of " + app.calSelfcalPasses + " (one arrow scale for every pass)"
+                opacity: 0.75
+            }
+        }
         Frame {
             visible: app.calSelfcalReport !== ""
             Layout.fillWidth: true
@@ -402,6 +435,20 @@ StepPage {
         }
     }
 
+    FileDialog {
+        id: openCalibrationDialog
+        title: "Open calibration"
+        nameFilters: ["Calibration or stereo results (*.jld2)", "All files (*)"]
+        onAccepted: Julia.hh_open_calibration(selectedFile.toString())
+    }
+    FileDialog {
+        id: saveCalibrationDialog
+        title: "Save calibration"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "jld2"
+        nameFilters: ["Calibration (*.jld2)"]
+        onAccepted: Julia.hh_save_calibration(selectedFile.toString())
+    }
     FileDialog {
         id: addPlatesDialog
         title: "Add camera " + app.camera + " calibration plates"

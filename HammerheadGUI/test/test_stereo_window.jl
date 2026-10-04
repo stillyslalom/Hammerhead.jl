@@ -102,6 +102,27 @@
     start_run!(wf; spawn = false)
     set_step!(wf, :run)
     @test finite(c.shafts[1][]) > 0
+
+    # Calibration › Self-calibration: the dewarped frame under a disparity map,
+    # one arrow scale for every pass
+    set_step!(wf, :calibration)
+    set_calibration_page!(cal, :selfcal)
+    @test c.space[] === :grid && occursin("self-calibrate to see", c.ax.title[])
+    @test finite(c.shafts[1][]) == 0
+    start_selfcal!(wf; pairs = 1)
+    m1 = disparity_map(cal)
+    @test m1 isa PIVResult && occursin("pass 1 of", c.ax.title[])
+    @test finite(c.shafts[1][]) == 2 * length(HammerheadGUI.vector_data(m1).x) > 0
+    @test finite(c.dots[1][]) == 0
+    seg_length(pts) = median([hypot((pts[2k] - pts[2k - 1])...) for k in 1:length(pts) ÷ 2 if all(isfinite, pts[2k])])
+    long1 = seg_length(c.shafts[1][])
+    set_disparity_pass!(cal, 99)
+    np = length(cal.selfcal[].report.passes)
+    @test np > 1 && cal.disparity_pass[] == np && occursin("pass $np of $np", c.ax.title[])
+    @test seg_length(c.shafts[1][]) < long1                  # corrected: shorter arrows
+    set_calibration_page!(cal, "plates")
+    @test c.space[] === :plate && finite(c.shafts[1][]) == 0
+    @test_throws ArgumentError set_calibration_page!(cal, :prepare)
     set_step!(wf, :images)
     @test finite(c.shafts[1][]) == 0 && c.space[] === :camera
     @test count(isfinite, c.mask[3][]) == 0                              # no mask on camera frames

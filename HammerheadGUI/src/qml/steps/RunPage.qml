@@ -10,6 +10,10 @@ StepPage {
         ? "Pool the correlations of every pair into one result with the current settings. " +
           "The result is written to the output file when the run finishes, together with the " +
           "settings that produced it."
+        : app.mode === "tracking"
+        ? "Track particles through every frame in order with the current settings. The tracks " +
+          "are written to the output file when the run finishes, together with the settings " +
+          "that produced them."
         : "Process every pair with the current settings. Results are written to the output " +
           "file as they finish, together with the settings that produced them; the viewer " +
           "shows the latest pair. Cancelling keeps the pairs already finished."
@@ -35,8 +39,9 @@ StepPage {
         spacing: 8
         Layout.topMargin: 8
         Button {
-            text: app.mode === "ensemble" ? "Run ensemble of " + app.pairCount + " pairs"
-                                           : "Run " + app.pairCount + " pairs"
+            text: app.mode === "ensemble" ? "Run ensemble of " + app.pairCount + " pairs" :
+                  app.mode === "tracking" ? "Track through " + app.frameCount + " frames" :
+                                            "Run " + app.pairCount + " pairs"
             highlighted: true
             enabled: !app.runRunning && app.analysisProblem === ""
             onClicked: Julia.hh_start_run()
@@ -48,8 +53,10 @@ StepPage {
         }
     }
     Label {
-        text: "Cancelling an ensemble stops after the pair in flight and keeps no result."
-        visible: app.mode === "ensemble"
+        text: app.mode === "tracking"
+            ? "Cancelling tracking stops at the next frame and keeps no result."
+            : "Cancelling an ensemble stops after the pair in flight and keeps no result."
+        visible: app.mode === "ensemble" || app.mode === "tracking"
         opacity: 0.75
         wrapMode: Text.WordWrap
         Layout.fillWidth: true

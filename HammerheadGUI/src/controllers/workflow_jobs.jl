@@ -10,14 +10,17 @@ _run_job(job, spawn::Bool) = spawn ? errormonitor(Threads.@spawn job()) : job()
     PairTest()
 
 The latest test of the current settings on the representative pair:
-`result` (a `PIVResult`, or a `StereoPIVResult` in a stereo workflow), the
+`result` (a `PIVResult`, a `StereoPIVResult` in a stereo workflow, or a
+`PTVResult`/`TrackingResult` in the particle modes), the
 `recipe` and `pair` it was computed with, `seconds` taken, the `previous`
 test's summary for comparison, and `running`/`status`. `inputs[]` holds the
 `apply_recipe` inputs after the recipe (pairs; for stereo also the
 dewarpers) of the last successful test.
 """
+const TestResult = Union{Nothing,PIVResult,StereoPIVResult,PTVResult,TrackingResult}
+
 struct PairTest
-    result::Observable{Union{Nothing,PIVResult,StereoPIVResult}}
+    result::Observable{TestResult}
     recipe::Observable{Union{Nothing,PIVRecipe}}
     pair::Observable{Int}
     seconds::Observable{Float64}
@@ -27,7 +30,7 @@ struct PairTest
     inputs::Base.RefValue{Any}
 end
 
-PairTest() = PairTest(Observable{Union{Nothing,PIVResult,StereoPIVResult}}(nothing),
+PairTest() = PairTest(Observable{TestResult}(nothing),
                       Observable{Union{Nothing,PIVRecipe}}(nothing), Observable(0),
                       Observable(0.0), Observable{Union{Nothing,NamedTuple}}(nothing),
                       Observable(false), Observable(""), Ref{Any}(nothing))
@@ -49,7 +52,9 @@ function start_test!(pt::PairTest, recipe::PIVRecipe, inputs::Tuple, label::Inte
     pt.running[] && return pt
     pt.running[] = true
     pt.status[] = recipe.mode === :ensemble ?
-        "testing ensemble of $(length(first(inputs))) pairs…" : "testing pair $label…"
+        "testing ensemble of $(length(first(inputs))) pairs…" :
+        recipe.mode === :tracking ? "tracking through $(length(first(inputs))) frames…" :
+        "testing pair $label…"
     job = function ()
         t0 = time()
         outcome = try
@@ -120,12 +125,65 @@ function _test_summary(r, good, peak, sig, disp, sigma_unit, recipe, seconds)
     valid = count(good)
     med(xs) = isempty(xs) ? NaN : _median(xs)
     final = last(recipe.passes)
-    return (; vectors = n, valid, flagged, masked,
+    return (; kind = :piv, vectors = n, valid, flagged, masked,
             valid_fraction = n - masked == 0 ? NaN : valid / (n - masked),
             peak_ratio = med(filter(isfinite, Float64.(peak))),
             sigma = med(filter(isfinite, Float64.(sig))), sigma_unit = String(sigma_unit),
             max_displacement = valid == 0 ? NaN : maximum(Float64.(disp)),
             quarter_window = minimum(final.window_size) / 4, seconds = Float64(seconds))
+end
+
+"""
+    test_summary(r::PTVResult, recipe, seconds)
+
+For a PTV test: `particles_a`/`particles_b` detected, `matches`, `valid`
+and `flagged` matches, `valid_fraction` (unflagged share of the matches),
+`match_fraction` (matches per frame-A particle), median `displacement` and
+`residual` (px; the distance from the predicted position), `search_radius`,
+`predictor` (`:piv`/`:none`), and `seconds`.
+"""
+function test_summary(r::PTVResult, recipe::PIVRecipe, seconds::Real)
+    n = length(r.u)
+    good = .!r.outliers .& isfinite.(r.u) .& isfinite.(r.v)
+    valid = count(good)
+    med(xs) = isempty(xs) ? NaN : _median(Float64.(xs))
+    na = length(r.particles_a)
+    return (; kind = :ptv, particles_a = na, particles_b = length(r.particles_b), matches = n,
+            valid, flagged = n - valid, valid_fraction = n == 0 ? NaN : valid / n,
+            match_fraction = na == 0 ? NaN : n / na,
+            displacement = med(hypot.(r.u[good], r.v[good])),
+            residual = med(filter(isfinite, r.match_residual[good])),
+            search_radius = recipe.ptv.search_radius, predictor = recipe.ptv_predictor,
+            seconds = Float64(seconds))
+end
+
+"""
+    test_summary(r::TrackingResult, recipe, seconds)
+
+For a tracking test: `tracks`, `frames` followed, mean and longest track
+length (observations), `gaps` bridged, `min_track_length`, and `seconds`.
+"""
+function test_summary(r::TrackingResult, recipe::PIVRecipe, seconds::Real)
+    lens = [length(t.x) for t in r.trajectories]
+    gaps = sum((count(>(1), diff(t.frames)) for t in r.trajectories); init = 0)
+    return (; kind = :tracking, tracks = length(lens), frames = r.n_frames,
+            mean_length = isempty(lens) ? NaN : sum(lens) / length(lens),
+            longest = isempty(lens) ? 0 : maximum(lens), gaps,
+            min_track_length = recipe.min_track_length, valid_fraction = NaN,
+            seconds = Float64(seconds))
+end
+
+"""
+    test_brief(summary) -> String
+
+A test summary in a few words, for the step rail.
+"""
+function test_brief(s::NamedTuple)
+    k = get(s, :kind, :piv)
+    k === :tracking && return @sprintf("%d tracks through %d frames · %.2f s", s.tracks, s.frames, s.seconds)
+    k === :ptv && return @sprintf("%d matches, %.0f %% valid · %.2f s", s.matches,
+                                  100 * (isfinite(s.valid_fraction) ? s.valid_fraction : 0.0), s.seconds)
+    return @sprintf("%.0f %% valid · %.2f s", 100 * s.valid_fraction, s.seconds)
 end
 
 test_summary(pt::PairTest) =
@@ -145,10 +203,38 @@ Readable lines for a `test_summary`, with changes from `previous`.
 function summary_lines(s::NamedTuple; previous = nothing)
     pct(x) = isfinite(x) ? @sprintf("%.1f %%", 100x) : "–"
     num(x) = isfinite(x) ? @sprintf("%.2f", x) : "–"
+    # compare only with a previous test of the same kind
+    kind = get(s, :kind, :piv)
+    previous !== nothing && get(previous, :kind, :piv) !== kind && (previous = nothing)
     delta(f, fmt) = previous === nothing || !isfinite(previous[f]) || !isfinite(s[f]) ? "" :
                     " (" * fmt(s[f] - previous[f]) * ")"
     signed_pct(d) = @sprintf("%+.1f pts", 100d)
     signed(d) = @sprintf("%+.2f", d)
+    if kind === :ptv
+        lines = ["Particles: $(s.particles_a) in frame A, $(s.particles_b) in frame B",
+                 "Matches: $(s.matches) ($(pct(s.match_fraction)) of frame A)" *
+                     delta(:match_fraction, signed_pct),
+                 "Valid matches: $(s.valid) ($(pct(s.valid_fraction))) · flagged: $(s.flagged)" *
+                     delta(:valid_fraction, signed_pct),
+                 "Median displacement: $(num(s.displacement)) px · median match residual: $(num(s.residual)) px"]
+        # without a predictor the search is centred on the particle itself; with
+        # one, matches far from the prediction point to a poor predictor
+        if s.predictor === :none && isfinite(s.displacement) && s.displacement > 0.8 * s.search_radius
+            push!(lines, "Displacements approach the search radius ($(num(s.search_radius)) px): " *
+                         "use the PIV predictor or a larger radius")
+        elseif s.predictor === :piv && isfinite(s.residual) && s.residual > 0.5 * s.search_radius
+            push!(lines, "Matches sit far from the PIV prediction (search radius " *
+                         "$(num(s.search_radius)) px): check the predictor passes or widen the search")
+        end
+        push!(lines, @sprintf("Time: %.2f s", s.seconds))
+        return lines
+    elseif kind === :tracking
+        return ["Tracks: $(s.tracks) through $(s.frames) frames (at least $(s.min_track_length) observations each)" *
+                    delta(:tracks, d -> @sprintf("%+d", d)),
+                "Mean length: $(num(s.mean_length)) observations · longest: $(s.longest)",
+                "Gaps bridged: $(s.gaps)",
+                @sprintf("Time: %.2f s", s.seconds)]
+    end
     lines = ["Valid vectors: $(s.valid) of $(s.vectors - s.masked) ($(pct(s.valid_fraction)))" *
                  delta(:valid_fraction, signed_pct),
              "Flagged: $(s.flagged) · masked: $(s.masked)",
@@ -171,12 +257,14 @@ end
 Batch-run state: `output_path` (empty keeps results in memory), `running`,
 `progress` `(done, total)`, `status`, `completed` (finished results, in
 order), and `started` (`time()` at start). `mode` is the running (or last)
-batch's recipe mode, `pairs` its pair count, and `cameras` 1 (planar) or 2
-(stereo). A `:sequence` batch counts `progress` in pairs; an `:ensemble`
-batch counts pair correlations accumulated over every pass (and both cameras
-for stereo) and finishes with one result. Cancelling a sequence keeps
-finished pairs, in memory and in the output file; cancelling an ensemble
-stops after the pair in flight and keeps no result.
+batch's recipe mode, `pairs` its pair count (frame count for tracking), and
+`cameras` 1 (planar) or 2 (stereo). A `:sequence` or `:ptv` batch counts
+`progress` in pairs; an `:ensemble` batch counts pair correlations
+accumulated over every pass (and both cameras for stereo) and finishes with
+one result; a `:tracking` batch counts frame steps and finishes with one
+`TrackingResult`. Cancelling a sequence keeps finished pairs, in memory and
+in the output file; cancelling an ensemble or tracking run stops at the next
+pair or frame step and keeps no result.
 """
 struct RunState
     output_path::Observable{String}
@@ -218,13 +306,15 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
     isempty(pairs) && (rs.status[] = "no pairs to process"; return rs)
     output = isempty(rs.output_path[]) ? nothing : rs.output_path[]
     ensemble = recipe.mode === :ensemble
+    pooled = ensemble || recipe.mode === :tracking      # one result at the end
     cameras = length(inputs) > 1 ? 2 : 1
     rs.cancel[] = false
     rs.completed[] = Any[]
     rs.mode[] = recipe.mode
     rs.pairs[] = length(pairs)
     rs.cameras[] = cameras
-    rs.progress[] = (0, ensemble ? length(recipe.passes) * length(pairs) * cameras : length(pairs))
+    rs.progress[] = (0, ensemble ? length(recipe.passes) * length(pairs) * cameras :
+                        recipe.mode === :tracking ? length(pairs) - 1 : length(pairs))
     rs.started[] = time()
     rs.finished_output[] = nothing
     rs.status[] = "running…"
@@ -236,7 +326,7 @@ function start_run!(rs::RunState, recipe::PIVRecipe, inputs::Tuple;
         end
         keep = r -> deliver(() -> (push!(rs.completed[], r); notify(rs.completed)))
         outcome = try
-            if ensemble
+            if pooled
                 keep(apply_recipe(recipe, inputs...; output, progress))
             else
                 apply_recipe(recipe, inputs...; output, progress, on_result = (i, r) -> keep(r))
@@ -256,9 +346,12 @@ function _finish_run!(rs::RunState, output, outcome)
     n = length(rs.completed[])
     to = output === nothing ? "" : " → $(basename(output))"
     rs.status[] = if outcome === :done
-        rs.mode[] === :ensemble ? "done: ensemble of $(rs.pairs[]) pairs" * to : "done: $n pairs" * to
+        rs.mode[] === :ensemble ? "done: ensemble of $(rs.pairs[]) pairs" * to :
+        rs.mode[] === :tracking ? "done: $(_ntracks(rs)) tracks through $(rs.pairs[]) frames" * to :
+        "done: $n pairs" * to
     elseif outcome === :cancelled
         rs.mode[] === :ensemble ? "cancelled; an ensemble keeps no partial result" :
+        rs.mode[] === :tracking ? "cancelled; tracking keeps no partial result" :
                                   "cancelled after $n of $total pairs"
     else
         "failed: " * _errmsg(outcome)
@@ -267,6 +360,9 @@ function _finish_run!(rs::RunState, output, outcome)
     rs.running[] = false
     return rs
 end
+
+_ntracks(rs::RunState) =
+    isempty(rs.completed[]) ? 0 : length(last(rs.completed[]).trajectories)
 
 """
     run_progress(rs::RunState) -> String
@@ -277,6 +373,7 @@ the camera for stereo).
 """
 function run_progress(rs::RunState)
     done, total = rs.progress[]
+    rs.mode[] === :tracking && return "tracking: frame step $done of $total"
     rs.mode[] === :ensemble || return "$done of $total pairs"
     n = rs.pairs[]
     (n > 0 && total >= n) || return "ensemble of $n pairs"

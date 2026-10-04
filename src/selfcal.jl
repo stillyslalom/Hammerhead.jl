@@ -208,7 +208,8 @@ the input dewarpers are returned unchanged.
   in the report for spatial inspection; scalar diagnostics are recorded
   regardless.
 - `preprocess = nothing`: function applied to each raw frame before
-  dewarping (e.g. background subtraction).
+  dewarping (e.g. background subtraction), or a tuple `(preprocess1,
+  preprocess2)` with one function per camera.
 - `image_type = Float64`: precision for frames loaded from file paths.
 - `progress = false`: show the ensemble-correlation progress meter.
 - Remaining keywords (`threaded`, ...) are forwarded to
@@ -245,10 +246,10 @@ function self_calibrate(frames1::AbstractVector, frames2::AbstractVector,
 
     imgs1 = [load_frame(f, image_type) for f in frames1]
     imgs2 = [load_frame(f, image_type) for f in frames2]
-    if preprocess !== nothing
-        imgs1 = map(preprocess, imgs1)
-        imgs2 = map(preprocess, imgs2)
-    end
+    pre1, pre2 = preprocess isa Tuple && length(preprocess) == 2 ? preprocess :
+                 (preprocess, preprocess)
+    pre1 === nothing || (imgs1 = map(pre1, imgs1))
+    pre2 === nothing || (imgs2 = map(pre2, imgs2))
     for (imgs, dw, name) in ((imgs1, dw1, "camera 1"), (imgs2, dw2, "camera 2"))
         all(img -> size(img) == dw.image_size, imgs) ||
             throw(DimensionMismatch("$name frames must match the dewarper's image size " *

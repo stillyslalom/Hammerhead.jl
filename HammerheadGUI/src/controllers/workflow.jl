@@ -7,12 +7,14 @@
 #   workflow_problem(wf)        why the frames cannot be analyzed yet, or nothing
 #   prepare_pages(wf)           its Prepare sub-pages
 #   _check_recipe(wf, r)        reject a recipe the workflow cannot hold
-#   _load_region!(wf, r)        recipe fields only this workflow has (planar: ROI)
+#   _load_specific!(wf, r)      recipe fields only this workflow has (planar: ROI, particles)
 #   _test_inputs(wf)            apply_recipe's positional inputs after the recipe,
 #   _run_inputs(wf)             for the test and for the batch
 #   _test_label(wf)             the representative pair's index
 #   _inputs_stale(wf)           whether the test's inputs changed (pair, dewarpers)
 #   _step_status(wf, step)      rail status of the steps that are not shared
+#   _edited_steps(wf),          the preprocessing list the Prepare preview
+#   _set_edited_steps!(wf, s)   edits (stereo: the shown camera's)
 
 """
     AbstractWorkflow
@@ -37,6 +39,14 @@ abstract type AbstractWorkflow end
 const STEP_LABELS = Dict(:images => "Images", :calibration => "Calibration",
                          :prepare => "Prepare", :passes => "Passes",
                          :test => "Test pair", :run => "Run", :results => "Results")
+
+"""
+    step_label(wf::AbstractWorkflow, step) -> String
+
+The step's name on the rail (the planar Passes step reads "Particles" in
+the particle modes).
+"""
+step_label(::AbstractWorkflow, step::Symbol) = STEP_LABELS[step]
 
 """
     workflow_steps(wf::AbstractWorkflow) -> Tuple{Vararg{Symbol}}
@@ -90,7 +100,15 @@ end
 # ---------------------------------------------------------------- settings
 
 _check_recipe(::AbstractWorkflow, ::PIVRecipe) = nothing
-_load_region!(::AbstractWorkflow, ::PIVRecipe) = nothing
+
+_copy_steps(steps::Vector{PreprocessStep}) = copy(steps)
+_copy_steps(steps::Tuple) = map(copy, steps)
+
+# The preprocessing list the Prepare preview edits.
+_edited_steps(wf::AbstractWorkflow) = wf.preprocessing[]
+_set_edited_steps!(wf::AbstractWorkflow, steps) = (wf.preprocessing[] = steps; wf)
+
+_load_specific!(::AbstractWorkflow, ::PIVRecipe) = nothing
 
 """
     load_settings!(wf::AbstractWorkflow, recipe_or_path)
@@ -105,14 +123,14 @@ load_settings!(wf::AbstractWorkflow, path::AbstractString) =
 
 function load_settings!(wf::AbstractWorkflow, r::PIVRecipe)
     _check_recipe(wf, r)
-    wf.preprocessing[] = copy(r.preprocessing)
+    wf.preprocessing[] = _copy_steps(r.preprocessing)
     wf.mask[] = r.mask === nothing ? nothing : copy(r.mask)
     wf.scale[] = r.scale
     wf.predictor_smoothing[] = r.predictor_smoothing
     wf.mask_threshold[] = r.mask_threshold
     wf.passes.mode[] = r.mode
     set_image_type!(wf.passes, r.image_type)
-    _load_region!(wf, r)                 # may resize a linked preset; replaced next
+    _load_specific!(wf, r)               # may resize a linked preset; replaced next
     load_passes!(wf.passes, r.passes)
     wf.saved[] = workflow_recipe(wf)
     wf.settings_path[] = ""
@@ -268,13 +286,12 @@ for the step rail.
 function step_status(wf::AbstractWorkflow, step::Symbol)
     step in workflow_steps(wf) || throw(ArgumentError("unknown step :$step"))
     if step === :passes
-        isempty(wf.passes.error[]) || return (:attention, wf.passes.error[])
-        return (:ok, passes_summary(wf.passes))
+        return _passes_status(wf)
     elseif step === :test
         wf.test.running[] && return (:busy, "testing…")
         s = test_summary(wf.test)
         s === nothing && return (:todo, "not tested")
-        txt = @sprintf("%.0f %% valid · %.2f s", 100 * s.valid_fraction, s.seconds)
+        txt = test_brief(s)
         inp = wf.test.inputs[]
         wf.test.recipe[].mode === :ensemble && inp !== nothing &&
             (txt = "ensemble of $(length(first(inp))) pairs: " * txt)
@@ -292,11 +309,23 @@ function step_status(wf::AbstractWorkflow, step::Symbol)
     return _step_status(wf, step)
 end
 
+_passes_status(wf::AbstractWorkflow) = _piv_passes_status(wf)
+
+function _piv_passes_status(wf::AbstractWorkflow)
+    isempty(wf.passes.error[]) || return (:attention, wf.passes.error[])
+    return (:ok, passes_summary(wf.passes))
+end
+
 # The Prepare step's summary parts shared by both workflows.
 function _prepare_parts(wf::AbstractWorkflow)
     parts = String[]
-    n = length(wf.preprocessing[])
-    n == 0 || push!(parts, "$n preprocessing step" * (n == 1 ? "" : "s"))
+    pre = wf.preprocessing[]
+    if pre isa Tuple
+        push!(parts, "preprocessing per camera ($(length(pre[1])) + $(length(pre[2])) steps)")
+    else
+        n = length(pre)
+        n == 0 || push!(parts, "$n preprocessing step" * (n == 1 ? "" : "s"))
+    end
     wf.mask[] === nothing || push!(parts, "mask")
     return parts
 end

@@ -15,6 +15,14 @@ ColumnLayout {
         opacity: 0.75
         Layout.fillWidth: true
     }
+    Label {
+        text: "Particle analysis (PTV and tracking) covers whole frames: clear the region " +
+              "and mask the parts to leave out instead."
+        visible: app.particleMode === true
+        color: "#b06f00"
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
     GridLayout {
         columns: 4
         columnSpacing: 8

@@ -58,7 +58,7 @@ Modules = [HammerheadGUI.Controllers]
 Order = [:module, :type, :function, :constant, :macro]
 Pages = ["controllers/workflow.jl", "planar_workflow.jl", "frame_set.jl",
          "controllers/prepare.jl", "prepare_workflow.jl", "passes_editor.jl",
-         "workflow_jobs.jl"]
+         "particle_settings.jl", "workflow_jobs.jl"]
 ```
 
 ## Prepare editors

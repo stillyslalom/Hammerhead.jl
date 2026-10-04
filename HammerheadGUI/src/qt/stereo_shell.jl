@@ -44,8 +44,6 @@ function _connect_window!(sh::StereoShell, mark)
         sh.rows["plates$k"] = rows
         sh.models["plates$(k)Model"] = JuliaItemModel(rows)
     end
-    # the Calibration step's sub-page is window state only
-    _set!(sh, "calibrationPage", "plates")
     return sh
 end
 
@@ -167,7 +165,14 @@ function _refresh_window!(sh::StereoShell)
     _set!(sh, "hasSelfcal", cal.selfcal[] !== nothing)
     _set!(sh, "calSelfcalApplied", cal.selfcal_applied[])
     _set!(sh, "calSummary", calibration_summary(cal))
-    # the Prepare step's scale page: lengths are the calibration's world units
+    _set!(sh, "calCanBuild", can_build_grid(cal))
+    _set!(sh, "calibrationPage", String(cal.page[]))
+    sc = cal.selfcal[]
+    _set!(sh, "calSelfcalPasses", sc === nothing ? 0 : length(sc.report.passes))
+    _set!(sh, "calHasMaps", sc !== nothing && !isempty(sc.report.disparity_maps))
+    _set!(sh, "calDisparityPass", cal.disparity_pass[])
+    # the Prepare step: per-camera preprocessing; the scale's lengths are world units
+    _set!(sh, "separatePreprocessing", separate_preprocessing(wf))
     _set!(sh, "scaleWorldUnit", Controllers._current_scale(wf).length_unit)
     return
 end
@@ -220,17 +225,22 @@ hh_calibration_option(option, value) =
     _with_stereo(wf -> edit_calibration_option!(wf.calibration, Symbol(String(option)),
                                                 value isa Bool ? value :
                                                 value isa Real ? _num(value) : string(value)))
-hh_set_calibration_page(name) = _with_shell(sh -> _set!(sh, "calibrationPage", String(name)))
+hh_set_calibration_page(name) = _with_stereo(wf -> set_calibration_page!(wf.calibration, String(name)))
+hh_set_disparity_pass(i) = _with_stereo(wf -> set_disparity_pass!(wf.calibration, round(Int, i)))
 hh_fit_calibration() = _with_stereo(wf -> fit_calibration!(wf.calibration))
 hh_build_dewarpers() = _with_stereo(wf -> build_dewarpers!(wf.calibration))
 hh_start_selfcal() = _with_stereo(start_selfcal!)
 hh_apply_selfcal() = _with_stereo(apply_selfcal!)
+hh_open_calibration(url) = _with_stereo(wf -> open_calibration!(wf, _url_to_path(String(url))))
+hh_save_calibration(url) = _with_stereo(wf -> save_calibration_file(wf, _url_to_path(String(url))))
+hh_set_separate_preprocessing(on) = _with_stereo(wf -> set_separate_preprocessing!(wf, Bool(on)))
 
 function _register_stereo_functions()
     @qmlfunction hh_set_camera hh_add_camera_files hh_clear_camera_files hh_add_plates hh_remove_plate
     @qmlfunction hh_clear_plates hh_set_plate_z hh_select_plate hh_calibration_option
     @qmlfunction hh_fit_calibration hh_build_dewarpers hh_start_selfcal hh_apply_selfcal
-    @qmlfunction hh_set_calibration_page
+    @qmlfunction hh_set_calibration_page hh_open_calibration hh_save_calibration
+    @qmlfunction hh_set_separate_preprocessing hh_set_disparity_pass
     return
 end
 
@@ -238,7 +248,8 @@ end
 
 """
     stereo_window(wf = StereoWorkflow(); files1 = nothing, files2 = nothing,
-                  settings = nothing, dewarpers = nothing) -> StereoWorkflow
+                  settings = nothing, dewarpers = nothing,
+                  calibration = nothing) -> StereoWorkflow
 
 Open the stereo PIV workflow window and return its workflow when the window
 closes. The steps — Images, Calibration, Prepare, Passes, Test pair, Run,
@@ -248,8 +259,10 @@ it), which can be popped out into its own window.
 `files1`/`files2` add each camera's frames (paths in acquisition order;
 entry `i` of both cameras is the same instant); `dewarpers = (dw1, dw2)`
 uses `ImageDewarper`s built in a script instead of the Calibration step's
-fit; `settings` opens a recipe or results file. Calibration inputs are
-session state: they are not saved with the settings.
+fit; `calibration` opens a saved camera rig (`Hammerhead.save_calibration`,
+or the calibration stored in a stereo results file); `settings` opens a
+recipe or results file. The settings and the calibration save separately:
+the Calibration step has its own Open and Save buttons.
 
 The call blocks while the window is open, as [`planar_window`](@ref) does;
 start Julia with several threads (`julia -t auto`). Like `planar_window`, it
@@ -258,9 +271,10 @@ screen (e.g. a [`calibration_review`](@ref) window): review calibrations in
 the Calibration step, or in a separate Julia session.
 """
 function stereo_window(wf::StereoWorkflow = StereoWorkflow(); files1 = nothing, files2 = nothing,
-                       settings = nothing, dewarpers = nothing)
+                       settings = nothing, dewarpers = nothing, calibration = nothing)
     return _run_window(wf, "StereoWindow.qml", (w, q) -> StereoShell(w; queue = q)) do
         dewarpers === nothing || set_dewarpers!(wf, dewarpers...)
+        calibration === nothing || open_calibration!(wf, calibration)
         files1 === nothing || add_files!(wf, _entry_list(files1); camera = 1)
         files2 === nothing || add_files!(wf, _entry_list(files2); camera = 2)
         settings === nothing || load_settings!(wf, settings)

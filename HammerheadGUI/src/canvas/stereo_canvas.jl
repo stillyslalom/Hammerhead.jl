@@ -7,7 +7,9 @@
 #   Images        the shown camera's raw frame (camera pixels)
 #   Calibration   the shown camera's selected plate image with the detected
 #                 dots (coloured by reprojection error), the fiducial markers,
-#                 and the reprojection residuals as magnified arrows
+#                 and the reprojection residuals as magnified arrows; on the
+#                 Self-calibration page, the shown camera's dewarped frame
+#                 with the selected pass's disparity map (camera 1 → 2)
 #   later steps   the shown camera's frame dewarped onto the common grid
 #                 (`wf.dewarped`, or the processed preview on Prepare ›
 #                 Preprocess), with the cameras' out-of-view union shaded; the
@@ -100,10 +102,12 @@ function stereo_canvas(wf::StereoWorkflow)
     pp = ps.preview
     onany((_...) -> _draw_frame!(c, wf), fs1.files, fs1.pair_mode, fs1.pair, fs1.shown, fs1.loaded,
           fs2.files, fs2.loaded, wf.camera, wf.step, ps.page, ps.show_processed, pp.processed,
-          pp.processed2, wf.dewarped, cal.reviews[1], cal.reviews[2], cal.plates[1], cal.plates[2])
+          pp.processed2, wf.dewarped, cal.reviews[1], cal.reviews[2], cal.plates[1], cal.plates[2],
+          cal.page, cal.selfcal, cal.disparity_pass)
     onany((_...) -> _draw_geometry!(c, wf), wf.mask, cal.dewarpers)
     onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes)
-    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed, cal.dewarpers)
+    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed, cal.dewarpers,
+          cal.page, cal.selfcal, cal.disparity_pass)
     onany((_...) -> _draw_prepare!(c, wf), wf.step, ps.revision)
     onany((_...) -> _draw_calibration!(c, wf), wf.step, wf.camera, cal.reviews[1], cal.reviews[2])
     # a review's plane selection and refits (a new model) redraw the plate
@@ -146,7 +150,7 @@ function _stereo_view(wf::StereoWorkflow)
     which = fs.shown[] === :a ? "frame A" : "frame B"
     step = wf.step[]
     step === :images && return (_shown_or_nothing(fs), :camera, "camera $k · $which")
-    step === :calibration && return _plate_view(wf)
+    step === :calibration && return wf.calibration.page[] === :selfcal ? _disparity_view(wf) : _plate_view(wf)
     ps, pp = wf.prepare, wf.prepare.preview
     gsz = grid_size(wf)
     if step === :prepare && ps.page[] === :preprocess && ps.show_processed[]
@@ -181,6 +185,29 @@ function _plate_view(wf::StereoWorkflow)
     img isa AbstractMatrix && return (img, :plate, "camera $k · plate 1 · not fitted yet")
     return (nothing, :plate, "camera $k · fit the calibration to show its plates")
 end
+
+# The Self-calibration page: the shown camera's dewarped frame under the
+# selected pass's disparity map.
+function _disparity_view(wf::StereoWorkflow)
+    cal, k = wf.calibration, wf.camera[]
+    fs = shown_frames(wf)
+    dw, gsz = wf.dewarped[], grid_size(wf)
+    img = dw !== nothing && gsz !== nothing && size(dw[1]) == gsz ?
+          (fs.shown[] === :a || dw[2] === nothing ? dw[1] : dw[2]) : nothing
+    title = "camera $k · $(fs.shown[] === :a ? "frame A" : "frame B") · dewarped"
+    s = cal.selfcal[]
+    s === nothing && return (img, :grid, title * " · self-calibrate to see the disparity")
+    np = length(s.report.passes)
+    r = disparity_map(cal)
+    r === nothing && return (img, :grid, title * " · disparity maps not kept")
+    ls = _disparity_scale(cal)
+    return (img, :grid, title * " · disparity camera 1 → 2, pass $(cal.disparity_pass[]) of $np" *
+                        " · arrows ×$(_num(round(ls; sigdigits = 2)))")
+end
+
+# One arrow scale for every pass (the first, largest disparity's), so the
+# correction's effect shows as shorter arrows.
+_disparity_scale(cal::StereoCalibration) = auto_lengthscale(first(cal.selfcal[].report.disparity_maps))
 
 _set_title!(c::StereoCanvas) =
     (t = c.title[] * c.note[]; c.ax.title[] == t || (c.ax.title = t); c)
@@ -269,9 +296,13 @@ end
 # pair (Run), on the dewarped frame.
 function _draw_vectors!(c::StereoCanvas, wf::StereoWorkflow)
     r = wf.step[] === :test ? wf.test.result[] :
-        wf.step[] === :run && !isempty(wf.run.completed[]) ? last(wf.run.completed[]) : nothing
+        wf.step[] === :run && !isempty(wf.run.completed[]) ? last(wf.run.completed[]) :
+        wf.step[] === :calibration && wf.calibration.page[] === :selfcal ? disparity_map(wf.calibration) :
+        nothing
     dws = wf.calibration.dewarpers[]
-    if r isa StereoPIVResult && dws !== nothing && c.space[] === :grid
+    if r isa PIVResult && c.space[] === :grid
+        _set_arrows!(c.shafts, c.heads, vector_data(r), _disparity_scale(wf.calibration))
+    elseif r isa StereoPIVResult && dws !== nothing && c.space[] === :grid
         d = grid_vector_data(r, dws[1].grid)
         dmax = maximum(k -> hypot(d.u[k], d.v[k]), eachindex(d.u); init = 0.0)
         ls = isfinite(d.spacing) && dmax > 0 ? 0.85 * d.spacing / dmax : 1.0

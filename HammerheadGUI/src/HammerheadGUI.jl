@@ -38,6 +38,7 @@ include("controllers/scale_tool.jl")
 include("controllers/calibration_review.jl")
 include("controllers/frame_set.jl")            # workflow window controllers
 include("controllers/passes_editor.jl")
+include("controllers/particle_settings.jl")
 include("controllers/workflow_jobs.jl")
 include("controllers/prepare.jl")              # before the workflows (field type)
 include("controllers/workflow.jl")             # AbstractWorkflow + shared steps
@@ -72,6 +73,8 @@ export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair
 export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type!,
        load_passes!, set_pass!, set_option!, add_pass!, remove_pass!, pass_rows,
        option_value, passes_summary
+export ParticleSettings, ANALYSIS_MODES, PARTICLE_OPTIONS, set_particle_option!,
+       edit_particle_option!, particle_option, load_particles!, particles_summary
 export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
        cancel_run!, run_eta, run_progress
 export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt_click!,
@@ -79,13 +82,16 @@ export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
-       test_pair!, test_stale, open_results!, step_status
+       test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
+       TRACKING_TEST_FRAMES
 export StereoCalibration, CALIBRATION_OPTIONS, add_plate!, remove_plate!, set_plate_z!,
        clear_plates!, detect_options, set_calibration_option!, edit_calibration_option!,
        fit_calibration!, fit_stale, build_dewarpers!, grid_summary, calibration_summary,
-       apply_selfcal!
+       apply_selfcal!, open_calibration!, save_calibration_file, can_build_grid,
+       CALIBRATION_PAGES, set_calibration_page!, disparity_map, set_disparity_pass!
 export StereoWorkflow, STEREO_WORKFLOW_STEPS, STEREO_PREPARE_PAGES, camera_frames,
-       shown_frames, set_camera!, out_of_view, grid_size, start_selfcal!
+       shown_frames, set_camera!, out_of_view, grid_size, start_selfcal!,
+       separate_preprocessing, set_separate_preprocessing!, set_backgrounds!
 
 end # module Controllers
 
@@ -109,8 +115,9 @@ export ScaleTool, clear_points!, set_separation!, pixel_size, physical_scale
 export CalibrationReview, calibration_review, calibration_review!,
        selfcal_review, nplanes, set_plane!, build_dewarpers, set_dewarpers!
 export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
-       open_results!, set_step!, set_prepare_page!
+       open_results!, set_step!, set_prepare_page!, ParticleSettings, set_particle_option!
 export StereoWorkflow, StereoCalibration, stereo_window, fit_calibration!, start_selfcal!,
+       open_calibration!, save_calibration_file, set_separate_preprocessing!,
        apply_selfcal!
 
 include("views/widgets.jl")

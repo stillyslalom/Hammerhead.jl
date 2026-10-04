@@ -33,6 +33,10 @@ The other step controllers and settings are those of every workflow
 (`prepare`, `passes`, `test`, `run`, `explorer`; `preprocessing`, `mask`,
 `scale`, …). Differences from the planar workflow:
 
+- `preprocessing` is one list for both cameras or a tuple with a list per
+  camera (as in `PIVRecipe`; see [`set_separate_preprocessing!`](@ref));
+  the Prepare preview edits the shown camera's list.
+  [`estimate_background!`](@ref) subtracts each camera's own background.
 - Prepare ([`STEREO_PREPARE_PAGES`](@ref)): preprocessing applies to the
   raw frames; `prepare.preview.processed`/`processed2` and the probe are
   the shown camera's processed pair *dewarped* onto the grid. `dewarped`
@@ -61,7 +65,7 @@ struct StereoWorkflow <: AbstractWorkflow
     test::PairTest
     run::RunState
     step::Observable{Symbol}
-    preprocessing::Observable{Vector{PreprocessStep}}
+    preprocessing::Observable{Union{Vector{PreprocessStep},NTuple{2,Vector{PreprocessStep}}}}
     mask::Observable{Union{Nothing,BitMatrix}}
     scale::Observable{Union{Nothing,PhysicalScale}}
     predictor_smoothing::Observable{Bool}
@@ -87,7 +91,7 @@ function StereoWorkflow(; files1 = Any[], files2 = Any[], pair_mode::Symbol = :p
     cal = StereoCalibration(; runner)
     wf = StereoWorkflow(fs1, fs2, Observable(1), cal, PrepareState(; runner), PassesEditor(),
                         PairTest(), RunState(), Observable(:images),
-                        Observable(PreprocessStep[]),
+                        Observable{Union{Vector{PreprocessStep},NTuple{2,Vector{PreprocessStep}}}}(PreprocessStep[]),
                         Observable{Union{Nothing,BitMatrix}}(nothing),
                         Observable{Union{Nothing,PhysicalScale}}(nothing),
                         Observable(true), Observable(0.5),
@@ -102,6 +106,8 @@ function StereoWorkflow(; files1 = Any[], files2 = Any[], pair_mode::Symbol = :p
     onany((_...) -> _view_changed!(wf), fs1.files, fs1.pair_mode, fs1.pair, fs1.loaded,
           fs2.files, fs2.pair_mode, fs2.pair, fs2.loaded, wf.camera, cal.dewarpers)
     on(_ -> _bump!(wf.prepare), wf.dewarped)          # the Prepare viewer redraws
+    # the preview edits the shown camera's preprocessing
+    on(_ -> _syncing(() -> set_steps!(wf.prepare.preview, _edited_steps(wf)), wf.prepare), wf.camera)
     _connect_results!(wf)
     dewarpers === nothing || set_dewarpers!(wf, dewarpers...)
     _sync_analysis_size!(wf)
@@ -331,7 +337,8 @@ function start_selfcal!(wf::StereoWorkflow; pairs::Integer = wf.calibration.self
     msg === nothing || (cal.selfcal_status[] = msg; return wf)
     pairs >= 1 || throw(ArgumentError("self-calibration needs at least one pair"))
     f1, f2 = _selfcal_frames(wf, pairs)
-    preprocess = recipe_preprocess(wf.preprocessing[])
+    pre = wf.preprocessing[]
+    preprocess = pre isa Tuple ? map(recipe_preprocess, pre) : recipe_preprocess(pre)
     m = wf.mask[]
     mask = m !== nothing && size(m) == size(dws[1].grid) ? copy(m) : nothing
     image_type = wf.passes.image_type[]
@@ -358,6 +365,7 @@ function _finish_selfcal!(cal::StereoCalibration, g::Int, source, out)
         return cal
     end
     d1, d2, report = out.value
+    cal.disparity_pass[] == 1 || (cal.disparity_pass[] = 1)
     cal.selfcal[] = (; report, dewarpers = (d1, d2), source)
     cal.selfcal_status[] = selfcal_summary(report)
     return cal
@@ -379,10 +387,15 @@ workflow_recipe(wf::StereoWorkflow) =
               predictor_smoothing = wf.predictor_smoothing[],
               mask_threshold = wf.mask_threshold[])
 
-_check_recipe(::StereoWorkflow, r::PIVRecipe) =
+function _check_recipe(::StereoWorkflow, r::PIVRecipe)
     r.roi === nothing ||
-    throw(ArgumentError("these settings have an ROI, which stereo analysis does not support; " *
-                        "remove it, or mask the dewarped grid instead"))
+        throw(ArgumentError("these settings have an ROI, which stereo analysis does not support; " *
+                            "remove it, or mask the dewarped grid instead"))
+    r.mode in (:sequence, :ensemble) ||
+        throw(ArgumentError("these settings are for particle analysis (:$(r.mode)); " *
+                            "open them in the planar window"))
+    return nothing
+end
 
 function _test_inputs(wf::StereoWorkflow)
     dw1, dw2 = wf.calibration.dewarpers[]
@@ -507,20 +520,109 @@ function _request_dewarped!(wf::StereoWorkflow, dw, a, b)
     return wf
 end
 
-"""
-    estimate_background!(wf::StereoWorkflow; kwargs...)
+# ---------------------------------------------------------------- preprocessing
 
-Not available for stereo: a recipe holds one preprocessing list for both
-cameras, and each camera has its own background. Sets
-`wf.prepare.status` and returns `wf`.
-"""
-function estimate_background!(wf::StereoWorkflow; kwargs...)
-    wf.prepare.status[] = background_note(wf)
+_edited_steps(wf::StereoWorkflow) =
+    (pre = wf.preprocessing[]; pre isa Tuple ? pre[wf.camera[]] : pre)
+
+function _set_edited_steps!(wf::StereoWorkflow, steps)
+    pre = wf.preprocessing[]
+    wf.preprocessing[] = !(pre isa Tuple) ? steps :
+                         wf.camera[] == 1 ? (steps, pre[2]) : (pre[1], steps)
     return wf
 end
 
-background_note(::StereoWorkflow) =
-    "background subtraction is not available for stereo (the cameras need different backgrounds)"
+"""
+    separate_preprocessing(wf::StereoWorkflow) -> Bool
+
+Whether each camera has its own preprocessing steps.
+"""
+separate_preprocessing(wf::StereoWorkflow) = wf.preprocessing[] isa Tuple
+
+"""
+    set_separate_preprocessing!(wf::StereoWorkflow, separate::Bool)
+
+Give each camera its own preprocessing steps (`true`: both start as copies
+of the shared list), or use one list for both cameras (`false`: camera 1's
+steps without a background subtraction, since each camera has its own
+background).
+"""
+function set_separate_preprocessing!(wf::StereoWorkflow, separate::Bool)
+    pre = wf.preprocessing[]
+    (pre isa Tuple) == separate && return wf
+    wf.preprocessing[] = separate ? (copy(pre), copy(pre)) :
+                         filter(s -> s.operation !== :subtract_background, pre[1])
+    return wf
+end
+
+"""
+    set_backgrounds!(wf::StereoWorkflow, bg1, bg2)
+
+Subtract `bg1` from camera 1's raw frames and `bg2` from camera 2's:
+switches to separate preprocessing lists and replaces each list's
+background subtraction, or inserts one first.
+"""
+function set_backgrounds!(wf::StereoWorkflow, bg1::AbstractMatrix{<:Real},
+                          bg2::AbstractMatrix{<:Real})
+    pre = wf.preprocessing[]
+    lists = pre isa Tuple ? pre : (pre, pre)
+    wf.preprocessing[] = (_with_background(lists[1], bg1), _with_background(lists[2], bg2))
+    return wf
+end
+
+"""
+    estimate_background!(wf::StereoWorkflow; frames = 10, method = :min)
+
+Estimate each camera's background from its own first `frames` frames
+(`compute_background`) and subtract it as the first step of that camera's
+preprocessing ([`set_backgrounds!`](@ref)). In a window this runs on a
+worker task; `wf.prepare.status` reports progress.
+"""
+function estimate_background!(wf::StereoWorkflow; frames::Integer = 10, method::Symbol = :min)
+    ps = wf.prepare
+    frames >= 1 || throw(ArgumentError("use at least one frame for the background"))
+    entries = map(k -> camera_frames(wf, k).files[][1:min(end, frames)], (1, 2))
+    any(isempty, entries) && (ps.status[] = "add both cameras' frames first"; return wf)
+    g = (ps.background_generation[] += 1)
+    n = minimum(length, entries)
+    what = "$(method === :min ? "minimum" : "mean") of $n frame" * (n == 1 ? "" : "s") * " per camera"
+    ps.status[] = "estimating both cameras' backgrounds…"
+    ps.background_running[] = true
+    apply = function (out)
+        g == ps.background_generation[] || return
+        ps.background_running[] = false
+        if out.err === nothing
+            set_backgrounds!(wf, out.value...)
+            ps.status[] = "backgrounds: " * what
+        else
+            ps.status[] = "background failed: " * _errmsg(out.err)
+        end
+    end
+    ps.preview.runner[](() -> map(e -> estimate_background(e; method), entries), apply)
+    return wf
+end
+
+# ---------------------------------------------------------------- calibration files
+
+"""
+    open_calibration!(wf::StereoWorkflow, path)
+    save_calibration_file(wf::StereoWorkflow, path) -> path
+
+Open a saved camera rig (a calibration file or a stereo results file) on
+the Calibration step, or save the current one; see
+the `StereoCalibration` method of [`open_calibration!`](@ref).
+"""
+function open_calibration!(wf::StereoWorkflow, path::AbstractString)
+    open_calibration!(wf.calibration, path)
+    wf.status[] = "calibration: $(basename(path))"
+    return wf
+end
+
+function save_calibration_file(wf::StereoWorkflow, path::AbstractString)
+    save_calibration_file(wf.calibration, path)
+    wf.status[] = "saved calibration to $(basename(path))"
+    return path
+end
 
 # A window closed with jobs in flight: forget them and catch up inline.
 function _abandon_jobs!(wf::StereoWorkflow)
