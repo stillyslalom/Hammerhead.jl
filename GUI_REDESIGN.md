@@ -1,7 +1,8 @@
 # HammerheadGUI redesign: workflow-first Qt Quick application
 
 Plan for ROADMAP §2. Status: framework chosen (Qt Quick via QML.jl + QMLMakie,
-2026-10-03); implementation not started. Delete this file once the redesign has
+2026-10-03); slices 0–2 done (planar window with Prepare and Results tools),
+stereo window next. Delete this file once the redesign has
 landed and CLAUDE.md describes the result.
 
 ## Goal
@@ -178,15 +179,24 @@ grid, and self-calibration) and has no ROI.
    10 s / 15 s targets; only a sysimage/app bundle removes the load time.
    Moved to slice 2: Prepare editing, the profile and circulation tools in
    Results, async image loading.
-2. Prepare sub-pages; retire the GLMakie tool windows and views they replace;
-   rewrite `docs/src/howto/gui.md` around the window.
-   Design (proposed 2026-10-04; implemented overnight, unreviewed): see
-   "Slice 2 design" below. Results tools (2026-10-04): inspect / profile /
-   circulation on the results canvas with a tool selector on the page;
-   the collapsed profile row hides its Axis and legend through scene
-   `visible` (GLMakie skips hidden scenes) inside an `Outside`-aligned
-   nested layout, so it takes no space and creates no plots.
-   `request_grab(path)` saves window images for render checks.
+2. ✅ Prepare, Results tools, docs (2026-10-04; implemented overnight,
+   unreviewed). Prepare sub-pages (Preprocess with probe and background
+   estimate, Mask, Region, Scale) edit the workflow through `PrepareState`,
+   synced both ways with opened settings (design below). Canvas gestures are
+   controller functions (`canvas_click!`/`canvas_alt_click!`/`canvas_key!`).
+   Pair loading, previews, probes and background estimates run on workers
+   under `wf.spawn` with generation counters. Results: inspect / profile /
+   circulation on the results canvas; the collapsed profile row hides its
+   Axis and legend through scene `visible` (GLMakie skips hidden scenes)
+   inside an `Outside`-aligned nested layout, so it takes no space and
+   creates no plots. `request_grab(path)` saves window images; the local
+   `docs/gui_screenshots.jl` uses it for the committed doc screenshots.
+   Retired: the GLMakie batch runner, mask, ROI, scale and preprocess
+   windows and the `BatchRunner` controller. Docs: the how-to, tour,
+   reference and explanation pages describe the window. Moved on: ensemble
+   runs in the Run step (slice 4; the Test step already tests ensembles);
+   the narrow Repeats column in the pass table clips its value (seen in the
+   screenshots; cosmetic).
 3. Stereo window.
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.

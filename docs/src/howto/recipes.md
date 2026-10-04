@@ -70,7 +70,7 @@ Other keywords, such as `backend = :cuda`, `collect_results = false` or
 
 ## Recover the settings from a results file
 
-A results file written by `apply_recipe` (or by the GUI batch form) knows how
+A results file written by `apply_recipe` (or by a run in the GUI window) knows how
 it was made. Load its recipe to inspect it or to process new images the same way:
 
 ```@example recipes
@@ -113,6 +113,7 @@ the dewarped grid.
 
 ## In the GUI
 
-The batch form's **save settings…** button writes the same recipe file, and
-**open settings…** loads a recipe file or an earlier run's results file into
-the form. See [Analyze an image pair in the GUI](gui.md).
+The planar window's **Save settings…** button writes the same recipe file, and
+**Open settings…** loads a recipe file or an earlier run's results file into
+the window. A run in the window stores its recipe in the results file, as
+`apply_recipe` does. See [Analyze an image pair in the GUI](gui.md).

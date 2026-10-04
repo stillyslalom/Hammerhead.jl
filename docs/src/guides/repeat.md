@@ -34,7 +34,7 @@ same_settings = load_recipe("vectors.jld2")
 ```
 
 [Save settings and reuse them](../howto/recipes.md) covers saving a recipe on
-its own, comparing two recipes, and pooled ensembles. The GUI batch form saves
+its own, comparing two recipes, and pooled ensembles. The GUI window saves
 and opens the same recipe files.
 
 ## Return to a questionable result

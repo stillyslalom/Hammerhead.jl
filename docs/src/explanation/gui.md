@@ -1,63 +1,85 @@
 # The graphical user interface (GUI) controller–view split
 
-Each HammerheadGUI tool has a **controller** that holds its state and a
-**view** that displays it. Controller functions let you perform the same
-actions from Julia code as from the GUI.
+HammerheadGUI keeps everything the window knows and does in plain Julia
+**controllers**. The Qt window and its Makie **canvases** only display
+controller state and forward the user's input. Every button and every click on
+the image is a controller function, so a script can perform the same steps,
+and the tests check them without a display.
 
-## Controllers own the state
+## Three layers
 
-A controller such as [`ResultExplorer`](@ref), [`MaskEditor`](@ref),
-[`BatchRunner`](@ref), or [`CalibrationReview`](@ref) stores its state in
-[`Observables`](https://juliagizmos.github.io/Observables.jl/stable/):
-the current frame, the displayed field, the polygons drawn so far, or the
-batch progress. Tool actions are ordinary functions on the
-controller: `set_field!`, `close_active!`, `start!`. The controllers live
-in `HammerheadGUI.Controllers`, which does not import Makie. You can create
-and use a controller on a server without opening a window.
+- **Controllers** (`HammerheadGUI.Controllers`) hold the state in
+  [`Observables`](https://juliagizmos.github.io/Observables.jl/stable/) and
+  implement the actions. [`PlanarWorkflow`](@ref) owns one controller per
+  step: `FrameSet` (frames and pairing), `PrepareState` (the Prepare pages and
+  their editors: [`PreprocessPreview`](@ref), [`MaskEditor`](@ref),
+  [`ROIEditor`](@ref), [`ScaleTool`](@ref)), `PassesEditor`, `PairTest`,
+  `RunState`, and a [`ResultExplorer`](@ref) for the results. The module does
+  not import Makie or Qt; a test checks this boundary.
+- **Canvases** are Makie figures that draw the controllers: the frame, mask,
+  region, window outlines, vectors, editing overlays, and the result field
+  with its profile panel.
+- **The Qt shell** lays out the step pages in QML. It mirrors the controller
+  values QML displays into one property map and calls controller functions
+  when a control changes.
 
-User gestures are controller methods too. When you left-click in the mask
-editor, the view calls `click!(me, x, y)`; the decision of whether that
-click adds a vertex, selects a polygon, or starts a new one lives in the
-controller. To call gesture methods directly, import them from the
-submodule: `using HammerheadGUI.Controllers: click!, alt_click!`.
+The workflow is the single source of the settings. Its `preprocessing`,
+`mask`, `roi` and `scale` fields are what the Prepare editors edit, and
+`workflow_recipe(wf)` turns them into a core [`PIVRecipe`](@ref). Opening
+settings writes those fields, and the editors follow. Opening a recipe and
+asking for it back without edits returns an equal recipe, including settings
+the window does not show.
 
-## Views render and forward
+## Gestures are controller functions
 
-The view functions ([`result_explorer`](@ref), [`mask_editor`](@ref), …)
-build GLMakie figures whose widgets use the controller's observables.
-Moving the frame slider updates the controller; calling `set_frame!` from
-code updates an open view. The controller remains available after its
-window closes.
+A click on the image becomes `canvas_click!(wf, x, y)` in image coordinates;
+a right-click becomes `canvas_alt_click!(wf)`, and keys such as Backspace,
+Escape and Delete become `canvas_key!(wf, key)`. The controller decides what
+the gesture means from the step and the open Prepare page: place the
+correlation probe, add a mask vertex or select a polygon, set a region
+corner, or set a scale point. On the Results step, clicks go to the
+explorer's tool (inspect, profile, or circulation). A gesture the
+controller does not use stays with the viewer, so dragging still zooms and
+pans. This is why the [GUI tour](../tutorials/gui_tour.md) can show the code
+for each click: it is the same call.
 
-Three practical consequences:
+## Canvases never create plots after display
 
-- **Drive an open window from the REPL.** Update an observable or call a
-  controller function and the figure follows. See
-  [the GUI tour](../tutorials/gui_tour.md) for examples.
-- **Script a set of actions.** Use controller calls to reproduce an analysis
-  setup or drive the same tool without interacting with widgets.
-- **Views compose.** [`result_explorer!`](@ref) builds into a
-  `GridPosition` of a larger figure; the self-calibration review embeds a
-  full result explorer for its disparity maps the same way.
+A Qt canvas has an OpenGL context only while Qt renders it. GLMakie creates or
+frees GPU objects as soon as a plot is added to or removed from a displayed
+figure. Outside Qt's render pass that would happen without a context. Each
+canvas therefore creates all of its plots when it is built: overlays that are
+empty hold a placeholder of `NaN` points. Afterwards only the plots' data,
+colours and visibility change. The profile panel under the result field is
+an axis that exists from the start; outside the profile tool its layout row
+collapses and it is hidden.
+
+## Work happens off the window's thread
+
+Qt's event loop runs on Julia's main thread while the window is open, so a
+callback from the window must return quickly. Loading the representative
+pair, the preprocessing preview, the correlation probe, the background
+estimate, the test pair, and the batch run all run on worker tasks. A job
+captures its inputs when it starts and hands its result back to the window,
+which applies it between frames. A newer request supersedes an older one,
+so after rapid edits the viewer shows the latest settings. This is why the
+window needs Julia started with several threads (`julia -t auto`). Without a
+window the same controllers run each job before returning, which is what
+scripts and tests expect.
 
 ## The boundary to the core package
 
-Controllers use the core API. The mask editor exports a mask made with
-[`polygon_mask`](@ref), using the same
-`true` = excluded convention described in
-[the masking model](masking.md); its "save" writes the image
-[`load_mask`](@ref) reads. The batch runner calls
-[`run_piv_sequence`](@ref) with its documented progress callback; its
-output file is an ordinary JLD2-format Julia data file written by
-[`save_results`](@ref). The calibration
-review calls [`detect_calibration_grid`](@ref) and
-[`calibrate_camera`](@ref). GUI output can therefore be read and processed
-with the same functions you use in a script.
-
-The batch form's settings are a core [`PIVRecipe`](@ref): "save settings…"
-writes it with [`save_recipe`](@ref), and a run with an output file stores the
-same recipe in that file. A script can open either file with
-[`load_recipe`](@ref) and continue with [`apply_recipe`](@ref).
+Controllers use the core API. A test pair and a run both call
+[`apply_recipe`](@ref) with the current recipe, so the test predicts the
+batch. A run's output is an ordinary results file written by
+[`save_results`](@ref), with the recipe stored beside the results, so
+[`load_recipe`](@ref) recovers the settings from either a settings file or
+a results file. The preprocessing preview applies `recipe_preprocess` to the
+same `PreprocessStep`s the batch uses. The mask editor exports its polygons
+with [`polygon_mask`](@ref), using the `true` = excluded convention of
+[the masking model](masking.md), and writes mask images that
+[`load_mask`](@ref) reads. The stereo calibration review calls
+[`detect_calibration_grid`](@ref) and [`calibrate_camera`](@ref).
 
 HammerheadGUI is a separate package that depends on Hammerhead. The core
-package does not require GLMakie, so it can run without a display.
+package does not depend on Qt or GLMakie, so it runs without a display.

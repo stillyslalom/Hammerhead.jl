@@ -1,179 +1,215 @@
 # # Your first PIV session in the GUI
 #
-# Turn two particle images into a vector field, exclude a reflection, and save
-# both the result and the settings needed to repeat it. This example uses a
-# synthetic vortex, so you can follow along without downloading a recording.
+# Turn a short recording into a vector field in the planar PIV window: exclude
+# a reflection, attach millimetres and seconds, test one pair, run the batch,
+# and measure a profile and a circulation in the result. The recording is a
+# synthetic vortex, so you can follow along without downloading data.
 #
-# Install **HammerheadGUI** with `pkg> add HammerheadGUI`, then load it:
+# Install **HammerheadGUI** with `pkg> add HammerheadGUI`, then start Julia
+# with several threads (`julia -t auto`) and open the window:
+#
+# ```julia
+# using HammerheadGUI
+# wf = planar_window()
+# ```
+#
+# The window walks through six steps, listed on its left: **Images → Prepare →
+# Passes → Test pair → Run → Results**. The viewer on the right follows the
+# step you are on. The screenshots below come from the window; each code block
+# is the equivalent of the clicks it describes, written against the window's
+# workflow controller. `planar_window()` returns that `PlanarWorkflow` when
+# the window closes, and `planar_window(wf)` opens one prepared in code.
 
-using HammerheadGUI
 using Hammerhead
+using HammerheadGUI
+using HammerheadGUI.Controllers                 # the functions behind the buttons
+using HammerheadGUI.Controllers: click!, alt_click!
 
-# The batch form, mask editor, and result explorer are **separate windows**.
-# The screenshots below show the real tools. The short code blocks make the
-# same selections for this worked example; you can use their buttons instead.
-
-const GUI = HammerheadGUI.GLMakie #hide
-tour_assets = joinpath(pkgdir(Hammerhead), "docs", "build", "assets", "gui") #hide
-mkpath(tour_assets) #hide
-function tour_picture(fig, name) #hide
-    screen = GUI.Screen(fig.scene; visible=false, start_renderloop=false) #hide
-    try #hide
-        for _ in 1:(length(filter(b -> b isa GUI.Toggle, fig.content)) + 1) #hide
-            tick = GUI.events(fig).tick[] #hide
-            GUI.events(fig).tick[] = GUI.Makie.Tick(GUI.Makie.UnknownTickState, tick.count+1, tick.time+1., 1.) #hide
-        end #hide
-        Hammerhead.FileIO.save(joinpath(tour_assets, name*".png"), copy(GUI.colorbuffer(screen))) #hide
-    finally #hide
-        GUI.destroy!(screen) #hide
-    end #hide
-    nothing #hide
-end #hide
-nothing #hide
-
-# ## 1. Start with two exposures
+# ## 1. Add the frames
 #
-# Particles move around the center of this pair. The bright square stays put:
-# it represents a reflection that would give misleading displacement measurements.
+# Particles circulate around the centre of these images. The bright square in
+# the upper-left corner stays put: it stands for a reflection, which would
+# give misleading displacements. Two exposure pairs make a short recording:
 
 using Hammerhead.SyntheticData, Random
-flow(x,y,z,t) = (-0.015*(y-128), 0.015*(x-128), 0.0)
-imgA, imgB, _, _ = generate_synthetic_piv_pair(flow, (256,256), 1.0;
-    particle_density=0.05, background_noise=0.03, rng=MersenneTwister(42))
-peak = max(maximum(imgA), maximum(imgB))   # same PNG intensity scale for both
-imgA ./= peak
-imgB ./= peak
-imgA[12:60,12:60] .= 1.0
-imgB[12:60,12:60] .= 1.0
-
-pair_figure = GUI.Figure(size=(900,400)) #hide
-for (i, image) in enumerate((imgA, imgB)) #hide
-    axis = GUI.Axis(pair_figure[1,i]; title=i==1 ? "Exposure A" : "Exposure B", #hide
-        xlabel="x (px)", ylabel="y (px)", aspect=GUI.DataAspect(), yreversed=true) #hide
-    GUI.heatmap!(axis, 1:256, 1:256, permutedims(image); colormap=:grays, colorrange=(0,1)) #hide
-end #hide
-tour_picture(pair_figure, "pair") #hide
-
-# ![Two particle exposures with a stationary bright reflection in the upper-left corner.](../assets/gui/pair.png)
-#
-# Save the example images so the file-based workflow can use them:
-
-work = mkpath("gui-example")   # use your own output folder if you prefer
-paths = [joinpath(work, "frame-A.png"), joinpath(work, "frame-B.png")]
-for (path, image) in zip(paths, (imgA, imgB))
-    Hammerhead.FileIO.save(path, Hammerhead.Gray.(image))
+flow(x, y, z, t) = (-0.015 * (y - 128), 0.015 * (x - 128), 0.0)
+work = mkpath("gui-example")             # use your own folder if you prefer
+paths = String[]
+for (k, seed) in enumerate((42, 43))
+    a, b, _, _ = generate_synthetic_piv_pair(flow, (256, 256), 1.0;
+        particle_density = 0.05, background_noise = 0.01, rng = MersenneTwister(seed))
+    peak = max(maximum(a), maximum(b))   # one intensity scale for the pair
+    for (j, img) in enumerate((a, b))
+        img = img ./ peak
+        img[12:60, 12:60] .= 1.0         # the reflection
+        path = joinpath(work, "frame_$(lpad(2k - 2 + j, 4, '0')).png")
+        Hammerhead.FileIO.save(path, Hammerhead.Gray.(img))
+        push!(paths, path)
+    end
 end
-batch = BatchRunner(files=paths)
-nothing #hide
 
-# With your own images, open `batch_runner()` and use **add frames…** to select
-# them in A/B order. For a longer recording, choose paired exposures
-# (`1–2, 3–4`) or consecutive frames (`1–2, 2–3`).
+# On the **Images** step, click **Add frames…** and select the four files.
+# **Pairing** forms pairs from frames in acquisition order: **Paired** for
+# separate A/B exposures (1–2, 3–4), **Chained** for a uniformly sampled
+# sequence (1–2, 2–3). The bar below the viewer steps through the pairs and
+# switches between frame A and frame B. Particles should shift slightly
+# between the two frames, not jump.
 
-# ## 2. Exclude the reflection
+wf = PlanarWorkflow(files = paths)                   # Add frames…
+frames_summary(wf.frames)
+
+# ![The Images step: four frames form two pairs; the viewer shows frame A of the first pair.](../assets/gui_window/images.png)
 #
-# Open `mask_editor(paths[1])`. Left-click just outside the square's four corners,
-# then right-click to close the polygon. Turn on **show mask**: red means excluded.
-# These calls draw the same boundary:
+# The pair shown is the *representative pair*: every preview, probe and test
+# uses it, so pick one with the flow features you care about.
 
-mask = MaskEditor(paths[1])
-for (x, y) in ((9,9), (63,9), (63,63), (9,63))
-    add_vertex!(mask, x, y)
+# ## 2. Check the preprocessing with the probe
+#
+# Open **Prepare**. On its **Preprocess** page, add a **Highpass filter** with
+# **Add step**, switch the viewer to **Processed**, and click a place in the
+# flow. The probe correlates one window of the processed pair at that point:
+
+set_step!(wf, :prepare)
+add_step!(wf.prepare.preview, :highpass_filter)      # Add step
+wf.prepare.show_processed[] = true                   # Viewer: Processed
+canvas_click!(wf, 190, 150)                          # click the image
+print(probe_summary(wf.prepare.preview))
+
+# ![Prepare, Preprocess page: a highpass filter, the processed frame, and the probe window in yellow.](../assets/gui_window/prepare_preprocess.png)
+#
+# A peak ratio well above 1.5 means the window finds one clear match. Probe a
+# few places, especially dim or fast regions; the preview runs exactly the
+# preprocessing the batch will run.
+
+# ## 3. Exclude the reflection
+#
+# On the **Mask** page, click just outside the square's four corners, then
+# right-click to close the polygon. The shaded area is excluded:
+
+set_prepare_page!(wf, :mask)
+for (x, y) in ((8, 8), (64, 8), (64, 64), (8, 64))
+    canvas_click!(wf, x, y)                          # click a vertex
 end
-close_active!(mask)
-mask.show_mask[] = true
-tour_picture(mask_editor(mask; size=(900,600)), "mask") #hide
+canvas_alt_click!(wf)                                # right-click closes
+count(wf.mask[])                                     # excluded pixels
 
-# ![The mask editor excludes the bright reflection with a red polygon.](../assets/gui/mask.png)
+# ![Prepare, Mask page: the polygon around the reflection, shaded as excluded.](../assets/gui_window/prepare_mask.png)
 #
-# Click **save mask…**, then **load mask…** in the batch window. Here we make
-# that hand-off through the same mask image format:
+# Backspace undoes a vertex and Escape cancels the polygon. A click inside a
+# finished polygon selects it, and Delete removes it. A mask only removes
+# regions; whether the remaining vectors are accurate is the job of the test
+# below.
 
-mask_path = joinpath(work, "reflection-mask.png")
-save_mask(mask, mask_path)
-batch.mask[] = load_mask(mask_path)
-nothing #hide
-
-# A mask excludes image regions. It does not decide whether the remaining
-# vectors are accurate; we will inspect those after processing.
-
-# ## 3. Choose the settings and units
+# ## 4. Attach millimetres and seconds
 #
-# Choose **medium** effort for this first run. The preset selects a multi-pass
-# window schedule for you. Choose an output file so the result survives closing
-# the window.
+# On the **Scale** page, type the pixel size and the time between the paired
+# exposures. Here that is 0.02 mm per pixel and 0.001 s; on your recording, use
+# your measured values. With a ruler or calibration target in view, click two
+# points of known separation instead and type their **Distance**.
+
+set_prepare_page!(wf, :scale)
+edit_scale!(wf, :pixel_size, "0.02")
+edit_scale!(wf, :length_unit, "mm")
+edit_scale!(wf, :dt, "0.001")
+edit_scale!(wf, :time_unit, "s")
+wf.scale[]
+
+# The vectors are still computed in pixels; the scale converts what you see in
+# the results, as described in [Scale results to physical units](../howto/scaling.md).
+
+# ## 5. Choose the passes and test one pair
 #
-# For this example, declare a pixel size of **0.02 mm** and an exposure delay of
-# **0.001 s**. On your recording, use your measured scale and the delay between
-# the paired exposures. Typing a unit label does not convert the numeric factor.
+# On **Passes**, click **Medium**. The preset fills the pass table for the
+# frame size, and the viewer outlines each window size against the particles.
+# A first window at least four times the largest displacement keeps most
+# particle pairs inside the window.
 
-set_effort!(batch, :medium)
-set_scale!(batch; pixel_size=0.02, dt=0.001, length_unit="mm", time_unit="s")
-batch.output_path[] = joinpath(work, "vectors.jld2")
-tour_picture(batch_runner(batch; size=(960,760)), "batch") #hide
+fill_preset!(wf.passes, :medium)                     # Preset: Medium
+passes_summary(wf.passes)
 
-# ![The batch form is ready to process one masked image pair with physical units.](../assets/gui/batch.png)
+# ![Passes: the medium preset's pass table and its window sizes outlined on the particles.](../assets/gui_window/passes.png)
 #
-# Need a smaller region? **edit ROI…** opens a rectangle editor. Need to condition
-# the images? **preprocess…** opens a raw/processed comparison. Both have an
-# explicit **apply/use in batch** action. Leave them unchanged for this first run.
+# On **Test pair**, click **Test pair 1**. The test runs the same call as the
+# batch on the representative pair, so its summary predicts the run:
 
-# ## 4. Run, then inspect the vectors
+test_pair!(wf; spawn = false)                        # Test pair 1
+print(join(summary_lines(test_summary(wf.test)), "\n"))
+
+# ![Test pair: the summary beside the vectors, valid in blue; the masked corner has none.](../assets/gui_window/test_pair.png)
 #
-# Press **run**. The progress count reaches `1 / 1`; **view results** opens
-# another window. For this tutorial, wait for the same run through code:
+# Change a setting and the step rail marks the test as out of date until you
+# test again.
 
-start!(batch; async=false)
-batch.status[]
-
-# The arrows should circulate around the center, with the reflection region
-# omitted. The axes and colorbar now use the scale entered above. Click a vector
-# to read its components and status; red flagged vectors deserve a closer look.
-
-explorer = ResultExplorer(batch.results[])
-select_nearest!(explorer, 3.5, 2.5)
-tour_picture(result_explorer(explorer; size=(1100,750)), "explorer") #hide
-
-# ![The result explorer shows the vortex in millimetres, with a selected vector's measurements beside it.](../assets/gui/explorer.png)
+# ## 6. Run the recording
 #
-# Try **u** or **v** in the field menu. To look for rotation, choose **vorticity**;
-# check masks and flagged vectors before interpreting small features, because
-# derivatives amplify local errors. For a longer recording, the frame slider
-# moves through the results.
+# On **Run**, choose an output file with **Browse…** and click **Run 2 pairs**.
+# Results are written as each pair finishes, together with the settings that
+# produced them. **Cancel** stops after the pair in progress and keeps the
+# finished ones. In the window the run happens in the background (the viewer
+# shows the latest pair); here it runs before the next line:
+
+wf.run.output_path[] = joinpath(work, "vectors.jld2")
+start_run!(wf; spawn = false)                        # Run 2 pairs
+wf.run.status[]
+
+# ## 7. Measure a profile and a circulation
 #
-# Use **cancel** during a batch to stop after the current pair. Finished pairs
-# remain available in the output file.
-
-# ## 5. Keep the result and the settings
+# **Results** opens the output file. Choose a field and step through the
+# pairs; with the **Inspect** tool, a click on a vector reads its components and
+# status. Axes and colours use millimetres and seconds now.
 #
-# The result is already in `vectors.jld2`. Reopen it with:
+# Choose the **Profile** tool and click two points across the vortex. The
+# panel under the field plots u, v and |V| along the line: v changes sign
+# through the centre and grows linearly, as in solid-body rotation.
 
-reopened = ResultExplorer(batch.output_path[]; lazy=true)
-nframes(reopened)
+ex = wf.explorer[]
+r = current_result(ex)
+xmid, ymid = (first(r.x) + last(r.x)) / 2, (first(r.y) + last(r.y)) / 2
+set_tool!(ex, :profile)                              # Tool: Profile
+click!(ex, xmid - 2, ymid)                           # two clicks on the viewer
+click!(ex, xmid + 2, ymid)
+tool_summary(ex)
 
-# The same file also records the settings that produced it: passes, mask,
-# ROI, scale and preprocessing. Click **save settings…** to write them to a
-# separate recipe file, which you can open in a later session with
-# **open settings…**. The equivalent code is:
+# ![Results with the Profile tool: the line across the vortex and the velocity along it.](../assets/gui_window/results_profile.png)
+#
+# Choose **Circulation**, click the corners of a contour around the centre,
+# and right-click to close it. The summary gives Γ from the line integral of
+# the velocity and from the vorticity enclosed:
+
+set_tool!(ex, :circulation)                          # Tool: Circulation
+for (x, y) in ((xmid - 1, ymid - 1), (xmid + 1, ymid - 1), (xmid + 1, ymid + 1), (xmid - 1, ymid + 1))
+    click!(ex, x, y)
+end
+alt_click!(ex)                                       # right-click closes
+print(tool_summary(ex))
+
+# This vortex rotates at 0.015 rad per frame, so its vorticity is 0.03 per
+# frame: 30 s⁻¹ with the scale above. Around this 2 mm square, both estimates
+# come close to 30 s⁻¹ × 4 mm² = 120 mm²/s. Check flagged vectors and the mask
+# before trusting derived quantities, because derivatives amplify local errors.
+
+# ## 8. Keep the result and the settings
+#
+# The results file already holds the settings that produced it. **Save
+# settings…** writes them to a separate recipe file as well:
 
 settings_path = joinpath(work, "vortex-settings.jld2")
-save_settings(batch, settings_path)
-recipe = load_recipe(batch.output_path[])
-recipe == load_recipe(settings_path)
+save_settings(wf, settings_path)                     # Save settings…
+load_recipe(settings_path) == load_recipe(wf.run.output_path[])
 
-# Opening either file in a new batch form loads its exact passes as the
-# **saved settings** effort, together with its mask and scale. Add the frames
-# of the next recording and press **run**:
+# In a later session, **Open settings…** reads either file back, and **Use
+# these settings** on the Results step does the same for the open results. Add
+# the next recording's frames, test a pair, and run:
 
-next_batch = BatchRunner()
-load_settings!(next_batch, settings_path)
-next_batch.status[]
+next_wf = PlanarWorkflow()
+load_settings!(next_wf, wf.run.output_path[])        # Open settings…
+next_wf.status[]
 
-# You have now made a masked vector field, inspected it in physical units,
-# saved its native result, and saved the settings for repeating the analysis.
-# [Save settings and reuse them](../howto/recipes.md) shows how to apply the same
-# recipe from a script.
+# To browse a results file without the workflow, open the standalone explorer
+# with `result_explorer("gui-example/vectors.jld2"; lazy = true)`.
 #
-# For your next task, use [the GUI task guide](../howto/gui.md). It points to
-# preprocessing, profiles, stereo, and tracking without requiring you to learn
-# every tool at once.
+# You have made a masked vector field in physical units, tested it before the
+# run, measured a profile and a circulation, and kept the settings for the
+# next recording. [Analyze an image pair in the GUI](../howto/gui.md) covers
+# the rest of the window, and [Save settings and reuse them](../howto/recipes.md)
+# runs the same settings from a script.

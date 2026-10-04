@@ -24,8 +24,7 @@ Configure a stereo PIV sequence and observe its progress. `files1` and
   dt-only [`PhysicalScale`](@ref) is attached when any differs from default
 - `output_path = ""` (empty = in memory only)
 
-Drive it like a [`BatchRunner`](@ref): [`add_files!`](@ref) (with a
-`camera` keyword), [`set_schedule!`](@ref), [`set_effort!`](@ref),
+Drive it with [`add_files!`](@ref) (with a `camera` keyword), [`set_schedule!`](@ref), [`set_effort!`](@ref),
 [`start!`](@ref), [`cancel!`](@ref) (the stereo driver's native
 between-acquisition cancellation — the completed prefix is kept in
 `results`); watch `progress`, `status`, `running`, `results`, and the live

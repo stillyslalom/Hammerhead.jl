@@ -29,7 +29,7 @@ or [the GUI tour](../tutorials/gui_tour.md).
 
 ## Desktop tools
 
-Start with the [GUI API](gui.md) for image preparation and batch controls, or
+Start with the [GUI API](gui.md) for the planar workflow window and its controllers, or
 the [result explorer](gui_results.md) for fields and trajectories.
 
 The [feature matrix](feature_matrix.md) records the scope of each method.

@@ -22,10 +22,45 @@ Added:
   test pair runs exactly the batch's `apply_recipe` call; runs write results
   as they finish and can be cancelled. Controllers (`PlanarWorkflow`,
   `FrameSet`, `PassesEditor`, `PairTest`, `RunState`) work without a window.
-  Prepare applies preprocessing, mask, ROI and scale from opened settings;
-  editing them in the window comes next.
+- Prepare step in the window, with four pages: **Preprocess** (ordered core
+  `PreprocessStep`s with every option editable, a raw/processed view, a
+  background estimate, and a single-window correlation probe placed by
+  clicking the image), **Mask** (polygons and holes drawn on the image,
+  grow/shrink, mask image files), **Region** (two corners or typed bounds),
+  and **Scale** (typed, or measured from two points of known separation).
+  Opened settings fill the editors, and an unedited recipe round-trips
+  unchanged. `PrepareState` (`wf.prepare`) holds the pages; the gestures are
+  controller functions (`canvas_click!`, `canvas_alt_click!`, `canvas_key!`),
+  so scripts and tests use the same calls as the canvas.
+- Results tools in the window: **Inspect**, **Profile** (u, v and |V| along a
+  clicked line, plotted under the field) and **Circulation** (line-integral
+  and vorticity-area estimates for a clicked contour). New `profile_series`.
+- Frames, previews, probes and background estimates load on worker tasks
+  in the window; a newer request supersedes an older one, and the viewer
+  keeps the previous pair until the next one arrives.
+- `request_grab(path)` saves an image of the open window, for screenshots
+  and render checks.
 - New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core
   release that exports `effort_schedule`.
+
+Breaking:
+
+- The GLMakie tool windows `batch_runner`, `mask_editor`, `roi_editor`
+  (and `roi_editor!`), `scale_tool` and `preprocess_preview` (and
+  `preprocess_preview!`) are removed; their tasks live in `planar_window`.
+  The `BatchRunner` controller is removed with them (`set_preprocess!`,
+  `set_scale!`, `set_pixel_size!`, `set_dt!`, `batch_recipe`,
+  `preprocess_steps`, `apply_roi!`, `apply_scale!`); use `PlanarWorkflow`,
+  whose `workflow_recipe`, `save_settings` and `load_settings!` cover the
+  saved settings. `StereoBatchRunner` and the stereo views are unchanged.
+- `PreprocessPreview` holds a `Vector{PreprocessStep}`: `add_step!`,
+  `remove_step!`, `move_step!`, `set_step_option!` and `set_steps!` replace
+  `PreprocStep`, `enable_step!` and `set_step_param!` (the `enabled` keyword
+  becomes `steps`), and the preview applies `recipe_preprocess`, so it
+  matches the batch exactly.
+- `MaskEditor`, `ROIEditor` and `ScaleTool` keep an image size instead of an
+  image copy: construct them from a size or a matrix. These three and
+  `PreprocessPreview` no longer take an image path.
 
 ## Hammerhead 0.2.0 and HammerheadGUI 0.2.0 (2026-10-03)
 

@@ -16,8 +16,10 @@ July 2026) is also done. Hammerhead and HammerheadGUI are registered in
 General; user installation instructions should use `pkg> add Hammerhead`
 and `pkg> add HammerheadGUI`. Phase 7 (HammerheadGUI) is underway:
 the monorepo conversion and CI/TagBot/CompatHelper subdir wiring are done;
-the result explorer, mask/ROI editors, batch forms (with saved settings),
-and calibration diagnostics are available. Phase 8 (2D2C PTV,
+the Qt planar workflow window (`planar_window`: Images → Prepare → Passes →
+Test pair → Run → Results, saved settings as recipes) replaced the GLMakie
+tool windows; the standalone result explorer and the stereo calibration/batch
+views remain until the stereo window. Phase 8 (2D2C PTV,
 July 2026) is done: per-frame particle detection (`detect_particles`),
 hybrid PIV-guided two-frame tracking (`run_ptv` → `PTVResult`, with
 `ptv_to_grid` binning and `run_ptv_sequence` batch), scattered validation,
@@ -35,6 +37,8 @@ from commit 88a4bda). Saved settings now go through the single recipe API in
 julia --project=. -t 4 -e 'using Pkg; Pkg.test()'   # full suite
 julia --project=docs docs/make.jl                    # docs: executes all seven tutorials ("skipping deployment" warning is normal locally)
 julia --project=HammerheadGUI -e 'using Pkg; Pkg.test()'  # GUI tests (needs a GL context; CI wraps in xvfb-run)
+# opt-in Qt window test (own process, needs a display): set HAMMERHEADGUI_QT_TESTS=true
+julia --project=docs -t 4 docs/gui_screenshots.jl    # local only: regenerate docs/src/assets/gui_window/*.png, then look at them
 ```
 
 `PIV sequence failed` error logs from the intentional failure-propagation
@@ -67,6 +71,12 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   1 + 3, calibration planes z = −3/0/+3 mm, frames 50–51, losslessly
   re-encoded 16-bit PNG). The 4E calibrations are fit to those images'
   pixel coordinates — never crop or re-encode them independently.
+- The GUI tour (`docs/lit/gui_tour.jl`) drives a `PlanarWorkflow` through
+  the window's controller calls (no display needed) and embeds window
+  screenshots committed under `docs/src/assets/gui_window/`, made by the
+  local-only `docs/gui_screenshots.jl` on the tour's own synthetic frames.
+  When the window's look or the tour's scene changes, regenerate them, look
+  at each image, and keep each under 300 KB.
 - Reference pages use `@autodocs` filtered by source file (`Pages =
   ["pipeline.jl", ...]`). A new `src/*.jl` file's public docstrings must be
   added to one of the reference pages (and every documented binding must
@@ -361,13 +371,47 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 ## HammerheadGUI (HammerheadGUI/)
 
 **Workflow window (Qt, GUI_REDESIGN.md):** `planar_window()` is a Qt Quick
-app (QML.jl + QMLMakie) over framework-free controllers
-(`controllers/planar_workflow.jl`, `frame_set.jl`, `passes_editor.jl`,
-`workflow_jobs.jl`); `src/qt/shell.jl` bridges them to QML (`src/qml/`) via
-one `JuliaPropertyMap` (`app`) + item models, and `hh_*` callbacks that only
-change state and return (Qt's event loop owns the main thread; tests and runs
-go to `Threads.@spawn` and hand observable updates to a queue that `hh_tick`,
-a 16 ms QML Timer, drains on the GUI thread). Rules learned the hard way:
+app (QML.jl + QMLMakie) over framework-free controllers. `PlanarWorkflow`
+(`controllers/planar_workflow.jl`) owns one controller per step — `FrameSet`
+(`frame_set.jl`), `PrepareState` (`prepare.jl`: Prepare sub-page + the four
+editors `PreprocessPreview`/`MaskEditor`/`ROIEditor`/`ScaleTool`, built for the
+current frame *size*, never an image copy), `PassesEditor`, `PairTest`/`RunState`
+(`workflow_jobs.jl`) — plus a `ResultExplorer` for Results. Its
+`preprocessing`/`mask`/`roi`/`scale` observables are the single source for
+`workflow_recipe`; `prepare_workflow.jl` syncs editors ↔ workflow both ways
+under a `syncing` guard (opened settings reseed the editors; a loaded mask
+becomes the editor's raster), and an unedited opened recipe round-trips `==`.
+Test pair and Run both call `apply_recipe` (Run is sequence-only for now).
+`src/qt/shell.jl` bridges to QML (`src/qml/`, one page per step,
+`steps/prepare/*Pane.qml`) via one `JuliaPropertyMap` (`app`, written through
+an equality-guarded `_set!`) + item models (steps, passes, preprocessing
+rows), and `hh_*` callbacks that only change state and return.
+
+Gestures are controller functions: canvases register one Makie interaction
+that turns left/right clicks into `canvas_click!(wf, x, y)` /
+`canvas_alt_click!(wf)` (and keys into `canvas_key!`), consumed only when the
+controller used them, so drags still zoom/pan; dispatch is on step + Prepare
+page (probe, mask polygon, ROI corner, scale point). The results canvas sends
+clicks to the explorer's tool (`click!`/`alt_click!`; Escape →
+`canvas_key!(::ResultExplorer, :escape)`). Tests and the docs tour drive the
+same calls.
+
+Background work: `wf.spawn[]` (set by `planar_window`, `false` otherwise)
+moves pair loading, preview, probe, and background estimate onto
+`Threads.@spawn`; a job captures its inputs on the GUI thread, computes from
+them alone, and hands its result to `wf.deliver[]`, which in a window queues
+it for `hh_tick` (a 16 ms QML Timer) to apply on the GUI thread. Each request
+bumps a generation counter and stale results are dropped (latest edit wins);
+nothing on the GUI thread reads an image file. Without a window everything
+runs inline (tests rely on it); test/run take an explicit `spawn` kwarg.
+Closing a window abandons in-flight jobs (`_abandon_jobs!`) and restores
+`deliver`/`spawn`. `request_grab(path)` saves the window body via QML
+`grabToImage` on the next tick (works offscreen); `_TICK_HOOK[]` lets a
+script drive an open window — see `test/qt_window.jl` and
+`docs/gui_screenshots.jl` (local-only; regenerates the committed
+`docs/src/assets/gui_window/*.png`).
+
+Rules learned the hard way:
 (1) **never destroy a `MakieArea`** — jlqml connects a context-less
 `sceneGraphInvalidated` lambda that dangles and crashes at teardown; the main
 and pop-out canvases live for the window's lifetime and figures move between
@@ -375,24 +419,31 @@ them with a two-phase handshake (`CanvasHost`: the source renders its own
 placeholder so GLMakie releases the figure in that GL context). (2) **Never
 add or delete plots on a displayed Qt canvas** — GLMakie builds/frees GPU
 objects immediately and there is no current GL context outside Qt's render;
-canvases (`src/canvas/`) create all plots up front and change only inputs via
-`_update!` (`Makie.update!` with `arg1…` keywords; a lone positional hits the
-Dict method). The old GLMakie views rebuild plots and must not be embedded.
-(3) GLFW/GLMakie contexts and Qt canvases must not share a process (AMD
-driver crash on Qt's render thread after a GLFW context existed), so the Qt
-window test (`test/qt_window.jl`, opt-in via `HAMMERHEADGUI_QT_TESTS=true`)
-runs in its own process. (4) On Windows, Qt reads msvcrt's environment
-copy: style selection sets `QT_QUICK_CONTROLS_STYLE` through `_putenv_s`,
-after preloading the FluentWinUI3 impl DLL. After `exec()` returns, QML
-screens are dropped from `GLMakie.ALL_SCREENS` and the atlas cache, so the
-REPL survives and the window can reopen; workers must not block in plain
-ccalls (they stall every GC). Startup is ~10 s package load + ~6 s to a live
-window; `qt/precompile_statements.jl` holds traced first-render methods
-(regenerate with `--trace-compile` after GLMakie/QMLMakie upgrades). CI loads
-QML with `QT_QPA_PLATFORM=offscreen`.
+canvases (`src/canvas/`) create all plots up front (empty overlays hold a NaN
+placeholder) and change only inputs via `_update!` (`Makie.update!` with
+`arg1…` keywords; a lone positional hits the Dict method), so the
+plot-rebuilding GLMakie views must not be embedded. The results canvas's
+profile panel is an Axis + Legend created with the figure in an
+`Outside`-aligned nested layout row; outside the profile tool the row is
+`Fixed(0)` and the panel's `blockscene`s are hidden via `scene.visible`. This
+leans on Makie internals (blockscene; GLMakie skipping invisible scenes;
+verified on GLMakie 0.13) — re-check on Makie upgrades; the offscreen test
+asserts figure-wide plot counts never change. (3) GLFW/GLMakie contexts and
+Qt canvases must not share a process (AMD driver crash on Qt's render thread
+after a GLFW context existed), so the Qt window test (`test/qt_window.jl`,
+opt-in via `HAMMERHEADGUI_QT_TESTS=true`) and the screenshot script run in
+their own processes. (4) On Windows, Qt reads msvcrt's environment copy:
+style selection sets `QT_QUICK_CONTROLS_STYLE` through `_putenv_s`, after
+preloading the FluentWinUI3 impl DLL. After `exec()` returns, QML screens are
+dropped from `GLMakie.ALL_SCREENS` and the atlas cache, so the REPL survives
+and the window can reopen; workers must not block in plain ccalls (they stall
+every GC). Startup is ~10 s package load + ~6 s to a live window;
+`qt/precompile_statements.jl` holds traced first-render methods (regenerate
+with `--trace-compile` after GLMakie/QMLMakie upgrades). CI loads QML with
+`QT_QPA_PLATFORM=offscreen`.
 
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
-the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
+the GLMakie/QML/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job
 `Pkg.develop`s the core instead so lts/1.10 works, and wraps tests in
 `xvfb-run`). The develop step sets `JULIA_PKG_PRECOMPILE_AUTO=0`: GLMakie
@@ -403,17 +454,18 @@ precompiling in the develop step both fails and wastes ~8 CI minutes. Releases g
 `HammerheadGUI-v*` (second TagBot job), CompatHelper covers both packages via
 `subdirs`. Architecture rule: all application state/logic lives in a
 framework-free controller layer (plain Julia + Observables, testable without
-a GL context); Makie code renders controllers and pushes input into them but
-controllers never import Makie. The mask editor is the framework proving
-ground for pure-GLMakie widget chrome.
+a GL context); Makie and QML code render controllers and push input into them
+but controllers never import Makie or Qt.
 
 Layout: `src/controllers/*.jl` are included into the `Controllers` submodule
 (Hammerhead + Observables/Printf/LinearAlgebra/FileIO only — the module
-boundary enforces the no-Makie rule, and a test asserts it); `src/views/*.jl`
-are the GLMakie shells. Controllers should use Hammerhead's public API (the
-batch form's `Hammerhead.effort_schedule` call is the current exception) —
-when the GUI needs something new, add it to the core first. Components (each =
-controller + view pair, same naming): `ResultExplorer`/`result_explorer`
+boundary enforces the no-Makie rule, and a test asserts it; small shared
+helpers such as `_errmsg`, `_try_job`, `display_number` and `BatchCancelled`
+live in `shared.jl`); `src/canvas/*.jl` are the Qt-safe workflow canvases;
+`src/views/*.jl` are the remaining standalone GLMakie windows. Controllers use
+Hammerhead's public API — when the GUI needs something new, add it to the core
+first. Standalone views (controller + view pair, same naming):
+`ResultExplorer`/`result_explorer`
 (browses all four persisted
 result types — `PIVResult`/`StereoPIVResult` grids, `PTVResult` particle
 scatter, `TrackingResult` gap-aware polylines colored by mean speed — mixed
@@ -433,41 +485,7 @@ unit-labelled 1/time — physical-at-construction keeps the gradients
 exactly 1/dt) and a tool mode (:inspect/:profile/:circulation with
 `click!`/`alt_click!` gestures, planar-only, state clears on frame
 switches; circulation reports both line-integral and vorticity-area
-estimators; the profile panel appears as a third layout row);
-`MaskEditor`/`mask_editor`
-(gesture API `click!`/`alt_click!` holds the editing model; the view only
-forwards mouse/key events; `Hammerhead.polygon_mask(::MaskEditor)` exports
-the mask, `save_mask` writes the white-=-excluded image `load_mask` reads);
-`ROIEditor`/`roi_editor` (two-corner or numeric inclusive pixel bounds →
-core `ROI`; `apply_roi!` into a batch form, which preprocesses full frames
-and lets the core crop, keeping original image coordinates);
-`BatchRunner`/`batch_runner` (runs `run_piv_sequence` with its progress
-callback inside `@async` — cooperative, so GL renders keep happening off
-`run_piv`'s internal thread-spawn yields while observables stay on the
-primary thread; cancel = throw `BatchCancelled` from the callback, which
-keeps finished pairs in the incremental output; an `effort` menu
-(`:custom` manual schedule vs `:low`/`:medium`/`:high` presets) and a
-physical-scale form group attach a `PhysicalScale` to the outputs; the
-core drivers' `on_result` hook (all sequence drivers incl. stereo: called
-`(i, result)` on the caller's task right after storage, before persist and
-progress; throwing aborts like progress) feeds the live `completed`
-observable, and "view results" opens an explorer mid-run that follows the
-batch; `set_preprocess!` attaches a per-frame pipeline — from a
-`PreprocessPreview` it records `preprocess_steps` so the form stays saveable,
-while a bare function runs through `run_piv_sequence` and cannot be saved;
-otherwise the run goes through `apply_recipe`, so the output file carries its
-recipe. `batch_recipe` / `save_settings` / `load_settings!` round-trip the
-form through a core `PIVRecipe` — the "save settings…"/"open settings…"
-buttons, which also open the recipe stored in a results file — and loading
-selects the `:saved` effort, which runs the recipe's exact pass schedule);
-`PreprocessPreview`/`preprocess_preview` (ordered toggleable pipeline over
-the core preprocessing set with live raw/processed preview and a
-single-window correlation probe — `set_pair!` + `click!` place it, du/dv/
-peak-ratio recompute on every pipeline change via a border-clamped
-single-window `run_piv` at the accuracy defaults; `build_preprocess`
-exports a frame-copying, snapshot-semantics closure (background copied) for
-the batch drivers); `ScaleTool`/`scale_tool` (two clicked points + known
-separation → `PhysicalScale`; `apply_scale!` into a batch form);
+estimators; `profile_series`/`tool_summary` feed the window's panel);
 `StereoBatchRunner`/`stereo_batch_runner` + `stereo_calibration` (two
 synchronized frame lists + an `ImageDewarper` pair —
 `build_dewarpers(cr1, cr2)` composes `common_dewarp_grid` from two fitted
@@ -479,11 +497,18 @@ returned — and a dt-only stereo scale);
 `calibration_review` + `selfcal_review` (grid-detection/reprojection review
 and the `SelfCalibrationReport` browser — its disparity maps open in an
 embedded explorer via `result_explorer!(gridposition, ex)`, the embeddable
-form all composite views should use). Shared widget↔controller sync helpers
-live in `views/widgets.jl`. View gotchas learned:
-recreate heatmap/arrows per refresh instead of updating per-argument
-observables (sequential x/y/data updates render transiently mismatched
-grids); preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`
+form all composite views should use). The stereo views stay until the stereo
+window (GUI_REDESIGN slice 3). The Prepare editors' controllers also work
+alone: `PreprocessPreview` holds core `PreprocessStep`s and previews with
+`recipe_preprocess`, so it is exactly the batch; `MaskEditor` exports via
+`Hammerhead.polygon_mask(::MaskEditor)` and `save_mask` writes the
+white-=-excluded image `load_mask` reads; `ROIEditor` → core `ROI` (results
+keep original image coordinates); `ScaleTool` → `PhysicalScale`. Shared
+widget↔controller sync helpers live in `views/widgets.jl`. View gotchas learned:
+in the GLMakie views, recreate heatmap/arrows per refresh instead of updating
+per-argument observables (sequential x/y/data updates render transiently
+mismatched grids — the Qt canvases avoid this with atomic `_update!`);
+preserve zoom by capturing/restoring `ax.targetlimits[]` — `limits!`
 normalizes the rect and silently undoes `yreversed`; guard every
 widget↔controller observable pair with equality checks (Observables notify
 on same-value writes, so unguarded two-way wiring loops forever);
