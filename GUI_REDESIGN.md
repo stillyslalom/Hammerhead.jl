@@ -34,18 +34,25 @@ Qt wins on polish and frame rate. The earlier Codex QML evaluation ran Qt with
 
 ## Known Qt/QMLMakie issues and how the app handles them
 
-1. **Teardown crash.** Destroying a window that holds a `MakieViewport` during
-   `QGuiApplication` shutdown calls into Julia on the Qt render thread and
-   crashes in dispatch; Julia's crash handler then runs exit finalizers on that
-   thread and self-deadlocks waiting for it (backtrace captured). App: on main
-   window close, save state and terminate the process without Qt/GL teardown
-   (`TerminateProcess` on Windows rather than `_exit`, which still runs DLL
-   detach and prints harmless Qt mutex warnings). Upstream: report to QML.jl
-   with the backtrace.
+1. **Teardown crash with destroyed canvases.** jlqml's
+   `MakieViewport::setup_buffer` connects a lambda capturing `this` to the
+   window's `sceneGraphInvalidated` signal with no context object, so the
+   connection outlives a destroyed `MakieArea`. At window teardown it calls
+   Julia through a dangling item and crashes on Qt's render thread. Julia's
+   crash handler then runs exit finalizers on that thread, which
+   self-deadlocks. The backtrace was captured. App: never destroy a
+   `MakieArea` (no `Loader` around canvases); keep one in the main window
+   and one in a persistent pop-out window, and swap figures into them.
+   After `exec()` returns, remove the QML screens from `GLMakie.ALL_SCREENS`
+   so GLMakie's atexit cleanup skips the destroyed contexts. Verified: 10
+   pop-out cycles, then `exec()` returns cleanly and Julia keeps running, so
+   a REPL session survives closing the window. Upstream: one-line jlqml fix
+   (pass `this` as the connection context).
 2. **`disconnect_screen` sleeps on the render thread.** QMLMakie's
    `Makie.disconnect_screen` calls `sleep(0.3)`, which deadlocks when Qt calls
-   it from the render thread at teardown. App: no-op once item 1 skips
-   teardown; upstream PR to QMLMakie removing the sleep.
+   it from the render thread at teardown. App: override the method without
+   the sleep (it only waits for pending zoom/pan actions). Upstream: PR to
+   QMLMakie removing it.
 3. **FluentWinUI3 style DLL not found.** The style plugin's
    `Qt6QuickControls2FluentWinUI3StyleImpl.dll` sits in the Qt Declarative
    artifact's `bin/`, off the DLL search path. App: `Libdl.dlopen` it before
@@ -55,7 +62,14 @@ Qt wins on polish and frame rate. The earlier Codex QML evaluation ran Qt with
    on the GUI thread; a blocking call freezes the window (and deadlocks
    anything that needs the message loop, e.g. `PrintWindow`). App: all work
    longer than a frame runs on `Threads.@spawn`; see the threading model.
-5. **No `colorbuffer` on QMLMakie screens.** Render checks in tests use QML
+5. **Worker threads must reach GC safepoints.** A worker blocked in a plain
+   `ccall` (e.g. `Libc.systemsleep`) delays every collection until it returns.
+   In the probe, a 0.5 s sleep loop on a worker thread cut panning from
+   120 fps to 15 fps. Workers use Julia `sleep`/`wait`, not blocking ccalls.
+6. **Qt 6 `quit()` is cancelled if a window rejects its close.** The pop-out
+   window turns close into "dock", so it must accept the close while the app
+   is quitting.
+7. **No `colorbuffer` on QMLMakie screens.** Render checks in tests use QML
    `grabToImage` instead.
 
 Re-check items 1–3 against new QML.jl/QMLMakie releases before each GUI release.
@@ -64,7 +78,7 @@ Re-check items 1–3 against new QML.jl/QMLMakie releases before each GUI releas
 
 ```
 HammerheadGUI/
-  src/HammerheadGUI.jl        module, launch functions, Qt setup (style DLL, hard exit)
+  src/HammerheadGUI.jl        module, launch functions, Qt setup (style DLL, screen cleanup)
   src/controllers/*.jl        framework-free state + logic (Observables only) — kept
   src/canvas/*.jl             Makie figure builders: image, overlays, gestures — from views/
   src/bridge/*.jl             controller ↔ QML adapters (JuliaPropertyMap, @qmlfunction)
@@ -154,9 +168,16 @@ grid, and self-calibration) and has no ROI.
 
 0. ✅ Core changes above; the stash `Shared recipe workbench WIP parked for
    experimental QML integration` was dropped (2026-10-03).
-1. Qt shell: launch function, the workarounds, step rail, persistent canvas
-   with pop-out, recipe open/save, then Images → Passes → Test pair → Run →
-   Results for planar. Startup measured against the targets.
+1. ✅ Qt shell (2026-10-04): `planar_window`, step rail, persistent canvas
+   with pop-out, recipe open/save, Images → Passes → Test pair → Run →
+   Results. Found on the way: canvases must create all plots before display
+   and only update inputs (no GL context outside Qt's render), so Results got
+   a Qt-safe canvas with native controls instead of the GLMakie explorer
+   view; GLFW and Qt GL contexts must not share a process (AMD driver crash).
+   Startup is 16.7 s to a live window (10.3 s is package loading) — over the
+   10 s / 15 s targets; only a sysimage/app bundle removes the load time.
+   Moved to slice 2: Prepare editing, the profile and circulation tools in
+   Results, async image loading.
 2. Prepare sub-pages; retire the GLMakie tool windows and views they replace;
    rewrite `docs/src/howto/gui.md` around the window.
 3. Stereo window.

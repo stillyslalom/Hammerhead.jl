@@ -11,6 +11,22 @@ Added:
 - `recipe_preprocess(steps)` builds the preprocessing function from a vector
   of `PreprocessStep`s, so previews apply exactly what `apply_recipe` runs.
 
+### HammerheadGUI
+
+Added:
+
+- `planar_window()`: a Qt Quick window for planar PIV that walks through
+  Images → Prepare → Passes → Test pair → Run → Results, with one image
+  viewer that follows the step and can pop out into its own window. Settings
+  save and open as core `PIVRecipe` files (results files carry theirs); the
+  test pair runs exactly the batch's `apply_recipe` call; runs write results
+  as they finish and can be cancelled. Controllers (`PlanarWorkflow`,
+  `FrameSet`, `PassesEditor`, `PairTest`, `RunState`) work without a window.
+  Prepare applies preprocessing, mask, ROI and scale from opened settings;
+  editing them in the window comes next.
+- New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core
+  release that exports `effort_schedule`.
+
 ## Hammerhead 0.2.0 and HammerheadGUI 0.2.0 (2026-10-03)
 
 Changes since core v0.1.0 (2026-07-14) and HammerheadGUI v0.1.1 (2026-07-22).

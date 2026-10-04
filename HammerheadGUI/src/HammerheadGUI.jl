@@ -11,6 +11,10 @@ module HammerheadGUI
 using Hammerhead
 using GLMakie
 using NativeFileDialog
+using QML: QML, JuliaPropertyMap, JuliaItemModel, loadqml, exec, @qmlfunction
+import QMLMakie                       # registers the MakieArea QML type
+import Qt6Declarative_jll
+import Libdl
 
 # Framework-free controller layer: the submodule boundary keeps Makie names
 # out of scope, so controller code cannot grow GL dependencies by accident.
@@ -31,6 +35,10 @@ include("controllers/batch_runner.jl")
 include("controllers/scale_tool.jl")           # after batch_runner (apply_scale! signature)
 include("controllers/calibration_review.jl")
 include("controllers/stereo_batch.jl")         # after calibration_review (build_dewarpers signature)
+include("controllers/frame_set.jl")            # workflow window controllers (after batch_runner: _errmsg, BatchCancelled)
+include("controllers/passes_editor.jl")
+include("controllers/workflow_jobs.jl")
+include("controllers/planar_workflow.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -56,6 +64,15 @@ export ScaleTool, clear_points!, set_separation!, pixel_distance,
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
+export FrameSet, set_pair_mode!, npairs, select_pair!, show_frame!, current_pair,
+       pair_images, shown_image, frames_problem, frames_summary, frame_size
+export PassesEditor, fill_preset!, set_analysis_size!, set_mode!, set_image_type!,
+       load_passes!, set_pass!, set_option!, add_pass!, remove_pass!, pass_rows,
+       option_value, passes_summary
+export PairTest, start_test!, test_summary, summary_lines, RunState, start_run!,
+       cancel_run!, run_eta
+export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
+       test_pair!, test_stale, open_results!, step_status
 
 end # module Controllers
 
@@ -83,6 +100,8 @@ export CalibrationReview, calibration_review, calibration_review!,
        selfcal_review, nplanes, set_plane!
 export StereoBatchRunner, stereo_batch_runner, stereo_calibration,
        set_dewarpers!, build_dewarpers
+export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
+       open_results!, set_step!
 
 include("views/widgets.jl")
 include("views/result_explorer.jl")
@@ -93,8 +112,31 @@ include("views/batch_runner.jl")
 include("views/scale_tool.jl")
 include("views/calibration_review.jl")
 include("views/stereo_batch.jl")
+include("canvas/planar_canvas.jl")
+include("canvas/results_canvas.jl")
+include("qt/shell.jl")
 
 using PrecompileTools: @setup_workload, @compile_workload
+
+# Evaluates traced `precompile(...)` statements (see qt/precompile_statements.jl)
+# with every loaded package's name in scope; failing lines are skipped.
+module _TracedPrecompiles end
+function _precompile_traced(path::AbstractString)
+    M = _TracedPrecompiles
+    for m in values(Base.loaded_modules)
+        name = nameof(m)
+        isdefined(M, name) || Core.eval(M, :(const $name = $m))
+    end
+    for line in eachline(path)
+        startswith(line, "precompile(") || continue
+        try
+            Core.eval(M, Meta.parse(line))
+        catch
+        end
+    end
+    return
+end
+include_dependency(joinpath(@__DIR__, "qt", "precompile_statements.jl"))
 
 # Time-to-first-window workload: run the pipeline once and build each view
 # (Figure construction only — no GL context at precompile time, so no
@@ -144,6 +186,28 @@ using PrecompileTools: @setup_workload, @compile_workload
                          padding = false, apodization = :none)
         batch_runner(bc)
         start!(bc; async = false)
+
+        # Workflow window: controllers and canvases (the Qt window itself
+        # needs a display and is not part of the workload).
+        wf = PlanarWorkflow(files = Any[imgA, imgB, imgA, imgB])
+        fill_preset!(wf.passes, :low)
+        pc = planar_canvas(wf)
+        set_step!(wf, :passes)
+        test_pair!(wf; spawn = false)
+        set_step!(wf, :test)
+        start_run!(wf; spawn = false)
+        set_step!(wf, :results)
+        for st in WORKFLOW_STEPS
+            step_status(wf, st)
+        end
+        rc = results_canvas()
+        set_explorer!(rc, wf.explorer[])
+        set_field!(wf.explorer[], :vorticity)
+        set_frame!(wf.explorer[], 2)
+        summary_lines(test_summary(wf.test))
+
+        # First render of a Qt canvas (needs a GL context, so traced instead).
+        _precompile_traced(joinpath(@__DIR__, "qt", "precompile_statements.jl"))
     end
 end
 

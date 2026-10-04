@@ -360,6 +360,37 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
+**Workflow window (Qt, GUI_REDESIGN.md):** `planar_window()` is a Qt Quick
+app (QML.jl + QMLMakie) over framework-free controllers
+(`controllers/planar_workflow.jl`, `frame_set.jl`, `passes_editor.jl`,
+`workflow_jobs.jl`); `src/qt/shell.jl` bridges them to QML (`src/qml/`) via
+one `JuliaPropertyMap` (`app`) + item models, and `hh_*` callbacks that only
+change state and return (Qt's event loop owns the main thread; tests and runs
+go to `Threads.@spawn` and hand observable updates to a queue that `hh_tick`,
+a 16 ms QML Timer, drains on the GUI thread). Rules learned the hard way:
+(1) **never destroy a `MakieArea`** — jlqml connects a context-less
+`sceneGraphInvalidated` lambda that dangles and crashes at teardown; the main
+and pop-out canvases live for the window's lifetime and figures move between
+them with a two-phase handshake (`CanvasHost`: the source renders its own
+placeholder so GLMakie releases the figure in that GL context). (2) **Never
+add or delete plots on a displayed Qt canvas** — GLMakie builds/frees GPU
+objects immediately and there is no current GL context outside Qt's render;
+canvases (`src/canvas/`) create all plots up front and change only inputs via
+`_update!` (`Makie.update!` with `arg1…` keywords; a lone positional hits the
+Dict method). The old GLMakie views rebuild plots and must not be embedded.
+(3) GLFW/GLMakie contexts and Qt canvases must not share a process (AMD
+driver crash on Qt's render thread after a GLFW context existed), so the Qt
+window test (`test/qt_window.jl`, opt-in via `HAMMERHEADGUI_QT_TESTS=true`)
+runs in its own process. (4) On Windows, Qt reads msvcrt's environment
+copy: style selection sets `QT_QUICK_CONTROLS_STYLE` through `_putenv_s`,
+after preloading the FluentWinUI3 impl DLL. After `exec()` returns, QML
+screens are dropped from `GLMakie.ALL_SCREENS` and the atlas cache, so the
+REPL survives and the window can reopen; workers must not block in plain
+ccalls (they stall every GC). Startup is ~10 s package load + ~6 s to a live
+window; `qt/precompile_statements.jl` holds traced first-render methods
+(regenerate with `--trace-compile` after GLMakie/QMLMakie upgrades). CI loads
+QML with `QT_QPA_PLATFORM=offscreen`.
+
 Monorepo subdirectory package, Makie-style: own Project.toml (this is where
 the GLMakie/NativeFileDialog hard deps live — the core never gains GUI deps),
 `[sources]` path coupling to the core for dev (Julia ≥ 1.11; the CI `gui` job

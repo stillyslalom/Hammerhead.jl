@@ -1,5 +1,6 @@
 using Test
 using HammerheadGUI
+using HammerheadGUI.Controllers   # workflow controllers (test_planar_workflow.jl)
 using HammerheadGUI.GLMakie
 using HammerheadGUI.Hammerhead
 using HammerheadGUI.Hammerhead.SyntheticData: generate_synthetic_piv_pair, linear_flow
@@ -59,7 +60,7 @@ const r_track = TrackingResult(
     end
 
     @testset "Controllers are framework-free" begin
-        for makie_name in (:Figure, :Axis, :heatmap!, :GLMakie, :Makie)
+        for makie_name in (:Figure, :Axis, :heatmap!, :GLMakie, :Makie, :QML, :QMLMakie)
             @test !isdefined(HammerheadGUI.Controllers, makie_name)
         end
     end
@@ -735,6 +736,9 @@ const r_track = TrackingResult(
         @test size(img2) == size(img1)
         @test img2 != img1
     end
+
+    include("test_planar_workflow.jl")
+    include("test_planar_window.jl")
 
     @testset "BatchRunner controller (no GL)" begin
         C = HammerheadGUI.Controllers

@@ -4,15 +4,35 @@ CurrentModule = HammerheadGUI
 
 # Graphical user interface (GUI; HammerheadGUI)
 
-The desktop GUI uses GLMakie. The application and view functions below open
-interactive tools; `HammerheadGUI.Controllers` holds their state and actions
-for scripted use without a display. Start with the
+The planar PIV window ([`planar_window`](@ref)) is a Qt Quick application
+(QML.jl) with GLMakie canvases; the separate tool windows use GLMakie alone.
+`HammerheadGUI.Controllers` holds their state and actions for scripted use
+without a display. Start with the
 [GUI tour](../tutorials/gui_tour.md) for a worked session.
 Result browsing and interactive analysis have a separate
 [result explorer reference](gui_results.md).
 
 ```@index
 Pages = ["gui.md"]
+```
+
+## Workflow window
+
+`planar_window` shows a [`PlanarWorkflow`](@ref Controllers.PlanarWorkflow);
+the same controller runs without a window. Its canvases create every plot
+before they are first shown and afterwards only update plot data, because a
+Qt canvas has a current OpenGL context only while Qt renders it.
+
+```@autodocs
+Modules = [HammerheadGUI]
+Order = [:module, :type, :function, :constant, :macro]
+Pages = ["shell.jl", "planar_canvas.jl", "results_canvas.jl"]
+```
+
+```@autodocs
+Modules = [HammerheadGUI.Controllers]
+Order = [:module, :type, :function, :constant, :macro]
+Pages = ["planar_workflow.jl", "frame_set.jl", "passes_editor.jl", "workflow_jobs.jl"]
 ```
 
 ## Application and views

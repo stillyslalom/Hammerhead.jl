@@ -87,12 +87,19 @@ jobs:
           Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
       - name: Run HammerheadGUI tests
+        # QML.jl creates a Qt application when it loads; no test opens a Qt
+        # window by default (HAMMERHEADGUI_QT_TESTS), so Qt needs no X server.
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: >
           xvfb-run -s '-screen 0 1024x768x24'
           julia --color=yes --project=HammerheadGUI -e 'using Pkg; Pkg.test()'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen # loading HammerheadGUI creates a Qt application
+
     permissions:
       actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
       contents: write

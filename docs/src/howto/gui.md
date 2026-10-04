@@ -4,8 +4,29 @@ Start with two exposures of the same flow. You will make a mask if needed,
 run PIV, inspect the vectors, and keep the result. For a complete example with
 sample images, follow [Your first PIV session in the GUI](../tutorials/gui_tour.md).
 
-Install the separate GUI package with `pkg> add HammerheadGUI`, then open the
-batch form:
+Install the separate GUI package with `pkg> add HammerheadGUI`.
+
+## The planar PIV window
+
+`planar_window` opens one window that walks through the whole analysis:
+**Images → Prepare → Passes → Test pair → Run → Results**. The image viewer
+on the right follows the step you are on: the representative pair, window
+outlines against the particles, the test pair's vectors (blue valid, red
+flagged), the latest finished pair of a run, and finally the results.
+**Pop out viewer** moves it into its own window.
+
+```julia
+using HammerheadGUI
+wf = planar_window()            # blocks until the window closes; returns the workflow
+```
+
+Start Julia with several threads (`julia -t auto`) so tests and runs keep the
+window responsive. **Save settings…** writes a recipe file; **Open settings…**
+reads one, or the settings stored in a results file. In this release the
+Prepare step applies preprocessing, mask, region and scale from opened
+settings; edit them with the separate tools below.
+
+The rest of this page uses the separate tool windows. Open the batch form:
 
 ```julia
 using HammerheadGUI
