@@ -5,7 +5,7 @@ CurrentModule = HammerheadGUI
 # GUI result explorer
 
 The result explorer combines result browsing, field display, vector selection
-and planar interactive analysis. The planar window's Results step shows a
+and planar interactive analysis. The Hammerhead window's Results step shows a
 [`ResultExplorer`](@ref Controllers.ResultExplorer) on its own canvas;
 [`result_explorer`](@ref) opens one in a separate GLMakie window. For an
 example, see the [GUI tour](../tutorials/gui_tour.md).

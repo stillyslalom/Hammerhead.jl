@@ -205,6 +205,7 @@ ApplicationWindow {
         repeat: true
         onTriggered: {
             const r = Julia.hh_tick()
+            if (app.switchQuestion !== "" && !switchDialog.visible) switchDialog.open()
             if (app.grabPath !== "") {
                 const path = app.grabPath
                 Julia.hh_grab_started()
@@ -217,6 +218,24 @@ ApplicationWindow {
                 popCanvas.update()
             }
         }
+    }
+
+    // Asked before a change of recording type discards the session's work.
+    Dialog {
+        id: switchDialog
+        title: "Change the recording type"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 480
+        contentItem: Label {
+            text: app.switchQuestion
+            wrapMode: Text.WordWrap
+        }
+        Component.onCompleted: standardButton(Dialog.Ok).text = "Discard and switch"
+        onAccepted: Julia.hh_confirm_switch()
+        // Cancel, Escape, or a click outside
+        onClosed: if (app.switchQuestion !== "") Julia.hh_cancel_switch()
     }
 
     FileDialog {

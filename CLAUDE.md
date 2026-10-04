@@ -16,10 +16,12 @@ July 2026) is also done. Hammerhead and HammerheadGUI are registered in
 General; user installation instructions should use `pkg> add Hammerhead`
 and `pkg> add HammerheadGUI`. Phase 7 (HammerheadGUI) is underway:
 the monorepo conversion and CI/TagBot/CompatHelper subdir wiring are done;
-the Qt planar workflow window (`planar_window`: Images → Prepare → Passes →
-Test pair → Run → Results, saved settings as recipes) replaced the GLMakie
-tool windows; the standalone result explorer and the stereo calibration/batch
-views remain until the stereo window. Phase 8 (2D2C PTV,
+one Qt window, `hammerhead()` (Images → [Calibration →] Prepare → Passes →
+Test pair → Run → Results, saved settings as recipes), serves planar, PTV
+and stereo recordings (one recording type per session; `planar_window` /
+`stereo_window` are shortcuts) and replaced the GLMakie tool and stereo
+windows; the standalone result explorer and calibration review remain
+GLMakie views. Phase 8 (2D2C PTV,
 July 2026) is done: per-frame particle detection (`detect_particles`),
 hybrid PIV-guided two-frame tracking (`run_ptv` → `PTVResult`, with
 `ptv_to_grid` binning and `run_ptv_sequence` batch), scattered validation,
@@ -400,8 +402,18 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
 
 ## HammerheadGUI (HammerheadGUI/)
 
-**Workflow window (Qt; plan archived in `reference/archive/GUI_REDESIGN.md`):** `planar_window()` is a Qt Quick
-app (QML.jl + QMLMakie) over framework-free controllers. `PlanarWorkflow`
+**Workflow window (Qt; plan archived in `reference/archive/GUI_REDESIGN.md`):** `hammerhead()` is a Qt Quick
+app (QML.jl + QMLMakie) over framework-free controllers, holding one session
+at a time: a `PlanarWorkflow` or a `StereoWorkflow` (`recording_type`).
+Changing the type on Images (or opening other-type settings) replaces the
+session: `_request_switch` asks through `switchQuestion` (a QML Dialog opened
+from the tick) when `unsaved_work(wf)` is non-empty, then `_switch_session!`
+builds a fresh workflow + canvas and a new `WorkflowShell` that reuses the
+QML-bound objects (`base`: app map, item models, canvas host, results
+canvas) and replaces `_SHELL[]`; `_run_window` returns the final session.
+QML loads both types' pages, so the first shell seeds the other type's keys
+(`_seed_other_type!`, running its refresh hooks on a fresh session through a
+`WorkflowShell{W,Nothing}`). `PlanarWorkflow`
 (`controllers/planar_workflow.jl`) owns one controller per step — `FrameSet`
 (`frame_set.jl`), `PrepareState` (`prepare.jl`: Prepare sub-page + the four
 editors `PreprocessPreview`/`MaskEditor`/`ROIEditor`/`ScaleTool`, built for the
@@ -458,14 +470,15 @@ disparity map, with pass 1's arrow scale for every pass.
 `steps/prepare/*Pane.qml`) via one `JuliaPropertyMap` (`app`, written through
 an equality-guarded `_set!`) + item models (steps, passes, preprocessing
 rows), and `hh_*` callbacks that only change state and return. One
-`WorkflowShell{W,C}` serves both windows (`PlanarShell`/`StereoShell`
-aliases); per-window hooks are `_connect_window!`, `_refresh_frames!`,
+`WorkflowShell{W,C}` serves both session types (`PlanarShell`/`StereoShell`
+= `WorkflowShell{PlanarWorkflow}`/`{StereoWorkflow}`, so hooks dispatch on
+the workflow alone); per-type hooks are `_connect_window!`, `_refresh_frames!`,
 `_refresh_region!`, `_refresh_window!` (stereo: calibration fields + the
 `plates1Model`/`plates2Model` lists, `qt/stereo_shell.jl`). QML shares
 `WorkflowWindow.qml` (chrome, rail, canvas, pop-out, tick, dialogs; its
-children are the page stack) — `PlanarWindow.qml`/`StereoWindow.qml` only
-list pages; shared pages take a `stereo` flag where they differ.
-`stereo_window()` uses `StereoCanvas` (`canvas/stereo_canvas.jl`): raw frame
+children are the page stack); `HammerheadWindow.qml` lists every step's page
+(Images holds both variants) and binds the `stereo` flags of shared pages to
+`app.modality`. A stereo session uses `StereoCanvas` (`canvas/stereo_canvas.jl`): raw frame
 (Images), plate + dots + residual arrows ×gain in the title (Calibration),
 else the dewarped frame in dewarped px with the out-of-view union shaded;
 stereo vectors are mapped to grid coords via `grid_vector_data`. The results
@@ -480,7 +493,7 @@ clicks to the explorer's tool (`click!`/`alt_click!`; Escape →
 `canvas_key!(::ResultExplorer, :escape)`). Tests and the docs tour drive the
 same calls.
 
-Background work: `wf.spawn[]` (set by `planar_window`, `false` otherwise)
+Background work: `wf.spawn[]` (set by the window, `false` otherwise)
 moves pair loading, preview, probe, and background estimate onto
 `Threads.@spawn`; a job captures its inputs on the GUI thread, computes from
 them alone, and hands its result to `wf.deliver[]`, which in a window queues
@@ -585,7 +598,7 @@ estimators; `profile_series`/`tool_summary` feed the window's panel);
 its disparity maps open in an embedded explorer via
 `result_explorer!(gridposition, ex)`, the embeddable form all composite views
 should use); `build_dewarpers(cr1, cr2)` (in `calibration_review.jl`) builds a
-dewarper pair from two fitted reviews for `stereo_window(; dewarpers)`, sharing
+dewarper pair from two fitted reviews for `hammerhead(; dewarpers)`, sharing
 `_dewarper_pair` with the window's grid build. The stereo window replaced the
 GLMakie stereo batch/calibration views (2026-10-04). Stereo window
 conventions: the calibration saves/opens separately from the recipe

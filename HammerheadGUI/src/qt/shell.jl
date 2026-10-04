@@ -257,22 +257,41 @@ mutable struct WorkflowShell{W<:AbstractWorkflow,C}
     rows::Dict{String,Any}                         # the extra models' rows (and caches)
 end
 
-const PlanarShell = WorkflowShell{PlanarWorkflow,PlanarCanvas}
+const PlanarShell = WorkflowShell{PlanarWorkflow}
 
 PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)) =
     WorkflowShell(wf, planar_canvas(wf); queue)
 
-function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Channel{Any}(Inf))
-    app = JuliaPropertyMap()
-    host = CanvasHost(app, canvas.fig)
-    step_rows = [StepRow(String(s), step_label(wf, s), "todo", "") for s in workflow_steps(wf)]
-    pass_rows = PassRow[]
-    prep_rows = PrepStepRow[]
-    results = results_canvas()
-    sh = WorkflowShell(wf, canvas, host, results, app, step_rows, JuliaItemModel(step_rows),
-                       pass_rows, JuliaItemModel(pass_rows), prep_rows, JuliaItemModel(prep_rows),
-                       queue, Ref(true), Dict{String,Any}(), Dict{String,JuliaItemModel}(),
-                       Dict{String,Any}())
+# `base`: the shell of the session this one replaces in an open window (a
+# change of recording type). The objects QML is bound to (the property map,
+# the item models, the canvas host, and the results canvas) carry over; the
+# workflow and its image canvas are new.
+function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Channel{Any}(Inf),
+                       base::Union{Nothing,WorkflowShell} = nothing)
+    steps = [StepRow(String(s), step_label(wf, s), "todo", "") for s in workflow_steps(wf)]
+    sh = if base === nothing
+        app = JuliaPropertyMap()
+        pass_rows, prep_rows = PassRow[], PrepStepRow[]
+        models, rows = Dict{String,JuliaItemModel}(), Dict{String,Any}()
+        for k in 1:2                  # the Calibration step's plate lists (stereo sessions)
+            rows["plates$k"] = PlateRow[]
+            models["plates$(k)Model"] = JuliaItemModel(rows["plates$k"])
+        end
+        WorkflowShell(wf, canvas, CanvasHost(app, canvas.fig), results_canvas(), app,
+                      steps, JuliaItemModel(steps), pass_rows, JuliaItemModel(pass_rows),
+                      prep_rows, JuliaItemModel(prep_rows), queue, Ref(true),
+                      Dict{String,Any}(), models, rows)
+    else
+        _sync_rows!(base.step_rows, base.step_model, steps, (a, b) -> false)
+        for k in 1:2
+            _sync_rows!(base.rows["plates$k"], base.models["plates$(k)Model"], PlateRow[],
+                        (a, b) -> false)
+        end
+        WorkflowShell(wf, canvas, base.host, base.results, base.app, base.step_rows,
+                      base.step_model, base.pass_rows, base.pass_model, base.prep_rows,
+                      base.prep_model, base.queue, Ref(true), base.shown, base.models, base.rows)
+    end
+    app, results = sh.app, sh.results
     mark = (_...) -> (sh.dirty[] = true)
     ps, pe, t, r = wf.prepare, wf.passes, wf.test, wf.run
     pp = ps.preview
@@ -327,12 +346,33 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
                    "gpuPackages" => join((Controllers._gpu_package(b) for b in gpu_packages()), " and "),
                    # per-frame mask images (planar only)
                    "frameMaskCount" => 0, "frameMasksInfo" => "", "patternDir3" => "",
-                   "pattern3" => "*.png", "patternCount3" => 0, "patternInfo3" => "")
-        _set!(sh, k, v)
+                   "pattern3" => "*.png", "patternCount3" => 0, "patternInfo3" => "",
+                   "switchQuestion" => "")
+        base === nothing && _set!(sh, k, v)
+    end
+    base === nothing && _seed_other_type!(sh)
+    if base !== nothing                        # the toolbar's view mode carries over
+        m = Symbol(get(sh.shown, "viewMode", "edit"))
+        set_view_mode!(canvas.ax, m, :workflow_gesture)
     end
     _sync_pass_rows!(sh)
     _sync_prep_rows!(sh)
     _refresh!(sh)
+    return sh
+end
+
+# The window loads the pages of both recording types, so every key either
+# type binds must exist from the start: seed the other type's keys from a
+# fresh session of it (the session's own refresh then sets its keys).
+function _seed_other_type!(sh::WorkflowShell)
+    other = new_workflow(recording_type(sh.wf) === :stereo ? :planar : :stereo)
+    seed = WorkflowShell{typeof(other),Nothing}(other, nothing, sh.host, sh.results, sh.app,
+                                                sh.step_rows, sh.step_model, sh.pass_rows,
+                                                sh.pass_model, sh.prep_rows, sh.prep_model,
+                                                sh.queue, Ref(false), sh.shown, sh.models, sh.rows)
+    _refresh_frames!(seed)
+    _refresh_region!(seed)
+    _refresh_window!(seed)
     return sh
 end
 
@@ -539,6 +579,7 @@ function _refresh!(sh::WorkflowShell)
         true
     end
     _set!(sh, "title", "Hammerhead $(_window_kind(wf)) | " * name * (modified ? " •" : ""))
+    _set!(sh, "modality", String(recording_type(wf)))
     _set!(sh, "step", String(wf.step[]))
     _set!(sh, "status", wf.status[])
 
@@ -814,7 +855,70 @@ hh_test() = _with_shell(sh -> test_pair!(sh.wf))
 hh_set_output(url) = _with_shell(sh -> (sh.wf.run.output_path[] = _url_to_path(String(url))))
 hh_start_run() = _with_shell(sh -> start_run!(sh.wf))
 hh_cancel_run() = _with_shell(sh -> cancel_run!(sh.wf))
-hh_open_settings(url) = _with_shell(sh -> load_settings!(sh.wf, _url_to_path(String(url))))
+# Settings of the other recording type open in a fresh session of that type.
+function hh_open_settings(url)
+    _with_shell() do sh
+        path = _url_to_path(String(url))
+        type = recording_type(path)
+        if type === nothing || type === recording_type(sh.wf)
+            load_settings!(sh.wf, path)
+        else
+            _request_switch(sh, type, wf -> load_settings!(wf, path))
+        end
+    end
+end
+
+# ---------------------------------------------------------------- recording type
+
+const _PENDING_SWITCH = Ref{Any}(nothing)      # (type, then) awaiting confirmation
+
+hh_set_modality(type) = _with_shell(sh -> _request_switch(sh, Symbol(String(type))))
+function hh_confirm_switch()
+    _with_shell() do sh
+        p = _PENDING_SWITCH[]
+        _PENDING_SWITCH[] = nothing
+        _set!(sh, "switchQuestion", "")
+        p === nothing || _switch_session!(sh, p...)
+    end
+end
+hh_cancel_switch() = _with_shell(sh -> (_PENDING_SWITCH[] = nothing; _set!(sh, "switchQuestion", "")))
+
+# Change the recording type: at once when nothing would be lost, otherwise
+# after the window's confirmation (`switchQuestion`). `then(wf)` runs on the
+# new session (e.g. opening the settings that asked for the switch).
+function _request_switch(sh::WorkflowShell, type::Symbol, then = nothing)
+    type in RECORDING_TYPES ||
+        throw(ArgumentError("recording type must be planar or stereo, got $type"))
+    type === recording_type(sh.wf) && then === nothing && return sh
+    q = type === recording_type(sh.wf) ? nothing : switch_question(sh.wf, type)
+    if q === nothing
+        _switch_session!(sh, type, then)
+    else
+        _PENDING_SWITCH[] = (type, then)
+        _set!(sh, "switchQuestion", q)
+    end
+    return sh
+end
+
+# Replace the window's session with a fresh one of recording type `type`.
+function _switch_session!(sh::WorkflowShell, type::Symbol, then = nothing)
+    old = sh.wf
+    if type !== recording_type(old)
+        cancel_run!(old)
+        Controllers._abandon_jobs!(old)
+        old.deliver[] = f -> f()
+        old.spawn[] = false
+        wf = new_workflow(type)
+        wf.deliver[] = f -> put!(sh.queue, f)
+        wf.spawn[] = true
+        canvas = wf isa StereoWorkflow ? stereo_canvas(wf) : planar_canvas(wf)
+        sh = WorkflowShell(wf, canvas; queue = sh.queue, base = sh)
+        _SHELL[] = sh
+    end
+    then === nothing || then(sh.wf)
+    sh.dirty[] = true
+    return sh
+end
 hh_save_settings(url) = _with_shell(sh -> save_settings(sh.wf, _url_to_path(String(url))))
 hh_open_results(url) = _with_shell(sh -> begin
     open_results!(sh.wf, _url_to_path(String(url)))
@@ -949,6 +1053,7 @@ function _register_qml_functions()
     @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points hh_load_ruler hh_clear_ruler
     @qmlfunction hh_set_frame_pattern hh_add_matching hh_pattern_from_frames
     @qmlfunction hh_add_frame_masks hh_clear_frame_masks hh_use_gpu
+    @qmlfunction hh_set_modality hh_confirm_switch hh_cancel_switch
     _register_stereo_functions()
     return
 end
@@ -982,12 +1087,21 @@ function _run_window(setup, wf::AbstractWorkflow, qml::AbstractString, make_shel
                 prepModel = sh.prep_model, (Symbol(k) => m for (k, m) in sh.models)...)
         exec()
     finally
-        cancel_run!(wf)
+        # the session open at the end (a change of recording type replaces it)
+        final = _SHELL[] === nothing ? wf : _SHELL[].wf
+        cancel_run!(final)
         _SHELL[] = nothing
-        wf.deliver[] = previous_deliver
-        wf.spawn[] = previous_spawn
-        Controllers._abandon_jobs!(wf)
+        _PENDING_SWITCH[] = nothing
+        if final === wf
+            wf.deliver[] = previous_deliver
+            wf.spawn[] = previous_spawn
+        else
+            final.deliver[] = f -> f()
+            final.spawn[] = false
+        end
+        Controllers._abandon_jobs!(final)
         _release_qml_screens!()
+        wf = final
     end
     return wf
 end
@@ -995,15 +1109,31 @@ end
 _entry_list(x) = x isa AbstractString || x isa AbstractMatrix ? [x] : x
 
 """
-    planar_window(wf = PlanarWorkflow(); files = nothing, settings = nothing) -> PlanarWorkflow
+    hammerhead(wf = nothing; type = nothing, files = nothing, files1 = nothing,
+               files2 = nothing, settings = nothing, dewarpers = nothing,
+               calibration = nothing) -> AbstractWorkflow
 
-Open the planar PIV workflow window and return its workflow when the window
-closes. The steps — Images, Prepare, Passes, Test pair, Run, Results — share
-one image canvas, which can be popped out into its own window.
+Open the Hammerhead window and return its session's workflow when the window
+closes. The window analyzes one recording at a time, of the type chosen on
+the Images step: one camera (planar PIV and particle analysis, a
+[`PlanarWorkflow`](@ref Controllers.PlanarWorkflow)) or two cameras (stereo
+PIV, a [`StereoWorkflow`](@ref Controllers.StereoWorkflow), with a
+Calibration step). Its steps (Images, [Calibration,] Prepare, Passes, Test
+pair, Run, Results) share one image canvas, which can be popped out into its
+own window. Changing the recording type starts a fresh session, after
+confirming what the current one would lose; so does opening settings or
+results of the other type.
 
-`files` adds frames (paths in acquisition order); `settings` opens a recipe
-or results file. Settings are saved and opened as core `PIVRecipe` files,
-and a run's output file also carries the recipe that produced it.
+The session starts from `wf`, or a fresh one of recording `type` (`:planar`
+or `:stereo`). Without either, the inputs decide: `files1`, `files2`,
+`dewarpers`, `calibration`, or stereo `settings` start a stereo session,
+otherwise it is planar. Planar: `files` adds frames (paths in acquisition
+order). Stereo: `files1`/`files2` add each camera's frames (entry `i` of both
+cameras is the same instant); `dewarpers = (dw1, dw2)` uses `ImageDewarper`s
+built in a script instead of the Calibration step's fit; `calibration` opens
+a saved camera rig or the calibration stored in a stereo results file.
+`settings` opens a recipe or results file. Settings are saved and opened as
+core `PIVRecipe` files, and a run's output file also carries its recipe.
 
 The call blocks while the window is open (Qt runs its event loop on this
 thread). Start Julia with several threads (`julia -t auto`) so tests and
@@ -1016,9 +1146,44 @@ GLMakie screen (a [`result_explorer`](@ref), [`calibration_review`](@ref), or
 windows and the Qt window cannot share a process. Restart Julia, and browse
 results in the window's Results step.
 """
-function planar_window(wf::PlanarWorkflow = PlanarWorkflow(); files = nothing, settings = nothing)
-    return _run_window(wf, "PlanarWindow.qml", (w, q) -> PlanarShell(w; queue = q)) do
-        files === nothing || add_files!(wf.frames, _entry_list(files))
+function hammerhead(wf::Union{Nothing,AbstractWorkflow} = nothing; type = nothing,
+                    files = nothing, files1 = nothing, files2 = nothing, settings = nothing,
+                    dewarpers = nothing, calibration = nothing)
+    stereo_inputs = files1 !== nothing || files2 !== nothing || dewarpers !== nothing ||
+                    calibration !== nothing
+    if wf === nothing
+        type = something(type, stereo_inputs ? :stereo :
+                               settings !== nothing && recording_type(settings) === :stereo ?
+                               :stereo : :planar)
+        wf = new_workflow(type)
+    elseif type !== nothing && type !== recording_type(wf)
+        throw(ArgumentError("type = :$type does not match the $(recording_type(wf)) workflow given"))
+    end
+    if wf isa PlanarWorkflow
+        stereo_inputs && throw(ArgumentError("files1, files2, dewarpers and calibration " *
+                                             "need a stereo session (type = :stereo)"))
+    else
+        files === nothing || throw(ArgumentError("a stereo session takes files1 and files2, not files"))
+    end
+    make_shell = (w, q) -> w isa StereoWorkflow ? StereoShell(w; queue = q) : PlanarShell(w; queue = q)
+    return _run_window(wf, "HammerheadWindow.qml", make_shell) do
+        if wf isa StereoWorkflow
+            dewarpers === nothing || set_dewarpers!(wf, dewarpers...)
+            calibration === nothing || open_calibration!(wf, calibration)
+            files1 === nothing || add_files!(wf, _entry_list(files1); camera = 1)
+            files2 === nothing || add_files!(wf, _entry_list(files2); camera = 2)
+        else
+            files === nothing || add_files!(wf.frames, _entry_list(files))
+        end
         settings === nothing || load_settings!(wf, settings)
     end
 end
+
+"""
+    planar_window(wf = PlanarWorkflow(); files = nothing, settings = nothing)
+
+Open the [`hammerhead`](@ref) window on a one-camera (planar) session:
+`hammerhead(wf; files, settings)`.
+"""
+planar_window(wf::PlanarWorkflow = PlanarWorkflow(); files = nothing, settings = nothing) =
+    hammerhead(wf; files, settings)

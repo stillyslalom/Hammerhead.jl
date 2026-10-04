@@ -159,6 +159,14 @@ Added:
   change after a run (`run_stale`), as Test pair already did; a failed or
   canceled run also needs attention. The window title reads
   `Hammerhead planar PIV | settings.toml`.
+- One window for every recording: `hammerhead()` opens the Hammerhead
+  window, and **Recording** on Images chooses one camera (planar PIV and
+  particle analysis) or two (stereo PIV, with the Calibration step). The
+  window holds one session at a time; changing the type, or opening settings
+  or results of the other type, starts a fresh session after confirming what
+  it discards (`recording_type`, `new_workflow`, `unsaved_work`,
+  `switch_question`). `planar_window` and `stereo_window` remain as
+  shortcuts that open it on their type.
 - `request_grab(path)` saves an image of the open window, for screenshots
   and render checks.
 - Ensemble runs in both windows: with **Ensemble** chosen on Passes, Run

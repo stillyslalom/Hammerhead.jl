@@ -2,22 +2,23 @@
 CurrentModule = HammerheadGUI
 ```
 
-# GUI stereo window (HammerheadGUI)
+# GUI stereo sessions (HammerheadGUI)
 
-The stereo PIV window ([`stereo_window`](@ref)) shows a
+A two-camera session of the Hammerhead window ([`hammerhead`](@ref),
+[`stereo_window`](@ref)) shows a
 [`StereoWorkflow`](@ref Controllers.StereoWorkflow); the same controllers
-run without a window. For the window's tasks, see
+run without a window. For its tasks, see
 [Run stereo PIV in the GUI](../howto/gui_stereo.md). The settings, test,
-run, and results functions it shares with the planar window are in the
+run, and results functions it shares with planar sessions are in the
 [GUI reference](gui.md).
 
 ```@index
 Pages = ["gui_stereo.md"]
 ```
 
-## Stereo window
+## Stereo canvas
 
-[`stereo_window`](@ref) opens the window. Its canvas shows the raw frame on
+In a stereo session the canvas shows the raw frame on
 Images, the selected calibration plate with its reprojection residuals on
 Calibration, and the shown camera's dewarped frame on the later steps, where
 [`grid_vector_data`](@ref) places stereo vectors on the dewarped grid.
@@ -41,7 +42,7 @@ self-calibration. Its Prepare step works on the dewarped grid, and its
 test and run call the stereo `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`.
 A recipe holds processing settings only; the calibration is session state,
 and [`set_dewarpers!`](@ref Controllers.set_dewarpers!) or
-`stereo_window(; dewarpers)` start from dewarpers built elsewhere.
+`hammerhead(; dewarpers)` start from dewarpers built elsewhere.
 
 ```@autodocs
 Modules = [HammerheadGUI.Controllers]
@@ -55,7 +56,7 @@ Pages = ["controllers/stereo_workflow.jl", "controllers/stereo_calibration.jl"]
 detection and reprojection errors per calibration plane for one camera;
 [`calibration_review!`](@ref) embeds the same review in a larger figure.
 [`build_dewarpers`](@ref Controllers.build_dewarpers) turns two fitted
-reviews into the dewarper pair that `stereo_window(; dewarpers)` and
+reviews into the dewarper pair that `hammerhead(; dewarpers)` and
 [`run_piv_stereo`](@ref Hammerhead.run_piv_stereo) take.
 [`selfcal_review`](@ref) browses a self-calibration report and its
 disparity maps.

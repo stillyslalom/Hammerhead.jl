@@ -2,10 +2,9 @@
     HammerheadGUI
 
 Windows and controllers for setting up, running, and inspecting Hammerhead
-analyses: the planar and stereo workflow windows (`planar_window`,
-`stereo_window`), plus GLMakie views
-for browsing results and reviewing calibrations. Use `Controllers` to configure
-and inspect an analysis without opening a window. Controller state is
+analyses: the Hammerhead window (`hammerhead`, for planar and stereo
+recordings), plus GLMakie views for browsing results and reviewing
+calibrations. Use `Controllers` to configure and inspect an analysis without opening a window. Controller state is
 exposed through `Observables`.
 """
 module HammerheadGUI
@@ -47,6 +46,7 @@ include("controllers/planar_workflow.jl")
 include("controllers/stereo_calibration.jl")
 include("controllers/stereo_workflow.jl")
 include("controllers/prepare_workflow.jl")
+include("controllers/recording_type.jl")
 
 export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        available_fields, field_values, field_name, field_label, set_field!,
@@ -88,7 +88,8 @@ export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note,
        load_ruler!, clear_ruler!, passes_probe_available
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem, frame_masks_problem,
-       representative_mask, run_stale, GPU_BACKENDS, gpu_packages, use_gpu!, set_backend!
+       representative_mask, run_stale, GPU_BACKENDS, gpu_packages, use_gpu!, set_backend!,
+       RECORDING_TYPES, recording_type, new_workflow, unsaved_work, switch_question
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
        pair_position, go_to_pair!, step_pair!, save_run_results!, results_in_memory,
@@ -124,7 +125,7 @@ export ROIEditor, set_roi!, clear_roi!
 export ScaleTool, clear_points!, set_separation!, pixel_size, physical_scale
 export CalibrationReview, calibration_review, calibration_review!,
        selfcal_review, nplanes, set_plane!, build_dewarpers, set_dewarpers!
-export PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
+export hammerhead, PlanarWorkflow, planar_window, workflow_recipe, test_pair!, start_run!, cancel_run!,
        open_results!, set_step!, set_prepare_page!, ParticleSettings, set_particle_option!
 export StereoWorkflow, StereoCalibration, stereo_window, fit_calibration!, start_selfcal!,
        open_calibration!, save_calibration_file, set_separate_preprocessing!,

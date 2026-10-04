@@ -97,10 +97,9 @@ window to open next and carry settings between them by hand.
 - [x] Ensemble runs in the GUI windows (GUI_REDESIGN slice 4, 2026-10-04).
   Stereo save/open settings and calibration files landed with
   `stereo_window` (2026-10-04).
-- [ ] Merge the planar and stereo windows into one window with a modality
-  choice on Images: the controllers, shell, and QML pages are already shared
-  through `AbstractWorkflow`/`WorkflowShell`; the remaining differences are
-  the Calibration step, the camera switch, and the canvas type.
+- [x] Merge the planar and stereo windows into one window (2026-10-04):
+  `hammerhead()`, with the recording type (one or two cameras) chosen on
+  Images; one session at a time, switching after a confirmation.
 - [x] One favicon for the docs site and both windows (2026-10-04, H4:
   a hammerhead-arrow hybrid in Julia's colors; `docs/make_icons.jl`).
 - [ ] Exercise the redesigned workflow with a lab user and record concrete

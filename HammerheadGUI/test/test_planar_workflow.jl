@@ -350,6 +350,38 @@
         end
     end
 
+    @testset "recording type and what a new session discards" begin
+        @test recording_type(PlanarWorkflow()) === :planar && recording_type(StereoWorkflow()) === :stereo
+        p = multipass_parameters([32, 16])
+        @test recording_type(PIVRecipe(p)) === nothing
+        @test recording_type(PIVRecipe(p; roi = ROI(1:64, 1:64))) === :planar
+        @test recording_type(PIVRecipe(p; mode = :ptv)) === :planar
+        @test recording_type(PIVRecipe(p; preprocessing = (PreprocessStep[], PreprocessStep[]))) === :stereo
+        mktempdir() do dir
+            path = save_recipe(joinpath(dir, "s.toml"), PIVRecipe(p; mode = :tracking))
+            @test recording_type(path) === :planar
+            @test recording_type(joinpath(dir, "missing.toml")) === nothing
+        end
+        @test new_workflow(:stereo) isa StereoWorkflow
+        @test_throws ArgumentError new_workflow(:tomo)
+
+        wf = PlanarWorkflow()
+        @test isempty(unsaved_work(wf)) && switch_question(wf, :stereo) === nothing
+        add_files!(wf.frames, frames)
+        set_option!(wf.passes, :correlation, :phase)
+        @test unsaved_work(wf) == ["6 frames", "settings not saved to a file"]
+        q = switch_question(wf, :stereo)
+        @test q == "Start a new two-camera (stereo) session? This discards 6 frames and " *
+                   "settings not saved to a file."
+        mktempdir() do dir
+            save_settings(wf, joinpath(dir, "s.toml"))
+            @test unsaved_work(wf) == ["6 frames"]
+        end
+        start_run!(wf; spawn = false)
+        @test "results kept only in memory" in unsaved_work(wf)
+        @test "the camera calibration" ∉ unsaved_work(StereoWorkflow())
+    end
+
     @testset "ensemble: test, run, progress, cancellation" begin
         wf = PlanarWorkflow(files = frames)
         fill_preset!(wf.passes, :low)

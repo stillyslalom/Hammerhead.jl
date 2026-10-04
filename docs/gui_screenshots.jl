@@ -3,11 +3,12 @@
 # Local only: needs a display and Qt, so neither docs/make.jl nor CI runs it.
 # Run from the repository root after changing a window's look:
 #
-#     julia --project=docs -t 4 docs/gui_screenshots.jl            # both windows
-#     julia --project=docs -t 4 docs/gui_screenshots.jl stereo     # one window
+#     julia --project=docs -t 4 docs/gui_screenshots.jl            # both session types
+#     julia --project=docs -t 4 docs/gui_screenshots.jl stereo     # one type
 #
-# It opens `planar_window` on the GUI tour's synthetic vortex (with its
-# stationary reflection) and `stereo_window` on the synthetic two-camera rig
+# It opens `hammerhead` on a planar session of the GUI tour's synthetic vortex
+# (with its stationary reflection) and on a stereo session of the synthetic
+# two-camera rig
 # of HammerheadGUI/test/stereo_fixture.jl (plates and frames written as image
 # files), walks the steps through the controllers on the window's tick, and
 # saves the window body with `request_grab`. Look at every image afterwards:
@@ -158,7 +159,7 @@ function planar_shots()
     st!(w, sh -> !wf.test.running[] && wf.test.result[] isa PTVResult && waited(w, 1.5),
         sh -> grab!("ptv_test_pair"))
     st!(w, sh -> grabbed(w, "ptv_test_pair"), sh -> HammerheadGUI.request_close())
-    walk!(() -> planar_window(wf; files = paths), w; timeout = 300)
+    walk!(() -> hammerhead(wf; files = paths), w; timeout = 300)
 end
 
 # ---------------------------------------------------------------- stereo window
@@ -250,7 +251,7 @@ function stereo_shots()
     end)
     st!(w, sh -> waited(w, 1.5), sh -> grab!("stereo_results"))
     st!(w, sh -> grabbed(w, "stereo_results"), sh -> HammerheadGUI.request_close())
-    walk!(() -> stereo_window(wf; files1 = frames[1], files2 = frames[2]), w)
+    walk!(() -> hammerhead(wf; files1 = frames[1], files2 = frames[2]), w)
 end
 
 "planar" in WINDOWS && planar_shots()

@@ -6,9 +6,11 @@ import jlqml
 
 StepPage {
     title: "Images"
-    guidance: "Add the recording's frames in acquisition order, then choose how they form pairs. " +
-              "Step through pairs and switch between frame A and B below the viewer: particles " +
-              "should shift slightly between frames, not jump."
+    guidance: "Choose one camera or two. Add the recording's frames in acquisition order, " +
+              "then choose how they form pairs. Step through pairs and switch between frame A " +
+              "and B below the viewer: particles should shift slightly between frames, not jump."
+
+    RecordingTypeRow {}
 
     RowLayout {
         spacing: 8

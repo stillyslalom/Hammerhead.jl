@@ -181,7 +181,7 @@ recordings on the CPU and use a mask instead of an ROI.
 
 ## In the GUI
 
-The planar window's **Save settings…** button writes the same recipe file
+The Hammerhead window's **Save settings…** button writes the same recipe file
 (TOML by default), and **Open settings…** loads a recipe file or an earlier
 run's results file into the window. A run in the window stores its recipe in
 the results file, as `apply_recipe` does. Per-frame mask images are added on

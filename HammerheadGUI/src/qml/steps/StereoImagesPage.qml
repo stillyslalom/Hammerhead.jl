@@ -13,6 +13,8 @@ StepPage {
               "camera 2 must show the same instant), then choose how they form pairs. Step " +
               "through pairs, frames A and B, and the cameras below the viewer."
 
+    RecordingTypeRow {}
+
     property int addingCamera: 1
 
     Repeater {

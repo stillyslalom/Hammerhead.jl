@@ -1,9 +1,10 @@
 # Run stereo PIV in the GUI
 
-The stereo window takes two cameras' frames of the same instants and each
-camera's calibration plate images. It calibrates both cameras, reviews the
-fits, builds the common dewarped grid, moves it onto the light sheet, and
-then prepares, tests and runs the recording as the planar window does. The
+For a two-camera recording, the Hammerhead window takes both cameras' frames
+of the same instants and each camera's calibration plate images. It
+calibrates both cameras, reviews the fits, builds the common dewarped grid,
+moves it onto the light sheet, and then prepares, tests and runs the
+recording as for one camera. The
 result is three velocity components on a world-coordinate grid. For the
 geometry behind each step, see
 [Stereo geometry and self-calibration](../explanation/stereo.md); for the
@@ -17,18 +18,20 @@ several threads, so fits, tests and runs leave the window responsive:
 ```julia
 # julia -t auto
 using HammerheadGUI
-wf = stereo_window()
+wf = hammerhead(type = :stereo)
 ```
 
-The call returns the window's `StereoWorkflow` when you close the window.
-Pass each camera's frames to start further along:
-`stereo_window(files1 = cam1_paths, files2 = cam2_paths)`.
+or choose **Two cameras (stereo)** under **Recording** on **Images**. The
+call returns the window's `StereoWorkflow` when you close the window. Pass
+each camera's frames to start further along:
+`hammerhead(files1 = cam1_paths, files2 = cam2_paths)` (camera inputs start
+a stereo session by themselves).
 
 The steps on the left run in order: **Images → Calibration → Prepare →
 Passes → Test pair → Run → Results**. **Camera 1** and **Camera 2** in the
 bar below the viewer choose which camera the viewer shows, on every step.
-The viewer, the step rail, the pair bar and the pop-out work as in the
-planar window; [Analyze an image pair in the GUI](gui.md) describes them.
+The viewer, the step rail, the pair bar and the pop-out work as for one
+camera; [Analyze an image pair in the GUI](gui.md) describes them.
 
 ## Add both cameras' frames
 
@@ -167,7 +170,7 @@ view; it is excluded from every analysis.
   shown camera's steps. **Estimate background** subtracts each camera's own
   background, estimated from its first frames, and switches to separate
   lists.
-- **Mask**: draw polygons on the dewarped grid, as in the planar window. One
+- **Mask**: draw polygons on the dewarped grid, as for one camera. One
   mask applies to both cameras. Stereo analysis has no region page; mask the
   part of the grid you do not want instead.
 - **Scale**: vectors are already in the calibration's world units per frame.
@@ -178,7 +181,7 @@ view; it is excluded from every analysis.
 
 ## Choose the passes, test, and run
 
-**Passes**, **Test pair** and **Run** are the planar window's steps; the
+**Passes**, **Test pair** and **Run** are the one-camera steps; the
 presets size the windows to the dewarped grid. Both cameras run with the
 same passes, and their two-component fields combine into three components
 at every node. **Test pair** runs the call the batch will run, and the
@@ -211,7 +214,7 @@ settings with `apply_recipe(recipe, pairs1, pairs2, dw1, dw2)`; see
 
 **Save calibration…** on the Calibration step writes the rig with
 `save_calibration`; open it with **Open calibration…**, or start a window
-with it: `stereo_window(calibration = "rig.jld2")`. A run's results file
+with it: `hammerhead(calibration = "rig.jld2")`. A run's results file
 stores the calibration that produced it, so **Open calibration…** on a
 results file reproduces that rig. Changing a dewarp grid option rebuilds
 the grid for the opened cameras.
@@ -228,14 +231,14 @@ cr1 = CalibrationReview(cam1_plate_paths, zs; detect...)
 cr2 = CalibrationReview(cam2_plate_paths, zs; detect...)
 dw1, dw2 = build_dewarpers(cr1, cr2)   # common grid at z = 0
 
-wf = stereo_window(files1 = cam1_paths, files2 = cam2_paths,
-                   dewarpers = (dw1, dw2), settings = "stereo_settings.toml")
+wf = hammerhead(files1 = cam1_paths, files2 = cam2_paths,
+                dewarpers = (dw1, dw2), settings = "stereo_settings.toml")
 ```
 
 The window then starts at a calibrated rig: self-calibrate on the
 recording's frames, or go straight to **Prepare**. To review one camera's
 fit first, run `calibration_review(cr1)` in a separate Julia session: it is
 a GLMakie window, and some graphics drivers fail when GLMakie and Qt windows
-share a process. Once a GLMakie window exists, `stereo_window` throws an
+share a process. Once a GLMakie window exists, `hammerhead` throws an
 error asking you to restart Julia; `calibration_review`, `selfcal_review`,
 and `result_explorer` warn when a workflow window was already open.

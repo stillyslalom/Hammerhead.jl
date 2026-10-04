@@ -10,7 +10,7 @@ executable end-to-end walkthroughs, see the
 and [stereo on a real recording](../tutorials/stereo_real.md) (the 4E
 data itself); for the theory, see
 [stereo geometry and self-calibration](../explanation/stereo.md). The
-[stereo window](gui_stereo.md) runs the same detection, fits, dewarping
+[stereo session of the GUI](gui_stereo.md) runs the same detection, fits, dewarping
 and self-calibration interactively.
 
 ## What the target must provide

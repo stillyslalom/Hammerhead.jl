@@ -1,8 +1,10 @@
 # Analyze an image pair in the GUI
 
-The planar window takes the frames of a recording through image checks,
+The Hammerhead window takes the frames of a recording through image checks,
 masking, the pass schedule, a test on one pair, the batch run, and the
-results. [A PIV session in the GUI](../tutorials/gui_tour.md) is a complete
+results. This page covers one-camera (planar) recordings; for two cameras see
+[Run stereo PIV in the GUI](gui_stereo.md).
+[A PIV session in the GUI](../tutorials/gui_tour.md) is a complete
 session on sample images.
 
 ## Open the window
@@ -13,12 +15,20 @@ several threads, so tests, runs and previews leave the window responsive:
 ```julia
 # julia -t auto
 using HammerheadGUI
-wf = planar_window()
+wf = hammerhead()
 ```
 
 The call returns when you close the window. It returns the window's
-`PlanarWorkflow`, with every setting you made. Pass frames or saved settings
-to start further along: `planar_window(files = paths, settings = "settings.toml")`.
+session, a `PlanarWorkflow` for a one-camera recording, with every setting
+you made. Pass frames or saved settings to start further along:
+`hammerhead(files = paths, settings = "settings.toml")`.
+
+**Recording** at the top of **Images** chooses one camera (planar PIV and
+particle analysis) or two (stereo PIV, with a Calibration step). The window
+holds one recording at a time: changing the type starts a fresh session,
+and the window first lists what that discards (frames, unsaved settings,
+results kept only in memory). Opening settings or results of the other
+type switches the same way.
 
 The steps on the left run in order: **Images → Prepare → Passes → Test pair →
 Run → Results**. Each step shows a one-line summary, and a dot marks it as
@@ -310,16 +320,17 @@ and tools.
 
 Open it in its own Julia session. The explorer is a GLMakie window, and
 GLMakie windows and the workflow windows cannot share a session (some
-graphics drivers crash): once a GLMakie window exists, `planar_window` throws
+graphics drivers crash): once a GLMakie window exists, `hammerhead` throws
 an error asking you to restart Julia, and `result_explorer` warns when a
 workflow window was already open. Within the workflow window, browse results
 on **Results**.
 
 ## Work with two cameras
 
-For a stereo rig, `stereo_window()` adds a Calibration step and runs both
-cameras on a common dewarped grid; the other steps are the ones above. See
-[Run stereo PIV in the GUI](gui_stereo.md).
+For a stereo rig, choose **Two cameras (stereo)** on **Images** (or start
+with `hammerhead(type = :stereo)`): the window adds a Calibration step and
+runs both cameras on a common dewarped grid; the other steps are the ones
+above. See [Run stereo PIV in the GUI](gui_stereo.md).
 
 ## Script the window's steps
 

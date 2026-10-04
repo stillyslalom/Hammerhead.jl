@@ -91,7 +91,7 @@ makedocs(;
             "PTV (particle tracking)" => "reference/ptv.md",
             "GUI (HammerheadGUI)" => "reference/gui.md",
             "GUI Prepare editors" => "reference/gui_prepare.md",
-            "GUI stereo window" => "reference/gui_stereo.md",
+            "GUI stereo sessions" => "reference/gui_stereo.md",
             "GUI result explorer" => "reference/gui_results.md",
             "KernelAbstractions and GPU backends" => "reference/backends.md",
             "Feature matrix" => "reference/feature_matrix.md",

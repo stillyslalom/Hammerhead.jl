@@ -1,6 +1,7 @@
 # # A PIV session in the GUI
 #
-# This tutorial processes a short recording in the planar PIV window: it
+# This tutorial processes a short one-camera recording in the Hammerhead
+# window: it
 # excludes a reflection, attaches millimeters and seconds, tests one pair,
 # runs the batch, and measures a profile and a circulation in the result. The
 # recording is a synthetic vortex generated in the first code block.
@@ -10,15 +11,16 @@
 #
 # ```julia
 # using HammerheadGUI
-# wf = planar_window()
+# wf = hammerhead()
 # ```
 #
-# The window walks through six steps, listed on its left: **Images → Prepare →
-# Passes → Test pair → Run → Results**. The viewer on the right follows the
-# step you are on. The screenshots below come from the window; each code block
-# is the equivalent of the clicks it describes, written against the window's
-# workflow controller. `planar_window()` returns that `PlanarWorkflow` when
-# the window closes, and `planar_window(wf)` opens one prepared in code.
+# A one-camera session walks through six steps, listed on the window's left:
+# **Images → Prepare → Passes → Test pair → Run → Results**. The viewer on the
+# right follows the step you are on. The screenshots below come from the
+# window; each code block is the equivalent of the clicks it describes,
+# written against the session's workflow controller. `hammerhead()` returns
+# that `PlanarWorkflow` when the window closes, and `hammerhead(wf)` opens one
+# prepared in code.
 
 using Hammerhead
 using HammerheadGUI

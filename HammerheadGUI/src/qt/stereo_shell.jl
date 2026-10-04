@@ -10,7 +10,7 @@ mutable struct PlateRow
     info::String
 end
 
-const StereoShell = WorkflowShell{StereoWorkflow,StereoCanvas}
+const StereoShell = WorkflowShell{StereoWorkflow}
 
 StereoShell(wf::StereoWorkflow; queue::Channel{Any} = Channel{Any}(Inf)) =
     WorkflowShell(wf, stereo_canvas(wf); queue)
@@ -41,9 +41,6 @@ function _connect_window!(sh::StereoShell, mark)
     for k in 1:2
         on(watch_review, cal.reviews[k])
         watch_review(cal.reviews[k][])
-        rows = PlateRow[]
-        sh.rows["plates$k"] = rows
-        sh.models["plates$(k)Model"] = JuliaItemModel(rows)
     end
     return sh
 end
@@ -248,35 +245,13 @@ end
 
 """
     stereo_window(wf = StereoWorkflow(); files1 = nothing, files2 = nothing,
-                  settings = nothing, dewarpers = nothing,
-                  calibration = nothing) -> StereoWorkflow
+                  settings = nothing, dewarpers = nothing, calibration = nothing)
 
-Open the stereo PIV workflow window and return its workflow when the window
-closes. The steps — Images, Calibration, Prepare, Passes, Test pair, Run,
-Results — share one image canvas (camera 1 or 2, switched in the bar below
-it), which can be popped out into its own window.
-
-`files1`/`files2` add each camera's frames (paths in acquisition order;
-entry `i` of both cameras is the same instant); `dewarpers = (dw1, dw2)`
-uses `ImageDewarper`s built in a script instead of the Calibration step's
-fit; `calibration` opens a saved camera rig (`Hammerhead.save_calibration`,
-or the calibration stored in a stereo results file); `settings` opens a
-recipe or results file. The settings and the calibration save separately:
-the Calibration step has its own Open and Save buttons.
-
-The call blocks while the window is open, as [`planar_window`](@ref) does;
-start Julia with several threads (`julia -t auto`). Like `planar_window`, it
-throws an `ArgumentError` when this Julia session already has a GLMakie
-screen (e.g. a [`calibration_review`](@ref) window): review calibrations in
-the Calibration step, or in a separate Julia session.
+Open the [`hammerhead`](@ref) window on a two-camera (stereo) session:
+`hammerhead(wf; files1, files2, settings, dewarpers, calibration)`. The
+settings and the calibration save separately: the Calibration step has its
+own Open and Save buttons.
 """
-function stereo_window(wf::StereoWorkflow = StereoWorkflow(); files1 = nothing, files2 = nothing,
-                       settings = nothing, dewarpers = nothing, calibration = nothing)
-    return _run_window(wf, "StereoWindow.qml", (w, q) -> StereoShell(w; queue = q)) do
-        dewarpers === nothing || set_dewarpers!(wf, dewarpers...)
-        calibration === nothing || open_calibration!(wf, calibration)
-        files1 === nothing || add_files!(wf, _entry_list(files1); camera = 1)
-        files2 === nothing || add_files!(wf, _entry_list(files2); camera = 2)
-        settings === nothing || load_settings!(wf, settings)
-    end
-end
+stereo_window(wf::StereoWorkflow = StereoWorkflow(); files1 = nothing, files2 = nothing,
+              settings = nothing, dewarpers = nothing, calibration = nothing) =
+    hammerhead(wf; files1, files2, settings, dewarpers, calibration)

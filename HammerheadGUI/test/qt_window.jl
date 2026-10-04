@@ -208,4 +208,54 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
         img = HammerheadGUI.Controllers.FileIO.load(path)
         @test minimum(size(img)) > 100 && length(unique(img)) > 50
     end
+
+    # a fourth session changes the recording type: the session has frames,
+    # so the window asks; declined, then confirmed; a fresh stereo session
+    # switches back without asking
+    stereo_png = joinpath(shots, "switched_stereo.png")
+    sw_stage = Ref(0)
+    sw = Any[]
+    t_start = time()
+    HammerheadGUI._TICK_HOOK[] = function (sh)
+        time() - t_start > 120 && return HammerheadGUI.request_close()
+        s = sw_stage[]
+        if s == 0
+            set_step!(sh.wf, :images)
+            HammerheadGUI.hh_set_modality("stereo")
+            push!(sw, sh.shown["switchQuestion"])
+            HammerheadGUI.hh_cancel_switch()
+            push!(sw, sh.wf)
+            HammerheadGUI.hh_set_modality("stereo")
+            HammerheadGUI.hh_confirm_switch()
+            sw_stage[] = 1; t_stage[] = time()
+        elseif s == 1 && time() - t_stage[] > 1
+            push!(sw, sh.wf, sh.shown["modality"], [r.key for r in sh.step_rows], sh.shown["title"])
+            HammerheadGUI.request_grab(stereo_png); sw_stage[] = 2
+        elseif s == 2 && grabbed(stereo_png)
+            HammerheadGUI.hh_set_modality("planar")    # nothing to lose: no question
+            push!(sw, sh.shown["switchQuestion"])
+            sw_stage[] = 3; t_stage[] = time()
+        elseif s == 3 && time() - t_stage[] > 0.5
+            push!(sw, length(HammerheadGUI._SHELL[].step_rows))
+            sw_stage[] = 4
+            HammerheadGUI.request_close()
+        end
+    end
+    local final
+    try
+        final = hammerhead(wf)
+    finally
+        HammerheadGUI._TICK_HOOK[] = nothing
+    end
+    @test sw_stage[] == 4
+    @test startswith(sw[1], "Start a new two-camera (stereo) session? This discards 4 frames")
+    @test sw[2] === wf                                       # declined: same session
+    @test sw[3] isa StereoWorkflow && sw[4] == "stereo"
+    @test sw[5] == ["images", "calibration", "prepare", "passes", "test", "run", "results"]
+    @test startswith(sw[6], "Hammerhead stereo PIV |")
+    @test sw[7] == "" && sw[8] == 6
+    @test final isa PlanarWorkflow && final !== wf && isempty(final.frames.files[])
+    @test !final.spawn[] && !wf.spawn[]
+    img = HammerheadGUI.Controllers.FileIO.load(stereo_png)
+    @test minimum(size(img)) > 100 && length(unique(img)) > 20
 end

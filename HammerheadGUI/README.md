@@ -4,7 +4,7 @@
 particle image velocimetry (PIV): prepare the images, test the settings on one
 pair, run a recording, and inspect the vectors, all in one window.
 
-## Open the planar PIV window
+## Open the Hammerhead window
 
 Install Hammerhead and the GUI in the same Julia environment. In Julia 1.10
 or later, press `]` to enter package mode:
@@ -18,15 +18,16 @@ prompt with Backspace, and open the window:
 
 ```julia
 using HammerheadGUI
-wf = planar_window()
+wf = hammerhead()
 ```
 
 The window needs a graphical session. It walks through one analysis in six
 steps, with an image viewer that follows the step and can pop out into its own
 window:
 
-- **Images:** add frames and choose how they pair (1–2, 3–4 or 1–2, 2–3);
-  pick the representative pair the other steps preview.
+- **Images:** choose one camera (planar) or two (stereo), add frames and
+  choose how they pair (1–2, 3–4 or 1–2, 2–3); pick the representative pair
+  the other steps preview.
 - **Prepare:** preprocessing with a raw/processed view and a single-window
   correlation probe; mask polygons drawn on the image; an analysis region;
   and the physical scale, typed or measured from two points.
@@ -41,17 +42,13 @@ window:
 
 **Save settings…** and **Open settings…** store and read the settings as a
 core `PIVRecipe`, and every results file carries the recipe that produced it.
-`planar_window` returns its workflow when the window closes; the controllers
-in `HammerheadGUI.Controllers` run the same steps from a script.
+`hammerhead` returns its session's workflow when the window closes; the
+controllers in `HammerheadGUI.Controllers` run the same steps from a script.
 
-## Open the stereo PIV window
+## Two cameras (stereo PIV)
 
-```julia
-using HammerheadGUI
-wf = stereo_window()
-```
-
-The stereo window follows the same steps for two cameras and adds
+Choose **Two cameras (stereo)** on Images, or start with
+`hammerhead(type = :stereo)`. A stereo session follows the same steps and adds
 **Calibration**: plate images with their z positions per camera, dot
 detection and the camera model (Soloff or pinhole), the fit's reprojection
 residuals on each plate, the common dewarp grid, and self-calibration onto
