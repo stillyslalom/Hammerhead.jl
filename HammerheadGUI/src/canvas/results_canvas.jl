@@ -88,6 +88,7 @@ function results_canvas()
     _show_profile!(rc, false)
     _register_gestures!(rc)
     _register_point_drag!(rc)
+    _release_on_blur!(rc.fig, () -> (rc.dragging[] = nothing))
     return rc
 end
 

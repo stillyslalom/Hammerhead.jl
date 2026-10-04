@@ -190,6 +190,19 @@ end
     mouse_click(r.x[3], r.y[2])
     @test ex.selection[] == CartesianIndex(2, 3)
 
+    # a Shift released after the canvas lost focus never arrives: clicks
+    # stay ignored (reserved for zoom gestures) until focus loss releases it
+    ev.hasfocus[] = true
+    push!(ev.keyboardstate, Keyboard.left_shift)
+    ev.keyboardbutton[] = Makie.KeyEvent(Keyboard.left_shift, Keyboard.press)
+    mouse_click(r.x[4], r.y[3])
+    @test ex.selection[] == CartesianIndex(2, 3)
+    rc.dragging[] = 1
+    ev.hasfocus[] = false
+    @test isempty(ev.keyboardstate) && rc.dragging[] === nothing
+    mouse_click(r.x[4], r.y[3])
+    @test ex.selection[] == CartesianIndex(3, 4)
+
     # profile: two real clicks draw the line and open the profile row
     set_tool!(ex, :profile)
     mouse_click(x0 + 5, ym); mouse_click(x1 - 5, ym)

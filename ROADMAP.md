@@ -101,8 +101,8 @@ window to open next and carry settings between them by hand.
   choice on Images: the controllers, shell, and QML pages are already shared
   through `AbstractWorkflow`/`WorkflowShell`; the remaining differences are
   the Calibration step, the camera switch, and the canvas type.
-- [ ] One favicon for the docs site and both windows (prototypes 2026-10-04:
-  a hammerhead-arrow hybrid in Julia's colors; awaiting the user's pick).
+- [x] One favicon for the docs site and both windows (2026-10-04, H4:
+  a hammerhead-arrow hybrid in Julia's colors; `docs/make_icons.jl`).
 - [ ] Exercise the redesigned workflow with a lab user and record concrete
   friction before adding further features.
 

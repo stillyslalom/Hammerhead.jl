@@ -143,6 +143,7 @@ end
 _register_gestures!(c::PlanarCanvas, wf::PlanarWorkflow) = (_register_workflow_gestures!(c.ax, c.fig, wf); c)
 
 function _register_workflow_gestures!(ax::Axis, fig::Figure, wf::AbstractWorkflow)
+    _release_on_blur!(fig)
     register_interaction!(ax, :workflow_gesture) do event::MouseEvent, _
         # a click with a modifier is Makie's (ctrl-click resets the zoom)
         _modifier_held(fig) && return Consume(false)
@@ -198,6 +199,26 @@ const _MODIFIER_KEYS = (Keyboard.left_control, Keyboard.right_control, Keyboard.
                         Keyboard.right_shift, Keyboard.left_alt, Keyboard.right_alt,
                         Keyboard.left_super, Keyboard.right_super)
 _modifier_held(fig) = any(k -> k in events(fig).keyboardstate, _MODIFIER_KEYS)
+
+# A canvas receives key and mouse events only while it has keyboard focus,
+# so a key or button released after focus moved elsewhere (to a menu, a text
+# field) never arrives: Makie would keep Shift or Ctrl "held" and treat every
+# later click as a zoom gesture. When the canvas loses focus, release the
+# keys it still holds and forget held buttons (`reset` clears a drag in
+# progress). No release is sent for a button: that would register as a click.
+function _release_on_blur!(fig::Figure, reset = () -> nothing)
+    ev = events(fig)
+    on(ev.hasfocus) do focused
+        focused && return
+        for key in collect(ev.keyboardstate)
+            delete!(ev.keyboardstate, key)
+            ev.keyboardbutton[] = Makie.KeyEvent(key, Keyboard.release)
+        end
+        empty!(ev.mousebuttonstate)
+        reset()
+    end
+    return fig
+end
 
 """
     set_contrast!(canvas, wf, auto::Bool)

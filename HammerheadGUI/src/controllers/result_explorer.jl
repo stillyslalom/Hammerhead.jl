@@ -891,7 +891,11 @@ end
 Close the `:circulation` contour (right-click in the view): with at least
 three vertices the line-integral `circulation(r, contour)` and the
 vorticity-area form `circulation(r; region = contour)` are both evaluated
-into `circulation_result`; the area form also reports valid and requested
+into `circulation_result`. The line integral runs counterclockwise in the
+result's x–y frame whatever order the vertices were placed in, so by
+Stokes' theorem both forms estimate the same Γ = ∫ω dA (on an image-axis
+view with y down, counterclockwise in x–y appears clockwise on screen).
+The area form also reports valid and requested
 area and their coverage fraction. An incomplete area retains its partial
 integral; zero valid area yields `NaN`. With fewer vertices the gesture is
 canceled. A no-op for the other tools.
@@ -912,12 +916,17 @@ function _compute_circulation!(ex::ResultExplorer)
     contour = copy(ex.tool_points[])
     inc = ex.include_flagged[]
     area_report = circulation(r; region = contour, coverage = :report, include_invalid = inc)
-    ex.circulation_result[] = (; line = circulation(r, contour; include_invalid = inc),
+    # positive orientation in x–y, which Stokes' theorem pairs with ∫ω dA
+    line_contour = _signed_area(contour) < 0 ? reverse(contour) : contour
+    ex.circulation_result[] = (; line = circulation(r, line_contour; include_invalid = inc),
                                area = area_report.value, contour,
                                area_report.valid_area, area_report.requested_area,
                                area_report.coverage_fraction, area_report.complete)
     return ex
 end
+
+_signed_area(pts) = sum(pts[k][1] * pts[mod1(k + 1, length(pts))][2] -
+                        pts[mod1(k + 1, length(pts))][1] * pts[k][2] for k in eachindex(pts)) / 2
 
 """
     tool_point_near(ex::ResultExplorer, x, y, tol) -> Union{Nothing,Int}

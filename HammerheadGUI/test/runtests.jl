@@ -306,6 +306,14 @@ const r_track = TrackingResult(
         @test res.valid_area ≈ res.requested_area ≈ 100.0
         @test occursin("Γ (line)", tool_summary(ex))
         @test occursin("px²/frame", tool_summary(ex))
+        # the opposite click order gives the same Γ from both estimators
+        C.click!(ex, 1.0, 1.0)
+        empty!(ex.tool_points[])
+        for p in ((5.0, 15.0), (15.0, 15.0), (15.0, 5.0), (5.0, 5.0))
+            C.click!(ex, p...)
+        end
+        C.alt_click!(ex)
+        @test ex.circulation_result[].line ≈ ex.circulation_result[].area ≈ 2Ω * 100
         C.click!(ex, 1.0, 1.0)                             # closed → new contour
         @test length(ex.tool_points[]) == 1 && ex.circulation_result[] === nothing
         C.alt_click!(ex)                                   # < 3 vertices: cancel

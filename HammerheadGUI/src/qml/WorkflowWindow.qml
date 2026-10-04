@@ -26,6 +26,15 @@ ApplicationWindow {
     property bool stereo: false
     default property alias pages: stack.data
 
+    // Give a canvas keyboard focus when the pointer enters it, unless a text
+    // field is being edited (its typing would move to the canvas).
+    function focusCanvas(canvas, hovered) {
+        if (!hovered || canvas.activeFocus) return
+        const item = canvas.Window.activeFocusItem
+        if (item && item.hasOwnProperty("cursorPosition")) return
+        canvas.forceActiveFocus(Qt.MouseFocusReason)
+    }
+
     // Closing the main window ends the session (the pop-out window included).
     onClosing: { quitting = true; Qt.quit() }
 
@@ -124,6 +133,9 @@ ApplicationWindow {
                 anchors.right: mainTools.left
                 scene: app.main
                 visible: !app.popped
+                // QMLMakie passes clicks on only while the canvas has focus:
+                // take it when the pointer arrives, so the first click counts
+                HoverHandler { onHoveredChanged: win.focusCanvas(mainCanvas, hovered) }
             }
             ViewerToolbar {
                 id: mainTools
@@ -163,6 +175,7 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.right: popTools.left
             scene: app.pop
+            HoverHandler { onHoveredChanged: win.focusCanvas(popCanvas, hovered) }
         }
         ViewerToolbar {
             id: popTools

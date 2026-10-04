@@ -186,6 +186,19 @@ Changed:
   disk beside Makie's own atlas cache, and the traced precompile statements
   cover both windows.
 
+Fixed:
+
+- Canvas clicks (Results tools, mask and scale points) stopped working after
+  focus moved to a control while Shift or Ctrl was held: the canvas never saw
+  the key release and kept treating clicks as zoom gestures. A canvas now
+  releases held keys and drags when it loses focus, and takes focus when the
+  pointer enters it (unless a text field is being edited), so the first click
+  after using a menu counts.
+- The circulation tool's line integral now runs counterclockwise in the
+  result's x–y frame whatever the click order, so it agrees in sign with the
+  vorticity-area estimate (Stokes' theorem) instead of following the
+  direction the contour was clicked.
+
 Breaking:
 
 - The GLMakie tool windows `batch_runner`, `mask_editor`, `roi_editor`
