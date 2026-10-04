@@ -132,3 +132,16 @@ function scale_summary(st::ScaleTool)
                   " ", st.length_unit[], " → ", @sprintf("%.4g", ps), " ",
                   st.length_unit[], "/px")
 end
+
+"""
+    scale_description(scale::Union{Nothing,PhysicalScale}) -> String
+
+A readable sentence for a physical scale, e.g. "0.005882 mm per pixel ·
+1 frame between exposures", or what happens without one.
+"""
+function scale_description(sc::Union{Nothing,PhysicalScale})
+    sc === nothing && return "no scale: results stay in pixels and frames"
+    tu = sc.time_unit == "frame" && sc.dt != 1 ? "frames" : sc.time_unit
+    return string(@sprintf("%.4g", sc.pixel_size), " ", sc.length_unit, " per pixel · ",
+                  @sprintf("%.4g", sc.dt), " ", tu, " between exposures")
+end

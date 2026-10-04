@@ -201,18 +201,21 @@ function PlanarShell(wf::PlanarWorkflow; queue::Channel{Any} = Channel{Any}(Inf)
         _sync_pass_rows!(sh)
     end
     onany((_...) -> _sync_prep_rows!(sh), pp.steps, pp.error, pp.error_step)
-    on(wf.explorer) do ex
+    function watch_explorer(ex)
         set_explorer!(results, ex)
         ex === nothing && return
-        for obs in (ex.frame, ex.field, ex.selection, ex.color_mode, ex.show_vectors, ex.status)
+        for obs in (ex.frame, ex.field, ex.selection, ex.color_mode, ex.show_vectors, ex.status,
+                    ex.tool, ex.tool_points, ex.profile_data, ex.circulation_result)
             on(mark, obs)
         end
     end
-    set_explorer!(results, wf.explorer[])
+    on(watch_explorer, wf.explorer)
+    watch_explorer(wf.explorer[])
     # Every key QML binds to exists from the start (bindings read them at once).
-    for (k, v) in ("resultFrame" => 1, "resultFrames" => 1, "resultFieldKeys" => "",
+    for (k, v) in ("grabPath" => "", "resultFrame" => 1, "resultFrames" => 1, "resultFieldKeys" => "",
                    "resultFieldLabels" => "", "resultField" => "", "resultFieldLabel" => "", "resultColorMode" => "robust",
-                   "resultVectors" => true, "selectionText" => "", "resultsStatus" => "")
+                   "resultVectors" => true, "selectionText" => "", "resultsStatus" => "",
+                   "resultTool" => "inspect", "resultToolsAvailable" => false, "toolSummary" => "")
         _set!(sh, k, v)
     end
     _sync_pass_rows!(sh)
@@ -273,7 +276,9 @@ function _sync_prep_rows!(sh::PlanarShell)
     return
 end
 
-_num(x::Real) = isinteger(x) ? string(Int(x)) : string(x)
+# Numbers for text fields: integers plainly, others to ~6 significant digits
+# (an unedited field never writes its rounded text back).
+_num(x::Real) = isinteger(x) && abs(x) < 1e15 ? string(Int(x)) : Controllers.display_number(x)
 
 # Prepare step fields of the property map.
 function _refresh_prepare!(sh::PlanarShell)
@@ -317,7 +322,7 @@ function _refresh_prepare!(sh::PlanarShell)
     _set!(sh, "scaleLengthUnit", sc === nothing ? "" : sc.length_unit)
     _set!(sh, "scaleDt", sc === nothing ? "" : _num(sc.dt))
     _set!(sh, "scaleTimeUnit", sc === nothing ? "" : sc.time_unit)
-    _set!(sh, "scaleSummary", sc === nothing ? "no scale: results in pixels and frames" : string(sc))
+    _set!(sh, "scaleSummary", scale_description(sc))
     _set!(sh, "scaleSeparation", st === nothing ? "" : _num(st.separation[]))
     _set!(sh, "scaleMeasureUnit", st === nothing ? "" : st.length_unit[])
     _set!(sh, "scaleMeasure", st === nothing ? "" : Controllers.scale_summary(st))
@@ -346,7 +351,6 @@ function _refresh!(sh::PlanarShell)
     _set!(sh, "pairMode", String(fs.pair_mode[]))
     _set!(sh, "shown", String(fs.shown[]))
 
-    _set!(sh, "prepareSummary", step_status(wf, :prepare)[2])
     _refresh_prepare!(sh)
     _set!(sh, "preset", pe.preset[] === nothing ? "custom" : String(pe.preset[]))
     _set!(sh, "passesError", pe.error[])
@@ -389,6 +393,9 @@ function _refresh!(sh::PlanarShell)
         _set!(sh, "resultVectors", ex.show_vectors[])
         _set!(sh, "selectionText", describe_selection(ex))
         _set!(sh, "resultsStatus", ex.status[])
+        _set!(sh, "resultTool", String(ex.tool[]))
+        _set!(sh, "resultToolsAvailable", r isa PIVResult)
+        _set!(sh, "toolSummary", tool_summary(ex))
     end
     _set!(sh, "hasResults", ex !== nothing)
 
@@ -420,6 +427,18 @@ const _CLOSE_REQUESTED = Ref(false)
 Close the open workflow window (from a callback or a tick hook).
 """
 request_close() = (_CLOSE_REQUESTED[] = true; nothing)
+
+"""
+    request_grab(path)
+
+Save an image of the open workflow window's body (step pages and viewer
+canvas) to `path` (PNG) on the window's next tick, through QML
+`grabToImage`. This is the way to take screenshots and render checks of a
+window: it works from a tick hook or callback, also offscreen or with the
+display asleep. The file appears asynchronously, shortly after the tick.
+"""
+request_grab(path::AbstractString) = (sh = _SHELL[]; sh === nothing || _set!(sh, "grabPath", String(path)); nothing)
+hh_grab_started() = (sh = _SHELL[]; sh === nothing || _set!(sh, "grabPath", ""); nothing)
 
 # Run a callback body on the current shell, reporting errors in the status
 # line instead of letting them escape into Qt.
@@ -573,14 +592,16 @@ hh_result_frame(i) = _with_explorer(ex -> set_frame!(ex, round(Int, i)))
 hh_result_field(key) = _with_explorer(ex -> set_field!(ex, Symbol(String(key))))
 hh_result_color_mode(mode) = _with_explorer(ex -> set_color_mode!(ex, Symbol(String(mode))))
 hh_result_vectors(on) = _with_explorer(ex -> (ex.show_vectors[] = Bool(on)))
+hh_result_tool(name) = _with_explorer(ex -> set_tool!(ex, Symbol(String(name))))
+hh_result_clear_tool() = _with_explorer(clear_tool!)
 
 function _register_qml_functions()
-    @qmlfunction hh_tick hh_set_step hh_add_files hh_clear_files hh_set_pair_mode hh_select_pair
+    @qmlfunction hh_tick hh_grab_started hh_set_step hh_add_files hh_clear_files hh_set_pair_mode hh_select_pair
     @qmlfunction hh_show_frame hh_fill_preset hh_set_pass hh_add_pass hh_remove_pass hh_set_option
     @qmlfunction hh_set_mode hh_set_precision hh_test hh_set_output hh_start_run hh_cancel_run
     @qmlfunction hh_open_settings hh_save_settings hh_open_results hh_use_result_settings
     @qmlfunction hh_toggle_popout hh_result_frame hh_result_field hh_result_color_mode
-    @qmlfunction hh_result_vectors
+    @qmlfunction hh_result_vectors hh_result_tool hh_result_clear_tool
     @qmlfunction hh_set_prepare_page hh_add_step hh_remove_step hh_move_step hh_set_step_option
     @qmlfunction hh_estimate_background hh_show_processed hh_set_probe_window hh_clear_probe
     @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi

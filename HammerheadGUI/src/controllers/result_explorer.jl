@@ -667,6 +667,40 @@ function tool_summary(ex::ResultExplorer)
     return string("Γ (line) = ", _fmt(res.line), " ", un, "\n", area_text)
 end
 
+"""
+    profile_series(ex::ResultExplorer) -> Union{Nothing,NamedTuple}
+
+The profile panel's curves while the `:profile` tool has a line:
+`(; s, u, v, speed, xlabel, ylabel)`, with `s` the distance along the line
+and axis labels carrying units (displacement in pixels for unscaled
+results, velocity otherwise). `nothing` for the other tools or before the
+line is complete.
+"""
+function profile_series(ex::ResultExplorer)
+    pd = ex.profile_data[]
+    (ex.tool[] === :profile && pd !== nothing) || return nothing
+    r = current_result(ex)
+    s, u, v = collect(Float64, pd.s), collect(Float64, pd.u), collect(Float64, pd.v)
+    quantity = r.scale === nothing ? "displacement" : "velocity"
+    return (; s, u, v, speed = hypot.(u, v),
+            xlabel = string("distance along the line (", _length_unit(r), ")"),
+            ylabel = string(quantity, " (", _field_unit(r), ")"))
+end
+
+"""
+    canvas_key!(ex::ResultExplorer, key::Symbol) -> Bool
+
+A key pressed on the results canvas: `:escape` clears the analysis tool's
+path and outputs ([`clear_tool!`](@ref)). Returns whether it was used.
+"""
+function canvas_key!(ex::ResultExplorer, key::Symbol)
+    key === :escape || return false
+    (isempty(ex.tool_points[]) && ex.profile_data[] === nothing &&
+     ex.circulation_result[] === nothing) && return false
+    clear_tool!(ex)
+    return true
+end
+
 # Data-space point (x, y) marking the current selection, or `nothing` when the
 # selection is empty or stale — the view draws a marker there.
 function selection_point(r, sel)

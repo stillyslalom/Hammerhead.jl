@@ -19,6 +19,15 @@ catch err
     (; value = nothing, err)
 end
 
+# A number as text-field text: as printed when that is short, otherwise
+# rounded to 6 significant digits (the stored value stays exact until the
+# field is edited).
+function display_number(x::Real)
+    x isa Integer && return string(x)
+    s = string(x)
+    return length(s) <= 8 ? s : @sprintf("%.6g", x)
+end
+
 # Parse a positive-number text field entry.
 function _parse_positive(str::AbstractString, what::AbstractString)
     v = tryparse(Float64, strip(str))

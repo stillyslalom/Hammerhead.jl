@@ -272,8 +272,16 @@ const r_track = TrackingResult(
         @test pd.v[1] ≈ -5Ω atol = 1e-12                   # v = Ω(x-yc) at x = 5
         @test pd.v[end] ≈ 5Ω atol = 1e-12
         @test occursin("u (blue)", tool_summary(ex))
+        ps_ = profile_series(ex)                           # the profile panel's curves
+        @test ps_.s == pd.s && ps_.v == pd.v && ps_.speed ≈ hypot.(pd.u, pd.v)
+        @test ps_.xlabel == "distance along the line (px)" && ps_.ylabel == "displacement (px)"
+        @test C.canvas_key!(ex, :escape)                   # Escape clears the line
+        @test isempty(ex.tool_points[]) && profile_series(ex) === nothing && ex.tool[] === :profile
+        @test !C.canvas_key!(ex, :escape) && !C.canvas_key!(ex, :delete)
+        C.click!(ex, 5.0, 10.0); C.click!(ex, 15.0, 10.0)
         C.click!(ex, 0.0, 0.0)                             # restart
         @test length(ex.tool_points[]) == 1 && ex.profile_data[] === nothing
+        @test profile_series(ex) === nothing
 
         # circulation tool: polygon + alt-click close, both estimators
         set_tool!(ex, :circulation)
@@ -296,6 +304,12 @@ const r_track = TrackingResult(
         @test isempty(ex.tool_points[])
         clear_tool!(ex)
         @test ex.circulation_result[] === nothing
+
+        @test profile_series(ex) === nothing               # not the profile tool
+        exs_p = ResultExplorer(with_scale(rot, PhysicalScale(2.0, 0.5, "mm", "s")))
+        set_tool!(exs_p, :profile); C.click!(exs_p, 10.0, 20.0); C.click!(exs_p, 30.0, 20.0)
+        @test profile_series(exs_p).ylabel == "velocity (mm/s)"
+        @test profile_series(exs_p).xlabel == "distance along the line (mm)"
 
         # scaled circulation carries length²/time
         set_tool!(exs, :circulation)

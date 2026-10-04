@@ -115,6 +115,84 @@ end
     @test length(c.ax.scene.plots) == nplots
 end
 
+@testset "Results tools and profile row (offscreen)" begin
+    wf = PlanarWorkflow(files = Any[imgA, imgB, imgA, imgB])
+    fill_preset!(wf.passes, :low)
+    start_run!(wf; spawn = false)
+    ex = wf.explorer[]
+    rc = HammerheadGUI.results_canvas()
+    HammerheadGUI.set_explorer!(rc, ex)
+    finite(pts) = count(p -> all(isfinite, p), pts)
+    allplots(scene) = length(scene.plots) + sum(allplots, scene.children; init = 0)
+    nmain, nall = length(rc.ax.scene.plots), allplots(rc.fig.scene)
+    @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))  # lay out the figure
+    @test !rc.profile_shown[] && !rc.profile_ax.scene.visible[] && !rc.profile_ax.blockscene.visible[]
+    h0 = rc.ax.scene.viewport[].widths[2]
+
+    scene, ev = rc.ax.scene, events(rc.fig)
+    function mouse_click(x, y, button = Mouse.left)
+        p = Makie.project(scene, Point2f(x, y)) .+ scene.viewport[].origin
+        ev.mouseposition[] = (Float64(p[1]), Float64(p[2]))
+        ev.mousebutton[] = Makie.MouseButtonEvent(button, Mouse.press)
+        ev.mousebutton[] = Makie.MouseButtonEvent(button, Mouse.release)
+    end
+    key(k) = (ev.keyboardbutton[] = Makie.KeyEvent(k, Keyboard.press))
+    r = current_result(ex)
+    x0, x1 = extrema(r.x); y0, y1 = extrema(r.y)
+    xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
+
+    # inspect: a click selects the nearest vector
+    mouse_click(r.x[3], r.y[2])
+    @test ex.selection[] == CartesianIndex(2, 3)
+
+    # profile: two real clicks draw the line and open the profile row
+    set_tool!(ex, :profile)
+    mouse_click(x0 + 5, ym); mouse_click(x1 - 5, ym)
+    @test length(ex.tool_points[]) == 2 && all(isapprox.(ex.tool_points[][2], (x1 - 5, ym); atol = 1))
+    @test finite(rc.tool_line[1][]) == 2 && finite(rc.tool_points[1][]) == 2
+    @test rc.profile_shown[] && rc.profile_ax.scene.visible[] && rc.profile_legend.blockscene.visible[]
+    @test length(rc.profile_lines[1][1][]) == 100
+    @test occursin("distance along the line", rc.profile_ax.xlabel[])
+    @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
+    @test rc.ax.scene.viewport[].widths[2] < h0       # the row takes space from the field
+    @test rc.profile_ax.scene.viewport[].widths[2] >= 100
+    @test length(rc.ax.scene.plots) == nmain && allplots(rc.fig.scene) == nall
+
+    # Escape clears the line and collapses the row
+    key(Keyboard.escape)
+    @test isempty(ex.tool_points[]) && finite(rc.tool_line[1][]) == 0
+    @test !rc.profile_shown[] && !rc.profile_ax.scene.visible[] && !rc.profile_legend.blockscene.visible[]
+    @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
+    @test rc.ax.scene.viewport[].widths[2] == h0
+
+    # circulation: clicks add vertices, a right click closes the contour
+    set_tool!(ex, :circulation)
+    for (x, y) in ((x0 + 5, y0 + 5), (x1 - 5, y0 + 5), (x1 - 5, y1 - 5), (x0 + 5, y1 - 5))
+        mouse_click(x, y)
+    end
+    @test finite(rc.tool_line[1][]) == 4             # open path while drawing
+    mouse_click(xm, ym, Mouse.right)
+    @test ex.circulation_result[] !== nothing
+    @test finite(rc.tool_line[1][]) == 5 && rc.tool_line[1][][1] == rc.tool_line[1][][end]
+    @test occursin("Γ (line)", tool_summary(ex)) && !rc.profile_shown[]
+    @test !isempty(colorbuffer(rc.fig; px_per_unit = 1))
+    set_tool!(ex, :inspect)                           # switching tools clears the path
+    @test finite(rc.tool_line[1][]) == 0 && finite(rc.tool_points[1][]) == 0
+    limits = rc.ax.finallimits[]
+    mouse_click(xm, ym, Mouse.right)                  # not used: the Axis keeps it
+    @test rc.ax.finallimits[] == limits
+    @test length(rc.ax.scene.plots) == nmain && allplots(rc.fig.scene) == nall
+
+    # a frame switch clears a profile, and the row with it
+    set_tool!(ex, :profile)
+    HammerheadGUI.Controllers.click!(ex, x0 + 5, ym)
+    HammerheadGUI.Controllers.click!(ex, x1 - 5, ym)
+    @test rc.profile_shown[]
+    set_frame!(ex, 2)
+    @test !rc.profile_shown[] && finite(rc.tool_line[1][]) == 0
+    @test length(rc.ax.scene.plots) == nmain && allplots(rc.fig.scene) == nall
+end
+
 # Opens a real Qt window: needs a display and an OpenGL 3.3 context. It runs in
 # a separate Julia process: on some drivers (seen with AMD on Windows) a Qt GL
 # context crashes once GLFW/GLMakie has created a context in the same process,

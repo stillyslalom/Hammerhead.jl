@@ -49,7 +49,7 @@ export ResultExplorer, nframes, current_result, set_frame!, push_result!,
        vector_data, auto_lengthscale, selection_point,
        trajectory_points, trajectory_gap_count,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits,
-       current_field_values, set_tool!, clear_tool!, tool_summary
+       current_field_values, set_tool!, clear_tool!, tool_summary, profile_series
 export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
        click!, alt_click!, polygon_at, delete_selected!, clear_polygons!,
        begin_hole!, grow_mask!, shrink_mask!, set_raster!, has_mask, save_mask, status_text
@@ -63,7 +63,7 @@ export BatchCancelled, parse_schedule, add_files!, clear_files!, frame_pairs,
        start!, cancel!, save_settings, load_settings!
 export ROIEditor, set_roi!, clear_roi!, cancel_corner!, roi_summary
 export ScaleTool, clear_points!, undo_point!, set_separation!, pixel_distance,
-       pixel_size, physical_scale, scale_summary
+       pixel_size, physical_scale, scale_summary, scale_description
 export CalibrationReview, nplanes, set_plane!, refit!, plane_errors,
        plane_summary, fit_summary, selfcal_summary
 export StereoBatchRunner, set_dewarpers!, build_dewarpers, stereo_pairs
@@ -89,7 +89,7 @@ export ResultExplorer, result_explorer, result_explorer!,
        available_fields, field_values, set_field!,
        select_nearest!, clear_selection!, describe_selection,
        color_limits, set_color_mode!, set_color_limits!, current_color_limits,
-       set_tool!, clear_tool!, tool_summary
+       set_tool!, clear_tool!, tool_summary, profile_series
 export MaskEditor, add_vertex!, undo_vertex!, close_active!, cancel_active!,
        begin_hole!, grow_mask!, shrink_mask!, delete_selected!, clear_polygons!,
        set_raster!, save_mask

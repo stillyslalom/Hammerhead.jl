@@ -1,5 +1,6 @@
 # Drives the real planar_window through every step, including edits on the
-# Prepare sub-pages (run by test_planar_window.jl in its own process when
+# Prepare sub-pages and the Results tools, and grabs window images with
+# `request_grab` (run by test_planar_window.jl in its own process when
 # HAMMERHEADGUI_QT_TESTS=true). Exits nonzero on failure.
 using Test
 using HammerheadGUI
@@ -19,6 +20,14 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     t_stage = Ref(time())
     t_start = time()
     areas = Symbol[]
+    circulation = Ref{Any}(nothing)
+    shots = get(ENV, "HAMMERHEADGUI_SHOTS", mktempdir())     # keep the images: set the variable
+    mkpath(shots)
+    mask_png, scale_png, profile_png, circulation_png =
+        (joinpath(shots, f) for f in ("prepare_mask.png", "prepare_scale.png",
+                                      "results_profile.png", "results_circulation.png"))
+    # a grabbed image lands asynchronously: wait for the file, then a moment
+    grabbed(path) = isfile(path) && filesize(path) > 0 && time() - t_stage[] > 1
     next!() = (stage[] += 1; t_stage[] = time())
     HammerheadGUI._TICK_HOOK[] = function (sh)
         w = sh.wf
@@ -45,26 +54,58 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
             canvas_alt_click!(w)
             next!()
         elseif s == 2 && time() - t_stage[] > 0.5
+            HammerheadGUI.request_grab(mask_png); next!()
+        elseif s == 3 && grabbed(mask_png)
             set_prepare_page!(w, :roi)
             edit_roi!(w, "9", "120", "5", "124")
             set_prepare_page!(w, :scale)
             canvas_click!(w, 10.0, 20.0); canvas_click!(w, 10.0, 70.0)
             HammerheadGUI.hh_set_scale("separation", "25")
             HammerheadGUI.hh_set_scale("dt", "0.001")
+            HammerheadGUI.request_grab(scale_png); next!()
+        elseif s == 4 && grabbed(scale_png)
             set_prepare_page!(w, :preprocess)
             HammerheadGUI.hh_estimate_background(2)
             next!()
-        elseif s == 3 && !ps.background_running[] && time() - t_stage[] > 0.5
+        elseif s == 5 && !ps.background_running[] && time() - t_stage[] > 0.5
             set_step!(w, :test); test_pair!(w); next!()
-        elseif s == 4 && !w.test.running[]
+        elseif s == 6 && !w.test.running[]
             set_step!(w, :run); start_run!(w); next!()
-        elseif s == 5 && !w.run.running[]
+        elseif s == 7 && !w.run.running[]
             set_step!(w, :results); next!()
-        elseif s == 6 && time() - t_stage[] > 1
+        elseif s == 8 && time() - t_stage[] > 1
+            # Results › Profile through the bridge, clicks as the canvas sends them
+            ex = w.explorer[]
+            HammerheadGUI.hh_result_tool("profile")
+            r = current_result(ex)
+            ym = (first(r.y) + last(r.y)) / 2
+            Controllers.click!(ex, first(r.x) + 5, ym); Controllers.click!(ex, last(r.x) - 5, ym + 10)
+            next!()
+        elseif s == 9 && w.explorer[].profile_data[] !== nothing && time() - t_stage[] > 1
+            occursin("u (blue)", sh.shown["toolSummary"]) && push!(seen, :profile)  # bridged
+            HammerheadGUI.request_grab(profile_png); next!()
+        elseif s == 10 && grabbed(profile_png)
+            ex = w.explorer[]
+            HammerheadGUI.hh_result_tool("circulation")
+            r = current_result(ex)
+            # lower-right part of the field, clear of the masked corner
+            x0, x1 = (first(r.x) + last(r.x)) / 2, last(r.x) - 5
+            y0, y1 = (first(r.y) + last(r.y)) / 2, last(r.y) - 5
+            for (x, y) in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+                Controllers.click!(ex, x, y)
+            end
+            Controllers.alt_click!(ex)
+            circulation[] = ex.circulation_result[]
+            push!(seen, ex.tool[])
+            HammerheadGUI.request_grab(circulation_png); next!()
+        elseif s == 11 && grabbed(circulation_png)
+            HammerheadGUI.hh_result_clear_tool()
+            next!()
+        elseif s == 12 && time() - t_stage[] > 0.5
             HammerheadGUI.toggle_popout!(sh.host); next!()
-        elseif s == 7 && sh.host.pending === nothing && time() - t_stage[] > 1
+        elseif s == 13 && sh.host.pending === nothing && time() - t_stage[] > 1
             push!(areas, sh.host.area); HammerheadGUI.toggle_popout!(sh.host); next!()
-        elseif s == 8 && sh.host.pending === nothing && time() - t_stage[] > 1
+        elseif s == 14 && sh.host.pending === nothing && time() - t_stage[] > 1
             push!(areas, sh.host.area); HammerheadGUI.request_close(); next!()
         end
     end
@@ -73,8 +114,8 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     finally
         HammerheadGUI._TICK_HOOK[] = nothing
     end
-    @test stage[] == 9
-    @test seen == [:preview]
+    @test stage[] == 15
+    @test seen == [:preview, :profile, :circulation]
     @test !wf.spawn[]                                  # restored when the window closed
     @test [s.operation for s in wf.preprocessing[]] == [:subtract_background, :highpass_filter, :invert_image]
     @test wf.preprocessing[][2] == PreprocessStep(:highpass_filter; sigma = 2.5)
@@ -84,6 +125,15 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     @test wf.test.result[] isa PIVResult
     @test length(wf.run.completed[]) == 2 && nframes(wf.explorer[]) == 2
     @test areas == [:pop, :main]
+    @test circulation[] !== nothing && isfinite(circulation[].line)
+    @test isempty(wf.explorer[].tool_points[]) && wf.explorer[].tool[] === :circulation
+    # the grabbed window images exist and show something (not one colour)
+    for path in (mask_png, scale_png, profile_png, circulation_png)
+        @test isfile(path)
+        img = HammerheadGUI.Controllers.FileIO.load(path)
+        @test minimum(size(img)) > 100 && length(unique(img)) > 50
+    end
+    @info "window images" mask_png scale_png profile_png circulation_png
     @test isempty(filter(s -> s isa GLMakie.Screen{HammerheadGUI.QMLMakie.QMLWindow},
                          GLMakie.ALL_SCREENS))
     # the window can be opened again in the same session

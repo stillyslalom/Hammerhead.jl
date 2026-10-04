@@ -28,12 +28,6 @@ StepPage {
             }
         }
     }
-    Label {
-        text: app.prepareSummary
-        opacity: 0.75
-        wrapMode: Text.WordWrap
-        Layout.fillWidth: true
-    }
 
     PreprocessPane { visible: app.preparePage === "preprocess"; Layout.fillWidth: true }
     MaskPane { visible: app.preparePage === "mask"; Layout.fillWidth: true }

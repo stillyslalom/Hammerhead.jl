@@ -6,8 +6,8 @@ import jlqml
 
 StepPage {
     title: "Results"
-    guidance: "Browse the finished run: step through pairs, choose a field, and click a vector " +
-              "in the viewer to inspect it."
+    guidance: "Browse the finished run: step through pairs, choose a field, and inspect " +
+              "vectors, profiles, and circulation with the tools below."
 
     Label {
         text: app.resultsLabel
@@ -74,6 +74,64 @@ StepPage {
         Switch {
             checked: app.hasResults ? app.resultVectors : true
             onToggled: Julia.hh_result_vectors(checked)
+        }
+    }
+
+    Label {
+        visible: app.hasResults
+        text: "Tool"
+        font.weight: Font.DemiBold
+        Layout.topMargin: 8
+    }
+    RowLayout {
+        visible: app.hasResults
+        spacing: 0
+        ButtonGroup { id: toolGroup }
+        Repeater {
+            model: [{ key: "inspect", text: "Inspect" }, { key: "profile", text: "Profile" },
+                    { key: "circulation", text: "Circulation" }]
+            Button {
+                text: modelData.text
+                checkable: true
+                checked: app.resultTool === modelData.key
+                enabled: modelData.key === "inspect" || app.resultToolsAvailable
+                ButtonGroup.group: toolGroup
+                onClicked: Julia.hh_result_tool(modelData.key)
+            }
+        }
+        Item { implicitWidth: 12 }
+        Button {
+            text: "Clear"
+            enabled: app.resultTool !== "inspect"
+            onClicked: Julia.hh_result_clear_tool()
+            ToolTip.visible: hovered
+            ToolTip.text: "Remove the line or contour (Escape on the viewer)"
+        }
+    }
+    Label {
+        visible: app.hasResults
+        text: app.resultTool === "profile"
+              ? "Click two points on the viewer to sample the velocity along a line; " +
+                "a third click starts a new line."
+              : app.resultTool === "circulation"
+                ? "Click contour vertices on the viewer, right-click to close the contour."
+                : app.resultToolsAvailable
+                  ? "Click a vector on the viewer to inspect it."
+                  : "Click a vector on the viewer to inspect it. Profile and circulation " +
+                    "need a planar PIV result."
+        wrapMode: Text.WordWrap
+        opacity: 0.75
+        Layout.fillWidth: true
+    }
+    Frame {
+        visible: app.hasResults && app.toolSummary !== ""
+        Layout.fillWidth: true
+        Label {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            text: app.hasResults ? app.toolSummary : ""
+            wrapMode: Text.WordWrap
+            lineHeight: 1.2
         }
     }
 

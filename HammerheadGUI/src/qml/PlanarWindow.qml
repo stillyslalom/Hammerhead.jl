@@ -50,6 +50,7 @@ ApplicationWindow {
     footer: PairBar {}
 
     SplitView {
+        id: body
         anchors.fill: parent
         orientation: Qt.Horizontal
 
@@ -144,6 +145,11 @@ ApplicationWindow {
         repeat: true
         onTriggered: {
             const r = Julia.hh_tick()
+            if (app.grabPath !== "") {
+                const path = app.grabPath
+                Julia.hh_grab_started()
+                body.grabToImage(function (img) { img.saveToFile(path) })
+            }
             if (r === 2) {
                 win.close()
             } else if (r === 1) {

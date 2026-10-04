@@ -83,6 +83,17 @@
         clear_scale!(wf)
         @test wf.scale[] === nothing && isempty(ps.scale[].points[])
         @test_throws ArgumentError set_scale_field!(wf, :speed, 1)
+        # readable scale text; long decimals shortened for text fields
+        @test scale_description(nothing) == "no scale: results stay in pixels and frames"
+        @test scale_description(PhysicalScale(1 / 170, 1.0, "mm", "frame")) ==
+              "0.005882 mm per pixel · 1 frame between exposures"
+        @test scale_description(PhysicalScale(0.02, 2.0, "mm", "frame")) ==
+              "0.02 mm per pixel · 2 frames between exposures"
+        @test scale_description(PhysicalScale(0.5, 1e-3, "mm", "s")) ==
+              "0.5 mm per pixel · 0.001 s between exposures"
+        @test C.display_number(1 / 170) == "0.00588235" && C.display_number(2.5) == "2.5"
+        @test C.display_number(3.0) == "3.0" && C.display_number(7) == "7"
+        @test C.step_options(PreprocessStep(:highpass_filter; sigma = 1 / 3)) == ["sigma" => "0.333333"]
 
         # a recipe opened from outside reseeds every editor, and nothing
         # writes back: the recipe survives unchanged

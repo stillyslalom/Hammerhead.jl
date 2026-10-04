@@ -181,7 +181,12 @@ grid, and self-calibration) and has no ROI.
 2. Prepare sub-pages; retire the GLMakie tool windows and views they replace;
    rewrite `docs/src/howto/gui.md` around the window.
    Design (proposed 2026-10-04; implemented overnight, unreviewed): see
-   "Slice 2 design" below.
+   "Slice 2 design" below. Results tools (2026-10-04): inspect / profile /
+   circulation on the results canvas with a tool selector on the page;
+   the collapsed profile row hides its Axis and legend through scene
+   `visible` (GLMakie skips hidden scenes) inside an `Outside`-aligned
+   nested layout, so it takes no space and creates no plots.
+   `request_grab(path)` saves window images for render checks.
 3. Stereo window.
 4. Ensemble mode in both windows; session with a lab user (ROADMAP §2).
 5. PTV window, after a core PTV recipe design.

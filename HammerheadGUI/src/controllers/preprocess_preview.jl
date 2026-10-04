@@ -304,10 +304,12 @@ set_background!(pp::PreprocessPreview, frames; method::Symbol = :min) =
 """
     step_options(step::PreprocessStep) -> Vector{Pair{String,String}}
 
-The editable options of a step and their values as text, in display order.
+The editable options of a step and their values as text, in display order
+(long decimals rounded to 6 significant digits).
 """
 function step_options(step::PreprocessStep)
-    fmt(v::AbstractVector) = join(v, ", ")
+    fmt(v::Union{AbstractVector,Tuple}) = join((x isa Real ? display_number(x) : string(x) for x in v), ", ")
+    fmt(v::Real) = display_number(v)
     fmt(v) = string(v)
     return [k => fmt(step.options[k]) for k in PREPROCESS_OPTIONS[step.operation]]
 end
