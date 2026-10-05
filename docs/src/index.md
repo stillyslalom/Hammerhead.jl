@@ -4,10 +4,6 @@ CurrentModule = Hammerhead
 
 # Hammerhead.jl
 
-```@raw html
-<img src="assets/logo.svg" alt="Hammerhead logo" width="112" style="float: right; margin: 0 0 1em 1.5em;">
-```
-
 Hammerhead measures fluid motion from particle images: planar particle image
 velocimetry (PIV), stereo PIV with camera calibration and self-calibration,
 and particle tracking (PTV), with uncertainty estimates, statistics and
@@ -43,10 +39,11 @@ window size, masking and conversion to velocity, using synthetic images.
 In Julia 1.10 or later, press `]` to enter package mode:
 
 ```julia
-pkg> add Hammerhead CairoMakie
+pkg> add Hammerhead
 ```
 
-`CairoMakie` draws the tutorial figures. The desktop workflow is in the
+[`CairoMakie`](https://docs.makie.org/stable/explanations/backends/cairomakie.html)
+draws the tutorial figures. The desktop workflow is in the
 separate `HammerheadGUI` package (`pkg> add HammerheadGUI`); start Julia with
 several threads (`julia -t auto`) and open it with `using HammerheadGUI;
 hammerhead()`.
@@ -64,6 +61,6 @@ hammerhead()`.
 - [A PIV session in the GUI](tutorials/gui_tour.md): the same workflow in the
   desktop window.
 
-PIV measures the displacement of particle *patterns* within interrogation
+PIV measures the displacement of particle patterns within interrogation
 windows; PTV follows individual particles. A spatial calibration and the
 exposure delay convert displacement to velocity.
