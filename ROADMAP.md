@@ -12,13 +12,12 @@ of scope.
 
 ## Implemented baseline
 
-Both packages are registered (core v0.1.0, HammerheadGUI v0.1.1). The core
+Both packages are registered (core v0.2.1, HammerheadGUI v0.3.0). The core
 provides planar and stereo PIV (calibration, target detection, dewarping, 3C
 reconstruction, Wieneke 2005 self-calibration), ensemble correlation,
 Wieneke 2015 uncertainty, statistics and derived quantities, masking,
 physical scaling, PTV and gap-aware tracking, JLD2 persistence, table/VTK
-export, and CPU, KernelAbstractions, CUDA, and AMDGPU execution. Since the
-registered release:
+export, and CPU, KernelAbstractions, CUDA, and AMDGPU execution. Added in the 0.2 releases:
 
 - Larger frame-B search areas (CPU single-pair and ensemble).
 - Non-informative correlation planes and contrast-free deformed windows are
@@ -32,10 +31,11 @@ registered release:
   `PlanarTransform`-calibrated grid exports; calibrated PIV/PLIF resampling
   (`resample_planar`/`resample_image`); `stencil = :centered` derivatives;
   ROI-aware effort presets.
-- GUI: result explorer (all four result types, lazy browsing, derived fields,
-  profile/circulation tools), mask and ROI editors, preprocessing preview,
-  scale tool, planar and stereo batch forms with save/open settings,
-  calibration and self-calibration review.
+- GUI: one Qt window, `hammerhead()`, for planar, PTV and stereo recordings
+  (Images → [Calibration →] Prepare → Passes with a pair test → Run →
+  Results), settings saved as recipes, and an optional GPU switch; the result
+  explorer (all four result types, lazy browsing, derived fields,
+  profile/circulation tools) and calibration/self-calibration review.
 
 The [backend feature matrix](docs/src/reference/feature_matrix.md) lists
 execution support per backend.
@@ -77,23 +77,18 @@ studies, and the Qt/QML GUI prototype. They are recoverable from commit
 The current GUI is a set of separate tool windows. Users have to know which
 window to open next and carry settings between them by hand.
 
-- [ ] **One main window per modality** (planar ✅ `planar_window`, stereo ✅
-  `stereo_window`; PTV ✅ as the planar window's particle analysis modes,
-  2026-10-04, by user decision), organized as
+- [x] **One workflow window** (2026-10-04; HammerheadGUI 0.3.0), organized as
   steps: Images → Prepare (preprocessing, mask, ROI, and scale as embedded
-  panels) → Passes → Test pair → Run → Results. Each step shows its effect on
-  a representative pair before the batch runs.
+  panels) → Passes (with the pair test) → Run → Results, with Calibration for
+  stereo and PTV/tracking as planar analysis modes. Each step shows its
+  effect on a representative pair before the batch runs.
   - Settings save and open through the core recipe API (`PIVRecipe`,
     `save_recipe`, `load_recipe`, `apply_recipe`); the GUI holds no
     private settings format.
-  - The GUI calls only public core API. Anything it needs (e.g. effort
-    presets, now reached through the internal `effort_schedule`) gets a public
-    core function first.
+  - The GUI calls only public core API. Anything it needs (as with
+    `effort_schedule` and `backend_problem`) gets a public core function first.
   - Keep the framework-free controller layer; reuse the existing controllers
     as the step panels.
-  - Supersedes the parked stash `Shared recipe workbench WIP parked for
-    experimental QML integration` (built on the removed revision editors);
-    drop the stash once the redesign starts.
 - [x] Ensemble runs in the GUI windows (GUI_REDESIGN slice 4, 2026-10-04).
   Stereo save/open settings and calibration files landed with
   `stereo_window` (2026-10-04).
@@ -210,8 +205,6 @@ Each needs a failing baseline case and a demonstrated improvement.
 
 ## Release practice
 
-- [ ] Confirm the hosted Windows four-thread CI job passes on this branch.
-- [ ] Next release: core first, then the GUI with a raised Hammerhead compat
-  bound. Registered HammerheadGUI 0.1.1 already passes `on_result` to
-  `run_piv_sequence`, which registered core 0.1.0 lacks, so the GUI batch
-  form needs this core release. See [RELEASING.md](RELEASING.md).
+- Release core first, then the GUI with its Hammerhead compat bound raised to
+  the first core release carrying the APIs it calls. See
+  [RELEASING.md](RELEASING.md).

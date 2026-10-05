@@ -1,6 +1,8 @@
 # Release notes
 
-## Unreleased
+## Hammerhead 0.2.1 and HammerheadGUI 0.3.0 (2026-10-04)
+
+Changes since core v0.2.0 and HammerheadGUI v0.2.0 (2026-10-03).
 
 ### Core
 
@@ -182,9 +184,8 @@ Added:
   already has a GLMakie screen, and `result_explorer`, `calibration_review`
   and `selfcal_review` warn after a Qt window was opened: GLFW and Qt GL
   contexts sharing a process crashed the AMD driver.
-- New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires the core
-  release that exports `effort_schedule` and takes an ensemble `progress`
-  function.
+- New dependencies: QML.jl, QMLMakie, Qt6Declarative_jll. Requires
+  Hammerhead 0.2.1.
 
 Changed:
 
@@ -246,6 +247,22 @@ Breaking:
 - `MaskEditor`, `ROIEditor` and `ScaleTool` keep an image size instead of an
   image copy: construct them from a size or a matrix. These three and
   `PreprocessPreview` no longer take an image path.
+
+### Compatibility
+
+- Results files keep `format_version = 1`. Files written by `apply_recipe`
+  now embed the recipe as TOML text (`recipe_toml` plus `recipe_arrays/…`),
+  may record per-pair mask paths (`mask_sources/…`), and for stereo store the
+  calibration; readers that do not look for these entries ignore them.
+- Recipe files are `RECIPE_FORMAT_VERSION = 3` (TOML). Hammerhead 0.2.1 reads
+  versions 1–3; Hammerhead 0.2.0 cannot read version 3 recipes, so share
+  settings between machines on the same core release.
+- Stereo calibration files are new (`CALIBRATION_FORMAT_VERSION = 1`).
+- `TABLE_SCHEMA_VERSION` remains `hammerhead-table-1`.
+- HammerheadGUI 0.3.0 requires Hammerhead 0.2.1 (backend checks, per-pair
+  masks, TOML recipes, interpolation options). Its breaking changes are the
+  removed GLMakie tool windows and controllers listed above; `hammerhead()`
+  replaces them, and `planar_window`/`stereo_window` remain as shortcuts.
 
 ## Hammerhead 0.2.0 and HammerheadGUI 0.2.0 (2026-10-03)
 
