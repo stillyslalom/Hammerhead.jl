@@ -2,7 +2,7 @@
 #
 #     julia docs/make_icons.jl
 #
-# Writes the SVG (docs sidebar logo, GUI header) and a multi-size ICO (docs
+# Writes the SVG (docs sidebar logo and front page, README, GUI step rail) and a multi-size ICO (docs
 # favicon, Windows title bar and taskbar icon of the GUI windows) to
 # docs/src/assets/ and HammerheadGUI/src/qml/icons/. The drawing: a
 # hammerhead seen from above whose shaft is a displacement vector, with the

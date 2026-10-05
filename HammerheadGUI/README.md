@@ -1,5 +1,7 @@
 # HammerheadGUI.jl
 
+<img src="../docs/src/assets/logo.svg" alt="Hammerhead logo" width="112" align="right">
+
 **HammerheadGUI** provides desktop tools for [Hammerhead.jl](https://github.com/stillyslalom/Hammerhead.jl)
 particle image velocimetry (PIV): prepare the images, test the settings on one
 pair, run a recording, and inspect the vectors, all in one window.
@@ -21,9 +23,9 @@ using HammerheadGUI
 wf = hammerhead()
 ```
 
-The window needs a graphical session. It walks through one analysis in six
-steps, with an image viewer that follows the step and can pop out into its own
-window:
+The window needs a graphical session. It walks through one analysis in five
+steps (six for stereo, with Calibration), with an image viewer that follows
+the step and can pop out into its own window:
 
 - **Images:** choose one camera (planar) or two (stereo), add frames and
   choose how they pair (1–2, 3–4 or 1–2, 2–3); pick the representative pair

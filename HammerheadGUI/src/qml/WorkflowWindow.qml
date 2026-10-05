@@ -51,12 +51,6 @@ ApplicationWindow {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 4
-            Image {
-                source: "icons/hammerhead.svg"
-                sourceSize.width: 22
-                sourceSize.height: 22
-                Layout.rightMargin: 6
-            }
             ToolButton { text: "Open settings…"; onClicked: openSettingsDialog.open() }
             ToolButton { text: "Save settings…"; onClicked: saveSettingsDialog.open() }
             Item { Layout.fillWidth: true }
@@ -91,18 +85,40 @@ ApplicationWindow {
                 anchors.fill: parent
                 spacing: 0
 
-                ListView {
-                    id: rail
+                // the steps, with the app's mark at the foot of the rail (the
+                // title bar already shows the icon at the top left)
+                ColumnLayout {
+                    // a nested layout fills the row by default; the rail must not
+                    Layout.fillWidth: false
                     Layout.preferredWidth: 200
+                    Layout.maximumWidth: 200
                     Layout.fillHeight: true
-                    Layout.topMargin: 8
-                    model: stepModel
-                    interactive: false
-                    spacing: 2
-                    delegate: StepDelegate {
-                        width: rail.width
-                        stepNumber: index + 1
-                        current: model.key === app.step
+                    spacing: 0
+                    ListView {
+                        id: rail
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.topMargin: 8
+                        model: stepModel
+                        interactive: false
+                        spacing: 2
+                        delegate: StepDelegate {
+                            width: rail.width
+                            stepNumber: index + 1
+                            current: model.key === app.step
+                        }
+                    }
+                    RowLayout {
+                        Layout.leftMargin: 14
+                        Layout.bottomMargin: 12
+                        spacing: 8
+                        opacity: 0.8
+                        Image {
+                            source: "icons/hammerhead.svg"
+                            sourceSize.width: 28
+                            sourceSize.height: 28
+                        }
+                        Label { text: "Hammerhead"; font.weight: Font.DemiBold }
                     }
                 }
 

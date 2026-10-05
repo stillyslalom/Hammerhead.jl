@@ -4,6 +4,10 @@ CurrentModule = Hammerhead
 
 # Hammerhead.jl
 
+```@raw html
+<img src="assets/logo.svg" alt="Hammerhead logo" width="112" style="float: right; margin: 0 0 1em 1.5em;">
+```
+
 Hammerhead measures fluid motion from particle images: planar particle image
 velocimetry (PIV), stereo PIV with camera calibration and self-calibration,
 and particle tracking (PTV), with uncertainty estimates, statistics and
@@ -43,7 +47,9 @@ pkg> add Hammerhead CairoMakie
 ```
 
 `CairoMakie` draws the tutorial figures. The desktop workflow is in the
-separate `HammerheadGUI` package (`pkg> add HammerheadGUI`).
+separate `HammerheadGUI` package (`pkg> add HammerheadGUI`); start Julia with
+several threads (`julia -t auto`) and open it with `using HammerheadGUI;
+hammerhead()`.
 
 ## Tutorials
 

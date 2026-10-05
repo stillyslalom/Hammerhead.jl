@@ -1,5 +1,7 @@
 # Hammerhead.jl
 
+<img src="docs/src/assets/logo.svg" alt="Hammerhead logo" width="112" align="right">
+
 [![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/stable/)
 [![Development docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://stillyslalom.github.io/Hammerhead.jl/dev/)
 [![Build status](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/stillyslalom/Hammerhead.jl/actions/workflows/CI.yml?query=branch%3Amain)
@@ -25,6 +27,20 @@ environment:
 ```julia
 pkg> add HammerheadGUI
 ```
+
+Start Julia with several threads (`julia -t auto`) in a graphical session,
+press Backspace to leave package mode, and open the window:
+
+```julia
+using HammerheadGUI
+hammerhead()
+```
+
+It walks through one analysis (images, preprocessing and masks, passes with a
+test on one pair, the batch run, and the results) for planar PIV, PTV and
+stereo recordings. [Analyze an image pair in the
+GUI](https://stillyslalom.github.io/Hammerhead.jl/dev/howto/gui/) describes
+each step.
 
 ## Measure one image pair
 
