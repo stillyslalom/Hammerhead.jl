@@ -68,7 +68,7 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
             HammerheadGUI.hh_estimate_background(2)
             next!()
         elseif s == 5 && !ps.background_running[] && time() - t_stage[] > 0.5
-            set_step!(w, :test); test_pair!(w); next!()
+            set_step!(w, :passes); test_pair!(w); next!()
         elseif s == 6 && !w.test.running[]
             set_step!(w, :run); start_run!(w); next!()
         elseif s == 7 && !w.run.running[]
@@ -187,7 +187,7 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
             push!(ptv_text, sh.step_rows[3].label, sh.shown["ptvSearchRadius"])
             HammerheadGUI.request_grab(particles_png); ptv_stage[] = 2; t_stage[] = time()
         elseif s == 2 && grabbed(particles_png)
-            set_step!(w, :test); HammerheadGUI.hh_test(); ptv_stage[] = 3; t_stage[] = time()
+            HammerheadGUI.hh_test(); ptv_stage[] = 3; t_stage[] = time()
         elseif s == 3 && !w.test.running[] && w.test.result[] !== nothing && time() - t_stage[] > 1
             push!(ptv_text, first(split(sh.shown["testLines"], '\n')))
             HammerheadGUI.request_grab(ptv_test_png); ptv_stage[] = 4; t_stage[] = time()
@@ -251,9 +251,9 @@ imgA, imgB, _, _ = generate_synthetic_piv_pair(linear_flow(3.0, 2.0, 0.0, 0, 0, 
     @test startswith(sw[1], "Start a new two-camera (stereo) session? This discards 4 frames")
     @test sw[2] === wf                                       # declined: same session
     @test sw[3] isa StereoWorkflow && sw[4] == "stereo"
-    @test sw[5] == ["images", "calibration", "prepare", "passes", "test", "run", "results"]
+    @test sw[5] == ["images", "calibration", "prepare", "passes", "run", "results"]
     @test startswith(sw[6], "Hammerhead stereo PIV |")
-    @test sw[7] == "" && sw[8] == 6
+    @test sw[7] == "" && sw[8] == 5
     @test final isa PlanarWorkflow && final !== wf && isempty(final.frames.files[])
     @test !final.spawn[] && !wf.spawn[]
     img = HammerheadGUI.Controllers.FileIO.load(stereo_png)

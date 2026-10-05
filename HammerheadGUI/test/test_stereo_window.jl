@@ -83,12 +83,11 @@
     @test finite(c.polygons[1][]) == 4
     @test count(isfinite, c.mask[3][]) == count(wf.mask[])
 
-    # Passes: window outlines; Test and Run: in-plane vectors in dewarped px
+    # Passes: window outlines and the test's in-plane vectors in dewarped px; Run too
     fill_preset!(wf.passes, :low)
     set_step!(wf, :passes)
     @test finite(c.polygons[1][]) == 0 && c.box_labels.text[] == ["32 px"]
     test_pair!(wf; spawn = false)
-    set_step!(wf, :test)
     r = wf.test.result[]
     @test r isa StereoPIVResult
     d = HammerheadGUI.grid_vector_data(r, dws[1].grid)

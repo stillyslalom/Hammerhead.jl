@@ -58,10 +58,12 @@ Added:
 Added:
 
 - `planar_window()`: a Qt Quick window for planar PIV that walks through
-  Images → Prepare → Passes → Test pair → Run → Results, with one image
+  Images → Prepare → Passes → Run → Results, with one image
   viewer that follows the step and can pop out into its own window. Settings
-  save and open as core `PIVRecipe` files (results files carry theirs); the
-  test pair runs exactly the batch's `apply_recipe` call; runs write results
+  save and open as core `PIVRecipe` files (results files carry theirs); a
+  test bar pinned below the Passes settings runs exactly the batch's
+  `apply_recipe` call on the representative pair and draws its vectors on
+  the Passes viewer (**Show vectors** hides them); runs write results
   as they finish and can be canceled. Controllers (`PlanarWorkflow`,
   `FrameSet`, `PassesEditor`, `PairTest`, `RunState`) work without a window.
 - Prepare step in the window, with four pages: **Preprocess** (ordered core
@@ -113,7 +115,7 @@ Added:
   **Particles**: detection, matching, validation and track settings
   (`ParticleSettings`, `set_particle_option!`), the pass table as the
   optional PIV predictor, and a live preview circling the particles
-  detected on the shown frame. Test pair matches the representative pair
+  detected on the shown frame. The test matches the representative pair
   (or tracks up to ten frames from it), Run writes per-pair PTV results or
   one set of tracks, and Results draw particles and tracks. Settings save
   as particle recipes.
@@ -153,10 +155,12 @@ Added:
   `apply_recipe`.
 - Passes: **Run on the GPU** switch (`use_gpu!`, `set_backend!`,
   `gpu_packages`): loads CUDA or AMDGPU on first use and runs PIV tests and
-  batches on it; unavailable when neither package is installed. Settings the
-  GPU backends do not implement are reported on the step.
+  batches on it (`gpu_problem`). The switch is greyed out when neither
+  package is installed or a setting is one the GPU backends do not implement
+  (its tooltip names the setting), and hidden in the particle modes, which
+  run on the CPU.
 - The Run and Results steps turn to needing attention when settings or inputs
-  change after a run (`run_stale`), as Test pair already did; a failed or
+  change after a run (`run_stale`), as Passes does after a test; a failed or
   canceled run also needs attention. The window title reads
   `Hammerhead planar PIV | settings.toml`.
 - One window for every recording: `hammerhead()` opens the Hammerhead
@@ -187,6 +191,8 @@ Changed:
 - With a `PhysicalScale` attached, the magnitude field reads `|velocity|`
   (e.g. `|velocity| (mm/s)`); unscaled results keep `|displacement| (px)`.
   New `field_name(result, field)`.
+- Prepare and Passes stay grey on the step rail until the frames on Images
+  form pairs, and the Passes summary carries the pair test's outcome.
 - An ensemble's pass summary shows no repeat counts and the Passes page
   disables the Repeats column (the ensemble driver runs each pass once).
 - The windows open about 4 s faster (≈16.5 s warm from launch on the
@@ -196,6 +202,10 @@ Changed:
 
 Fixed:
 
+- **Run on the GPU** never finished loading the GPU package inside the
+  window: the worker waited on a subprocess whose completion only the
+  window's main thread could deliver. The window now services those events
+  on every tick, and AMDGPU loads in seconds.
 - Canvas clicks (Results tools, mask and scale points) stopped working after
   focus moved to a control while Shift or Ctrl was held: the canvas never saw
   the key release and kept treating clicks as zoom gestures. A canvas now

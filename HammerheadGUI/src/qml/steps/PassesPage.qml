@@ -13,10 +13,12 @@ StepPage {
     guidance: particles
         ? "Detect particles, match them between the frames of a pair, and validate the " +
           "matches. The viewer circles the particles detected on the shown frame with these " +
-          "settings. The PIV predictor below centers each particle's search on the local flow."
+          "settings. The PIV predictor below centers each particle's search on the local flow. " +
+          "Test the settings with the button at the bottom."
         : "Start from a preset, then adjust. Each pass refines the previous one; the first " +
           "window should be at least four times the largest displacement. The viewer " +
-          "outlines each window size against the particles."
+          "outlines each window size against the particles. Test the settings with the " +
+          "button at the bottom; the viewer draws the vectors, valid in blue, flagged in red."
 
     Label { text: "Analysis"; font.weight: Font.DemiBold; visible: passesPage.particleModes }
     ComboBox {
@@ -532,28 +534,36 @@ StepPage {
             currentIndex: app.precision === "Float32" ? 1 : 0
             onActivated: Julia.hh_set_precision(currentValue)
         }
-        Label { text: "Run on the GPU"; enabled: gpuSwitch.enabled }
+        // particle analysis always runs on the CPU, so its modes have no switch
+        Label { text: "Run on the GPU"; enabled: gpuSwitch.enabled; visible: !particles }
         RowLayout {
+            visible: !particles
             spacing: 8
+            // a disabled switch gets no hover events, so its row shows the tooltip
+            HoverHandler { id: gpuHover }
             Switch {
                 id: gpuSwitch
-                enabled: app.gpuInstalled && !app.gpuLoading && !passesPage.particleModes
+                // greyed out while settings are CPU-only, unless it is on (to switch it off)
+                enabled: app.gpuInstalled && !app.gpuLoading && (app.gpuOn || app.gpuProblem === "")
                 checked: app.gpuOn
                 onToggled: {
                     Julia.hh_use_gpu(checked)
                     checked = Qt.binding(() => app.gpuOn)
                 }
-                ToolTip.visible: hovered
+                ToolTip.visible: gpuHover.hovered
                 ToolTip.text: !app.gpuInstalled ?
                     "Install a GPU package (CUDA for NVIDIA, AMDGPU for AMD) in the " +
                     "environment to enable this" :
-                    passesPage.particleModes ? "Particle analysis runs on the CPU" :
+                    app.gpuProblem !== "" ?
+                        "These settings need the CPU: " + app.gpuProblem :
                     "Tests and runs use " + app.gpuPackages + "; loading it the first " +
                     "time takes a while"
             }
             BusyIndicator { running: app.gpuLoading; visible: running; implicitHeight: 24; implicitWidth: 24 }
             Label {
-                text: app.gpuStatus
+                text: app.gpuOn && !app.gpuLoading && app.gpuProblem !== ""
+                    ? app.gpuProblem + ": switch the GPU off to test or run"
+                    : app.gpuStatus
                 visible: text !== ""
                 opacity: 0.75
                 wrapMode: Text.WordWrap
@@ -561,4 +571,71 @@ StepPage {
             }
         }
     }
+
+    // The pair test, pinned below the settings: edit, test, compare.
+    footer: [
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Button {
+                text: app.mode === "ensemble" ? "Test ensemble" :
+                      app.mode === "tracking" ? "Test tracking from pair " + app.pairIndex :
+                      "Test pair " + app.pairIndex
+                highlighted: true
+                enabled: !app.testRunning && app.analysisProblem === ""
+                onClicked: Julia.hh_test()
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: app.mode === "ensemble"
+                    ? "Run the settings on the first pairs as an ensemble, exactly as the batch will"
+                    : app.mode === "tracking"
+                    ? "Track particles through up to ten frames from the representative pair"
+                    : "Run the settings on the representative pair, exactly as the batch will"
+            }
+            BusyIndicator {
+                running: app.testRunning
+                visible: running
+                implicitWidth: 28
+                implicitHeight: 28
+            }
+            Label {
+                text: app.testHeading === "" ? "" :
+                      app.testStale ? app.testHeading + " · out of date, test again" :
+                      app.testHeading
+                color: app.testStale ? "#b06f00" : palette.windowText
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+            CheckBox {
+                text: "Show vectors"
+                visible: app.testLines !== ""
+                checked: app.testShowVectors
+                onToggled: {
+                    Julia.hh_test_vectors(checked)
+                    checked = Qt.binding(() => app.testShowVectors)
+                }
+            }
+        },
+        Label {
+            text: app.analysisProblem
+            visible: text !== "" && !app.testRunning
+            color: "#b06f00"
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        },
+        Label {
+            text: app.testStatus
+            visible: text !== ""
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        },
+        Label {
+            text: app.testLines
+            visible: text !== ""
+            lineHeight: 1.2
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+    ]
 }

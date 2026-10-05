@@ -107,7 +107,8 @@ function stereo_canvas(wf::StereoWorkflow)
           cal.page, cal.selfcal, cal.disparity_pass)
     onany((_...) -> _draw_geometry!(c, wf), wf.mask, cal.dewarpers)
     onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes)
-    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed, cal.dewarpers,
+    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.test.show_vectors,
+          wf.run.completed, cal.dewarpers,
           cal.page, cal.selfcal, cal.disparity_pass)
     onany((_...) -> _draw_prepare!(c, wf), wf.step, ps.revision)
     onany((_...) -> _draw_calibration!(c, wf), wf.step, wf.camera, cal.reviews[1], cal.reviews[2])
@@ -294,13 +295,11 @@ function grid_vector_data(r::StereoPIVResult, grid::DewarpGrid)
             u = d.u ./ sx, v = d.v ./ sy, outlier = d.outlier, spacing)
 end
 
-# In-plane vectors of the test result (Test step) or the latest finished
-# pair (Run), on the dewarped frame.
+# In-plane vectors of the pair test (Passes) or the latest finished pair
+# (Run) on the dewarped frame, or the self-calibration disparity map.
 function _draw_vectors!(c::StereoCanvas, wf::StereoWorkflow)
-    r = wf.step[] === :test ? wf.test.result[] :
-        wf.step[] === :run && !isempty(wf.run.completed[]) ? last(wf.run.completed[]) :
-        wf.step[] === :calibration && wf.calibration.page[] === :selfcal ? disparity_map(wf.calibration) :
-        nothing
+    r = wf.step[] === :calibration && wf.calibration.page[] === :selfcal ?
+        disparity_map(wf.calibration) : _shown_vectors(wf)
     dws = wf.calibration.dewarpers[]
     if r isa PIVResult && c.space[] === :grid
         _set_arrows!(c.shafts, c.heads, vector_data(r), _disparity_scale(wf.calibration))

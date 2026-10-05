@@ -14,8 +14,8 @@
 # wf = hammerhead()
 # ```
 #
-# A one-camera session walks through six steps, listed on the window's left:
-# **Images → Prepare → Passes → Test pair → Run → Results**. The viewer on the
+# A one-camera session walks through five steps, listed on the window's left:
+# **Images → Prepare → Passes → Run → Results**. The viewer on the
 # right follows the step you are on. The screenshots below come from the
 # window; each code block is the equivalent of the clicks it describes,
 # written against the session's workflow controller. `hammerhead()` returns
@@ -131,16 +131,17 @@ passes_summary(wf.passes)
 
 # ![Passes: the medium preset's pass table and its window sizes outlined on the particles.](../assets/gui_window/passes.png)
 #
-# On **Test pair**, click **Test pair 1**. The test runs the same call as the
-# batch on the representative pair, so its summary predicts the run:
+# In the bar at the foot of **Passes**, click **Test pair 1**. The test runs
+# the same call as the batch on the representative pair, so its summary
+# predicts the run:
 
 test_pair!(wf; spawn = false)                        # Test pair 1
 print(join(summary_lines(test_summary(wf.test)), "\n"))
 
-# ![Test pair: the summary beside the vectors, valid in blue; the masked corner has none.](../assets/gui_window/test_pair.png)
+# ![Passes after a test: the summary in the bar below the settings, the vectors on the viewer, valid in blue; the masked corner has none.](../assets/gui_window/test_pair.png)
 #
-# Change a setting and the step rail marks the test as out of date until you
-# test again.
+# Change a setting and the test bar and step rail mark the test as out of
+# date until you test again.
 
 # ## 6. Run the recording
 #

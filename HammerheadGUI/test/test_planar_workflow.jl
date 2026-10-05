@@ -175,10 +175,18 @@
         set_option!(wf.passes, :subpixel, :gauss2d)
         @test occursin("on the GPU", workflow_problem(wf))
         @test occursin("switch the GPU off", workflow_problem(wf))
+        @test gpu_problem(wf) == "the 2-D Gaussian subpixel fit is CPU-only"
         set_mode!(wf.passes, :ptv)                               # particles: CPU regardless
         @test workflow_problem(wf) === nothing
         use_gpu!(wf, false)
         @test wf.passes.backend[] === :cpu
+        set_mode!(wf.passes, :sequence)
+        # on the CPU, :ka answers for the GPU backends (the switch greys out)
+        @test gpu_problem(wf) == "the 2-D Gaussian subpixel fit is CPU-only"
+        set_option!(wf.passes, :subpixel, :gauss3)
+        @test gpu_problem(wf) === nothing
+        set_option!(wf.passes, :image_interpolation, :linear)
+        @test gpu_problem(wf) == "linear image interpolation is CPU-only"
         if isempty(gpu_packages())
             use_gpu!(wf, true; spawn = false)
             @test occursin("no GPU package", wf.passes.gpu_status[]) && wf.passes.backend[] === :cpu
@@ -235,22 +243,34 @@
         @test wf3.passes.passes[] == effort_schedule(:medium; image_size = (64, 96))
     end
 
+    @testset "Prepare and Passes stay grey until frames form pairs" begin
+        wf = PlanarWorkflow()
+        @test step_status(wf, :prepare) == (:todo, "full image, no preprocessing")
+        @test step_status(wf, :passes)[1] === :todo
+        add_files!(wf.frames, frames)
+        @test step_status(wf, :prepare)[1] === :ok && step_status(wf, :passes)[1] === :ok
+        sw = StereoWorkflow()
+        @test step_status(sw, :prepare)[1] === :todo && step_status(sw, :passes)[1] === :todo
+    end
+
     @testset "test pair matches apply_recipe; staleness" begin
         wf = PlanarWorkflow(files = frames)
         fill_preset!(wf.passes, :low)
-        @test step_status(wf, :test) == (:todo, "not tested")
+        @test step_status(wf, :passes) == (:ok, passes_summary(wf.passes))     # not tested
         test_pair!(wf; spawn = false)
         res = wf.test.result[]
         @test res isa PIVResult
         direct = apply_recipe(workflow_recipe(wf), [current_pair(wf.frames)]; progress = false)[1]
         @test isequal(res.u, direct.u) && isequal(res.v, direct.v)
-        @test !test_stale(wf) && step_status(wf, :test)[1] === :ok
         s = test_summary(wf.test)
+        @test !test_stale(wf) &&
+              step_status(wf, :passes) == (:ok, passes_summary(wf.passes) * " · " * test_brief(s))
         @test s.valid > 0 && s.valid_fraction > 0.9
         @test median(filter(!isnan, res.u)) ≈ 3.0 atol = 0.3
         @test any(l -> startswith(l, "Valid vectors"), summary_lines(s))
         set_option!(wf.passes, :correlation, :phase)
-        @test test_stale(wf) && step_status(wf, :test)[1] === :attention
+        @test test_stale(wf) && step_status(wf, :passes) ==
+              (:attention, passes_summary(wf.passes) * " · settings changed since the test")
         test_pair!(wf; spawn = false)
         @test !test_stale(wf) && wf.test.previous[] !== nothing
         @test any(l -> occursin("pts)", l), summary_lines(test_summary(wf.test); previous = wf.test.previous[]))
@@ -392,7 +412,7 @@
         @test !occursin("×", passes_summary(wf.passes)) && occursin("ensemble", passes_summary(wf.passes))
         test_pair!(wf; spawn = false)
         @test wf.test.result[] isa PIVResult
-        @test startswith(step_status(wf, :test)[2], "ensemble of 3 pairs: ")
+        @test length(only(wf.test.inputs[])) == 3 && step_status(wf, :passes)[1] === :ok
         select_pair!(wf.frames, 2)                     # the ensemble ignores the pair
         @test !test_stale(wf)
         add_files!(wf.frames, Any[imgA, imgB])         # but not the frames

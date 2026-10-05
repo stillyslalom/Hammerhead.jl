@@ -7,7 +7,7 @@ import QtQuick
 import "steps"
 
 WorkflowWindow {
-    stepKeys: ["images", "calibration", "prepare", "passes", "test", "run", "results"]
+    stepKeys: ["images", "calibration", "prepare", "passes", "run", "results"]
     stereo: app.modality === "stereo"
 
     Item {
@@ -17,7 +17,6 @@ WorkflowWindow {
     CalibrationPage {}
     PreparePage { stereo: app.modality === "stereo" }
     PassesPage { particleModes: app.modality !== "stereo" }
-    TestPage {}
     RunPage {}
     ResultsPage {}
 }

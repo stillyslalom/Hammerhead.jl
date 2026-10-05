@@ -88,7 +88,7 @@ export PrepareState, PREPARE_PAGES, set_prepare_page!, canvas_click!, canvas_alt
        set_scale_field!, clear_scale!, load_mask_file!, save_mask_file, background_note,
        load_ruler!, clear_ruler!, passes_probe_available
 export AbstractWorkflow, workflow_steps, prepare_pages, workflow_problem, frame_masks_problem,
-       representative_mask, run_stale, GPU_BACKENDS, gpu_packages, use_gpu!, set_backend!,
+       representative_mask, run_stale, GPU_BACKENDS, gpu_packages, use_gpu!, set_backend!, gpu_problem,
        RECORDING_TYPES, recording_type, new_workflow, unsaved_work, switch_question
 export PlanarWorkflow, WORKFLOW_STEPS, workflow_recipe, settings_modified, set_step!,
        test_pair!, test_stale, open_results!, step_status, step_label, test_brief,
@@ -224,7 +224,8 @@ include_dependency(joinpath(@__DIR__, "qt", "precompile_statements.jl"))
         wf.roi[] = nothing
         set_step!(wf, :passes)
         test_pair!(wf; spawn = false)
-        set_step!(wf, :test)
+        wf.test.show_vectors[] = false
+        set_step!(wf, :run)
         start_run!(wf; spawn = false)
         set_step!(wf, :results)
         for st in WORKFLOW_STEPS

@@ -28,7 +28,7 @@ each camera's frames to start further along:
 a stereo session by themselves).
 
 The steps on the left run in order: **Images → Calibration → Prepare →
-Passes → Test pair → Run → Results**. **Camera 1** and **Camera 2** in the
+Passes → Run → Results**. **Camera 1** and **Camera 2** in the
 bar below the viewer choose which camera the viewer shows, on every step.
 The viewer, the step rail, the pair bar and the pop-out work as for one
 camera; [Analyze an image pair in the GUI](gui.md) describes them.
@@ -181,7 +181,7 @@ view; it is excluded from every analysis.
 
 ## Choose the passes, test, and run
 
-**Passes**, **Test pair** and **Run** are the one-camera steps; the
+**Passes** (with its test bar) and **Run** are the one-camera steps; the
 presets size the windows to the dewarped grid. Both cameras run with the
 same passes, and their two-component fields combine into three components
 at every node. **Test pair** runs the call the batch will run, and the
@@ -190,7 +190,7 @@ viewer shows the in-plane vectors on the shown camera's dewarped frame.
 finishes; an ensemble writes one pooled stereo result when both cameras'
 correlations have been summed over every pair.
 
-![Test pair: the summary and the in-plane vectors on camera 1's dewarped frame.](../assets/gui_window/stereo_test_pair.png)
+![Passes after a test: the summary in the test bar and the in-plane vectors on camera 1's dewarped frame.](../assets/gui_window/stereo_test_pair.png)
 
 ## Inspect the results
 

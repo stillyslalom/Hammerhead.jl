@@ -34,11 +34,14 @@
     @test c.box_labels.text[] == ["32 px"]
     @test !isempty(colorbuffer(c.fig; px_per_unit = 1))
 
-    test_pair!(wf; spawn = false)
-    set_step!(wf, :test)
+    test_pair!(wf; spawn = false)                # Passes draws the test's vectors
     n = count(i -> !(isnan(wf.test.result[].u[i]) || isnan(wf.test.result[].v[i])),
               eachindex(wf.test.result[].u))
-    @test finite(c.shafts[1][]) == 2n
+    @test finite(c.shafts[1][]) == 2n && c.box_labels.text[] == ["32 px"]
+    wf.test.show_vectors[] = false
+    @test finite(c.shafts[1][]) == 0
+    test_pair!(wf; spawn = false)                # a new test shows them again
+    @test wf.test.show_vectors[] && finite(c.shafts[1][]) == 2n
     set_step!(wf, :images)
     @test finite(c.shafts[1][]) == 0
     show_frame!(wf.frames, :b)                   # same size: data swap only
@@ -72,8 +75,7 @@
     @test finite(c.boxes[1][]) == 0                  # no predictor windows
     set_particle_option!(wf.particles, :predictor, :piv)
     test_pair!(wf; spawn = false)
-    set_step!(wf, :test)
-    @test finite(c.particles[1][]) == 0
+    @test finite(c.particles[1][]) == length(wf.particles.detected[])
     @test finite(c.shafts[1][]) == 2 * length(HammerheadGUI.vector_data(wf.test.result[]).x) > 0
     HammerheadGUI.set_explorer!(rc, ResultExplorer([wf.test.result[]]))
     @test finite(rc.points[1][]) == length(wf.test.result[].x) && finite(rc.shafts[1][]) > 0

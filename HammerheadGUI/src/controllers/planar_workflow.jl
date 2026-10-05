@@ -6,7 +6,7 @@
 """
 Steps of the planar workflow window, in order.
 """
-const WORKFLOW_STEPS = (:images, :prepare, :passes, :test, :run, :results)
+const WORKFLOW_STEPS = (:images, :prepare, :passes, :run, :results)
 
 """
     PlanarWorkflow(; files = Any[], pair_mode = :paired, deliver = f -> f())
@@ -305,6 +305,8 @@ end
 
 step_label(wf::PlanarWorkflow, step::Symbol) =
     step === :passes && _particle_mode(wf.passes.mode[]) ? "Particles" : STEP_LABELS[step]
+
+_has_pairs(wf::PlanarWorkflow) = npairs(wf.frames) > 0
 
 function _step_status(wf::PlanarWorkflow, step::Symbol)
     if step === :images

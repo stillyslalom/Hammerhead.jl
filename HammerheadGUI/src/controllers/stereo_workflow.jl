@@ -1,5 +1,5 @@
-# The stereo PIV workflow window's state. It shares the settings, Passes,
-# Test pair, Run, and Results machinery with the planar workflow
+# The stereo PIV workflow window's state. It shares the settings, Passes
+# (with the pair test), Run, and Results machinery with the planar workflow
 # (workflow.jl) and adds two synchronized camera frame sets, the Calibration
 # step (stereo_calibration.jl), and a Prepare step on the dewarped grid:
 # preprocessing applies to the raw frames (as `run_piv_stereo` does), and
@@ -8,7 +8,7 @@
 """
 Steps of the stereo workflow window, in order.
 """
-const STEREO_WORKFLOW_STEPS = (:images, :calibration, :prepare, :passes, :test, :run, :results)
+const STEREO_WORKFLOW_STEPS = (:images, :calibration, :prepare, :passes, :run, :results)
 
 """
 Sub-pages of the stereo Prepare step, in order (no ROI: mask the dewarped
@@ -422,6 +422,8 @@ function _inputs_stale(wf::StereoWorkflow)
 end
 
 # ---------------------------------------------------------------- step rail
+
+_has_pairs(wf::StereoWorkflow) = npairs(wf.frames1) > 0 && npairs(wf.frames2) > 0
 
 function _step_status(wf::StereoWorkflow, step::Symbol)
     if step === :images

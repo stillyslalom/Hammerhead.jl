@@ -302,7 +302,7 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
                 pp.error_step, pp.status, pp.processed2,
                 pe.passes, pe.preset, pe.mode, pe.image_type, pe.error,
                 pe.backend, pe.gpu_loading, pe.gpu_status,
-                t.result, t.running, t.status, r.output_path, r.running, r.progress, r.status,
+                t.result, t.running, t.status, t.show_vectors, r.output_path, r.running, r.progress, r.status,
                 r.completed, r.finished_output)
         on(mark, obs)
     end
@@ -344,6 +344,7 @@ function WorkflowShell(wf::AbstractWorkflow, canvas; queue::Channel{Any} = Chann
                    # the GPU switch: installed device packages are looked up once
                    "gpuInstalled" => !isempty(gpu_packages()),
                    "gpuPackages" => join((Controllers._gpu_package(b) for b in gpu_packages()), " and "),
+                   "gpuProblem" => "",
                    # per-frame mask images (planar only)
                    "frameMaskCount" => 0, "frameMasksInfo" => "", "patternDir3" => "",
                    "pattern3" => "*.png", "patternCount3" => 0, "patternInfo3" => "",
@@ -569,6 +570,15 @@ function _refresh_window!(sh::PlanarShell)
     return
 end
 
+# What the shown pair test analyzed, for the Passes page's test bar.
+function _test_heading(t)
+    rec, inp = t.recipe[], t.inputs[]
+    (t.result[] === nothing || rec === nothing || inp === nothing) && return ""
+    rec.mode === :ensemble && return "Ensemble of $(length(first(inp))) pairs"
+    rec.mode === :tracking && return "Tracking through $(length(first(inp))) frames from pair $(t.pair[])"
+    return "Pair $(t.pair[])"
+end
+
 function _refresh!(sh::WorkflowShell)
     wf = sh.wf
     pe, t, r = wf.passes, wf.test, wf.run
@@ -614,6 +624,8 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "gpuOn", pe.backend[] !== :cpu || pe.gpu_loading[])
     _set!(sh, "gpuLoading", pe.gpu_loading[])
     _set!(sh, "gpuStatus", pe.gpu_status[])
+    gp = gpu_problem(wf)
+    _set!(sh, "gpuProblem", gp === nothing ? "" : gp)
 
     s = test_summary(t)
     _set!(sh, "testRunning", t.running[])
@@ -621,6 +633,8 @@ function _refresh!(sh::WorkflowShell)
     _set!(sh, "testLines", s === nothing ? "" : join(summary_lines(s; previous = t.previous[]), "\n"))
     _set!(sh, "testStale", s !== nothing && test_stale(wf))
     _set!(sh, "testPair", t.pair[])
+    _set!(sh, "testShowVectors", t.show_vectors[])
+    _set!(sh, "testHeading", _test_heading(t))
 
     _set!(sh, "outputPath", r.output_path[])
     _set!(sh, "runRunning", r.running[])
@@ -763,6 +777,10 @@ end
 function hh_tick()
     sh = _SHELL[]
     sh === nothing && return 0
+    # Only thread 1 runs libuv's event loop, and it sits in Qt's exec(): pump
+    # it here, or a worker waiting on a subprocess, timer, or socket (loading a
+    # GPU package runs ROCm/CUDA discovery tools) waits until the window closes.
+    Base.process_events()
     if _ICON_TRIES[] > 0
         _ICON_TRIES[] = _set_window_icon(get(sh.shown, "title", "")) ? 0 : _ICON_TRIES[] - 1
     end
@@ -852,6 +870,7 @@ end
 hh_set_precision(p) = _with_shell(sh -> set_image_type!(sh.wf.passes, String(p) == "Float32" ? Float32 : Float64))
 hh_use_gpu(on) = _with_shell(sh -> use_gpu!(sh.wf, Bool(on)))
 hh_test() = _with_shell(sh -> test_pair!(sh.wf))
+hh_test_vectors(on) = _with_shell(sh -> (sh.wf.test.show_vectors[] = Bool(on)))
 hh_set_output(url) = _with_shell(sh -> (sh.wf.run.output_path[] = _url_to_path(String(url))))
 hh_start_run() = _with_shell(sh -> start_run!(sh.wf))
 hh_cancel_run() = _with_shell(sh -> cancel_run!(sh.wf))
@@ -1052,7 +1071,7 @@ function _register_qml_functions()
     @qmlfunction hh_mask_action hh_mask_morph hh_load_mask hh_save_mask hh_set_roi hh_clear_roi
     @qmlfunction hh_set_scale hh_clear_scale hh_clear_scale_points hh_load_ruler hh_clear_ruler
     @qmlfunction hh_set_frame_pattern hh_add_matching hh_pattern_from_frames
-    @qmlfunction hh_add_frame_masks hh_clear_frame_masks hh_use_gpu
+    @qmlfunction hh_add_frame_masks hh_clear_frame_masks hh_use_gpu hh_test_vectors
     @qmlfunction hh_set_modality hh_confirm_switch hh_cancel_switch
     _register_stereo_functions()
     return

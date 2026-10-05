@@ -16,8 +16,9 @@ July 2026) is also done. Hammerhead and HammerheadGUI are registered in
 General; user installation instructions should use `pkg> add Hammerhead`
 and `pkg> add HammerheadGUI`. Phase 7 (HammerheadGUI) is underway:
 the monorepo conversion and CI/TagBot/CompatHelper subdir wiring are done;
-one Qt window, `hammerhead()` (Images → [Calibration →] Prepare → Passes →
-Test pair → Run → Results, saved settings as recipes), serves planar, PTV
+one Qt window, `hammerhead()` (Images → [Calibration →] Prepare → Passes
+(with a pinned pair-test bar) → Run → Results, saved settings as recipes),
+serves planar, PTV
 and stereo recordings (one recording type per session; `planar_window` /
 `stereo_window` are shortcuts) and replaced the GLMakie tool and stereo
 windows; the standalone result explorer and calibration review remain
@@ -423,7 +424,9 @@ current frame *size*, never an image copy), `PassesEditor`, `PairTest`/`RunState
 `workflow_recipe`; `prepare_workflow.jl` syncs editors ↔ workflow both ways
 under a `syncing` guard (opened settings reseed the editors; a loaded mask
 becomes the editor's raster), and an unedited opened recipe round-trips `==`.
-Test pair and Run both call `apply_recipe`; an ensemble Run returns one
+The pair test (a footer bar on Passes, `StepPage.footer`; vectors drawn on
+the Passes viewer unless `wf.test.show_vectors` is off) and Run both call
+`apply_recipe`; an ensemble Run returns one
 result (no `on_result`; `RunState.mode/pairs/cameras` + `run_progress` turn
 the core's per-pair-per-pass ticks into "pass k of P" text; cancel throws
 from `progress` and keeps nothing). `wf.frame_masks` is a second `FrameSet`
@@ -437,8 +440,12 @@ canvas shade and the detection preview.
 device package (`Base.find_package` → `Base.require(Main, …)` on a worker,
 then `invokelatest(backend_available, b)`), and `_backend_kw`/`_backend_problem`
 feed `_input_kwargs` and `workflow_problem` (PIV modes only; particles stay
-on the CPU). `run_stale(wf)` drives the Run/Results attention state the way
-`test_stale` drives Test pair.
+on the CPU and the switch is hidden there). `gpu_problem(wf)` names a
+CPU-only setting in Passes-page terms, asking `backend_problem(:ka, …)` before
+a device package loads (same scope check); the switch greys out on it unless
+already on. `run_stale(wf)` drives the Run/Results attention state the way
+`test_stale` drives the Passes status. Prepare/Passes report `:todo` until
+the frames form pairs (`_has_pairs` hook, `_until_pairs`).
 Particle analysis is a set of planar
 modes, not a window: `passes.mode` ∈ `ANALYSIS_MODES` (`:sequence`,
 `:ensemble`, `:ptv`, `:tracking`); `ParticleSettings` (`wf.particles`,
@@ -538,7 +545,10 @@ style selection sets `QT_QUICK_CONTROLS_STYLE` through `_putenv_s`, after
 preloading the FluentWinUI3 impl DLL. After `exec()` returns, QML screens are
 dropped from `GLMakie.ALL_SCREENS` and the atlas cache, so the REPL survives
 and the window can reopen; workers must not block in plain ccalls (they stall
-every GC). Startup (warm, to the first `hh_tick`) is ~16.5 s: ~10.8 s package
+every GC). Only thread 1 runs libuv's event loop and it sits in Qt's `exec()`,
+so `hh_tick` pumps it (`Base.process_events()`); without that, a worker
+waiting on a subprocess/timer/socket (e.g. AMDGPU's ROCm discovery in
+`use_gpu!`) hung until the window closed. Startup (warm, to the first `hh_tick`) is ~16.5 s: ~10.8 s package
 load + ~5.8 s, of which ~4.6 s is still compilation (CxxWrap/QML methods
 are defined at init, so their callers do not cache; closures are not
 traced). The canvas glyph atlas (~3 s to render) is cached on disk beside

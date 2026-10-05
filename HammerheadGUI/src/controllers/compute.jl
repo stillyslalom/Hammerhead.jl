@@ -105,11 +105,38 @@ function _backend_kw(wf::AbstractWorkflow)
     return (; backend = b)
 end
 
+"""
+    gpu_problem(wf::AbstractWorkflow) -> Union{Nothing,String}
+
+Why the current pass schedule cannot run on a GPU, in the Passes page's terms
+(e.g. "the 2-D Gaussian subpixel fit is CPU-only"), or `nothing`. Before a
+device package is loaded the hardware-free `:ka` backend answers: the GPU
+backends share its kernels and option scope.
+"""
+function gpu_problem(wf::AbstractWorkflow)
+    b = wf.passes.backend[]
+    passes = wf.passes.passes[]
+    msg = Base.invokelatest(backend_problem, b === :cpu ? :ka : b, passes)
+    msg === nothing && return nothing
+    for p in passes
+        setting = _cpu_only_setting(p)
+        setting === nothing || return setting * " is CPU-only"
+    end
+    return replace(msg, r";? ?use backend = :cpu" => "")
+end
+
+# The Passes-page name of a setting the GPU backends do not implement.
+function _cpu_only_setting(p::PIVParameters)
+    p.search_area_size == p.window_size || return "a search area larger than the window"
+    p.subpixel_method in (:gauss3, :gauss9) || return "the 2-D Gaussian subpixel fit"
+    p.image_interpolation === :cubic || return "linear image interpolation"
+    p.predictor_interpolation === :linear || return "cubic predictor interpolation"
+    return nothing
+end
+
 # Why the pass schedule cannot run on the selected GPU backend, or nothing.
 function _backend_problem(wf::AbstractWorkflow)
-    kw = _backend_kw(wf)
-    isempty(kw) && return nothing
-    msg = Base.invokelatest(backend_problem, kw.backend, wf.passes.passes[])
-    msg === nothing && return nothing
-    return "on the GPU: " * replace(msg, r";? ?use backend = :cpu" => "; switch the GPU off")
+    isempty(_backend_kw(wf)) && return nothing
+    msg = gpu_problem(wf)
+    return msg === nothing ? nothing : "on the GPU: " * msg * "; switch the GPU off"
 end

@@ -129,7 +129,7 @@ function planar_shots()
         fill_preset!(wf.passes, :medium)
     end)
     st!(w, sh -> waited(w, 1), sh -> grab!("passes"))
-    st!(w, sh -> grabbed(w, "passes"), sh -> (set_step!(wf, :test); test_pair!(wf)))
+    st!(w, sh -> grabbed(w, "passes"), sh -> (set_step!(wf, :passes); test_pair!(wf)))
     st!(w, sh -> !wf.test.running[] && wf.test.result[] !== nothing && waited(w, 1),
         sh -> grab!("test_pair"))
     st!(w, sh -> grabbed(w, "test_pair"), sh -> (set_step!(wf, :run); start_run!(wf)))
@@ -155,7 +155,7 @@ function planar_shots()
         HammerheadGUI.reset_limits!(sh.canvas.ax)
     end)
     st!(w, sh -> wf.particles.detected[] !== nothing && waited(w, 1.5), sh -> grab!("particles"))
-    st!(w, sh -> grabbed(w, "particles"), sh -> (set_step!(wf, :test); test_pair!(wf)))
+    st!(w, sh -> grabbed(w, "particles"), sh -> (set_step!(wf, :passes); test_pair!(wf)))
     st!(w, sh -> !wf.test.running[] && wf.test.result[] isa PTVResult && waited(w, 1.5),
         sh -> grab!("ptv_test_pair"))
     st!(w, sh -> grabbed(w, "ptv_test_pair"), sh -> HammerheadGUI.request_close())
@@ -239,7 +239,7 @@ function stereo_shots()
         edit_scale!(wf, :dt, "0.001")
         edit_scale!(wf, :time_unit, "s")
         fill_preset!(wf.passes, :medium)
-        set_step!(wf, :test)
+        set_step!(wf, :passes)
         test_pair!(wf)
     end)
     st!(w, sh -> !wf.test.running[] && wf.test.result[] !== nothing && waited(w, 1.5),
@@ -257,12 +257,13 @@ end
 "planar" in WINDOWS && planar_shots()
 "stereo" in WINDOWS && stereo_shots()
 
-# Qt writes RGBA with light compression; RGB at zlib's best compression is
-# lossless and keeps each image well under 300 KiB.
+# Qt writes RGBA with light compression; RGB at zlib's best compression with
+# PNG row filtering (`filters = 1`; ~9% smaller on the particle images) is
+# lossless and keeps each image under 300 KiB.
 for name in GRABBED
     p = shot(name)
     img = Hammerhead.FileIO.load(p)
     Hammerhead.FileIO.save(p, parentmodule(eltype(img)).RGB.(img);
-                           compression_level = 9, compression_strategy = 0)
+                           compression_level = 9, compression_strategy = 0, filters = 1)
     println(rpad(name * ".png", 36), round(filesize(p) / 1024; digits = 1), " KiB")
 end

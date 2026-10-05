@@ -30,13 +30,14 @@ and the window first lists what that discards (frames, unsaved settings,
 results kept only in memory). Opening settings or results of the other
 type switches the same way.
 
-The steps on the left run in order: **Images → Prepare → Passes → Test pair →
-Run → Results**. Each step shows a one-line summary, and a dot marks it as
-to do, done, needing attention, or busy. Changing a setting after a test or
-run marks **Test pair**, **Run** and **Results** as needing attention until
-they are repeated. The viewer on the right follows the
-step: frames and overlays while you prepare, window outlines on **Passes**,
-vectors on **Test pair** and **Run**, and the result field on **Results**.
+The steps on the left run in order: **Images → Prepare → Passes → Run →
+Results**. Each step shows a one-line summary, and a dot marks it as to do,
+done, needing attention, or busy; **Prepare** and **Passes** stay grey until
+the frames on **Images** form pairs. Changing a setting after a test or run
+marks **Passes**, **Run** and **Results** as needing attention until they are
+repeated. The viewer on the right follows the step: frames and overlays
+while you prepare, window outlines and the test's vectors on **Passes**,
+vectors of the latest pair on **Run**, and the result field on **Results**.
 The toolbar at the viewer's right edge sets what a drag does: **Edit** (the
 default: clicks work on the open step, a left-drag zooms to a box, a
 right-drag pans), **Zoom** (drag a box; clicks do not edit) and **Pan**
@@ -165,12 +166,13 @@ Below the table:
   final pass's size on the processed pair, as on **Preprocess**.
 - **Precision:** Float32 halves the memory of Float64.
 - **Run on the GPU:** tests and runs use CUDA (NVIDIA) or AMDGPU (AMD) when
-  one of those packages is installed in the environment; the switch is
-  unavailable otherwise. The first switch-on loads the package, which takes
-  a while. GPU backends cover PIV per pair and ensembles with the default
-  interpolation, equal search and window sizes, and the 3- or 9-point
-  subpixel fit; the step reports a setting outside that range. Particle
-  analysis runs on the CPU. See [Run PIV on a GPU](gpu.md).
+  one of those packages is installed in the environment. The first switch-on
+  loads the package, which takes a while. GPU backends cover PIV per pair
+  and ensembles with the default interpolation, equal search and window
+  sizes, and the 3- or 9-point subpixel fit; with a setting outside that
+  range the switch is greyed out and its tooltip names the setting. Particle
+  analysis runs on the CPU, so the particle modes have no switch. See
+  [Run PIV on a GPU](gpu.md).
 
 A **PIV ensemble** sums the correlation over all pairs into one mean field
 (see [Measure one field from many pairs](ensemble.md)). The window tests an
@@ -210,14 +212,18 @@ See [Track particles](../tutorials/ptv.md) for the method.
 
 ## Test one pair
 
-On **Test pair**, click **Test pair** (or **Test ensemble**, which uses the
+The bar at the foot of **Passes** stays in view while you scroll the
+settings. Click **Test pair** there (or **Test ensemble**, which uses the
 first ten pairs). The test runs the same call the batch will run. It reports
 the valid and flagged fractions, the median peak ratio, the largest
-displacement and how long the test took. The viewer shows valid vectors in blue and
-flagged vectors in red. When you change a setting or the representative pair,
-the summary says it is out of date until you test again.
+displacement and how long the test took, with the change from the previous
+test. The viewer draws valid vectors in blue and flagged vectors in red over
+the window outlines; **Show vectors** hides them, for instance to place the
+correlation probe on the particles underneath. When you change a setting or
+the representative pair, the bar says the test is out of date until you test
+again.
 
-![Test pair: the summary and the vectors of the representative pair.](../assets/gui_window/test_pair.png)
+![Passes after a test: the summary in the test bar and the vectors of the representative pair.](../assets/gui_window/test_pair.png)
 
 Many red vectors usually mean the first window is too small for the
 displacement, or that a region needs a mask or preprocessing.

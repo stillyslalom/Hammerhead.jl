@@ -90,7 +90,7 @@ fx = stereo_rig(acquisitions = 2)
     st!(sh -> waited(0.5), sh -> grab("prepare_scale"))
     st!(sh -> grabbed("prepare_scale"), sh -> begin
         fill_preset!(sh.wf.passes, :low)
-        HammerheadGUI.hh_set_step("test")
+        HammerheadGUI.hh_set_step("passes")
         HammerheadGUI.hh_test()
     end)
     st!(sh -> !sh.wf.test.running[] && sh.wf.test.result[] !== nothing && waited(1), sh -> grab("test"))

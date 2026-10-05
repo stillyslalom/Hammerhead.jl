@@ -13,7 +13,8 @@ The latest test of the current settings on the representative pair:
 `result` (a `PIVResult`, a `StereoPIVResult` in a stereo workflow, or a
 `PTVResult`/`TrackingResult` in the particle modes), the
 `recipe` and `pair` it was computed with, `seconds` taken, the `previous`
-test's summary for comparison, and `running`/`status`. `inputs[]` holds the
+test's summary for comparison, `running`/`status`, and `show_vectors`
+(whether the Passes viewer draws the result; a new test turns it on). `inputs[]` holds the
 `apply_recipe` inputs after the recipe (pairs; for stereo also the
 dewarpers) of the last successful test, and `options[]` its keyword inputs
 (per-pair `masks`).
@@ -28,6 +29,7 @@ struct PairTest
     previous::Observable{Union{Nothing,NamedTuple}}
     running::Observable{Bool}
     status::Observable{String}
+    show_vectors::Observable{Bool}
     inputs::Base.RefValue{Any}
     options::Base.RefValue{Any}
 end
@@ -35,7 +37,8 @@ end
 PairTest() = PairTest(Observable{TestResult}(nothing),
                       Observable{Union{Nothing,PIVRecipe}}(nothing), Observable(0),
                       Observable(0.0), Observable{Union{Nothing,NamedTuple}}(nothing),
-                      Observable(false), Observable(""), Ref{Any}(nothing), Ref{Any}((;)))
+                      Observable(false), Observable(""), Observable(true), Ref{Any}(nothing),
+                      Ref{Any}((;)))
 
 """
     start_test!(pt::PairTest, recipe, pairs, label; deliver = f -> f(), spawn = true, options = (;))
@@ -80,6 +83,7 @@ function _finish_test!(pt::PairTest, recipe, label, outcome, inputs = nothing, o
         pt.recipe[] = recipe
         pt.pair[] = label
         pt.seconds[] = outcome.seconds
+        pt.show_vectors[] || (pt.show_vectors[] = true)
         pt.result[] = outcome.result
         pt.status[] = ""
     else

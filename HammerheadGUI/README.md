@@ -32,9 +32,9 @@ window:
   correlation probe; mask polygons drawn on the image; an analysis region;
   and the physical scale, typed or measured from two points.
 - **Passes:** low/medium/high presets fill an editable pass table, with the
-  window sizes outlined on the particles.
-- **Test pair:** run the current settings on the representative pair, exactly
-  as the batch will, with a summary of valid vectors and peak ratios.
+  window sizes outlined on the particles; **Test pair** runs the current
+  settings on the representative pair, exactly as the batch will, and shows
+  the vectors with a summary of valid vectors and peak ratios.
 - **Run:** process every pair in the background, writing results as they
   finish; canceling keeps the finished pairs.
 - **Results:** browse fields, inspect vectors, and measure profiles and

@@ -178,7 +178,7 @@
         @test canvas_alt_click!(wf) && isempty(ps.scale[].points[])
         @test !canvas_alt_click!(wf)
         # Other steps keep their clicks
-        set_step!(wf, :test)
+        set_step!(wf, :run)
         @test !canvas_click!(wf, 5.0, 5.0) && !canvas_alt_click!(wf) && !canvas_key!(wf, :escape)
     end
 

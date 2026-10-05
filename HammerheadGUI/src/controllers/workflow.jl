@@ -1,5 +1,5 @@
 # State and steps shared by the workflow windows (planar and stereo): the
-# settings ↔ recipe round trip, the Passes / Test pair / Run / Results steps,
+# settings ↔ recipe round trip, the Passes (with the pair test) / Run / Results steps,
 # and the background-job plumbing. Each workflow type supplies a few hooks:
 #
 #   workflow_steps(wf)          its steps, in order
@@ -14,6 +14,7 @@
 #   _test_label(wf)             the representative pair's index
 #   _inputs_stale(wf)           whether the test's inputs changed (pair, dewarpers)
 #   _step_status(wf, step)      rail status of the steps that are not shared
+#   _has_pairs(wf)              whether frames forming pairs were added
 #   _edited_steps(wf),          the preprocessing list the Prepare preview
 #   _set_edited_steps!(wf, s)   edits (stereo: the shown camera's)
 
@@ -39,7 +40,7 @@ abstract type AbstractWorkflow end
 
 const STEP_LABELS = Dict(:images => "Images", :calibration => "Calibration",
                          :prepare => "Prepare", :passes => "Passes",
-                         :test => "Test pair", :run => "Run", :results => "Results")
+                         :run => "Run", :results => "Results")
 
 """
     step_label(wf::AbstractWorkflow, step) -> String
@@ -462,16 +463,13 @@ for the step rail.
 function step_status(wf::AbstractWorkflow, step::Symbol)
     step in workflow_steps(wf) || throw(ArgumentError("unknown step :$step"))
     if step === :passes
-        return _passes_status(wf)
-    elseif step === :test
+        state, txt = _until_pairs(wf, _passes_status(wf))
+        state === :ok || return (state, txt)
         wf.test.running[] && return (:busy, "testing…")
         s = test_summary(wf.test)
-        s === nothing && return (:todo, "not tested")
-        txt = test_brief(s)
-        inp = wf.test.inputs[]
-        wf.test.recipe[].mode === :ensemble && inp !== nothing &&
-            (txt = "ensemble of $(length(first(inp))) pairs: " * txt)
-        return test_stale(wf) ? (:attention, "settings changed since: " * txt) : (:ok, txt)
+        s === nothing && return (:ok, txt)
+        test_stale(wf) && return (:attention, txt * " · settings changed since the test")
+        return (:ok, txt * " · " * test_brief(s))
     elseif step === :run
         rs = wf.run
         rs.running[] && return (:busy, run_progress(rs))
@@ -489,8 +487,14 @@ function step_status(wf::AbstractWorkflow, step::Symbol)
             return (:attention, "settings changed since the run: " * txt)
         return (:ok, txt)
     end
-    return _step_status(wf, step)
+    s = _step_status(wf, step)
+    return step === :prepare ? _until_pairs(wf, s) : s
 end
+
+# Prepare and Passes settings that are fine stay grey until there are frames
+# to apply them to: green means ready to analyze the frames listed on Images.
+_until_pairs(wf::AbstractWorkflow, (state, txt)) =
+    state === :ok && !_has_pairs(wf) ? (:todo, txt) : (state, txt)
 
 _passes_status(wf::AbstractWorkflow) = _piv_passes_status(wf)
 

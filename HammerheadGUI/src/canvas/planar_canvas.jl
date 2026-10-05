@@ -108,7 +108,8 @@ function planar_canvas(wf::PlanarWorkflow)
     onany((_...) -> _draw_geometry!(c, wf), wf.mask, wf.roi, fm.files, fm.loaded, fs.pair)
     onany((_...) -> _draw_boxes!(c, wf), wf.step, wf.passes.passes, wf.passes.mode,
           wf.particles.predictor, fs.files, fs.pair, wf.roi)
-    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.run.completed)
+    onany((_...) -> _draw_vectors!(c, wf), wf.step, wf.test.result, wf.test.show_vectors,
+          wf.run.completed)
     onany((_...) -> _draw_prepare!(c, wf), wf.step, ps.revision)
     onany((_...) -> _draw_particles!(c, wf), wf.step, wf.passes.mode, wf.particles.detected)
     _register_gestures!(c, wf)
@@ -456,11 +457,18 @@ function _draw_window_boxes!(boxes, box_labels, passes, center)
     return
 end
 
-# Vectors of the test result (Test step) or the latest finished pair (Run):
-# arrows for PIV and PTV results, polylines for tracks.
+# The result the viewer draws: the pair test's on Passes (unless hidden), the
+# latest finished pair's on Run.
+function _shown_vectors(wf)
+    wf.step[] === :passes && return wf.test.show_vectors[] ? wf.test.result[] : nothing
+    wf.step[] === :run && !isempty(wf.run.completed[]) && return last(wf.run.completed[])
+    return nothing
+end
+
+# Vectors of the shown result: arrows for PIV and PTV results, polylines for
+# tracks.
 function _draw_vectors!(c::PlanarCanvas, wf::PlanarWorkflow)
-    r = wf.step[] === :test ? wf.test.result[] :
-        wf.step[] === :run && !isempty(wf.run.completed[]) ? last(wf.run.completed[]) : nothing
+    r = _shown_vectors(wf)
     _update_arrows!(c.shafts, c.heads, r)
     if r isa TrackingResult && !isempty(r.trajectories)
         pts = Point2f[]

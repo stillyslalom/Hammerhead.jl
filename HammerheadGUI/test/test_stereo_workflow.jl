@@ -214,7 +214,7 @@
         good = .!(r.mask .| r.outliers)
         @test median(r.u[good]) ≈ disp[1] atol = 0.1          # world units (mm)
         @test median(r.v[good]) ≈ disp[2] atol = 0.1
-        @test !test_stale(sw) && step_status(sw, :test)[1] === :ok
+        @test !test_stale(sw) && step_status(sw, :passes)[1] === :ok
         s = test_summary(sw.test)
         @test s.valid_fraction > 0.9 && s.sigma_unit == "world units"
         @test s.max_displacement > 2                         # dewarped px
