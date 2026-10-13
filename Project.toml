@@ -1,7 +1,7 @@
 name = "Hammerhead"
 uuid = "5ded7e7b-b945-48ee-9a66-c5dce433a0a7"
-authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
 version = "0.2.1"
+authors = ["Alex Ames <alexander.m.ames@gmail.com> and contributors"]
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
@@ -46,7 +46,7 @@ ImageFiltering = "0.7"
 ImageIO = "0.6"
 Interpolations = "0.16"
 JLD2 = "0.5, 0.6"
-KernelAbstractions = "0.9"
+KernelAbstractions = "0.9, 0.10"
 LinearAlgebra = "1"
 LsqFit = "0.15"
 Makie = "0.24"
