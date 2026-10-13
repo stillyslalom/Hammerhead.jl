@@ -169,7 +169,7 @@ end
         origins = [0 1; 1 1]
         meansA = fill(99.0, 2); meansB = copy(meansA)
         CA = fill(ComplexF64(99), 8, 8, 2); CB = copy(CA)
-        mask = falses(8, 8)
+        mask = zeros(Bool, 8, 8)   # dense: kernel arguments must be isbits-backed arrays
         Hammerhead._ka_window_means!(dev)(meansA, meansB, A, A, origins, mask, true, 8, 8; ndrange = 2)
         Hammerhead._ka_gather!(dev)(CA, CB, A, A, origins, ones(8, 8), meansA, meansB, mask, true; ndrange = (8, 8, 2))
         Hammerhead.KernelAbstractions.synchronize(dev)

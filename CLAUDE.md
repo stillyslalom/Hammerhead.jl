@@ -379,7 +379,9 @@ Diátaxis layout under `docs/src/`: `tutorials/` (generated — do not edit),
   conventions (violations cost 10-50x, found the hard way on the RX 6800 XT):
   no throwing ops in kernels — checked `Int32` conversions and `round(Int, x)`
   compile to malloc hostcalls (use `% Int32` wrapping stores and
-  `unsafe_trunc` after guards); the cooperative analyze needs the plane-major
+  `unsafe_trunc` after guards); kernel arguments must be dense isbits-backed
+  arrays — KA ≥ 0.10 runs `:ka` through POCL, which rejects a `BitMatrix`
+  (`_ka_mask_arg` densifies masks); the cooperative analyze needs the plane-major
   `Rt[i, j, k]` layout so a block's within-plane strided reads coalesce; the
   `Rt` trailing (window) dimension is padded +1 because a power-of-two
   plane-to-plane byte stride funnels writes into one memory channel; GPU FFT

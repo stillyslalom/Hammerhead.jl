@@ -176,6 +176,13 @@ end
     end
 end
 
+# Kernel arguments must be plain dense arrays: KernelAbstractions ≥ 0.10 runs
+# its CPU backend through POCL, which rejects a `BitMatrix` (not isbits) or a
+# view. A 0×0 dummy stands in when there is no mask.
+_ka_mask_arg(::Nothing, img) = similar(img, Bool, 0, 0)
+_ka_mask_arg(mask::Array{Bool}, img) = mask
+_ka_mask_arg(mask::AbstractMatrix{Bool}, img) = convert(Array{Bool}, mask)
+
 # Gather each window into the (padded) complex batch, mean-subtracted and
 # apodized — the elementwise half of `load_windows!`. One work-item per window
 # *pixel* (`ndrange = (wr, wc, nbatch)`) so adjacent work-items touch adjacent
@@ -888,7 +895,7 @@ function process_windows!(u, v, peak_ratio, correlation_moment, alt_u, alt_v,
     _ensure_buffers!(engine, bs)
     ka = engine.ka
     hasmask = mask !== nothing
-    themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
+    themask = _ka_mask_arg(mask, imgA)
     gainarg = engine.padded ? engine.gain : engine.apod   # dummy when unpadded (unread)
     use_regionalmax = params.peak_finder === :regionalmax
     use_gauss9 = params.subpixel_method === :gauss9
@@ -967,7 +974,7 @@ function uncertainty_sweep!(uncertainty_u, uncertainty_v, jobs, imgA, imgB,
     bs = min(_KA_BATCH, njobs)
     _ensure_buffers!(engine, bs)
     hasmask = mask !== nothing
-    themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
+    themask = _ka_mask_arg(mask, imgA)
     for start in 1:bs:njobs
         nreal = min(bs, njobs - start + 1)
         for m in 1:nreal
@@ -1090,7 +1097,7 @@ function accumulate_planes!(acc::_KAPlaneAccumulator, jobrange::AbstractUnitRang
     _ensure_buffers!(engine, bs)
     ka = engine.ka
     hasmask = mask !== nothing
-    themask = hasmask ? mask : similar(imgA, Bool, 0, 0)
+    themask = _ka_mask_arg(mask, imgA)
     gainarg = engine.padded ? engine.gain : engine.apod   # dummy when unpadded (unread)
 
     for start in 1:bs:njobs

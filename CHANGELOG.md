@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+### Core
+
+- KernelAbstractions 0.10 is supported (compat `0.9, 0.10`). Its CPU backend
+  compiles kernels through POCL, so `backend = :ka` now passes masks to its
+  kernels as dense `Array{Bool}` (a `BitMatrix` mask is copied to one before
+  launch).
+
 ## Hammerhead 0.2.1 and HammerheadGUI 0.3.0 (2026-10-04)
 
 Changes since core v0.2.0 and HammerheadGUI v0.2.0 (2026-10-03).
